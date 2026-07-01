@@ -247,6 +247,27 @@
   document.getElementById('ts-flow-val').textContent=document.getElementById('ts-flow').value;
   document.getElementById('ts-hardness-val').textContent=document.getElementById('ts-hardness').value;
 
+  // ── Mark not-yet-implemented controls as Coming Soon ────────────────
+  const COMING_SOON='Coming Soon — This feature will be available in a future update.';
+  const _tsNotImplemented=['ts-tip-shape','ts-roundness','ts-angle','ts-flip-x','ts-flip-y',
+    'ts-size-jitter','ts-angle-jitter','ts-angle-control','ts-round-jitter','ts-min-round',
+    'ts-scatter-both-axes','ts-scatter','ts-count','ts-count-jitter',
+    'ts-color-apply','ts-fgbg-jitter','ts-hue-jitter','ts-sat-jitter','ts-bri-jitter','ts-purity',
+    'ts-blend-mode','ts-texture','ts-texture-scale','ts-texture-depth','ts-texture-each',
+    'ts-stabilize-mode','ts-stabilize-strength','ts-stabilize-delay','ts-tail-action',
+    'ts-postcorrect','ts-correct-begin','ts-correct-end','ts-ink-amount','ts-ink-type',
+    'ts-wetness','ts-mix-color','ts-persistence','ts-smear-color'];
+  _tsNotImplemented.forEach(id=>{
+    const el=document.getElementById(id);
+    if(!el) return;
+    el.disabled=true;
+    const row=el.closest('.ts-row');
+    if(row && !row.classList.contains('ts-disabled')){
+      row.classList.add('ts-disabled');
+      row.title=COMING_SOON;
+    }
+  });
+
 })(); // end Tool Settings panel init
 
 // Preset get/apply
@@ -1148,4 +1169,3 @@ function applyToolPreset(json){
   updateAABtn();
 })();
 document.getElementById('onion-chk').onchange=updateOnion;
-
