@@ -1,0 +1,1246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <!-- Windows Ink / Pointer API: disable default touch behaviors so pen events reach JS -->
+  <meta name="msapplication-tap-highlight" content="no"/>
+<title>Animator — Frame-by-Frame</title>
+<link rel="stylesheet" href="style.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+// ════════════════════════════════════════════════════════════════
+// PEN TABLET COMPATIBILITY — pointer-to-mouse relay
+// ════════════════════════════════════════════════════════════════
+// Many drag handlers in the app use document.addEventListener('mousemove')
+// which works fine for a mouse but breaks for pen tablets: when the stylus
+// moves outside the source element the browser may stop firing mousemove.
+// Pointer events (pointermove / pointerup) always fire globally on document
+// regardless of where the cursor is, so we relay them as synthetic MouseEvents
+// on document. This lets every existing mousedown→mousemove→mouseup drag
+// (timeline scrub, keyframe drag, layer reorder, rubber-band, range markers,
+// eye-drag, layer-B drag, etc.) work correctly with a pen tablet without
+// rewriting each one.
+//
+// The relay is ONLY active while a drag is in progress (primaryDown=true) so
+// it doesn't interfere with normal hover/click behaviour.
+// The canvas brush-engine uses its own pointer events and is unaffected.
+(function(){
+  let primaryDown = false;
+
+  // Track primary button state across all pointer types.
+  document.addEventListener('pointerdown', e => {
+    if (e.button === 0 || (e.buttons & 1)) primaryDown = true;
+  }, true);
+
+  document.addEventListener('pointermove', e => {
+    // Only relay non-mouse pointer types (pen, touch) and only during a drag.
+    // Mouse fires its own mousemove natively; relaying it would double-fire.
+    if (e.pointerType === 'mouse' || !primaryDown) return;
+    const me = new MouseEvent('mousemove', {
+      bubbles: true, cancelable: true,
+      clientX: e.clientX, clientY: e.clientY,
+      screenX: e.screenX, screenY: e.screenY,
+      buttons: e.buttons, button: 0,
+      ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey,
+    });
+    document.dispatchEvent(me);
+  }, true);
+
+  document.addEventListener('pointerup', e => {
+    if (e.button === 0 || !(e.buttons & 1)) primaryDown = false;
+    if (e.pointerType === 'mouse') return;
+    const me = new MouseEvent('mouseup', {
+      bubbles: true, cancelable: true,
+      clientX: e.clientX, clientY: e.clientY,
+      screenX: e.screenX, screenY: e.screenY,
+      buttons: e.buttons, button: 0,
+      ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey,
+    });
+    document.dispatchEvent(me);
+  }, true);
+
+  document.addEventListener('pointercancel', e => {
+    primaryDown = false;
+    if (e.pointerType === 'mouse') return;
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+  }, true);
+})();
+</script>
+</head>
+<body>
+
+<!-- ── MENU BAR ────────────────────────────────────────────── -->
+<div id="menubar">
+  <div class="mb-app">▶ Animator</div>
+
+  <div class="mb-item" id="mb-file">File
+    <div class="dropdown" id="dd-file">
+      <div class="dd-item" id="dd-new">📄 New Project</div>
+      <div class="dd-sep"></div>
+      <div class="dd-item" id="dd-import-image">🖼 Import Image…</div>
+      <div class="dd-sep"></div>
+      <div class="dd-item" id="dd-export">💾 Export PNG Sequence</div>
+    </div>
+  </div>
+
+  <div class="mb-item" id="mb-edit">Edit
+    <div class="dropdown" id="dd-edit">
+      <div class="dd-item" id="dd-undo">↩ Undo<span class="dd-shortcut">Ctrl+Z</span></div>
+      <div class="dd-item" id="dd-redo">↪ Redo<span class="dd-shortcut">Ctrl+Y</span></div>
+      <div class="dd-sep"></div>
+      <div class="dd-item" id="dd-cut">✂ Cut Frame<span class="dd-shortcut">Ctrl+X</span></div>
+      <div class="dd-item" id="dd-copy">⎘ Copy Frame<span class="dd-shortcut">Ctrl+C</span></div>
+      <div class="dd-item" id="dd-paste">⎗ Paste Frame<span class="dd-shortcut">Ctrl+V</span></div>
+      <div class="dd-item" id="dd-paste-image">🖼 Paste Image<span class="dd-shortcut">Ctrl+Shift+V</span></div>
+      <div class="dd-item" id="dd-duplicate">⿻ Duplicate Frame</div>
+      <div class="dd-sep"></div>
+      <div class="dd-item danger" id="dd-clear">🗑 Clear Frame<span class="dd-shortcut" id="dd-clear-shortcut">Delete</span></div>
+      <div class="dd-sep"></div>
+      <div class="dd-item" id="dd-preferences">⚙ Preferences</div>
+    </div>
+  </div>
+
+  <div class="mb-item" id="mb-window">Window
+    <div class="dropdown" id="dd-window">
+      <div class="dd-item" id="dd-show-tools"><span class="dd-check" id="chk-tools">✓</span>Tools Panel</div>
+      <div class="dd-item" id="dd-show-brush-presets"><span class="dd-check" id="chk-brush-presets">✓</span>Brush Presets</div>
+      <div class="dd-item" id="dd-show-colorpanel"><span class="dd-check" id="chk-colorpanel"></span>Color Panel</div>
+      <div class="dd-item" id="dd-show-layers"><span class="dd-check" id="chk-layers">✓</span>Layers Panel</div>
+      <div class="dd-item" id="dd-show-timeline"><span class="dd-check" id="chk-timeline">✓</span>Timeline</div>
+      <div class="dd-item" id="dd-show-toolbar"><span class="dd-check" id="chk-toolbar">✓</span>Toolbar</div>
+      <div class="dd-sep"></div>
+      <div class="dd-item" id="dd-reset-layout">↺ Reset Layout</div>
+      <div class="dd-item" id="dd-center-canvas">⊕ Center Canvas</div>
+    </div>
+  </div>
+
+  <div class="mb-item" id="mb-settings">Settings
+    <div class="dropdown" id="dd-settings">
+      <div class="dd-item" id="dd-canvas-settings">⚙ Canvas &amp; Background</div>
+      <div class="dd-item" id="dd-zoom-settings">🔍 Zoom Settings</div>
+      <div class="dd-item" id="dd-keybind-settings">⌨ Keybinds</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── TOOLBAR ─────────────────────────────────────────────── -->
+<div id="toolbar">
+  <button class="tbtn" id="btn-undo" title="Undo Ctrl+Z">↩</button>
+  <button class="tbtn" id="btn-redo" title="Redo Ctrl+Y">↪</button>
+  <button class="tbtn" id="btn-clear" title="Clear frame">🗑</button>
+  <div class="tsep"></div>
+  <button class="tbtn active" id="btn-aa" title="Toggle antialiasing (A) — ON: soft sub-pixel edges like TVPaint pen brush / OFF: hard pixel edges like TVPaint pencil or Clip Studio pixel pen" style="font-size:11px;padding:0 7px;letter-spacing:.02em;">AA</button>
+  <div class="tsep"></div>
+  <button class="tbtn" id="btn-flip-h" title="Flip Horizontal (H)">⇄</button>
+  <button class="tbtn" id="btn-flip-v" title="Flip Vertical (V)">⇅</button>
+  <div class="tsep"></div>
+  <label style="display:flex;align-items:center;gap:4px;cursor:pointer;flex-shrink:0;">
+    <input type="checkbox" id="onion-chk" checked style="accent-color:var(--accent);"/>
+    <span class="tlabel">Onion</span>
+  </label>
+
+</div>
+
+<!-- ── MAIN AREA ───────────────────────────────────────────── -->
+<div id="main-area">
+  <div id="canvas-area">
+    <div id="canvas-wrap">
+      <canvas id="composite-canvas"></canvas>
+      <!-- display-canvas: what's actually shown on screen. composite-canvas stays
+           the pixel-exact data source (eyedropper/export/etc never touch this one);
+           display-canvas gets a slight pre-filter blur when zoomed out before the
+           browser's own CSS-transform downscale runs, which is what avoids the
+           shimmering "wave" artifact a raw CSS minify of a continuously-updating
+           canvas produces (see core-state.js / panels.js for why). -->
+      <canvas id="display-canvas"></canvas>
+      <canvas id="onion-canvas"></canvas>
+      <canvas id="active-canvas"></canvas>
+      <canvas id="transform-canvas"></canvas>
+    </div>
+    <div id="zoom-indicator">100%</div>
+    <div id="rotation-indicator">0°</div>
+    <div id="rotation-pivot"></div>
+
+    <!-- Dock-preview / merge-preview overlays (shown during panel drags) -->
+    <div class="fp-dockzone" id="fp-dz-left"></div>
+    <div class="fp-dockzone" id="fp-dz-right"></div>
+    <div class="fp-dockzone" id="fp-dz-top"></div>
+    <div class="fp-dockzone" id="fp-dz-bottom"></div>
+    <div class="fp-mergezone" id="fp-mergezone"></div>
+
+    <!-- TOOLS PANEL -->
+    <div id="tools-panel" class="float-panel dock-left docked" data-panel="tools" style="width:40px;left:0;">
+      <div class="fp-tabbar" style="display:none;"></div>
+      <div class="fp-titlebar"><span class="fp-grip">⠿</span><span class="fp-name">Tools</span><span class="fp-close" title="Close panel">✕</span></div>
+      <div class="fp-body-wrap">
+        <div class="fp-body active" data-body="tools">
+          <div id="tools-panel-body">
+            <button class="tbtn active" id="tp-btn-brush" title="Brush (B)">✏</button>
+            <button class="tbtn" id="tp-btn-eraser" title="Eraser (E)">⌫</button>
+            <button class="tbtn" id="tp-btn-fill" title="Fill (F)">■</button>
+            <button class="tbtn" id="tp-btn-line" title="Line (L)">↖</button>
+            <button class="tbtn" id="tp-btn-transform" title="Transform (T)">⛶</button>
+            <div id="color-swatch-stack" title="Click to pick color · drag to detach Color panel">
+              <div id="color-swatch" title="Pick color"></div>
+              <input type="color" id="color-input" value="#000000"/>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MINI COLOR PICKER POPUP (swatch single-tap) -->
+    <div id="mini-picker" style="display:none;">
+      <div id="mini-picker-inner">
+        <canvas id="mini-sq" width="180" height="180"></canvas>
+        <div id="mini-hue-wrap"><canvas id="mini-hue" width="16" height="180"></canvas></div>
+      </div>
+    </div>
+
+    <!-- COLOR PANEL (full picker — starts merged as a tab inside Tools) -->
+    <div id="color-panel" class="float-panel fp-hidden" data-panel="color" style="top:16px;left:130px;width:auto;">
+      <div class="fp-tabbar" style="display:none;"></div>
+      <div class="fp-titlebar"><span class="fp-grip">⠿</span><span class="fp-name">Color</span><span class="fp-close" title="Close panel">✕</span></div>
+      <div class="fp-body-wrap">
+        <div class="fp-body active" data-body="color">
+          <div id="color-panel-body">
+            <!-- Wheel + inner shape + FG/BG swatches overlaid at bottom-left -->
+            <div class="cp-wheel-wrap">
+              <canvas id="cp-wheel-canvas" width="240" height="240"></canvas>
+              <canvas id="cp-sq-canvas"></canvas>
+              <!-- FG/BG/Transparent swatches — same group layout as Tools panel -->
+              <div id="cp-swatch-stack">
+                <div class="cp-cs-swatch cp-cs-bg" id="cp-sw-bg" title="Background (click to edit)"></div>
+                <div class="cp-cs-swatch cp-cs-fg" id="cp-sw-fg" title="Foreground (click to edit)"></div>
+                <div id="cp-sw-transparent" title="Set foreground transparent"></div>
+              </div>
+            </div>
+            <!-- Shape + mode toggles: one row when large, two rows when small -->
+            <div class="cp-toggle-rows" id="cp-toggle-rows">
+              <div class="cp-toggle-row cp-shape-row">
+                <button class="cp-toggle-btn active" id="cp-shape-square">■ Sq</button>
+                <button class="cp-toggle-btn" id="cp-shape-triangle">▲ Tri</button>
+              </div>
+              <div class="cp-toggle-row cp-mode-row">
+                <button class="cp-toggle-btn" id="cp-mode-rgb">RGB</button>
+                <button class="cp-toggle-btn" id="cp-mode-hsv">HSV</button>
+                <button class="cp-toggle-btn" id="cp-mode-hsl">HSL</button>
+                <button class="cp-toggle-btn" id="cp-mode-v">V</button>
+              </div>
+            </div>
+            <!-- Dynamic sliders (hidden by default; toggled by clicking mode buttons) -->
+            <div id="cp-sliders-wrap" style="display:none;flex-direction:column;gap:4px;">
+              <div class="cp-slider-row"><label id="cp-l1">R</label><input type="range" id="cp-s1" min="0" max="255"/><input type="number" id="cp-n1" min="0" max="255" value="0"/></div>
+              <div class="cp-slider-row" id="cp-row2"><label id="cp-l2">G</label><input type="range" id="cp-s2" min="0" max="255"/><input type="number" id="cp-n2" min="0" max="255" value="0"/></div>
+              <div class="cp-slider-row" id="cp-row3"><label id="cp-l3">B</label><input type="range" id="cp-s3" min="0" max="255"/><input type="number" id="cp-n3" min="0" max="255" value="0"/></div>
+            </div>
+            <input type="color" id="cp-native" style="position:absolute;opacity:0;width:0;height:0;"/>
+          </div>
+        </div>
+    </div>
+    </div>
+
+    <!-- BRUSH PRESETS PANEL -->
+    <div id="brush-presets-panel" class="float-panel dock-left docked" data-panel="brush-presets" style="width:220px;left:40px;">
+      <div class="fp-tabbar" style="display:none;"></div>
+      <div class="fp-titlebar"><span class="fp-grip">⠿</span><span class="fp-name">Brush Presets</span><span class="fp-close" title="Close panel">✕</span></div>
+      <div class="fp-body-wrap">
+        <div class="fp-body active" data-body="brush-presets" data-space-pan style="flex-direction:column;">
+          <!-- Size bar -->
+          <div id="bp-size-bar">
+            <label>Size</label>
+            <input type="range" id="bp-sz" min="1" max="2000" step="0.1" value="6"/>
+            <span class="size-val-edit" id="bp-sz-val" title="Tap to type an exact size" tabindex="0">6</span>
+            <button class="size-unit-btn" id="bp-sz-unit" type="button" title="Switch between pixels and millimeters">px</button>
+            <button class="bp-icon-btn" id="btn-open-tool-settings" title="Tool Settings">⚙</button>
+          </div>
+          <!-- Search + group/brush management -->
+          <div id="bp-search-wrap">
+            <input id="bp-search" type="text" placeholder="🔍  Search brushes…"/>
+            <button class="bp-icon-btn" id="bp-add-group" title="New group folder">📁<span style="font-size:8px;margin-left:1px;">+</span></button>
+            <button class="bp-icon-btn" id="bp-add-brush" title="Save current settings as a new brush preset">➕</button>
+          </div>
+          <!-- Scrollable grouped grid -->
+          <div id="brush-preset-grid" style="flex:1;overflow-y:auto;overflow-x:hidden;">
+            <!-- populated by JS -->
+          </div>
+          <div id="bp-no-results">No brushes match your search.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- LAYERS PANEL -->
+    <div id="right-panel" class="float-panel dock-right docked" data-panel="layers" style="width:200px;right:0;">
+      <div class="fp-tabbar" style="display:none;"></div>
+      <div class="fp-titlebar"><span class="fp-grip">⠿</span><span class="fp-name">Layers</span><span class="fp-close" title="Close panel">✕</span></div>
+      <div class="fp-body-wrap">
+        <div class="fp-body active" data-body="layers">
+          <div id="layer-panel-header">
+            <div id="layer-opacity-row">
+              <label>Opacity</label>
+              <input type="range" id="layer-opacity-slider" min="0" max="100" value="100"/>
+              <span id="layer-opacity-val">100%</span>
+              <button id="layer-del-btn" title="Delete selected layer or group" style="flex-shrink:0;background:transparent;border:1px solid var(--border2);border-radius:4px;color:var(--text2);cursor:pointer;font-size:13px;padding:2px 5px;display:flex;align-items:center;">🗑</button>
+            </div>
+            <div id="layer-stencil-row">
+              <label>Stencil</label>
+              <select id="layer-stencil-select">
+                <option value="none">None</option>
+                <option value="inside">Clip Inside</option>
+                <option value="outside">Clip Outside</option>
+              </select>
+            </div>
+          </div>
+          <div id="layers-list" data-space-pan></div>
+          <div id="layer-btns">
+            <button class="layer-add-btn" id="add-layer-btn" title="Add layer">+ Layer</button>
+            <button class="layer-add-btn" id="add-group-btn" title="Add group">📁 Group</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── BOTTOM AREA ─────────────────────────────────────────── -->
+<div id="bottom-area">
+  <div class="resize-handle-h" id="rh-bottom"></div>
+  <div id="timeline-area">
+    <div id="tl-controls">
+      <div id="tl-controls-left">
+        <button class="tl-btn newkey" id="btn-new-key" title="New keyframe (N)">✦ Key</button>
+        <button class="tl-btn" id="btn-del-key" title="Delete keyframe">✕ Key</button>
+        <div class="tsep"></div>
+        <span class="tlabel">FPS</span>
+        <input type="range" id="fps-tl" min="1" max="24" value="24"/>
+        <span class="tval" id="fps-val" title="Click to set FPS">24</span>
+        <div class="tsep"></div>
+        <button class="tl-btn" id="btn-loop">↺ Loop</button>
+      </div>
+      <div id="tl-controls-center">
+        <button class="tl-btn" id="btn-prev" title="First">⏮</button>
+        <button class="tl-btn" id="btn-stepb" title="Step back">◀</button>
+        <button class="tl-btn" id="btn-play">▶ Play</button>
+        <button class="tl-btn" id="btn-stepf" title="Step forward">▶</button>
+        <button class="tl-btn" id="btn-last" title="Last">⏭</button>
+      </div>
+      <div id="tl-controls-right">
+        <span id="frame-info" title="Click to set total frame count">Frame 1 / 48</span>
+      </div>
+    </div>
+    <div id="tl-body">
+      <div id="tl-labels-col">
+        <div id="tl-labels-ruler-spacer">
+          <div id="tl-hide-zone" title="Drag a layer here to hide it from the timeline">⌫ Hide</div>
+        </div>
+        <div id="tl-labels-rows"></div>
+      </div>
+      <div id="tl-labels-resize"></div>
+      <div id="tl-scroll" data-space-pan>
+        <div id="tl-inner">
+          <div id="tl-ruler"></div>
+          <div id="tl-rows-wrap">
+            <div id="playhead"></div>
+            <div id="range-overlay"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── STATUS ──────────────────────────────────────────────── -->
+<div id="status">
+  <span class="stat" id="stat-tool">Brush</span>
+  <span class="stat" id="stat-color">Color: #000000</span>
+  <span class="stat" id="stat-canvas">1920×1080</span>
+  <span class="stat" id="stat-kf">KF: 0</span>
+  <span class="stat" id="stat-range">Range: 1–48</span>
+  <span class="stat" id="stat-zoom">Zoom: 100%</span>
+  <span class="stat" id="stat-rotation">Rotation: 0°</span>
+  <span class="stat" id="stat-sel">Sel: —</span>
+</div>
+
+<!-- ── CANVAS CONTEXT MENU ─────────────────────────────────── -->
+<div class="ctx-menu" id="ctx-menu">
+  <div class="ctx-item" id="ctx-cut">✂ Cut Frame<span class="ctx-shortcut">Ctrl+X</span></div>
+  <div class="ctx-item" id="ctx-copy">⎘ Copy Frame<span class="ctx-shortcut">Ctrl+C</span></div>
+  <div class="ctx-item" id="ctx-paste">⎗ Paste Frame<span class="ctx-shortcut">Ctrl+V</span></div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" id="ctx-duplicate">⿻ Duplicate Frame</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item danger" id="ctx-delete">⌫ Delete Frame</div>
+</div>
+
+<!-- ── RULER CONTEXT MENU ──────────────────────────────────── -->
+<div class="ctx-menu" id="ruler-ctx-menu">
+  <div class="ctx-item" id="ruler-ctx-in">▶| Set In Point</div>
+  <div class="ctx-item" id="ruler-ctx-out">|◀ Set Out Point</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" id="ruler-ctx-reset">↺ Reset Range</div>
+</div>
+
+<!-- ── LAYER PANEL CONTEXT MENU ────────────────────────────── -->
+<div class="ctx-menu" id="layer-ctx-menu">
+  <div class="ctx-item" id="layer-ctx-rename">✏ Rename</div>
+  <!-- Layer-level operations (shown only for layers) -->
+  <div class="ctx-sep layer-ctx-layer-only"></div>
+  <div class="ctx-item layer-ctx-layer-only" id="layer-ctx-cut-layer">✂ Cut Layer</div>
+  <div class="ctx-item layer-ctx-layer-only" id="layer-ctx-copy-layer">⎘ Copy Layer</div>
+  <div class="ctx-item layer-ctx-layer-only" id="layer-ctx-paste-layer">⎗ Paste Layer</div>
+  <div class="ctx-item layer-ctx-layer-only" id="layer-ctx-duplicate-layer">⧉ Duplicate Layer</div>
+  <div class="ctx-sep layer-ctx-layer-only"></div>
+  <div class="ctx-item danger layer-ctx-layer-only" id="layer-ctx-delete-layer">⌫ Delete Layer</div>
+  <!-- Group-level operations (shown only for groups) -->
+  <div class="ctx-sep layer-ctx-group-only"></div>
+  <div class="ctx-item layer-ctx-group-only" id="layer-ctx-cut-group">✂ Cut Group</div>
+  <div class="ctx-item layer-ctx-group-only" id="layer-ctx-copy-group">⎘ Copy Group</div>
+  <div class="ctx-item layer-ctx-group-only" id="layer-ctx-paste-group">⎗ Paste Group</div>
+  <div class="ctx-item layer-ctx-group-only" id="layer-ctx-duplicate-group">⧉ Duplicate Group</div>
+  <div class="ctx-sep layer-ctx-group-only"></div>
+  <div class="ctx-item danger layer-ctx-group-only" id="layer-ctx-delete-group">⌫ Delete Group</div>
+</div>
+
+<!-- ── BRUSH PRESET CONTEXT MENU ────────────────────────────── -->
+<div class="ctx-menu" id="brush-preset-ctx-menu">
+  <div class="ctx-item" id="bp-ctx-rename">✏ Rename</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" id="bp-ctx-cut">✂ Cut</div>
+  <div class="ctx-item" id="bp-ctx-copy">⎘ Copy</div>
+  <div class="ctx-item" id="bp-ctx-paste">⎗ Paste</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item danger" id="bp-ctx-delete">⌫ Delete</div>
+</div>
+
+<!-- ── BRUSH GROUP CONTEXT MENU ──────────────────────────────── -->
+<div class="ctx-menu" id="brush-group-ctx-menu">
+  <div class="ctx-item" id="bg-ctx-rename">✏ Rename Folder</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" id="bg-ctx-copy">⎘ Copy Folder</div>
+  <div class="ctx-item" id="bg-ctx-paste">⎗ Paste Folder</div>
+</div>
+
+<!-- ── CANVAS SETTINGS MODAL ──────────────────────────────── -->
+<div class="modal-overlay" id="modal-canvas">
+  <div class="modal">
+    <h2>Canvas Settings</h2>
+    <div class="modal-section">Resolution Presets</div>
+    <div class="preset-row">
+      <button class="preset-btn" data-w="800" data-h="450">800×450</button>
+      <button class="preset-btn" data-w="1280" data-h="720">1280×720</button>
+      <button class="preset-btn" data-w="1920" data-h="1080">1920×1080</button>
+      <button class="preset-btn" data-w="512" data-h="512">512×512</button>
+      <button class="preset-btn" data-w="480" data-h="270">480×270</button>
+    </div>
+    <div class="modal-row"><label>Width (px)</label><input type="number" id="canvas-w-input" min="8" max="4096" value="1920"/></div>
+    <div class="modal-row"><label>Height (px)</label><input type="number" id="canvas-h-input" min="8" max="4096" value="1080"/></div>
+    <div class="modal-section">Playback FPS Limit</div>
+    <div class="modal-row"><label>Max FPS</label><input type="number" id="canvas-maxfps-input" min="1" max="120" value="24"/></div>
+    <div class="modal-section">Frame Count</div>
+    <div class="modal-row">
+      <label>Duration</label>
+      <div class="timing-pair">
+        <input type="number" id="canvas-frames-sec-input" min="0" max="999" value="4"/>
+        <span class="timing-colon">:</span>
+        <input type="number" id="canvas-frames-fr-input" min="0" max="999" value="0" style="text-align:center;"/>
+      </div>
+    </div>
+    <p style="font-size:11px;color:var(--text2);margin:-4px 0 10px;">Seconds : Frames @ <span id="canvas-frames-fps-label">24</span> fps — <span id="canvas-frames-total-label">48</span> total frames</p>
+    <div class="modal-section">Background Color</div>
+    <div class="color-swatch-grid" id="bg-swatch-grid">
+      <div class="bg-swatch" data-color="#1a1a1e" style="background:#1a1a1e;" title="Dark"></div>
+      <div class="bg-swatch active" data-color="#ffffff" style="background:#ffffff;" title="White"></div>
+      <div class="bg-swatch" data-color="#000000" style="background:#000000;border-color:#555;" title="Black"></div>
+      <div class="bg-swatch" data-color="#2b2b2b" style="background:#2b2b2b;" title="Gray"></div>
+      <div class="bg-swatch" data-color="transparent" style="background:repeating-conic-gradient(#999 0% 25%,#ddd 0% 50%) 0 0/14px 14px;" title="Transparent"></div>
+    </div>
+    <div class="modal-row"><label>Custom color</label><input type="color" id="canvas-bg-color-input" value="#ffffff"/></div>
+    <div class="modal-actions">
+      <button class="modal-btn" id="modal-canvas-cancel">Cancel</button>
+      <button class="modal-btn primary" id="modal-canvas-ok">Apply</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── FRAME COUNT MODAL ───────────────────────────────────── -->
+<div class="modal-overlay" id="modal-frames">
+  <div class="modal">
+    <h2>Total Frame Count</h2>
+    <div class="modal-section">Playback FPS Limit</div>
+    <div class="modal-row"><label>Max FPS</label><input type="number" id="frames-maxfps-input" min="1" max="120" value="24"/></div>
+    <div class="modal-section">Duration</div>
+    <div class="modal-row">
+      <label>Duration</label>
+      <div class="timing-pair">
+        <input type="number" id="frames-sec-input" min="0" max="999" value="4"/>
+        <span class="timing-colon">:</span>
+        <input type="number" id="frames-fr-input" min="0" max="999" value="0" style="text-align:center;"/>
+      </div>
+    </div>
+    <p style="font-size:11px;color:var(--text2);">Seconds : Frames @ <span id="frames-fps-label">24</span> fps — <span id="frames-total-label">48</span> total frames</p>
+    <p style="font-size:11px;color:var(--text2);margin-top:4px;">Keyframes beyond the new total are preserved but hidden.</p>
+    <div class="modal-actions">
+      <button class="modal-btn" id="modal-frames-cancel">Cancel</button>
+      <button class="modal-btn primary" id="modal-frames-ok">Apply</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── ZOOM SETTINGS MODAL ────────────────────────────────── -->
+<div class="modal-overlay" id="modal-zoom">
+  <div class="modal">
+    <h2>Zoom Settings</h2>
+    <div class="modal-row"><label>Zoom speed</label><input type="number" id="zoom-speed-input" min="0.001" max="1" step="0.001" value="0.15"/></div>
+    <div class="modal-row"><label>Min zoom</label><input type="number" id="zoom-min-input" min="0.05" max="1" step="0.05" value="0.1"/></div>
+    <div class="modal-row"><label>Max zoom</label><input type="number" id="zoom-max-input" min="1" max="32" step="0.5" value="16"/></div>
+    <p style="font-size:11px;color:var(--text2);">Scroll wheel zooms toward cursor. Speed range: 0.001–1.0</p>
+    <div class="modal-actions">
+      <button class="modal-btn" id="modal-zoom-cancel">Cancel</button>
+      <button class="modal-btn primary" id="modal-zoom-ok">Apply</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── TOOL SETTINGS MODAL ────────────────────────────────── -->
+  <div class="modal-overlay" id="tool-settings-modal-overlay">
+    <div class="modal" id="tool-settings-modal" style="min-width:380px;display:flex;flex-direction:column;max-height:calc(100vh - 32px);overflow:hidden;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
+        <h2 style="margin-bottom:0;flex:1;">⚙ Tool Settings</h2>
+        <div class="ts-mode-toggle" id="ts-mode-toggle">
+          <button class="ts-mode-btn" id="ts-mode-simple" data-mode="simple" title="Only Size, Flow, Hardness &amp; Anti-alias">Simple</button>
+          <button class="ts-mode-btn" id="ts-mode-advanced" data-mode="advanced" title="All brush engine settings">Advanced</button>
+        </div>
+      </div>
+      <p style="font-size:11px;color:var(--text2);margin-bottom:12px;">Adjust the current brush's settings. Switch to Advanced for the full brush engine.</p>
+      <div id="tool-settings-modal-body" data-space-pan style="flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;touch-action:pan-y;">
+        <div id="tool-settings-body">
+
+          <!-- ── BASIC (Size / Flow / Hardness moved from toolbar) ── -->
+          <div class="ts-section">
+            <div class="ts-section-hd" data-sec="basic">
+              Basic <span class="ts-toggle">▾</span>
+            </div>
+            <div class="ts-section-body">
+              <div class="ts-compat-row ts-advanced-only"><span class="ts-badge all">PS</span><span class="ts-badge csp">CSP</span><span class="ts-badge kr">Krita</span></div>
+              <div class="ts-row">
+                <span class="ts-label">Size</span>
+                <input type="range" class="ts-range" id="ts-size" min="1" max="2000" step="0.1" value="6"/>
+                <span class="ts-val size-val-edit" id="ts-size-val" title="Tap to type an exact size" tabindex="0">6</span>
+                <button class="size-unit-btn" id="ts-size-unit" type="button" title="Switch between pixels and millimeters">px</button>
+              </div>
+              <div class="ts-row">
+                <span class="ts-label">Flow / Opacity</span>
+                <input type="range" class="ts-range" id="ts-flow" min="1" max="100" value="100"/>
+                <span class="ts-val" id="ts-flow-val">100</span>
+              </div>
+              <div class="ts-row">
+                <span class="ts-label">Hardness</span>
+                <input type="range" class="ts-range" id="ts-hardness" min="0" max="100" value="55"/>
+                <span class="ts-val" id="ts-hardness-val">55</span>
+              </div>
+              <div class="ts-row ts-advanced-only">
+                <span class="ts-label">Spacing</span>
+                <input type="range" class="ts-range" id="ts-spacing" min="1" max="200" value="12"/>
+                <span class="ts-val" id="ts-spacing-val">12%</span>
+              </div>
+              <div class="ts-row">
+                <label class="ts-label-sm" style="flex:1;display:flex;align-items:center;gap:5px;cursor:pointer;">
+                  <input type="checkbox" class="ts-check" id="ts-aa" checked/> Anti-alias (AA)
+                </label>
+              </div>
+              <div class="ts-row">
+                <label class="ts-label-sm" style="flex:1;display:flex;align-items:center;gap:5px;cursor:pointer;" title="Like Photoshop/Clip Studio's airbrush: while the pen is held down, paint keeps spraying and building up density even if you don't move — the longer you hold, the more it builds.">
+                  <input type="checkbox" class="ts-check" id="ts-airbrush"/> Airbrush (builds up while held)
+                </label>
+              </div>
+              <div class="ts-row ts-advanced-only">
+                <span class="ts-label">Airbrush Rate</span>
+                <input type="range" class="ts-range" id="ts-airbrush-rate" min="1" max="100" value="55"/>
+                <span class="ts-val" id="ts-airbrush-rate-val">55</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── SHAPE / TIP ── -->
+          <div class="ts-section ts-advanced-only">
+            <div class="ts-section-hd" data-sec="shape">
+              Shape / Tip <span class="ts-toggle">▾</span>
+            </div>
+            <div class="ts-section-body">
+              <div class="ts-compat-row"><span class="ts-badge all">PS</span><span class="ts-badge csp">CSP</span><span class="ts-badge kr">Krita</span></div>
+              <div class="ts-row">
+                <span class="ts-label">Tip Shape</span>
+                <select class="ts-select" id="ts-tip-shape">
+                  <option value="circle">Circle</option>
+                  <option value="square">Square / Flat</option>
+                  <option value="custom">Custom (from tip img)</option>
+                </select>
+              </div>
+              <div class="ts-row">
+                <span class="ts-label">Roundness</span>
+                <input type="range" class="ts-range" id="ts-roundness" min="1" max="100" value="100"/>
+                <span class="ts-val" id="ts-roundness-val">100</span>
+              </div>
+              <div class="ts-row">
+                <span class="ts-label">Angle</span>
+                <input type="range" class="ts-range" id="ts-angle" min="0" max="360" value="0"/>
+                <span class="ts-val" id="ts-angle-val">0°</span>
+              </div>
+              <div class="ts-row">
+                <label class="ts-label-sm" style="flex:1;display:flex;align-items:center;gap:5px;cursor:pointer;">
+                  <input type="checkbox" class="ts-check" id="ts-flip-x"/> Flip X
+                </label>
+                <label class="ts-label-sm" style="flex:1;display:flex;align-items:center;gap:5px;cursor:pointer;">
+                  <input type="checkbox" class="ts-check" id="ts-flip-y"/> Flip Y
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── DYNAMICS (Photoshop Shape Dynamics / CSP Sub Tool Detail / Krita) ── -->
+          <div class="ts-section ts-advanced-only">
+            <div class="ts-section-hd" data-sec="dynamics">
+              Dynamics <span class="ts-toggle">▾</span>
+            </div>
+            <div class="ts-section-body">
+              <div class="ts-compat-row"><span class="ts-badge all">PS</span><span class="ts-badge csp">CSP</span><span class="ts-badge kr">Krita</span></div>
+              <div class="ts-label-sm" style="color:var(--text);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px;">Size</div>
+              <div class="ts-row">
+                <span class="ts-label">Jitter</span>
+                <input type="range" class="ts-range" id="ts-size-jitter" min="0" max="100" value="0"/>
+                <span class="ts-val" id="ts-size-jitter-val">0</span>
+              </div>
+              <div class="ts-row">
+                <span class="ts-label">Control</span>
+                <select class="ts-select" id="ts-size-control">
+                  <option value="off">Off</option>
+                  <option value="pressure" selected>Pen Pressure</option>
+                  <option value="tilt">Pen Tilt</option>
+                  <option value="velocity">Velocity</option>
+                  <option value="fade">Fade</option>
+                </select>
+              </div>
+              <div class="ts-row">
+                <span class="ts-label">Min Size</span>
+                <input type="range" class="ts-range" id="ts-min-size" min="0" max="100" value="0"/>
+                <span class="ts-val" id="ts-min-size-val">0%</span>
+              </div>
+              <div class="ts-divider"></div>
+              <div class="ts-label-sm" style="color:var(--text);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px;">Opacity / Flow</div>
+              <div class="ts-row">
+                <span class="ts-label">Control</span>
+                <select class="ts-select" id="ts-opacity-control">
+                  <option value="off">Off</option>
+                  <option value="pressure" selected>Pen Pressure</option>
+                  <option value="tilt">Pen Tilt</option>
+                  <option value="velocity">Velocity</option>
+                  <option value="fade">Fade</option>
+                </select>
+              </div>
+              <div class="ts-row">
+                <span class="ts-label">Min Flow</span>
+                <input type="range" class="ts-range" id="ts-min-flow" min="0" max="100" value="0"/>
+                <span class="ts-val" id="ts-min-flow-val">0%</span>
+              </div>
+              <div class="ts-divider"></div>
+              <div class="ts-label-sm" style="color:var(--text);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px;">Angle</div>
+              <div class="ts-row">
+                <span class="ts-label">Jitter</span>
+                <input type="range" class="ts-range" id="ts-angle-jitter" min="0" max="100" value="0"/>
+                <span class="ts-val" id="ts-angle-jitter-val">0</span>
+              </div>
+              <div class="ts-row">
+                <span class="ts-label">Control</span>
+                <select class="ts-select" id="ts-angle-control">
+                  <option value="off">Off</option>
+                  <option value="direction">Direction</option>
+                  <option value="pressure">Pen Pressure</option>
+                  <option value="tilt">Pen Tilt</option>
+                  <option value="random">Random</option>
+                </select>
+              </div>
+              <div class="ts-divider"></div>
+              <div class="ts-label-sm" style="color:var(--text);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px;">Roundness</div>
+              <div class="ts-row">
+                <span class="ts-label">Jitter</span>
+                <input type="range" class="ts-range" id="ts-round-jitter" min="0" max="100" value="0"/>
+                <span class="ts-val" id="ts-round-jitter-val">0</span>
+              </div>
+              <div class="ts-row">
+                <span class="ts-label">Min Round</span>
+                <input type="range" class="ts-range" id="ts-min-round" min="0" max="100" value="25"/>
+                <span class="ts-val" id="ts-min-round-val">25%</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── SCATTERING (PS Scattering / CSP particle / Krita scatter) ── -->
+          <div class="ts-section ts-advanced-only">
+            <div class="ts-section-hd" data-sec="scatter">
+              Scattering <span class="ts-toggle">▾</span>
+            </div>
+            <div class="ts-section-body">
+              <div class="ts-compat-row"><span class="ts-badge all">PS</span><span class="ts-badge csp">CSP</span><span class="ts-badge kr">Krita</span></div>
+              <div class="ts-row">
+                <label class="ts-label-sm" style="flex:1;display:flex;align-items:center;gap:5px;cursor:pointer;">
+                  <input type="checkbox" class="ts-check" id="ts-scatter-both-axes"/> Both Axes
+                </label>
+              </div>
+              <div class="ts-row">
+                <span class="ts-label">Scatter</span>
+                <input type="range" class="ts-range" id="ts-scatter" min="0" max="1000" value="0"/>
+                <span class="ts-val" id="ts-scatter-val">0%</span>
+              </div>
+              <div class="ts-row">
+                <span class="ts-label">Count</span>
+                <input type="range" class="ts-range" id="ts-count" min="1" max="16" value="1"/>
+                <span class="ts-val" id="ts-count-val">1</span>
+              </div>
+              <div class="ts-row">
+                <span class="ts-label">Count Jitter</span>
+                <input type="range" class="ts-range" id="ts-count-jitter" min="0" max="100" value="0"/>
+                <span class="ts-val" id="ts-count-jitter-val">0</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── COLOR DYNAMICS (PS Color Dynamics / CSP Color Mixing) ── -->
+          <div class="ts-section ts-advanced-only">
+            <div class="ts-section-hd" data-sec="color-dyn">
+              Color Dynamics <span class="ts-toggle">▾</span>
+            </div>
+            <div class="ts-section-body">
+              <div class="ts-compat-row"><span class="ts-badge all">PS</span><span class="ts-badge csp">CSP</span></div>
+              <div class="ts-row">
+                <span class="ts-label">Apply Per</span>
+                <select class="ts-select" id="ts-color-apply">
+                  <option value="stroke">Each Stroke Tip</option>
+                  <option value="dab">Each Dab (Jitter)</option>
+                </select>
+              </div>
+              <div class="ts-row">
+                <span class="ts-label">FG/BG Jitter</span>
+                <input type="range" class="ts-range" id="ts-fgbg-jitter" min="0" max="100" value="0"/>
+                <span class="ts-val" id="ts-fgbg-jitter-val">0</span>
+              </div>
+              <div class="ts-row">
+                <span class="ts-label">Hue Jitter</span>
+                <input type="range" class="ts-range" id="ts-hue-jitter" min="0" max="100" value="0"/>
+                <span class="ts-val" id="ts-hue-jitter-val">0</span>
+              </div>
+              <div class="ts-row">
+                <span class="ts-label">Sat. Jitter</span>
+                <input type="range" class="ts-range" id="ts-sat-jitter" min="0" max="100" value="0"/>
+                <span class="ts-val" id="ts-sat-jitter-val">0</span>
+              </div>
+              <div class="ts-row">
+                <span class="ts-label">Bri. Jitter</span>
+                <input type="range" class="ts-range" id="ts-bri-jitter" min="0" max="100" value="0"/>
+                <span class="ts-val" id="ts-bri-jitter-val">0</span>
+              </div>
+              <div class="ts-row">
+                <span class="ts-label">Purity</span>
+                <input type="range" class="ts-range" id="ts-purity" min="-100" max="100" value="0"/>
+                <span class="ts-val" id="ts-purity-val">0</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── TRANSFER / TEXTURE ── -->
+          <div class="ts-section ts-advanced-only">
+            <div class="ts-section-hd" data-sec="transfer">
+              Transfer / Texture <span class="ts-toggle">▾</span>
+            </div>
+            <div class="ts-section-body">
+              <div class="ts-compat-row"><span class="ts-badge all">PS</span><span class="ts-badge csp">CSP</span><span class="ts-badge kr">Krita</span></div>
+              <div class="ts-row">
+                <span class="ts-label">Blend Mode</span>
+                <select class="ts-select" id="ts-blend-mode">
+                  <option value="normal">Normal</option>
+                  <option value="multiply">Multiply</option>
+                  <option value="screen">Screen</option>
+                  <option value="overlay">Overlay</option>
+                  <option value="hard-light">Hard Light</option>
+                  <option value="soft-light">Soft Light</option>
+                  <option value="color-dodge">Color Dodge</option>
+                  <option value="color-burn">Color Burn</option>
+                  <option value="luminosity">Luminosity</option>
+                  <option value="color">Color</option>
+                  <option value="hue">Hue</option>
+                  <option value="saturation">Saturation</option>
+                  <option value="difference">Difference</option>
+                  <option value="exclusion">Exclusion</option>
+                  <option value="behind">Behind (PS)</option>
+                  <option value="clear">Clear (PS)</option>
+                  <option value="dissolve">Dissolve (PS)</option>
+                </select>
+              </div>
+              <div class="ts-row">
+                <span class="ts-label">Texture</span>
+                <select class="ts-select" id="ts-texture">
+                  <option value="none">None</option>
+                  <option value="canvas">Canvas (linen)</option>
+                  <option value="watercolor">Watercolor paper</option>
+                  <option value="rough">Rough paper</option>
+                  <option value="crosshatch">Crosshatch</option>
+                </select>
+              </div>
+              <div class="ts-row" id="ts-texture-scale-row">
+                <span class="ts-label">Tex Scale</span>
+                <input type="range" class="ts-range" id="ts-texture-scale" min="25" max="1000" value="100"/>
+                <span class="ts-val" id="ts-texture-scale-val">100%</span>
+              </div>
+              <div class="ts-row" id="ts-texture-depth-row">
+                <span class="ts-label">Tex Depth</span>
+                <input type="range" class="ts-range" id="ts-texture-depth" min="0" max="100" value="50"/>
+                <span class="ts-val" id="ts-texture-depth-val">50</span>
+              </div>
+              <div class="ts-row">
+                <label class="ts-label-sm" style="flex:1;display:flex;align-items:center;gap:5px;cursor:pointer;">
+                  <input type="checkbox" class="ts-check" id="ts-texture-each"/> Texture Each Tip
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── SMOOTHING / STABILIZER (CSP Stabilizer / Krita Smoothing) ── -->
+          <div class="ts-section ts-advanced-only">
+            <div class="ts-section-hd" data-sec="stabilize">
+              Stabilizer / Smoothing <span class="ts-toggle">▾</span>
+            </div>
+            <div class="ts-section-body">
+              <div class="ts-compat-row"><span class="ts-badge csp">CSP</span><span class="ts-badge kr">Krita</span></div>
+              <div class="ts-row">
+                <span class="ts-label">Mode</span>
+                <select class="ts-select" id="ts-stabilize-mode">
+                  <option value="none">None</option>
+                  <option value="simple">Simple (Moving Avg)</option>
+                  <option value="weighted">Weighted</option>
+                  <option value="pullstring">Pull String (CSP)</option>
+                  <option value="magnetic">Magnetic Lasso</option>
+                  <option value="basic">Basic (Krita)</option>
+                  <option value="distance">Distance (Krita)</option>
+                </select>
+              </div>
+              <div class="ts-row">
+                <span class="ts-label">Strength</span>
+                <input type="range" class="ts-range" id="ts-stabilize-strength" min="0" max="100" value="0"/>
+                <span class="ts-val" id="ts-stabilize-str-val">0</span>
+              </div>
+              <div class="ts-row">
+                <span class="ts-label">Delay (px)</span>
+                <input type="range" class="ts-range" id="ts-stabilize-delay" min="0" max="200" value="0"/>
+                <span class="ts-val" id="ts-stabilize-delay-val">0</span>
+              </div>
+              <div class="ts-row">
+                <label class="ts-label-sm" style="flex:1;display:flex;align-items:center;gap:5px;cursor:pointer;">
+                  <input type="checkbox" class="ts-check" id="ts-tail-action" checked/> Finish stroke on release
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── CORRECTION / BRUSH TIPS (CSP-specific) ── -->
+          <div class="ts-section ts-advanced-only">
+            <div class="ts-section-hd" data-sec="correction">
+              Correction <span class="ts-toggle">▾</span>
+            </div>
+            <div class="ts-section-body">
+              <div class="ts-compat-row"><span class="ts-badge csp">CSP</span><span class="ts-badge kr">Krita</span></div>
+              <div class="ts-row">
+                <span class="ts-label">Post-Correct</span>
+                <input type="range" class="ts-range" id="ts-postcorrect" min="0" max="100" value="0"/>
+                <span class="ts-val" id="ts-postcorrect-val">0</span>
+              </div>
+              <div class="ts-row">
+                <label class="ts-label-sm" style="flex:1;display:flex;align-items:center;gap:5px;cursor:pointer;">
+                  <input type="checkbox" class="ts-check" id="ts-correct-begin"/> Correct start
+                </label>
+                <label class="ts-label-sm" style="flex:1;display:flex;align-items:center;gap:5px;cursor:pointer;">
+                  <input type="checkbox" class="ts-check" id="ts-correct-end"/> Correct end
+                </label>
+              </div>
+              <div class="ts-row">
+                <span class="ts-label">Ink Amount</span>
+                <input type="range" class="ts-range" id="ts-ink-amount" min="0" max="100" value="100"/>
+                <span class="ts-val" id="ts-ink-amount-val">100</span>
+              </div>
+              <div class="ts-row">
+                <span class="ts-label">Ink Type</span>
+                <select class="ts-select" id="ts-ink-type">
+                  <option value="dip-pen">Dip pen (CSP)</option>
+                  <option value="brush">Brush (CSP)</option>
+                  <option value="no-change">No change</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── PRESSURE CURVE ── -->
+          <div class="ts-section ts-advanced-only">
+            <div class="ts-section-hd" data-sec="pressure">
+              Pressure Curve <span class="ts-toggle">▾</span>
+            </div>
+            <div class="ts-section-body">
+              <div class="ts-compat-row"><span class="ts-badge all">PS</span><span class="ts-badge csp">CSP</span><span class="ts-badge kr">Krita</span></div>
+              <canvas class="ts-curve-canvas" id="ts-pressure-curve" width="180" height="60" title="Click to reset, drag points to edit"></canvas>
+              <div class="ts-pill-row" style="margin-top:3px;">
+                <button class="ts-pill active" id="ts-curve-linear">Linear</button>
+                <button class="ts-pill" id="ts-curve-soft">Soft</button>
+                <button class="ts-pill" id="ts-curve-hard">Hard</button>
+                <button class="ts-pill" id="ts-curve-s">S-curve</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── WETNESS / MIXING (Krita / CSP watercolor) ── -->
+          <div class="ts-section ts-advanced-only">
+            <div class="ts-section-hd collapsed" data-sec="wetness">
+              Wetness / Mixing <span class="ts-toggle">▾</span>
+            </div>
+            <div class="ts-section-body" style="display:none;">
+              <div class="ts-compat-row"><span class="ts-badge csp">CSP</span><span class="ts-badge kr">Krita</span></div>
+              <div class="ts-row">
+                <span class="ts-label">Wetness</span>
+                <input type="range" class="ts-range" id="ts-wetness" min="0" max="100" value="0"/>
+                <span class="ts-val" id="ts-wetness-val">0</span>
+              </div>
+              <div class="ts-row">
+                <span class="ts-label">Mix Color</span>
+                <input type="range" class="ts-range" id="ts-mix-color" min="0" max="100" value="50"/>
+                <span class="ts-val" id="ts-mix-color-val">50</span>
+              </div>
+              <div class="ts-row">
+                <span class="ts-label">Persistence</span>
+                <input type="range" class="ts-range" id="ts-persistence" min="0" max="100" value="80"/>
+                <span class="ts-val" id="ts-persistence-val">80</span>
+              </div>
+              <div class="ts-row">
+                <label class="ts-label-sm" style="flex:1;display:flex;align-items:center;gap:5px;cursor:pointer;">
+                  <input type="checkbox" class="ts-check" id="ts-smear-color"/> Smear color
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── IMPORT PRESET ── -->
+          <div class="ts-section ts-advanced-only">
+            <div class="ts-section-hd collapsed" data-sec="import">
+              Import / Export Preset <span class="ts-toggle">▾</span>
+            </div>
+            <div class="ts-section-body" style="display:none;">
+              <p style="font-size:9px;color:var(--text2);line-height:1.4;margin-bottom:4px;">Paste or load settings from Photoshop (.abr metadata), Clip Studio (.sut), or Krita (.kpp) to map parameters into this panel.</p>
+              <div class="ts-pill-row" style="margin-bottom:4px;">
+                <span class="ts-badge all">PS .abr</span>
+                <span class="ts-badge csp">CSP .sut</span>
+                <span class="ts-badge kr">Krita .kpp</span>
+              </div>
+              <button class="ts-import-btn" id="ts-btn-import-preset">📂 Load Preset File…</button>
+              <button class="ts-import-btn" id="ts-btn-paste-json" style="margin-top:3px;">📋 Paste JSON Settings</button>
+              <div class="ts-divider" style="margin:6px 0;"></div>
+              <p style="font-size:9px;color:var(--text2);margin-bottom:4px;">Save current settings:</p>
+              <button class="ts-import-btn" id="ts-btn-export-json">💾 Export as JSON</button>
+            </div>
+          </div>
+
+        </div><!-- /tool-settings-body -->
+      </div><!-- /tool-settings-modal-body -->
+      <div class="modal-actions">
+        <button class="modal-btn primary" id="tool-settings-modal-close">Done</button>
+      </div>
+    </div><!-- /tool-settings-modal -->
+  </div><!-- /tool-settings-modal-overlay -->
+
+<!-- ── PREFERENCES MODAL ──────────────────────────────────── -->
+<div class="modal-overlay" id="modal-preferences">
+  <div class="modal" style="min-width:380px;">
+    <h2>⚙ Preferences</h2>
+    <p style="font-size:11px;color:var(--text2);margin-bottom:14px;">App-wide settings, saved on this device.</p>
+
+    <div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Renderer</div>
+    <p style="font-size:11px;color:var(--text2);margin-bottom:10px;">Controls how the brush's soft (AA) edge is rasterized while drawing. This only affects the antialiased brush — the hard-edge pencil/pixel mode is unaffected either way.</p>
+    <label style="display:flex;align-items:flex-start;gap:8px;padding:8px;border-radius:8px;border:1px solid var(--border2);margin-bottom:8px;cursor:pointer;">
+      <input type="radio" name="pref-renderer" id="pref-renderer-gpu" value="gpu" style="margin-top:2px;"/>
+      <span>
+        <span style="font-weight:600;color:var(--text);display:block;">GPU (Hardware-accelerated) — default</span>
+        <span style="font-size:11px;color:var(--text2);">Uses the browser's built-in accelerated canvas rendering. Fastest option, recommended for most people.</span>
+      </span>
+    </label>
+    <label style="display:flex;align-items:flex-start;gap:8px;padding:8px;border-radius:8px;border:1px solid var(--border2);margin-bottom:14px;cursor:pointer;">
+      <input type="radio" name="pref-renderer" id="pref-renderer-cpu" value="cpu" style="margin-top:2px;"/>
+      <span>
+        <span style="font-weight:600;color:var(--text);display:block;">CPU (Software)</span>
+        <span style="font-size:11px;color:var(--text2);">Rasterizes each brush dab by hand on the CPU instead, similar to TVPaint's software brush engine. Heavier on the CPU by design — try this only if you have a specific reason to want software rendering.</span>
+      </span>
+    </label>
+
+    <div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Cursor</div>
+    <p style="font-size:11px;color:var(--text2);margin-bottom:10px;">Controls what the pointer looks like while it's over the canvas.</p>
+    <label style="display:flex;align-items:flex-start;gap:8px;padding:8px;border-radius:8px;border:1px solid var(--border2);margin-bottom:8px;cursor:pointer;">
+      <input type="radio" name="pref-cursor" id="pref-cursor-crosshair" value="crosshair" style="margin-top:2px;"/>
+      <span>
+        <span style="font-weight:600;color:var(--text);display:block;">Crosshair — default</span>
+        <span style="font-size:11px;color:var(--text2);">The standard fine crosshair.</span>
+      </span>
+    </label>
+    <label style="display:flex;align-items:flex-start;gap:8px;padding:8px;border-radius:8px;border:1px solid var(--border2);margin-bottom:8px;cursor:pointer;">
+      <input type="radio" name="pref-cursor" id="pref-cursor-point" value="point" style="margin-top:2px;"/>
+      <span>
+        <span style="font-weight:600;color:var(--text);display:block;">Point</span>
+        <span style="font-size:11px;color:var(--text2);">A small dot marking the exact draw point, without crosshair lines.</span>
+      </span>
+    </label>
+    <label style="display:flex;align-items:flex-start;gap:8px;padding:8px;border-radius:8px;border:1px solid var(--border2);margin-bottom:14px;cursor:pointer;">
+      <input type="radio" name="pref-cursor" id="pref-cursor-brush" value="brush" style="margin-top:2px;"/>
+      <span>
+        <span style="font-weight:600;color:var(--text);display:block;">Brush Size</span>
+        <span style="font-size:11px;color:var(--text2);">A live circle showing the exact brush/eraser radius, scaled with zoom.</span>
+      </span>
+    </label>
+
+    <div class="modal-actions">
+      <button class="modal-btn primary" id="modal-preferences-close">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── KEYBINDS MODAL ─────────────────────────────────────── -->
+<div class="modal-overlay" id="modal-keybinds">
+  <div class="modal" style="min-width:380px;">
+    <h2>⌨ Keybinds</h2>
+    <p style="font-size:11px;color:var(--text2);margin-bottom:12px;">Click a key field, then press a new key to rebind. Esc cancels.</p>
+    <div style="font-size:11px;color:var(--text2);margin-bottom:10px;border:1px solid var(--border2);border-radius:6px;padding:8px 10px;">
+      <div style="font-weight:600;color:var(--text);margin-bottom:6px;">Canvas Navigation (hold + drag, not rebindable)</div>
+      <div class="modal-row" style="margin:0 0 4px;"><label style="width:150px;">Pan</label><span>Space + Drag</span></div>
+      <div class="modal-row" style="margin:0 0 4px;"><label style="width:150px;">Zoom</label><span>Ctrl + Space + Drag</span></div>
+      <div class="modal-row" style="margin:0;"><label style="width:150px;">Rotate</label><span>Shift + Space + Drag</span></div>
+    </div>
+    <div id="keybinds-list" style="max-height:360px;overflow-y:auto;"></div>
+    <div class="modal-actions">
+      <button class="modal-btn" id="modal-keybinds-reset">↺ Reset to Defaults</button>
+      <button class="modal-btn primary" id="modal-keybinds-close">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── KEYBIND CONFLICT MODAL ───────────────────────────────── -->
+<div class="modal-overlay" id="modal-keybind-conflict">
+  <div class="modal" style="min-width:300px;">
+    <h2>Keybind Already In Use</h2>
+    <p id="modal-keybind-conflict-msg" style="font-size:12px;color:var(--text2);margin-bottom:14px;"></p>
+    <div class="modal-actions">
+      <button class="modal-btn" id="modal-keybind-conflict-cancel">Cancel</button>
+      <button class="modal-btn primary" id="modal-keybind-conflict-swap">Swap</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── FPS MODAL ──────────────────────────────────────────── -->
+<div class="modal-overlay" id="modal-fps">
+  <div class="modal" style="min-width:220px;">
+    <h2>Set FPS</h2>
+    <div class="modal-row">
+      <label>FPS (1–<span id="fps-max-label">60</span>)</label>
+      <input type="number" id="fps-direct-input" min="1" max="60" value="12"/>
+    </div>
+    <div class="modal-actions">
+      <button class="modal-btn" id="modal-fps-cancel">Cancel</button>
+      <button class="modal-btn primary" id="modal-fps-ok">Apply</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── BULK DELETE MODAL ────────────────────────────────────── -->
+<div class="modal-overlay" id="modal-del-bulk">
+  <div class="modal" style="min-width:300px;">
+    <h2>Delete Selection</h2>
+    <p id="del-bulk-msg"></p>
+    <p id="del-bulk-group-warn" style="margin-top:8px;font-size:12px;color:var(--red);display:none;"></p>
+    <div class="modal-actions">
+      <button class="modal-btn" id="del-bulk-cancel">Cancel</button>
+      <button class="modal-btn" id="del-bulk-ok" style="background:var(--red);border-color:var(--red);color:#fff;">Delete All</button>
+    </div>
+  </div>
+</div>
+
+<div id="eye-drag-ghost">👁</div>
+
+<!-- ── ADD LAYER PLACEMENT MODAL ───────────────────────────── -->
+<div class="modal-overlay" id="modal-add-layer-placement">
+  <div class="modal" style="min-width:280px;">
+    <h2>Add Layer</h2>
+    <p id="modal-add-layer-placement-msg" style="font-size:12px;color:var(--text2);margin-bottom:14px;"></p>
+    <div class="del-group-opts">
+      <label class="del-group-opt">
+        <input type="radio" name="add-layer-placement" value="inside" checked>
+        <div><div class="opt-label">Inside group</div><div class="opt-desc">New layer is added at the top of the group</div></div>
+      </label>
+      <label class="del-group-opt">
+        <input type="radio" name="add-layer-placement" value="outside">
+        <div><div class="opt-label">Above group</div><div class="opt-desc">New layer is added above the group, outside it</div></div>
+      </label>
+    </div>
+    <div class="modal-actions">
+      <button class="modal-btn" id="modal-add-layer-placement-cancel">Cancel</button>
+      <button class="modal-btn primary" id="modal-add-layer-placement-ok">Add Layer</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── GROUP ACTION MODAL (wrap selected group vs. insert new group inside it) ── -->
+<div class="modal-overlay" id="modal-group-action">
+  <div class="modal" style="min-width:300px;">
+    <h2>Add Group</h2>
+    <p id="modal-group-action-msg" style="font-size:12px;color:var(--text2);margin-bottom:14px;"></p>
+    <div class="del-group-opts">
+      <label class="del-group-opt">
+        <input type="radio" name="group-action" value="wrap" checked>
+        <div><div class="opt-label">Group this group</div><div class="opt-desc">Wraps the selected group in a new parent group</div></div>
+      </label>
+      <label class="del-group-opt">
+        <input type="radio" name="group-action" value="insert">
+        <div><div class="opt-label">Insert group inside this group</div><div class="opt-desc">Adds a new group (with a starter layer) nested inside the selected group</div></div>
+      </label>
+    </div>
+    <div class="modal-actions">
+      <button class="modal-btn" id="modal-group-action-cancel">Cancel</button>
+      <button class="modal-btn primary" id="modal-group-action-ok">OK</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ── NEW PROJECT MODAL ───────────────────────────────────── -->
+<div class="modal-overlay" id="modal-new-project">
+  <div class="modal" style="min-width:280px;">
+    <h2>New Project</h2>
+    <p style="font-size:12px;color:var(--text2);margin-bottom:16px;">Start a new project? All unsaved work will be lost.</p>
+    <div class="modal-actions">
+      <button class="modal-btn" id="modal-new-project-cancel">Cancel</button>
+      <button class="modal-btn" id="modal-new-project-ok" style="background:var(--red);border-color:var(--red);color:#fff;">New Project</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── INFO MODAL (replaces alert()) ──────────────────────────── -->
+<div class="modal-overlay" id="modal-info">
+  <div class="modal" style="min-width:260px;">
+    <h2 id="modal-info-title">Notice</h2>
+    <p id="modal-info-msg" style="font-size:12px;color:var(--text2);margin-bottom:16px;"></p>
+    <div class="modal-actions">
+      <button class="modal-btn primary" id="modal-info-ok">OK</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── DELETE LAYER MODAL ──────────────────────────────────── -->
+<div class="modal-overlay" id="modal-del-layer">
+  <div class="modal" style="min-width:280px;">
+    <h2>Delete Layer</h2>
+    <p id="del-layer-msg">Are you sure you want to delete this layer? This cannot be undone.</p>
+    <label class="del-modal-check"><input type="checkbox" id="del-layer-skip-confirm"> Don't ask again when deleting layers</label>
+    <div class="modal-actions">
+      <button class="modal-btn" id="del-layer-cancel">Cancel</button>
+      <button class="modal-btn" id="del-layer-ok" style="background:var(--red);border-color:var(--red);color:#fff;">Delete</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── DELETE GROUP MODAL ──────────────────────────────────── -->
+<div class="modal-overlay" id="modal-del-group">
+  <div class="modal" style="min-width:290px;">
+    <h2>Delete Group</h2>
+    <p id="del-group-msg">How do you want to delete this group?</p>
+    <div class="del-group-opts">
+      <label class="del-group-opt">
+        <input type="radio" name="del-group-mode" value="with-children" checked>
+        <div><div class="opt-label">Group and all layers inside</div><div class="opt-desc">Permanently delete the folder and every layer it contains</div></div>
+      </label>
+      <label class="del-group-opt">
+        <input type="radio" name="del-group-mode" value="group-only">
+        <div><div class="opt-label">Group only</div><div class="opt-desc">Remove the folder — layers inside become ungrouped</div></div>
+      </label>
+    </div>
+    <div class="modal-actions">
+      <button class="modal-btn" id="del-group-cancel">Cancel</button>
+      <button class="modal-btn" id="del-group-ok" style="background:var(--red);border-color:var(--red);color:#fff;">Delete</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── IMAGE DRAG-OVER OVERLAY ──────────────────────────────── -->
+<div id="img-drop-overlay">
+  <div class="img-drop-label">
+    🖼 Drop image to import
+    <span>PNG · JPG · GIF · WebP · BMP · SVG</span>
+  </div>
+</div>
+
+<!-- Hidden file input for menu-triggered import -->
+<input type="file" id="img-file-input" accept="image/*" style="position:fixed;opacity:0;width:0;height:0;pointer-events:none;top:-100px;left:-100px;"/>
+
+<!-- ── IMAGE IMPORT DESTINATION MODAL ───────────────────────── -->
+<div class="modal-overlay" id="modal-img-import">
+  <div class="modal">
+    <h2>Import Image</h2>
+    <p class="sub" id="img-import-sub">Where do you want to place the image?</p>
+    <div class="img-import-opts">
+      <label class="img-import-opt selected" id="opt-new-layer-wrap">
+        <input type="radio" name="img-import-dest" value="new-layer" checked>
+        <div class="opt-body">
+          <div class="opt-label">✦ New layer</div>
+          <div class="opt-desc">Create a new layer above the current selection and place the image on it.</div>
+        </div>
+      </label>
+      <label class="img-import-opt" id="opt-cur-layer-wrap">
+        <input type="radio" name="img-import-dest" value="cur-layer">
+        <div class="opt-body">
+          <div class="opt-label">Current layer — <em id="opt-cur-layer-name"></em></div>
+          <div class="opt-desc" id="opt-cur-layer-desc">Draw the image onto the current frame of the active layer.</div>
+        </div>
+      </label>
+      <label class="img-import-opt" id="opt-group-layer-wrap" style="display:none;">
+        <input type="radio" name="img-import-dest" value="group-layer">
+        <div class="opt-body">
+          <div class="opt-label">📁 New layer inside <em id="opt-group-name"></em></div>
+          <div class="opt-desc">Create a new layer inside the active group and place the image on it.</div>
+        </div>
+      </label>
+    </div>
+    <div class="img-fit-row">
+      <label>Fit:</label>
+      <select id="img-fit-mode">
+        <option value="fit">Fit to canvas (keep ratio)</option>
+        <option value="fill">Fill canvas (crop to fit)</option>
+        <option value="stretch">Stretch to canvas</option>
+        <option value="center">Center (original size)</option>
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button class="modal-btn" id="img-import-cancel">Cancel</button>
+      <button class="modal-btn primary" id="img-import-ok">Import</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ── JavaScript Modules ───────────────────────────────────── -->
+<script src="core-state.js"></script>
+<script src="cursor-prefs.js"></script>
+<script src="brush-size-unit.js"></script>
+<script src="brush-engine.js"></script>
+<script src="panels.js"></script>
+<script src="tools-color.js"></script>
+<script src="brush-presets.js"></script>
+<script src="timeline.js"></script>
+<script src="layers.js"></script>
+<script src="keybinds.js"></script>
+<script src="brush-size-drag.js"></script>
+<script src="brush-size-cursor.js"></script>
+<script src="ui-controls.js"></script>
+<script src="panel-pan.js"></script>
+<script src="image-import.js"></script>
+<script src="transform-tool.js"></script>
+</body>
+</html>
