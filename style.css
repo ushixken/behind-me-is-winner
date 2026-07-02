@@ -642,9 +642,10 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 .ts-section-hd.collapsed+.ts-section-body{display:none;}
 
 .ts-row{display:flex;align-items:center;gap:5px;min-height:20px;}
-.ts-row.ts-disabled{opacity:0.42;position:relative;cursor:not-allowed;}
+.ts-row.ts-disabled{opacity:0.42;position:relative;cursor:not-allowed;flex-wrap:wrap;}
 .ts-row.ts-disabled *{pointer-events:none;}
 .ts-row.ts-disabled input,.ts-row.ts-disabled select{cursor:not-allowed;}
+.ts-lock-icon{font-size:9px;margin-right:3px;}
 .ts-soon-badge{font-size:8px;color:var(--text2);background:var(--bg4);border-radius:3px;padding:1px 4px;margin-left:auto;white-space:nowrap;}
 .ts-label{font-size:10px;color:var(--text2);white-space:nowrap;flex-shrink:0;width:72px;}
 .ts-label-sm{font-size:10px;color:var(--text2);white-space:nowrap;flex-shrink:0;}

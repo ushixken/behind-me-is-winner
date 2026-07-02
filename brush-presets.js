@@ -265,6 +265,19 @@
     if(row && !row.classList.contains('ts-disabled')){
       row.classList.add('ts-disabled');
       row.title=COMING_SOON;
+      const label=row.querySelector('.ts-label,.ts-label-sm');
+      if(label && !label.querySelector('.ts-lock-icon')){
+        const lock=document.createElement('span');
+        lock.className='ts-lock-icon';
+        lock.textContent='🔒';
+        label.prepend(lock);
+      }
+      if(!row.querySelector('.ts-soon-badge')){
+        const badge=document.createElement('span');
+        badge.className='ts-soon-badge';
+        badge.textContent='Coming Soon';
+        row.appendChild(badge);
+      }
     }
   });
 
