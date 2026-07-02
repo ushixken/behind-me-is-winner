@@ -29,6 +29,15 @@ let tfDragInfo=null;     // scratch data for the active drag
 // the Transform tool has its own live preview drawn on top instead —
 // read by recomposite() in panels.js. Only meaningful in group mode.
 let _tfHiddenLayers=new Set();
+// Perspective sub-mode: each corner can move independently for 4-point
+// perspective distortion, Photoshop/CSP/Krita-style. Reuses the same
+// enter/preview/commit/cancel flow as the normal (free) transform — only
+// the interaction (corner-only drag) and rendering (projective warp
+// instead of translate/scale/rotate) differ.
+let tfPerspective=false;    // true while Perspective mode is active
+let tfCorners=null;         // [{x,y}×4] TL,TR,BR,BL — independently draggable, canvas coords
+let tfCornerDrag=null;      // index of corner currently being dragged, or null
+
 
 const TF_HANDLE_R=9;       // corner handle hit radius, canvas px (scales visually with zoom via CSS)
 const TF_ROTATE_OFFSET=36; // distance above the box the rotate handle sits, canvas px
@@ -36,6 +45,75 @@ const TF_ROTATE_OFFSET=36; // distance above the box the rotate handle sits, can
 function _tfCenter(){
   return {x:tfBox.x+tfBox.w/2+tfState.tx, y:tfBox.y+tfBox.h/2+tfState.ty};
 }
+
+// ── Perspective warp math ───────────────────────────────────────
+// Standard unit-square → quadrilateral projective mapping (Heckbert).
+// d0..d3 are the destination corners for source-space (0,0),(1,0),(1,1),(0,1).
+function _tfQuadH(d0,d1,d2,d3){
+  const dx1=d1.x-d2.x, dx2=d3.x-d2.x, dx3=d0.x-d1.x+d2.x-d3.x;
+  const dy1=d1.y-d2.y, dy2=d3.y-d2.y, dy3=d0.y-d1.y+d2.y-d3.y;
+  let a,b,c,d,e,f,g,h;
+  if(Math.abs(dx3)<1e-9&&Math.abs(dy3)<1e-9){
+    a=d1.x-d0.x;b=d2.x-d1.x;c=d0.x;
+    d=d1.y-d0.y;e=d2.y-d1.y;f=d0.y;
+    g=0;h=0;
+  } else {
+    const det=dx1*dy2-dx2*dy1;
+    g=det?(dx3*dy2-dx2*dy3)/det:0;
+    h=det?(dx1*dy3-dx3*dy1)/det:0;
+    a=d1.x-d0.x+g*d1.x;b=d3.x-d0.x+h*d3.x;c=d0.x;
+    d=d1.y-d0.y+g*d1.y;e=d3.y-d0.y+h*d3.y;f=d0.y;
+  }
+  return {a,b,c,d,e,f,g,h};
+}
+function _tfApplyQuadH(H,u,v){
+  const w=H.g*u+H.h*v+1;
+  return {x:(H.a*u+H.b*v+H.c)/w, y:(H.d*u+H.e*v+H.f)/w};
+}
+// Draw one source triangle (s0,s1,s2 in `img` pixel coords) warped onto
+// destination triangle (d0,d1,d2), via an affine transform + clip. Used to
+// approximate the projective warp with a fine triangle grid.
+function _tfDrawTri(dctx,img,s0,s1,s2,d0,d1,d2){
+  const denom=s0.x*(s1.y-s2.y)+s1.x*(s2.y-s0.y)+s2.x*(s0.y-s1.y);
+  if(!denom) return;
+  const a=(d0.x*(s1.y-s2.y)+d1.x*(s2.y-s0.y)+d2.x*(s0.y-s1.y))/denom;
+  const b=(d0.y*(s1.y-s2.y)+d1.y*(s2.y-s0.y)+d2.y*(s0.y-s1.y))/denom;
+  const c=(d0.x*(s2.x-s1.x)+d1.x*(s0.x-s2.x)+d2.x*(s1.x-s0.x))/denom;
+  const d=(d0.y*(s2.x-s1.x)+d1.y*(s0.x-s2.x)+d2.y*(s1.x-s0.x))/denom;
+  const e=(d0.x*(s1.x*s2.y-s2.x*s1.y)+d1.x*(s2.x*s0.y-s0.x*s2.y)+d2.x*(s0.x*s1.y-s1.x*s0.y))/denom;
+  const f=(d0.y*(s1.x*s2.y-s2.x*s1.y)+d1.y*(s2.x*s0.y-s0.x*s2.y)+d2.y*(s0.x*s1.y-s1.x*s0.y))/denom;
+  dctx.save();
+  dctx.beginPath();
+  dctx.moveTo(d0.x,d0.y);dctx.lineTo(d1.x,d1.y);dctx.lineTo(d2.x,d2.y);dctx.closePath();
+  dctx.clip();
+  dctx.transform(a,b,c,d,e,f);
+  dctx.imageSmoothingEnabled=true;
+  dctx.drawImage(img,0,0);
+  dctx.restore();
+}
+// Warp `img`'s (sx,sy,sw,sh) source rect onto the quad `corners`
+// (TL,TR,BR,BL, destination canvas coords) using an NxN triangle grid.
+function _tfDrawPerspective(dctx,img,sx,sy,sw,sh,corners,gridN){
+  const H=_tfQuadH(corners[0],corners[1],corners[2],corners[3]);
+  const n=gridN||14;
+  for(let j=0;j<n;j++){
+    const v0=j/n, v1=(j+1)/n;
+    for(let i=0;i<n;i++){
+      const u0=i/n, u1=(i+1)/n;
+      const p00=_tfApplyQuadH(H,u0,v0), p10=_tfApplyQuadH(H,u1,v0);
+      const p11=_tfApplyQuadH(H,u1,v1), p01=_tfApplyQuadH(H,u0,v1);
+      const s00={x:sx+u0*sw,y:sy+v0*sh}, s10={x:sx+u1*sw,y:sy+v0*sh};
+      const s11={x:sx+u1*sw,y:sy+v1*sh}, s01={x:sx+u0*sw,y:sy+v1*sh};
+      _tfDrawTri(dctx,img,s00,s10,s11,p00,p10,p11);
+      _tfDrawTri(dctx,img,s00,s11,s01,p00,p11,p01);
+    }
+  }
+}
+// The four corners of the current axis-aligned box under the *free*
+// transform (tx/ty/scale/rotation) — used as the starting quad when
+// switching into Perspective mode, so distortion begins from whatever
+// move/scale/rotation was already dialed in.
+function _tfFreeCorners(){ return _tfCorners(); }
 
 // Find the bounding box of non-transparent pixels in `canvas`. Falls back
 // to the full canvas if everything is transparent (nothing to grab onto,
@@ -103,8 +181,11 @@ function enterTransformTool(){
   }
 
   tfState={tx:0,ty:0,scale:1,rotation:0};
+  tfPerspective=false;
+  tfCorners=null;
   tfActive=true;
   transformC.classList.add('tf-active');
+  _tfSyncToggleUI();
   _tfRedraw();
 }
 
@@ -120,13 +201,17 @@ function commitTransformTool(){
     tfMembers.forEach(m=>{
       const out=mkLayerCanvas();
       const octx2=out.getContext('2d');
-      octx2.save();
-      octx2.translate(c.x,c.y);
-      octx2.rotate(rad);
-      octx2.scale(tfState.scale,tfState.scale);
-      octx2.translate(-(tfBox.x+tfBox.w/2),-(tfBox.y+tfBox.h/2));
-      octx2.drawImage(m.base,0,0);
-      octx2.restore();
+      if(tfPerspective){
+        _tfDrawPerspective(octx2,m.base,tfBox.x,tfBox.y,tfBox.w,tfBox.h,tfCorners,28);
+      } else {
+        octx2.save();
+        octx2.translate(c.x,c.y);
+        octx2.rotate(rad);
+        octx2.scale(tfState.scale,tfState.scale);
+        octx2.translate(-(tfBox.x+tfBox.w/2),-(tfBox.y+tfBox.h/2));
+        octx2.drawImage(m.base,0,0);
+        octx2.restore();
+      }
       layers[m.li].frames[curFrame]=out;
       // The active layer is always rendered from activeC during compositing
       // (not from its frame key) — without this, that member would visually
@@ -141,13 +226,22 @@ function commitTransformTool(){
     recomposite(curLayer,curFrame);
     renderTimeline();
     tfMembers=null;tfMemberIdx=null;tfGroupMode=false;tfGroupId=null;tfBox=null;tfState=null;
+    tfPerspective=false;tfCorners=null;
     return;
+  }
+
+  if(tfPerspective){
+    const out=mkLayerCanvas();
+    _tfDrawPerspective(out.getContext('2d'),tfSnapshot,tfBox.x,tfBox.y,tfBox.w,tfBox.h,tfCorners,28);
+    ctx.clearRect(0,0,CW,CH);
+    ctx.drawImage(out,0,0);
   }
 
   saveActiveToKey();
   recomposite(curLayer,curFrame);
   renderTimeline();
   tfSnapshot=null;tfBox=null;tfState=null;
+  tfPerspective=false;tfCorners=null;
 }
 
 function cancelTransformTool(){
@@ -161,6 +255,7 @@ function cancelTransformTool(){
     recomposite(curLayer,curFrame);
     renderTimeline();
     tfMembers=null;tfMemberIdx=null;tfGroupMode=false;tfGroupId=null;tfBox=null;tfState=null;
+    tfPerspective=false;tfCorners=null;
     return;
   }
 
@@ -170,25 +265,30 @@ function cancelTransformTool(){
   recomposite(curLayer,curFrame);
   renderTimeline();
   tfSnapshot=null;tfBox=null;tfState=null;
+  tfPerspective=false;tfCorners=null;
 }
 
 function _tfRedraw(){
   if(!tfActive) return;
   if(tfGroupMode){
     _tfDrawGroupPreview();
-    _tfDrawHandles(false);
+    if(tfPerspective) _tfDrawHandlesPerspective(false); else _tfDrawHandles(false);
   } else {
-    const c=_tfCenter();
     ctx.clearRect(0,0,CW,CH);
-    ctx.save();
-    ctx.translate(c.x,c.y);
-    ctx.rotate(tfState.rotation*Math.PI/180);
-    ctx.scale(tfState.scale,tfState.scale);
-    ctx.translate(-(tfBox.x+tfBox.w/2),-(tfBox.y+tfBox.h/2));
-    ctx.drawImage(tfSnapshot,0,0);
-    ctx.restore();
+    if(tfPerspective){
+      _tfDrawPerspective(ctx,tfSnapshot,tfBox.x,tfBox.y,tfBox.w,tfBox.h,tfCorners,12);
+    } else {
+      const c=_tfCenter();
+      ctx.save();
+      ctx.translate(c.x,c.y);
+      ctx.rotate(tfState.rotation*Math.PI/180);
+      ctx.scale(tfState.scale,tfState.scale);
+      ctx.translate(-(tfBox.x+tfBox.w/2),-(tfBox.y+tfBox.h/2));
+      ctx.drawImage(tfSnapshot,0,0);
+      ctx.restore();
+    }
     _scheduleRecomposite();
-    _tfDrawHandles(true);
+    if(tfPerspective) _tfDrawHandlesPerspective(true); else _tfDrawHandles(true);
   }
 }
 
@@ -202,11 +302,15 @@ function _tfDrawGroupPreview(){
     const layerAlpha=(l.opacity??1)*(typeof _layerGroupChainOpacity==='function'?_layerGroupChainOpacity(l):1);
     tfCtx.save();
     tfCtx.globalAlpha=layerAlpha;
-    tfCtx.translate(c.x,c.y);
-    tfCtx.rotate(rad);
-    tfCtx.scale(tfState.scale,tfState.scale);
-    tfCtx.translate(-(tfBox.x+tfBox.w/2),-(tfBox.y+tfBox.h/2));
-    tfCtx.drawImage(m.base,0,0);
+    if(tfPerspective){
+      _tfDrawPerspective(tfCtx,m.base,tfBox.x,tfBox.y,tfBox.w,tfBox.h,tfCorners,12);
+    } else {
+      tfCtx.translate(c.x,c.y);
+      tfCtx.rotate(rad);
+      tfCtx.scale(tfState.scale,tfState.scale);
+      tfCtx.translate(-(tfBox.x+tfBox.w/2),-(tfBox.y+tfBox.h/2));
+      tfCtx.drawImage(m.base,0,0);
+    }
     tfCtx.restore();
   });
 }
@@ -255,6 +359,28 @@ function _tfDrawHandles(clearFirst){
   tfCtx.restore();
 }
 
+// Perspective-mode handle drawing: the quad outline plus its 4
+// independently-draggable corner handles. No rotate handle or center
+// crosshair — corner dragging alone covers move/scale/skew/perspective.
+function _tfDrawHandlesPerspective(clearFirst){
+  if(clearFirst) tfCtx.clearRect(0,0,CW,CH);
+  tfCtx.save();
+  tfCtx.strokeStyle=tfGroupMode?'#ff9f4d':'#a24dff';
+  tfCtx.lineWidth=Math.max(1,1.5/zoom);
+  tfCtx.setLineDash([6/zoom,4/zoom]);
+  tfCtx.beginPath();
+  tfCorners.forEach((p,i)=>{ i===0?tfCtx.moveTo(p.x,p.y):tfCtx.lineTo(p.x,p.y); });
+  tfCtx.closePath();
+  tfCtx.stroke();
+  tfCtx.setLineDash([]);
+  const hr=TF_HANDLE_R/zoom;
+  tfCtx.fillStyle='#fff';
+  tfCorners.forEach(p=>{
+    tfCtx.beginPath();tfCtx.rect(p.x-hr/2,p.y-hr/2,hr,hr);tfCtx.fill();tfCtx.stroke();
+  });
+  tfCtx.restore();
+}
+
 function _tfDist(ax,ay,bx,by){ return Math.hypot(ax-bx,ay-by); }
 
 function _tfHitTest(p){
@@ -275,10 +401,44 @@ function _tfHitTest(p){
   return null;
 }
 
+// Point-in-polygon (ray casting) — used to hit-test the perspective quad's
+// interior for whole-quad dragging, since it's not axis-aligned like the
+// free-transform box.
+function _tfPointInPoly(p,poly){
+  let inside=false;
+  for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+    const xi=poly[i].x,yi=poly[i].y, xj=poly[j].x,yj=poly[j].y;
+    const intersect=((yi>p.y)!==(yj>p.y)) && (p.x < (xj-xi)*(p.y-yi)/(yj-yi)+xi);
+    if(intersect) inside=!inside;
+  }
+  return inside;
+}
+function _tfHitTestPerspective(p){
+  const hitR=TF_HANDLE_R/zoom+4/zoom;
+  for(let i=0;i<tfCorners.length;i++){
+    if(_tfDist(p.x,p.y,tfCorners[i].x,tfCorners[i].y)<=hitR) return {mode:'pcorner',cornerIndex:i};
+  }
+  if(_tfPointInPoly(p,tfCorners)) return {mode:'pmove'};
+  return null;
+}
+
 transformC.addEventListener('pointerdown',e=>{
   if(!tfActive) return;
   e.preventDefault();
   const p=getPos(e);
+  if(tfPerspective){
+    const hit=_tfHitTestPerspective(p);
+    if(!hit) return;
+    transformC.setPointerCapture(e.pointerId);
+    tfDrag=hit.mode;
+    if(hit.mode==='pcorner'){
+      tfCornerDrag=hit.cornerIndex;
+      tfDragInfo={startP:p,startCorner:Object.assign({},tfCorners[hit.cornerIndex])};
+    } else {
+      tfDragInfo={startP:p,startCorners:tfCorners.map(c=>({x:c.x,y:c.y}))};
+    }
+    return;
+  }
   const hit=_tfHitTest(p);
   if(!hit) return;
   transformC.setPointerCapture(e.pointerId);
@@ -296,6 +456,17 @@ transformC.addEventListener('pointermove',e=>{
   if(!tfActive||!tfDrag) return;
   e.preventDefault();
   const p=getPos(e);
+  if(tfPerspective){
+    if(tfDrag==='pcorner'){
+      tfCorners[tfCornerDrag].x=tfDragInfo.startCorner.x+(p.x-tfDragInfo.startP.x);
+      tfCorners[tfCornerDrag].y=tfDragInfo.startCorner.y+(p.y-tfDragInfo.startP.y);
+    } else if(tfDrag==='pmove'){
+      const dx=p.x-tfDragInfo.startP.x, dy=p.y-tfDragInfo.startP.y;
+      tfCorners.forEach((c,i)=>{ c.x=tfDragInfo.startCorners[i].x+dx; c.y=tfDragInfo.startCorners[i].y+dy; });
+    }
+    _tfRedraw();
+    return;
+  }
   if(tfDrag==='move'){
     tfState.tx=tfDragInfo.startState.tx+(p.x-tfDragInfo.startP.x);
     tfState.ty=tfDragInfo.startState.ty+(p.y-tfDragInfo.startP.y);
@@ -315,13 +486,18 @@ transformC.addEventListener('pointermove',e=>{
 function _tfEndDrag(e){
   if(!tfDrag) return;
   if(transformC.hasPointerCapture&&transformC.hasPointerCapture(e.pointerId)) transformC.releasePointerCapture(e.pointerId);
-  tfDrag=null;tfDragInfo=null;
+  tfDrag=null;tfDragInfo=null;tfCornerDrag=null;
 }
 transformC.addEventListener('pointerup',_tfEndDrag);
 transformC.addEventListener('pointercancel',_tfEndDrag);
 
 transformC.addEventListener('pointermove',e=>{
   if(!tfActive||tfDrag) return;
+  if(tfPerspective){
+    const hit=_tfHitTestPerspective(getPos(e));
+    transformC.style.cursor=hit?(hit.mode==='pcorner'?'crosshair':'move'):'default';
+    return;
+  }
   const hit=_tfHitTest(getPos(e));
   transformC.style.cursor=hit?(hit.mode==='rotate'?'grab':hit.mode==='scale'?'nwse-resize':'move'):'default';
 });
@@ -332,3 +508,34 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Enter'){ e.preventDefault(); setTool('brush','Brush'); }
   else if(e.key==='Escape'){ e.preventDefault(); cancelTransformTool(); setTool('brush','Brush'); }
 });
+
+// ── Transform mode buttons — Free / Perspective ────────────────────
+// Live inside the Brush Presets docker's "transform" body (see
+// index.html / _syncBrushPresetsDocker in tools-color.js), which swaps
+// in over the Brush Presets contents whenever the Transform tool is
+// selected, and swaps back out when it isn't. Only one mode button is
+// active at a time.
+const _tfBtnFree=document.getElementById('transform-mode-free');
+const _tfBtnPersp=document.getElementById('transform-mode-perspective');
+if(_tfBtnFree) _tfBtnFree.onclick=()=>_tfSetPerspective(false);
+if(_tfBtnPersp) _tfBtnPersp.onclick=()=>_tfSetPerspective(true);
+
+function _tfSyncToggleUI(){
+  if(_tfBtnFree) _tfBtnFree.classList.toggle('active',!tfPerspective);
+  if(_tfBtnPersp) _tfBtnPersp.classList.toggle('active',tfPerspective);
+}
+
+// Switch between Free (move/scale/rotate) and Perspective (independent
+// corner drag) without leaving the transform tool — same snapshot/box,
+// same commit/cancel flow, just a different interaction+render path.
+function _tfSetPerspective(on){
+  if(!tfActive||on===tfPerspective) return;
+  if(on){
+    tfCorners=_tfFreeCorners().map(p=>({x:p.x,y:p.y}));
+  } else {
+    tfCorners=null;
+  }
+  tfPerspective=on;
+  _tfSyncToggleUI();
+  _tfRedraw();
+}

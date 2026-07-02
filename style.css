@@ -573,7 +573,7 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 .cp-slider-row input[type=number]{
   width:38px;flex-shrink:0;background:var(--bg3);border:1px solid var(--border2);
   border-radius:4px;color:var(--text);font-size:10px;padding:2px 3px;
-  outline:none;text-align:right;-moz-appearance:textfield;
+  outline:none;text-align:right;-moz-appearance:textfield;appearance:textfield;
 }
 .cp-slider-row input[type=number]::-webkit-inner-spin-button{opacity:.4;}
 
@@ -647,6 +647,13 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 .ts-row.ts-disabled input,.ts-row.ts-disabled select{cursor:not-allowed;}
 .ts-lock-icon{font-size:9px;margin-right:3px;}
 .ts-soon-badge{font-size:8px;color:var(--text2);background:var(--bg4);border-radius:3px;padding:1px 4px;margin-left:auto;white-space:nowrap;}
+
+.tf-panel-label{font-size:9px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px;}
+.tf-mode-btn{display:flex;align-items:center;gap:6px;width:100%;text-align:left;padding:7px 8px;border-radius:5px;border:1px solid transparent;background:var(--bg3);color:var(--text);font-size:12px;cursor:pointer;}
+.tf-mode-btn:hover{background:var(--bg4);}
+.tf-mode-btn.active{background:var(--accent,#4da3ff);color:#fff;border-color:var(--accent,#4da3ff);}
+.tf-mode-btn.tf-mode-disabled{opacity:0.42;cursor:not-allowed;}
+.tf-mode-btn.tf-mode-disabled:hover{background:var(--bg3);}
 .ts-label{font-size:10px;color:var(--text2);white-space:nowrap;flex-shrink:0;width:72px;}
 .ts-label-sm{font-size:10px;color:var(--text2);white-space:nowrap;flex-shrink:0;}
 .ts-val{font-size:10px;color:var(--text2);min-width:26px;text-align:right;flex-shrink:0;}
@@ -660,7 +667,7 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 .ts-num{
   width:42px;flex-shrink:0;background:var(--bg3);border:1px solid var(--border2);
   border-radius:4px;color:var(--text);font-size:10px;padding:2px 3px;
-  outline:none;text-align:right;-moz-appearance:textfield;
+  outline:none;text-align:right;-moz-appearance:textfield;appearance:textfield;
 }
 .ts-num:focus{border-color:var(--accent);}
 .ts-num::-webkit-inner-spin-button{opacity:.4;}

@@ -20,12 +20,28 @@ function redo(){if(!redoStack.length)return;const t=redoStack.pop();const c=mkLa
 // ════════════════════════════════════════════════════════════════
 const szSlider=document.getElementById('ts-size');
 const szValEl=document.getElementById('ts-size-val');
+// Swap the Brush Presets docker's contents between the Brush Presets body
+// and the Transform body depending on the active tool, instead of opening
+// a separate docker — same shell, same dock position/size, just different
+// contents (and title) shown.
+function _syncBrushPresetsDocker(t){
+  const shell=document.getElementById('brush-presets-panel');
+  if(!shell) return;
+  const bpBody=shell.querySelector('.fp-body[data-body="brush-presets"]');
+  const tfBody=shell.querySelector('.fp-body[data-body="transform"]');
+  const nameEl=shell.querySelector('.fp-name');
+  const showTransform=(t==='transform');
+  if(bpBody) bpBody.classList.toggle('active',!showTransform);
+  if(tfBody) tfBody.classList.toggle('active',showTransform);
+  if(nameEl) nameEl.textContent=showTransform?'Transform':'Brush Presets';
+}
 function setTool(t,lbl){
   // Leaving the Transform tool for anything else commits the current
   // move/scale/rotate into the layer (baking it into the active canvas)
   // before the new tool takes over.
   if(tool==='transform'&&t!=='transform'&&typeof commitTransformTool==='function') commitTransformTool();
   tool=t;
+  _syncBrushPresetsDocker(t);
   document.querySelectorAll('.tbtn').forEach(b=>b.classList.remove('active'));
   const btn=document.getElementById('btn-'+t);if(btn) btn.classList.add('active');
   const tpBtn=document.getElementById('tp-btn-'+t);if(tpBtn) tpBtn.classList.add('active');
