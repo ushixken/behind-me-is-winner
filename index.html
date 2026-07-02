@@ -277,6 +277,10 @@
           <button class="tf-mode-btn tf-mode-disabled" disabled title="Coming Soon — This feature will be available in a future update.">🔒 Cage Transform</button>
           <button class="tf-mode-btn tf-mode-disabled" disabled title="Coming Soon — This feature will be available in a future update.">🔒 Liquify</button>
           <button class="tf-mode-btn tf-mode-disabled" disabled title="Coming Soon — This feature will be available in a future update.">🔒 Puppet Warp</button>
+          <div class="tf-panel-label" style="margin-top:8px;">Transform Options</div>
+          <div id="tf-options-body" style="display:flex;flex-direction:column;gap:6px;">
+            <!-- populated by JS, per current transform mode (see transform-tool.js) -->
+          </div>
         </div>
       </div>
     </div>
@@ -1253,6 +1257,7 @@
 <script src="ui-controls.js"></script>
 <script src="panel-pan.js"></script>
 <script src="image-import.js"></script>
+<script src="perspective-controller.js"></script>
 <script src="transform-tool.js"></script>
 </body>
 </html>

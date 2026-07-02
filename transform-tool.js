@@ -23,8 +23,16 @@ let tfMembers=null;      // [{li, base}] pristine per-layer content snapshots (g
 let tfSnapshot=null;     // pristine copy of activeC content when the tool was entered (single-layer mode)
 let tfBox=null;          // {x,y,w,h} axis-aligned bbox of the artwork, in original canvas coords
 let tfState=null;        // {tx,ty,scale,rotation} — cumulative transform applied to tfBox's center
-let tfDrag=null;         // current drag mode: 'move' | 'scale' | 'rotate' | null
+let tfDrag=null;         // current drag mode: 'move' | 'scale' | 'rotate' | 'pivot' | null
 let tfDragInfo=null;     // scratch data for the active drag
+// Pivot point — the origin rotation/scaling is performed around. Stored in
+// local/original canvas coords (same space as tfBox), independent of the
+// current tx/ty/scale/rotation, so it stays put relative to the artwork as
+// the transform changes. Defaults to the box center; user-draggable.
+// Deliberately generic (just a local-space point + helpers to convert it
+// to/from world space under *any* state) so Perspective, Warp, and future
+// transform modes can read/drive the same pivot without duplicating logic.
+let tfPivot=null;        // {x,y} in local/original canvas coords, or null when no transform is active
 // Layer indices to hide from the normal per-layer compositing pass while
 // the Transform tool has its own live preview drawn on top instead —
 // read by recomposite() in panels.js. Only meaningful in group mode.
@@ -42,8 +50,50 @@ let tfCornerDrag=null;      // index of corner currently being dragged, or null
 const TF_HANDLE_R=9;       // corner handle hit radius, canvas px (scales visually with zoom via CSS)
 const TF_ROTATE_OFFSET=36; // distance above the box the rotate handle sits, canvas px
 
-function _tfCenter(){
-  return {x:tfBox.x+tfBox.w/2+tfState.tx, y:tfBox.y+tfBox.h/2+tfState.ty};
+function _tfCenter(state){
+  state=state||tfState;
+  return {x:tfBox.x+tfBox.w/2+state.tx, y:tfBox.y+tfBox.h/2+state.ty};
+}
+
+// ── Pivot helpers ───────────────────────────────────────────────
+// Generic local-space <-> world-space conversion for a point under a given
+// transform state (defaults to the live tfState). "Local" is the same
+// coordinate space as tfBox — i.e. original, untransformed canvas coords.
+// Kept separate from any single mode's math so Free, Perspective, Warp,
+// etc. can all place/read the pivot consistently.
+function _tfLocalToWorld(local,state){
+  state=state||tfState;
+  const c=_tfCenter(state);
+  const rad=state.rotation*Math.PI/180, cosR=Math.cos(rad), sinR=Math.sin(rad);
+  const bx=tfBox.x+tfBox.w/2, by=tfBox.y+tfBox.h/2;
+  const dx=(local.x-bx)*state.scale, dy=(local.y-by)*state.scale;
+  return {x:c.x+dx*cosR-dy*sinR, y:c.y+dx*sinR+dy*cosR};
+}
+function _tfWorldToLocal(world,state){
+  state=state||tfState;
+  const c=_tfCenter(state);
+  const rad=-state.rotation*Math.PI/180, cosR=Math.cos(rad), sinR=Math.sin(rad);
+  const dx=world.x-c.x, dy=world.y-c.y;
+  const s=state.scale||1;
+  const lx=(dx*cosR-dy*sinR)/s, ly=(dx*sinR+dy*cosR)/s;
+  const bx=tfBox.x+tfBox.w/2, by=tfBox.y+tfBox.h/2;
+  return {x:bx+lx, y:by+ly};
+}
+// Current on-screen position of the pivot handle.
+function _tfPivotWorld(state){ return _tfLocalToWorld(tfPivot,state); }
+// Update tfState's rotation/scale to the given values while recomputing
+// tx/ty so that `pivotWorld` (the pivot's canvas position, captured before
+// the change) stays exactly where it was — i.e. rotation/scaling orbits the
+// pivot instead of the box center. This is the one bit of math any
+// transform mode needs to make its rotate/scale interactions pivot-aware.
+function _tfSetStateForPivot(pivotWorld,rotation,scale){
+  const rad=rotation*Math.PI/180, cosR=Math.cos(rad), sinR=Math.sin(rad);
+  const bx=tfBox.x+tfBox.w/2, by=tfBox.y+tfBox.h/2;
+  const dx=(tfPivot.x-bx)*scale, dy=(tfPivot.y-by)*scale;
+  tfState.tx=(pivotWorld.x-(dx*cosR-dy*sinR))-bx;
+  tfState.ty=(pivotWorld.y-(dx*sinR+dy*cosR))-by;
+  tfState.rotation=rotation;
+  tfState.scale=scale;
 }
 
 // ── Perspective warp math ───────────────────────────────────────
@@ -59,8 +109,9 @@ function _tfQuadH(d0,d1,d2,d3){
     g=0;h=0;
   } else {
     const det=dx1*dy2-dx2*dy1;
-    g=det?(dx3*dy2-dx2*dy3)/det:0;
-    h=det?(dx1*dy3-dx3*dy1)/det:0;
+    const safe=Math.abs(det)>1e-6;
+    g=safe?(dx3*dy2-dx2*dy3)/det:0;
+    h=safe?(dx1*dy3-dx3*dy1)/det:0;
     a=d1.x-d0.x+g*d1.x;b=d3.x-d0.x+h*d3.x;c=d0.x;
     d=d1.y-d0.y+g*d1.y;e=d3.y-d0.y+h*d3.y;f=d0.y;
   }
@@ -73,6 +124,19 @@ function _tfApplyQuadH(H,u,v){
 // Draw one source triangle (s0,s1,s2 in `img` pixel coords) warped onto
 // destination triangle (d0,d1,d2), via an affine transform + clip. Used to
 // approximate the projective warp with a fine triangle grid.
+// Small destination-space overdraw applied to every triangle's clip path
+// (not to the source sampling) so adjacent triangles overlap by a
+// sub-pixel amount instead of abutting exactly. Canvas anti-aliases each
+// clip path independently, so triangles that only *touch* leave a hairline
+// gap/seam along shared edges; a tiny outward bleed toward each triangle's
+// own centroid closes that gap without visibly duplicating content, since
+// the overlap is <1px of the same continuous image.
+const TF_TRI_BLEED=0.75;
+function _tfOutset(p,cx,cy,amt){
+  const dx=p.x-cx, dy=p.y-cy;
+  const len=Math.hypot(dx,dy)||1;
+  return {x:p.x+dx/len*amt, y:p.y+dy/len*amt};
+}
 function _tfDrawTri(dctx,img,s0,s1,s2,d0,d1,d2){
   const denom=s0.x*(s1.y-s2.y)+s1.x*(s2.y-s0.y)+s2.x*(s0.y-s1.y);
   if(!denom) return;
@@ -82,12 +146,20 @@ function _tfDrawTri(dctx,img,s0,s1,s2,d0,d1,d2){
   const d=(d0.y*(s2.x-s1.x)+d1.y*(s0.x-s2.x)+d2.y*(s1.x-s0.x))/denom;
   const e=(d0.x*(s1.x*s2.y-s2.x*s1.y)+d1.x*(s2.x*s0.y-s0.x*s2.y)+d2.x*(s0.x*s1.y-s1.x*s0.y))/denom;
   const f=(d0.y*(s1.x*s2.y-s2.x*s1.y)+d1.y*(s2.x*s0.y-s0.x*s2.y)+d2.y*(s0.x*s1.y-s1.x*s0.y))/denom;
+  const cx=(d0.x+d1.x+d2.x)/3, cy=(d0.y+d1.y+d2.y)/3;
+  const e0=_tfOutset(d0,cx,cy,TF_TRI_BLEED), e1=_tfOutset(d1,cx,cy,TF_TRI_BLEED), e2=_tfOutset(d2,cx,cy,TF_TRI_BLEED);
   dctx.save();
   dctx.beginPath();
-  dctx.moveTo(d0.x,d0.y);dctx.lineTo(d1.x,d1.y);dctx.lineTo(d2.x,d2.y);dctx.closePath();
+  dctx.moveTo(e0.x,e0.y);dctx.lineTo(e1.x,e1.y);dctx.lineTo(e2.x,e2.y);dctx.closePath();
   dctx.clip();
+  // Affine mapping itself is computed from the true (un-outset) triangle
+  // correspondence above, so the extra bleed only extends sampling a
+  // fraction of a pixel past the source triangle's own edge — into
+  // immediately-adjacent, visually identical source content — rather than
+  // distorting the mapping.
   dctx.transform(a,b,c,d,e,f);
   dctx.imageSmoothingEnabled=true;
+  if('imageSmoothingQuality' in dctx) dctx.imageSmoothingQuality='high';
   dctx.drawImage(img,0,0);
   dctx.restore();
 }
@@ -95,7 +167,7 @@ function _tfDrawTri(dctx,img,s0,s1,s2,d0,d1,d2){
 // (TL,TR,BR,BL, destination canvas coords) using an NxN triangle grid.
 function _tfDrawPerspective(dctx,img,sx,sy,sw,sh,corners,gridN){
   const H=_tfQuadH(corners[0],corners[1],corners[2],corners[3]);
-  const n=gridN||14;
+  const n=gridN||18;
   for(let j=0;j<n;j++){
     const v0=j/n, v1=(j+1)/n;
     for(let i=0;i<n;i++){
@@ -181,6 +253,7 @@ function enterTransformTool(){
   }
 
   tfState={tx:0,ty:0,scale:1,rotation:0};
+  tfPivot={x:tfBox.x+tfBox.w/2, y:tfBox.y+tfBox.h/2}; // reset to box center for every new transform
   tfPerspective=false;
   tfCorners=null;
   tfActive=true;
@@ -225,7 +298,7 @@ function commitTransformTool(){
     _tfHiddenLayers=new Set();
     recomposite(curLayer,curFrame);
     renderTimeline();
-    tfMembers=null;tfMemberIdx=null;tfGroupMode=false;tfGroupId=null;tfBox=null;tfState=null;
+    tfMembers=null;tfMemberIdx=null;tfGroupMode=false;tfGroupId=null;tfBox=null;tfState=null;tfPivot=null;
     tfPerspective=false;tfCorners=null;
     return;
   }
@@ -240,7 +313,7 @@ function commitTransformTool(){
   saveActiveToKey();
   recomposite(curLayer,curFrame);
   renderTimeline();
-  tfSnapshot=null;tfBox=null;tfState=null;
+  tfSnapshot=null;tfBox=null;tfState=null;tfPivot=null;
   tfPerspective=false;tfCorners=null;
 }
 
@@ -254,7 +327,7 @@ function cancelTransformTool(){
     _tfHiddenLayers=new Set();
     recomposite(curLayer,curFrame);
     renderTimeline();
-    tfMembers=null;tfMemberIdx=null;tfGroupMode=false;tfGroupId=null;tfBox=null;tfState=null;
+    tfMembers=null;tfMemberIdx=null;tfGroupMode=false;tfGroupId=null;tfBox=null;tfState=null;tfPivot=null;
     tfPerspective=false;tfCorners=null;
     return;
   }
@@ -264,7 +337,7 @@ function cancelTransformTool(){
   saveActiveToKey();
   recomposite(curLayer,curFrame);
   renderTimeline();
-  tfSnapshot=null;tfBox=null;tfState=null;
+  tfSnapshot=null;tfBox=null;tfState=null;tfPivot=null;
   tfPerspective=false;tfCorners=null;
 }
 
@@ -354,16 +427,42 @@ function _tfDrawHandles(clearFirst){
     tfCtx.beginPath();tfCtx.rect(p.x-hr/2,p.y-hr/2,hr,hr);tfCtx.fill();tfCtx.stroke();
   });
   tfCtx.beginPath();tfCtx.arc(rHandle.x,rHandle.y,hr/2,0,Math.PI*2);tfCtx.fill();tfCtx.stroke();
-  tfCtx.beginPath();tfCtx.moveTo(c.x-hr/2,c.y);tfCtx.lineTo(c.x+hr/2,c.y);
-  tfCtx.moveTo(c.x,c.y-hr/2);tfCtx.lineTo(c.x,c.y+hr/2);tfCtx.stroke();
+  _tfDrawPivotHandle();
   tfCtx.restore();
 }
 
-// Perspective-mode handle drawing: the quad outline plus its 4
-// independently-draggable corner handles. No rotate handle or center
-// crosshair — corner dragging alone covers move/scale/skew/perspective.
+// Pivot handle — a small circled crosshair, drawn distinctly (yellow) from
+// the corner/rotate handles so it reads as "the origin", not another
+// resize control. Shared by every mode that has a rotate/scale pivot;
+// currently only Free transform draws it, but the drawing + hit-test logic
+// live here so Perspective/Warp can opt in later without duplicating this.
+function _tfDrawPivotHandle(){
+  if(!tfPivot) return;
+  const p=_tfPivotWorld();
+  const hr=TF_HANDLE_R/zoom;
+  tfCtx.save();
+  tfCtx.strokeStyle='#ffd24d';
+  tfCtx.fillStyle='rgba(255,210,77,0.25)';
+  tfCtx.lineWidth=Math.max(1,1.5/zoom);
+  tfCtx.beginPath();tfCtx.arc(p.x,p.y,hr*0.7,0,Math.PI*2);tfCtx.fill();tfCtx.stroke();
+  tfCtx.beginPath();tfCtx.moveTo(p.x-hr/2,p.y);tfCtx.lineTo(p.x+hr/2,p.y);
+  tfCtx.moveTo(p.x,p.y-hr/2);tfCtx.lineTo(p.x,p.y+hr/2);tfCtx.stroke();
+  tfCtx.restore();
+}
+
+// Perspective-mode handle drawing: the quad outline, its 4 independently-
+// draggable corner handles (square), and 4 edge-midpoint handles (diamond)
+// that move+adjust a whole edge at once. No rotate handle or pivot —
+// corner/edge dragging alone covers move/scale/skew/perspective.
 function _tfDrawHandlesPerspective(clearFirst){
   if(clearFirst) tfCtx.clearRect(0,0,CW,CH);
+  if(tfOptionValues.perspectiveGuidesEnabled){
+    // Detected fresh from the *current* quad every redraw — never from
+    // which handle was last touched — so it's always in sync, and shows
+    // nothing at all once the quad is back to an unconverged rectangle.
+    const analysis=PerspectiveController.analyze(tfCorners);
+    PerspectiveController.draw(tfCtx,analysis,{scale:zoom,width:CW,height:CH});
+  }
   tfCtx.save();
   tfCtx.strokeStyle=tfGroupMode?'#ff9f4d':'#a24dff';
   tfCtx.lineWidth=Math.max(1,1.5/zoom);
@@ -378,13 +477,38 @@ function _tfDrawHandlesPerspective(clearFirst){
   tfCorners.forEach(p=>{
     tfCtx.beginPath();tfCtx.rect(p.x-hr/2,p.y-hr/2,hr,hr);tfCtx.fill();tfCtx.stroke();
   });
+  const mids=_tfPolyEdgeMidpoints(tfCorners);
+  const dr=hr*0.62;
+  mids.forEach(p=>{
+    tfCtx.beginPath();
+    tfCtx.moveTo(p.x,p.y-dr);tfCtx.lineTo(p.x+dr,p.y);
+    tfCtx.lineTo(p.x,p.y+dr);tfCtx.lineTo(p.x-dr,p.y);
+    tfCtx.closePath();tfCtx.fill();tfCtx.stroke();
+  });
   tfCtx.restore();
 }
 
 function _tfDist(ax,ay,bx,by){ return Math.hypot(ax-bx,ay-by); }
 
+// Midpoint of every consecutive edge of an arbitrary point-array poly
+// (wrapping last->first). Generic on purpose: works for the 4-point
+// Perspective quad today, and for any N-point control cage a future Mesh,
+// Warp, or Cage transform mode would use — those modes can reuse this same
+// helper (plus the edge hit-test / drag-translate pattern below) instead of
+// re-deriving edge handles themselves.
+function _tfPolyEdgeMidpoints(poly){
+  return poly.map((p,i)=>{
+    const q=poly[(i+1)%poly.length];
+    return {x:(p.x+q.x)/2, y:(p.y+q.y)/2};
+  });
+}
+
 function _tfHitTest(p){
   const hitR=TF_HANDLE_R/zoom+4/zoom;
+  if(tfPivot){
+    const pivP=_tfPivotWorld();
+    if(_tfDist(p.x,p.y,pivP.x,pivP.y)<=hitR) return {mode:'pivot'};
+  }
   const rHandle=_tfRotateHandlePos();
   if(_tfDist(p.x,p.y,rHandle.x,rHandle.y)<=hitR) return {mode:'rotate'};
   const corners=_tfCorners();
@@ -418,6 +542,23 @@ function _tfHitTestPerspective(p){
   for(let i=0;i<tfCorners.length;i++){
     if(_tfDist(p.x,p.y,tfCorners[i].x,tfCorners[i].y)<=hitR) return {mode:'pcorner',cornerIndex:i};
   }
+  // VP / horizon handles are checked before edge-midpoint handles: once
+  // one axis has been dragged, the *other* (still-unconverged) axis's
+  // placeholder handle is re-derived from the now-skewed quad and can
+  // land close to an edge midpoint. Edge midpoints previously took
+  // priority here, which could make that VP's own hit circle
+  // unreachable even though the pointer was legitimately over it — VP1
+  // and VP2 need identical, order-independent access to their handles.
+  if(tfOptionValues.perspectiveGuidesEnabled){
+    const analysis=PerspectiveController.analyze(tfCorners);
+    const vpAxisId=PerspectiveController.hitTestVP(p,analysis,hitR*1.3);
+    if(vpAxisId) return {mode:'vp',axisId:vpAxisId};
+    if(PerspectiveController.hitTestHorizon(p,analysis,hitR)) return {mode:'horizon'};
+  }
+  const mids=_tfPolyEdgeMidpoints(tfCorners);
+  for(let i=0;i<mids.length;i++){
+    if(_tfDist(p.x,p.y,mids[i].x,mids[i].y)<=hitR) return {mode:'pedge',edgeIndex:i};
+  }
   if(_tfPointInPoly(p,tfCorners)) return {mode:'pmove'};
   return null;
 }
@@ -434,6 +575,30 @@ transformC.addEventListener('pointerdown',e=>{
     if(hit.mode==='pcorner'){
       tfCornerDrag=hit.cornerIndex;
       tfDragInfo={startP:p,startCorner:Object.assign({},tfCorners[hit.cornerIndex])};
+    } else if(hit.mode==='pedge'){
+      const i0=hit.edgeIndex, i1=(hit.edgeIndex+1)%tfCorners.length;
+      tfDragInfo={startP:p,edgeIndex:hit.edgeIndex,
+        startA:Object.assign({},tfCorners[i0]), startB:Object.assign({},tfCorners[i1])};
+    } else if(hit.mode==='vp'){
+      // Capture the *other* axis's current VP once, here at drag start —
+      // this is the fixed world-space constraint that must NOT move for
+      // the rest of this drag. It is deliberately not recomputed inside
+      // the pointermove handler below; doing so from the live (already
+      // partially re-solved) quad every frame is what previously let it
+      // drift as the two VPs converged.
+      const analysis=PerspectiveController.analyze(tfCorners);
+      const otherVP=analysis.vanishingPoints.find(v=>v.axisId!==hit.axisId);
+      tfDragInfo={axisId:hit.axisId,startP:p,startCorners:tfCorners.map(c=>({x:c.x,y:c.y})),
+        fixedOtherVP:otherVP?{x:otherVP.x,y:otherVP.y}:null};
+    } else if(hit.mode==='horizon'){
+      // Same idea: capture both starting VPs once, fixed for the whole
+      // drag, and measure dy from this same start every frame (rather
+      // than incrementally re-basing startP each move, which would
+      // otherwise re-read the "current" VPs off the live quad).
+      const analysis=PerspectiveController.analyze(tfCorners);
+      tfDragInfo={startP:p,startCorners:tfCorners.map(c=>({x:c.x,y:c.y})),
+        startVP1:Object.assign({},analysis.vanishingPoints[0]),
+        startVP2:Object.assign({},analysis.vanishingPoints[1])};
     } else {
       tfDragInfo={startP:p,startCorners:tfCorners.map(c=>({x:c.x,y:c.y}))};
     }
@@ -443,6 +608,10 @@ transformC.addEventListener('pointerdown',e=>{
   if(!hit) return;
   transformC.setPointerCapture(e.pointerId);
   tfDrag=hit.mode;
+  if(hit.mode==='pivot'){
+    tfDragInfo={};
+    return;
+  }
   const c=_tfCenter();
   tfDragInfo={
     startP:p,
@@ -450,6 +619,10 @@ transformC.addEventListener('pointerdown',e=>{
     startCenter:c,
     startDist:_tfDist(p.x,p.y,c.x,c.y),
     startAngle:Math.atan2(p.y-c.y,p.x-c.x),
+    // Fixed pivot world-position for the duration of a scale/rotate drag —
+    // captured once here so scale/rotate can keep re-solving tx/ty against
+    // the *same* anchor point rather than one that drifts frame to frame.
+    startPivotWorld:_tfPivotWorld(tfState),
   };
 });
 transformC.addEventListener('pointermove',e=>{
@@ -457,13 +630,57 @@ transformC.addEventListener('pointermove',e=>{
   e.preventDefault();
   const p=getPos(e);
   if(tfPerspective){
+    let candidate=tfCorners;
     if(tfDrag==='pcorner'){
-      tfCorners[tfCornerDrag].x=tfDragInfo.startCorner.x+(p.x-tfDragInfo.startP.x);
-      tfCorners[tfCornerDrag].y=tfDragInfo.startCorner.y+(p.y-tfDragInfo.startP.y);
+      candidate=tfCorners.map((c,i)=>i===tfCornerDrag?{
+        x:tfDragInfo.startCorner.x+(p.x-tfDragInfo.startP.x),
+        y:tfDragInfo.startCorner.y+(p.y-tfDragInfo.startP.y)
+      }:c);
+    } else if(tfDrag==='pedge'){
+      // Translate both endpoints of the edge by the same delta — moves
+      // that whole side (and drags the perspective distortion along with
+      // it) while leaving the edge's own length/angle, and the opposite
+      // side, untouched.
+      const dx=p.x-tfDragInfo.startP.x, dy=p.y-tfDragInfo.startP.y;
+      const i0=tfDragInfo.edgeIndex, i1=(tfDragInfo.edgeIndex+1)%tfCorners.length;
+      candidate=tfCorners.map((c,i)=>{
+        if(i===i0) return {x:tfDragInfo.startA.x+dx,y:tfDragInfo.startA.y+dy};
+        if(i===i1) return {x:tfDragInfo.startB.x+dx,y:tfDragInfo.startB.y+dy};
+        return c;
+      });
     } else if(tfDrag==='pmove'){
       const dx=p.x-tfDragInfo.startP.x, dy=p.y-tfDragInfo.startP.y;
-      tfCorners.forEach((c,i)=>{ c.x=tfDragInfo.startCorners[i].x+dx; c.y=tfDragInfo.startCorners[i].y+dy; });
+      candidate=tfCorners.map((c,i)=>({x:tfDragInfo.startCorners[i].x+dx, y:tfDragInfo.startCorners[i].y+dy}));
+    } else if(tfDrag==='vp'){
+      // Dragging a vanishing point rotates that axis's two edges rigidly
+      // about their own near anchors (never pulls/stretches a corner) so
+      // the resulting VP lands under the pointer and neither edge
+      // touching the dragged axis ever shrinks or expands. Solved from
+      // tfDragInfo.startCorners — the quad exactly as it was at
+      // pointer-down — rather than the live tfCorners, so every frame is
+      // an independent, from-scratch solve against the same fixed
+      // starting shape instead of compounding small changes onto
+      // whatever the previous frame's output happened to be.
+      candidate=PerspectiveController.dragAxisVP(tfDragInfo.startCorners,tfDragInfo.axisId,p,tfDragInfo.fixedOtherVP);
+    } else if(tfDrag==='horizon'){
+      const dy=p.y-tfDragInfo.startP.y;
+      candidate=PerspectiveController.dragHorizon(tfDragInfo.startCorners,tfDragInfo.startVP1,tfDragInfo.startVP2,dy);
     }
+    // Reject any update that would fold the quad into a self-intersecting
+    // or reflex shape — that's exactly the configuration that sends the
+    // Heckbert homography's perspective divide through zero inside the
+    // unit square (points shoot to infinity, warp looks "tangled"). This
+    // caps every perspective interaction — corner, edge, VP, horizon — at
+    // the same source of instability instead of patching each one.
+    if(PerspectiveController.isValidQuad(candidate)) tfCorners=candidate;
+    _tfRedraw();
+    return;
+  }
+  if(tfDrag==='pivot'){
+    // Pivot handle itself: re-derive its local coord from the mouse's
+    // current world position under the *live* (unchanging during this
+    // drag) state, so it tracks the cursor exactly.
+    tfPivot=_tfWorldToLocal(p,tfState);
     _tfRedraw();
     return;
   }
@@ -473,13 +690,17 @@ transformC.addEventListener('pointermove',e=>{
   }else if(tfDrag==='scale'){
     const d=_tfDist(p.x,p.y,tfDragInfo.startCenter.x,tfDragInfo.startCenter.y);
     const ratio=tfDragInfo.startDist>1?d/tfDragInfo.startDist:1;
-    tfState.scale=Math.max(0.02,Math.min(50,tfDragInfo.startState.scale*ratio));
+    const newScale=Math.max(0.02,Math.min(50,tfDragInfo.startState.scale*ratio));
+    // Scale around the pivot, not the box center: re-solve tx/ty so the
+    // pivot's on-screen position (captured at drag start) doesn't move.
+    _tfSetStateForPivot(tfDragInfo.startPivotWorld,tfDragInfo.startState.rotation,newScale);
   }else if(tfDrag==='rotate'){
     const ang=Math.atan2(p.y-tfDragInfo.startCenter.y,p.x-tfDragInfo.startCenter.x);
     const deltaDeg=(ang-tfDragInfo.startAngle)*180/Math.PI;
     let newRot=tfDragInfo.startState.rotation+deltaDeg;
     if(e.shiftKey) newRot=Math.round(newRot/15)*15;
-    tfState.rotation=newRot;
+    // Rotate around the pivot, not the box center — same idea as scale above.
+    _tfSetStateForPivot(tfDragInfo.startPivotWorld,newRot,tfDragInfo.startState.scale);
   }
   _tfRedraw();
 });
@@ -495,11 +716,11 @@ transformC.addEventListener('pointermove',e=>{
   if(!tfActive||tfDrag) return;
   if(tfPerspective){
     const hit=_tfHitTestPerspective(getPos(e));
-    transformC.style.cursor=hit?(hit.mode==='pcorner'?'crosshair':'move'):'default';
+    transformC.style.cursor=hit?((hit.mode==='pcorner'||hit.mode==='pedge'||hit.mode==='vp')?'crosshair':hit.mode==='horizon'?'ns-resize':'move'):'default';
     return;
   }
   const hit=_tfHitTest(getPos(e));
-  transformC.style.cursor=hit?(hit.mode==='rotate'?'grab':hit.mode==='scale'?'nwse-resize':'move'):'default';
+  transformC.style.cursor=hit?(hit.mode==='pivot'?'crosshair':hit.mode==='rotate'?'grab':hit.mode==='scale'?'nwse-resize':'move'):'default';
 });
 
 document.addEventListener('keydown',e=>{
@@ -508,6 +729,54 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Enter'){ e.preventDefault(); setTool('brush','Brush'); }
   else if(e.key==='Escape'){ e.preventDefault(); cancelTransformTool(); setTool('brush','Brush'); }
 });
+
+// ── Transform Options panel ─────────────────────────────────────
+// Per-mode checkbox options rendered into the "Transform Options" section
+// of the Transform panel (index.html #tf-options-body). Purely-visual
+// overlays — toggling them only affects what's drawn on the tfCtx overlay
+// canvas, never the artwork itself (commit/cancel never read tfOptionValues).
+// Keyed by mode so a future Warp/Mesh/Cage mode can register its own
+// options list here without touching the render/wiring code below.
+const TF_MODE_OPTIONS={
+  free:[],
+  perspective:[
+    {id:'perspectiveGuidesEnabled',label:'Perspective Guides (Beta)',default:true},
+  ],
+};
+let tfOptionValues={};
+Object.values(TF_MODE_OPTIONS).forEach(list=>list.forEach(o=>{ tfOptionValues[o.id]=o.default; }));
+
+const _tfOptionsBody=document.getElementById('tf-options-body');
+
+// Current mode key into TF_MODE_OPTIONS. Only 'free'/'perspective' exist
+// today; a future mode just needs to make this resolve to its own key
+// (e.g. via a shared tfMode variable) once it's wired up.
+function _tfCurrentModeKey(){ return tfPerspective?'perspective':'free'; }
+
+// Rebuilds the checkbox list for whichever mode is active. Free Transform
+// has no options registered, so the section renders empty and hides itself.
+function _tfRenderOptionsPanel(){
+  if(!_tfOptionsBody) return;
+  const opts=TF_MODE_OPTIONS[_tfCurrentModeKey()]||[];
+  _tfOptionsBody.innerHTML='';
+  _tfOptionsBody.style.display=opts.length?'':'none';
+  opts.forEach(o=>{
+    const row=document.createElement('label');
+    row.className='tf-option-row';
+    row.style.cssText='display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text);cursor:pointer;user-select:none;';
+    const cb=document.createElement('input');
+    cb.type='checkbox';
+    cb.checked=!!tfOptionValues[o.id];
+    cb.addEventListener('change',()=>{
+      tfOptionValues[o.id]=cb.checked;
+      if(tfActive) _tfRedraw(); // live-update the overlay while transforming
+    });
+    row.appendChild(cb);
+    row.appendChild(document.createTextNode(o.label));
+    _tfOptionsBody.appendChild(row);
+  });
+}
+_tfRenderOptionsPanel();
 
 // ── Transform mode buttons — Free / Perspective ────────────────────
 // Live inside the Brush Presets docker's "transform" body (see
@@ -523,6 +792,7 @@ if(_tfBtnPersp) _tfBtnPersp.onclick=()=>_tfSetPerspective(true);
 function _tfSyncToggleUI(){
   if(_tfBtnFree) _tfBtnFree.classList.toggle('active',!tfPerspective);
   if(_tfBtnPersp) _tfBtnPersp.classList.toggle('active',tfPerspective);
+  _tfRenderOptionsPanel();
 }
 
 // Switch between Free (move/scale/rotate) and Perspective (independent
