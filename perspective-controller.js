@@ -321,71 +321,106 @@ const PerspectiveController=(()=>{
     return d;
   }
 
+  // Exact, closed-form solve for the swinging side of an axis whose VP is
+  // being dragged — replaces a prior weighted-score search (matching side
+  // length AND midpoint drift AND angular drift all at once, none of them
+  // exactly) that let the object's visual footprint bleed away as a VP
+  // moved, especially toward large distances, since "length" was only one
+  // of three blended objectives and never actually enforced.
+  //
+  // Geometry: corner `a` must lie on lineA (the edge from its own anchor
+  // corner, lineA.p0, toward the dragged VP) and corner `b` must lie on
+  // lineB likewise, with a-b colinear with fixedVP (the OTHER axis's own
+  // vanishing point, since edge a-b belongs to that axis too). That's a
+  // genuine 1-parameter family of valid (a,b) pairs. Rather than search
+  // that family for a compromise, pin it down exactly the same way
+  // _pcSolveFromVPs already does for the horizon drag: treat `a` as a
+  // rigid rod pivoting on its own anchor (lineA.p0), preserving its exact
+  // original length — so the footprint of THAT edge never changes, only
+  // its angle — then derive `b` as the one remaining unknown: the
+  // intersection of lineB with the line from the now-fixed `a` through
+  // fixedVP. Fully determined, no iteration, no blended/competing scores.
   function _pcSolveMovableSide(lineA,lineB,fixedVP,oldA,oldB){
-    const targetLen=Math.max(_pcDist(oldA,oldB),1e-6);
-    const oldMid=_pcPointOnSegment(oldA,oldB,0.5);
-    const baseTheta=_pcAngle(fixedVP,oldMid);
+    const anchorA=lineA.p0;
+    const rodLen=_pcDist(anchorA,oldA);
+    const a=_pcRotateTo(anchorA,lineA.p1,rodLen);
+    const b=_lineIntersect(lineB.p0,lineB.p1,a,fixedVP);
+    if(!b) return null;
+    // Guard against the derived edge folding backward through the anchor
+    // side entirely (same "don't self-intersect" guard the old search
+    // applied) — bail so the caller's own clone-corners fallback kicks in
+    // instead of handing back a degenerate quad.
     const oldSide={x:oldB.x-oldA.x,y:oldB.y-oldA.y};
-    const evalTheta=theta=>{
-      const guide=_pcLineAtAngle(fixedVP,theta);
-      const a=_lineIntersect(lineA.p0,lineA.p1,guide.p0,guide.p1);
-      const b=_lineIntersect(lineB.p0,lineB.p1,guide.p0,guide.p1);
-      if(!a||!b) return null;
-      const side={x:b.x-a.x,y:b.y-a.y};
-      if(side.x*oldSide.x+side.y*oldSide.y<=0) return null;
-      const len=_pcDist(a,b);
-      const mid=_pcPointOnSegment(a,b,0.5);
-      const lenErr=Math.abs(len-targetLen);
-      const midErr=_pcDist(mid,oldMid);
-      const angleErr=Math.abs(_pcAngleDelta(theta,baseTheta))*targetLen;
-      return {a,b,score:lenErr+midErr*0.35+angleErr*0.2};
-    };
-
-    let best=null,bestTheta=baseTheta;
-    const searchSpan=Math.PI*0.92;
-    const samples=360;
-    for(let i=0;i<=samples;i++){
-      const theta=baseTheta-searchSpan/2+(searchSpan*i)/samples;
-      const r=evalTheta(theta);
-      if(r&&(!best||r.score<best.score)){ best=r; bestTheta=theta; }
-    }
-    if(!best) return null;
-
-    let lo=bestTheta-searchSpan/samples;
-    let hi=bestTheta+searchSpan/samples;
-    for(let i=0;i<32;i++){
-      const m1=lo+(hi-lo)/3;
-      const m2=hi-(hi-lo)/3;
-      const r1=evalTheta(m1);
-      const r2=evalTheta(m2);
-      const s1=r1?r1.score:Infinity;
-      const s2=r2?r2.score:Infinity;
-      if(s1<s2) hi=m2; else lo=m1;
-    }
-    const refined=evalTheta((lo+hi)/2);
-    return refined||best;
+    const side={x:b.x-a.x,y:b.y-a.y};
+    if(side.x*oldSide.x+side.y*oldSide.y<=0) return null;
+    return {a,b};
   }
 
   function dragAxisVP(corners,axisId,targetVP,otherVP){
     if(!corners||corners.length!==4||!targetVP) return corners;
     const [TL,TR,BR,BL]=corners;
 
+    // Which of this axis's two edges stays fixed (the "anchor") and which
+    // one swings to follow the dragged VP is decided dynamically from the
+    // edges' CURRENT on-screen positions, not a hardcoded TL/TR/BR/BL
+    // corner slot. Previously the anchor was always e.g. "whichever
+    // corners started out as bottom-left/bottom-right" — which looks
+    // right in the default, unrotated layout (ground stays put, ceiling
+    // swings toward VP2) purely by coincidence, since that's also the
+    // edge farther from VP2 there. But a corner's *slot* (its role from
+    // when Perspective mode was entered) doesn't rotate with the artwork,
+    // so after the quad is rotated ~180°-ish that same slot can end up on
+    // the opposite side of the screen — anchoring the wrong (now-visible)
+    // edge and making it look like only "the old side" ever moves.
+    // Fix: pin whichever edge is currently farther from this axis's own
+    // vanishing point (the "background" edge), and let the nearer edge
+    // (the one visibly closer to/pointing at the VP) swing to follow it —
+    // reproduces the exact same result as before in the default layout,
+    // but re-derives it fresh from live geometry every drag, so it keeps
+    // being correct after any rotation.
+    // Decided once from the STARTING `corners` (fixed for the whole drag,
+    // per the caller's own convention — see call site) rather than the
+    // live, moving `targetVP`, so the choice can't flip mid-drag if the
+    // pointer happens to cross over the quad.
+    const _selfVP=analyze(corners).vanishingPoints.find(v=>v.axisId===axisId);
+    const refVP=_selfVP?{x:_selfVP.x,y:_selfVP.y}:targetVP;
+
     if(axisId==='horizontal'){
       if(!otherVP) return _pcCloneCorners(corners);
-      const topLine={p0:TL,p1:targetVP};
-      const bottomLine={p0:BL,p1:targetVP};
-      const solved=_pcSolveMovableSide(topLine,bottomLine,otherVP,TR,BR);
-      if(!solved) return _pcCloneCorners(corners);
-      return [{x:TL.x,y:TL.y},solved.a,solved.b,{x:BL.x,y:BL.y}];
+      const leftMid=_pcPointOnSegment(TL,BL,0.5), rightMid=_pcPointOnSegment(TR,BR,0.5);
+      const pivotLeft=_pcDist(leftMid,refVP)>=_pcDist(rightMid,refVP);
+      if(pivotLeft){
+        const topLine={p0:TL,p1:targetVP};
+        const bottomLine={p0:BL,p1:targetVP};
+        const solved=_pcSolveMovableSide(topLine,bottomLine,otherVP,TR,BR);
+        if(!solved) return _pcCloneCorners(corners);
+        return [{x:TL.x,y:TL.y},solved.a,solved.b,{x:BL.x,y:BL.y}];
+      } else {
+        const topLine={p0:TR,p1:targetVP};
+        const bottomLine={p0:BR,p1:targetVP};
+        const solved=_pcSolveMovableSide(topLine,bottomLine,otherVP,TL,BL);
+        if(!solved) return _pcCloneCorners(corners);
+        return [solved.a,{x:TR.x,y:TR.y},{x:BR.x,y:BR.y},solved.b];
+      }
     }
 
     if(axisId==='vertical'){
       if(!otherVP) return _pcCloneCorners(corners);
-      const leftLine={p0:BL,p1:targetVP};
-      const rightLine={p0:BR,p1:targetVP};
-      const solved=_pcSolveMovableSide(leftLine,rightLine,otherVP,TL,TR);
-      if(!solved) return _pcCloneCorners(corners);
-      return [solved.a,solved.b,{x:BR.x,y:BR.y},{x:BL.x,y:BL.y}];
+      const topMid=_pcPointOnSegment(TL,TR,0.5), bottomMid=_pcPointOnSegment(BL,BR,0.5);
+      const pivotBottom=_pcDist(bottomMid,refVP)>=_pcDist(topMid,refVP);
+      if(pivotBottom){
+        const leftLine={p0:BL,p1:targetVP};
+        const rightLine={p0:BR,p1:targetVP};
+        const solved=_pcSolveMovableSide(leftLine,rightLine,otherVP,TL,TR);
+        if(!solved) return _pcCloneCorners(corners);
+        return [solved.a,solved.b,{x:BR.x,y:BR.y},{x:BL.x,y:BL.y}];
+      } else {
+        const leftLine={p0:TL,p1:targetVP};
+        const rightLine={p0:TR,p1:targetVP};
+        const solved=_pcSolveMovableSide(leftLine,rightLine,otherVP,BL,BR);
+        if(!solved) return _pcCloneCorners(corners);
+        return [{x:TL.x,y:TL.y},{x:TR.x,y:TR.y},solved.b,solved.a];
+      }
     }
 
     return _pcCloneCorners(corners);

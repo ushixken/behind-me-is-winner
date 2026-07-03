@@ -15,6 +15,76 @@
 const transformC=document.getElementById('transform-canvas');
 const tfCtx=transformC.getContext('2d');
 
+// ── Perspective guide overlay (VPs / horizon line) ─────────────────
+// Drawn on a SEPARATE canvas sized to the canvas-area viewport, not to
+// the artwork — see #perspective-guide-canvas in index.html/style.css for
+// why. tfCtx (transformC) stays CW×CH and clips guides to the artwork's
+// own bounds, which is what made VPs/horizon invisible outside the
+// canvas in the first place.
+const perspGuideC=document.getElementById('perspective-guide-canvas');
+const perspGuideCtx=perspGuideC.getContext('2d');
+
+function _tfResizeGuideCanvas(){
+  const r=canvasArea.getBoundingClientRect();
+  const w=Math.max(1,Math.round(r.width)), h=Math.max(1,Math.round(r.height));
+  if(perspGuideC.width!==w) perspGuideC.width=w;
+  if(perspGuideC.height!==h) perspGuideC.height=h;
+}
+window.addEventListener('resize',_tfResizeGuideCanvas);
+_tfResizeGuideCanvas();
+
+// perspGuideC only needs to *receive pointer events* while Perspective mode
+// is actually active — otherwise it must stay pointer-events:none so it
+// doesn't block clicks/drags meant for the canvas underneath (drawing,
+// free-transform, etc). It sits ABOVE transformC (z-index) and covers the
+// whole viewport (a superset of transformC's CW×CH area), so once it's
+// interactive it becomes the sole target for perspective pointer events —
+// see the perspGuideC listeners below, which replace transformC's
+// perspective-branch handling (VPs/horizon can be outside transformC's own
+// bounds, where transformC never receives the event at all).
+function _tfSyncGuideCanvasActive(){
+  perspGuideC.classList.toggle('tf-persp-active', !!(tfActive&&tfPerspective));
+}
+
+// Map a point from LOCAL/original canvas coords (the same space tfCorners
+// live in) to canvas-area VIEWPORT coords — i.e. reproduce, in JS, exactly
+// what canvas-wrap's CSS transform chain in applyTransform() does to a
+// point, so guides drawn on perspGuideC line up pixel-for-pixel with the
+// artwork under whatever pan/zoom/rotation/flip is currently active.
+// (See core-state.js applyTransform(): translate(pivot) scale(flip)
+// translate(-pivot) translate(pan) rotate(rotation) scale(zoom) — applied
+// to a point right-to-left, which is the order reproduced below.)
+function _tfToViewportPoint(p){
+  const pivot=getNavPivot();
+  const rad=rotation*Math.PI/180;
+  const cos=Math.cos(rad), sin=Math.sin(rad);
+  let x=p.x*zoom, y=p.y*zoom;
+  const rx=x*cos-y*sin, ry=x*sin+y*cos;
+  x=rx+panX; y=ry+panY;
+  const fx=flipX?-1:1, fy=flipY?-1:1;
+  x=pivot.cx+(x-pivot.cx)*fx;
+  y=pivot.cy+(y-pivot.cy)*fy;
+  return {x,y};
+}
+
+// Re-express a PerspectiveController.analyze() result (all in local canvas
+// coords) in viewport coords, so PerspectiveController.draw()'s own
+// width/height clip rect can clip to the visible workspace instead of the
+// artwork. Only the point fields are transformed; converged/axisId etc.
+// pass through untouched.
+function _tfAnalysisToViewport(analysis){
+  const vp=p=>_tfToViewportPoint(p);
+  return {
+    type:analysis.type,
+    axes:analysis.axes.map(a=>Object.assign({},a,{
+      nearA:vp(a.nearA),farA:vp(a.farA),nearB:vp(a.nearB),farB:vp(a.farB),
+      vp:a.vp?vp(a.vp):null,
+    })),
+    vanishingPoints:analysis.vanishingPoints.map(v=>Object.assign({},v,vp(v))),
+    horizon:analysis.horizon?{p0:vp(analysis.horizon.p0),p1:vp(analysis.horizon.p1)}:null,
+  };
+}
+
 let tfActive=false;
 let tfGroupMode=false;   // true when the transform is acting on a whole active group, not a single layer
 let tfGroupId=null;
@@ -259,6 +329,7 @@ function enterTransformTool(){
   tfActive=true;
   transformC.classList.add('tf-active');
   _tfSyncToggleUI();
+  _tfSyncGuideCanvasActive();
   _tfRedraw();
 }
 
@@ -267,6 +338,8 @@ function commitTransformTool(){
   tfActive=false;
   transformC.classList.remove('tf-active');
   tfCtx.clearRect(0,0,CW,CH);
+  perspGuideCtx.clearRect(0,0,perspGuideC.width,perspGuideC.height);
+  _tfSyncGuideCanvasActive();
 
   if(tfGroupMode){
     const c=_tfCenter();
@@ -322,6 +395,8 @@ function cancelTransformTool(){
   tfActive=false;
   transformC.classList.remove('tf-active');
   tfCtx.clearRect(0,0,CW,CH);
+  perspGuideCtx.clearRect(0,0,perspGuideC.width,perspGuideC.height);
+  _tfSyncGuideCanvasActive();
 
   if(tfGroupMode){
     _tfHiddenLayers=new Set();
@@ -456,12 +531,21 @@ function _tfDrawPivotHandle(){
 // corner/edge dragging alone covers move/scale/skew/perspective.
 function _tfDrawHandlesPerspective(clearFirst){
   if(clearFirst) tfCtx.clearRect(0,0,CW,CH);
+  _tfResizeGuideCanvas();
+  perspGuideCtx.clearRect(0,0,perspGuideC.width,perspGuideC.height);
   if(tfOptionValues.perspectiveGuidesEnabled){
     // Detected fresh from the *current* quad every redraw — never from
     // which handle was last touched — so it's always in sync, and shows
     // nothing at all once the quad is back to an unconverged rectangle.
+    // Analyzed in local canvas coords, then re-expressed in viewport coords
+    // and drawn on the viewport-sized overlay canvas, so VPs/horizon can
+    // render out past the artwork edge and only get clipped at the visible
+    // workspace edge (canvas-area), not the artwork's own bounds. Points
+    // are already in on-screen pixel units after the transform, so scale:1
+    // here (zoom compensation happens implicitly via _tfToViewportPoint).
     const analysis=PerspectiveController.analyze(tfCorners);
-    PerspectiveController.draw(tfCtx,analysis,{scale:zoom,width:CW,height:CH});
+    const viewAnalysis=_tfAnalysisToViewport(analysis);
+    PerspectiveController.draw(perspGuideCtx,viewAnalysis,{scale:1,width:perspGuideC.width,height:perspGuideC.height});
   }
   tfCtx.save();
   tfCtx.strokeStyle=tfGroupMode?'#ff9f4d':'#a24dff';
@@ -563,47 +647,59 @@ function _tfHitTestPerspective(p){
   return null;
 }
 
-transformC.addEventListener('pointerdown',e=>{
-  if(!tfActive) return;
+function _tfPerspPointerDown(e){
+  if(!tfActive||!tfPerspective) return;
   e.preventDefault();
   const p=getPos(e);
-  if(tfPerspective){
-    const hit=_tfHitTestPerspective(p);
-    if(!hit) return;
-    transformC.setPointerCapture(e.pointerId);
-    tfDrag=hit.mode;
-    if(hit.mode==='pcorner'){
-      tfCornerDrag=hit.cornerIndex;
-      tfDragInfo={startP:p,startCorner:Object.assign({},tfCorners[hit.cornerIndex])};
-    } else if(hit.mode==='pedge'){
-      const i0=hit.edgeIndex, i1=(hit.edgeIndex+1)%tfCorners.length;
-      tfDragInfo={startP:p,edgeIndex:hit.edgeIndex,
-        startA:Object.assign({},tfCorners[i0]), startB:Object.assign({},tfCorners[i1])};
-    } else if(hit.mode==='vp'){
-      // Capture the *other* axis's current VP once, here at drag start —
-      // this is the fixed world-space constraint that must NOT move for
-      // the rest of this drag. It is deliberately not recomputed inside
-      // the pointermove handler below; doing so from the live (already
-      // partially re-solved) quad every frame is what previously let it
-      // drift as the two VPs converged.
-      const analysis=PerspectiveController.analyze(tfCorners);
-      const otherVP=analysis.vanishingPoints.find(v=>v.axisId!==hit.axisId);
-      tfDragInfo={axisId:hit.axisId,startP:p,startCorners:tfCorners.map(c=>({x:c.x,y:c.y})),
-        fixedOtherVP:otherVP?{x:otherVP.x,y:otherVP.y}:null};
-    } else if(hit.mode==='horizon'){
-      // Same idea: capture both starting VPs once, fixed for the whole
-      // drag, and measure dy from this same start every frame (rather
-      // than incrementally re-basing startP each move, which would
-      // otherwise re-read the "current" VPs off the live quad).
-      const analysis=PerspectiveController.analyze(tfCorners);
-      tfDragInfo={startP:p,startCorners:tfCorners.map(c=>({x:c.x,y:c.y})),
-        startVP1:Object.assign({},analysis.vanishingPoints[0]),
-        startVP2:Object.assign({},analysis.vanishingPoints[1])};
-    } else {
-      tfDragInfo={startP:p,startCorners:tfCorners.map(c=>({x:c.x,y:c.y}))};
-    }
-    return;
+  const hit=_tfHitTestPerspective(p);
+  if(!hit) return;
+  perspGuideC.setPointerCapture(e.pointerId);
+  tfDrag=hit.mode;
+  if(hit.mode==='pcorner'){
+    tfCornerDrag=hit.cornerIndex;
+    tfDragInfo={startP:p,startCorner:Object.assign({},tfCorners[hit.cornerIndex])};
+  } else if(hit.mode==='pedge'){
+    const i0=hit.edgeIndex, i1=(hit.edgeIndex+1)%tfCorners.length;
+    tfDragInfo={startP:p,edgeIndex:hit.edgeIndex,
+      startA:Object.assign({},tfCorners[i0]), startB:Object.assign({},tfCorners[i1])};
+  } else if(hit.mode==='vp'){
+    // Capture the *other* axis's current VP once, here at drag start —
+    // this is the fixed world-space constraint that must NOT move for
+    // the rest of this drag. It is deliberately not recomputed inside
+    // the pointermove handler below; doing so from the live (already
+    // partially re-solved) quad every frame is what previously let it
+    // drift as the two VPs converged.
+    const analysis=PerspectiveController.analyze(tfCorners);
+    const otherVP=analysis.vanishingPoints.find(v=>v.axisId!==hit.axisId);
+    tfDragInfo={axisId:hit.axisId,startP:p,startCorners:tfCorners.map(c=>({x:c.x,y:c.y})),
+      fixedOtherVP:otherVP?{x:otherVP.x,y:otherVP.y}:null};
+  } else if(hit.mode==='horizon'){
+    // Same idea: capture both starting VPs once, fixed for the whole
+    // drag, and measure dy from this same start every frame (rather
+    // than incrementally re-basing startP each move, which would
+    // otherwise re-read the "current" VPs off the live quad).
+    const analysis=PerspectiveController.analyze(tfCorners);
+    tfDragInfo={startP:p,startCorners:tfCorners.map(c=>({x:c.x,y:c.y})),
+      startVP1:Object.assign({},analysis.vanishingPoints[0]),
+      startVP2:Object.assign({},analysis.vanishingPoints[1])};
+  } else {
+    tfDragInfo={startP:p,startCorners:tfCorners.map(c=>({x:c.x,y:c.y}))};
   }
+}
+// perspGuideC is a viewport-sized canvas that sits ABOVE transformC and
+// becomes pointer-interactive only in Perspective mode (see
+// _tfSyncGuideCanvasActive) — this is what lets VP/horizon handles be
+// grabbed even when they're rendered outside the artwork's own bounds,
+// where transformC (clipped to CW×CH) never receives the pointer event at
+// all. transformC's own perspective branch below early-returns in that
+// case since perspGuideC is now the sole handler for perspective drags.
+perspGuideC.addEventListener('pointerdown',_tfPerspPointerDown);
+
+transformC.addEventListener('pointerdown',e=>{
+  if(!tfActive) return;
+  if(tfPerspective) return; // handled by perspGuideC instead — see above
+  e.preventDefault();
+  const p=getPos(e);
   const hit=_tfHitTest(p);
   if(!hit) return;
   transformC.setPointerCapture(e.pointerId);
@@ -625,57 +721,67 @@ transformC.addEventListener('pointerdown',e=>{
     startPivotWorld:_tfPivotWorld(tfState),
   };
 });
-transformC.addEventListener('pointermove',e=>{
+function _tfPerspPointerMoveDrag(e){
   if(!tfActive||!tfDrag) return;
   e.preventDefault();
   const p=getPos(e);
-  if(tfPerspective){
-    let candidate=tfCorners;
-    if(tfDrag==='pcorner'){
-      candidate=tfCorners.map((c,i)=>i===tfCornerDrag?{
-        x:tfDragInfo.startCorner.x+(p.x-tfDragInfo.startP.x),
-        y:tfDragInfo.startCorner.y+(p.y-tfDragInfo.startP.y)
-      }:c);
-    } else if(tfDrag==='pedge'){
-      // Translate both endpoints of the edge by the same delta — moves
-      // that whole side (and drags the perspective distortion along with
-      // it) while leaving the edge's own length/angle, and the opposite
-      // side, untouched.
-      const dx=p.x-tfDragInfo.startP.x, dy=p.y-tfDragInfo.startP.y;
-      const i0=tfDragInfo.edgeIndex, i1=(tfDragInfo.edgeIndex+1)%tfCorners.length;
-      candidate=tfCorners.map((c,i)=>{
-        if(i===i0) return {x:tfDragInfo.startA.x+dx,y:tfDragInfo.startA.y+dy};
-        if(i===i1) return {x:tfDragInfo.startB.x+dx,y:tfDragInfo.startB.y+dy};
-        return c;
-      });
-    } else if(tfDrag==='pmove'){
-      const dx=p.x-tfDragInfo.startP.x, dy=p.y-tfDragInfo.startP.y;
-      candidate=tfCorners.map((c,i)=>({x:tfDragInfo.startCorners[i].x+dx, y:tfDragInfo.startCorners[i].y+dy}));
-    } else if(tfDrag==='vp'){
-      // Dragging a vanishing point rotates that axis's two edges rigidly
-      // about their own near anchors (never pulls/stretches a corner) so
-      // the resulting VP lands under the pointer and neither edge
-      // touching the dragged axis ever shrinks or expands. Solved from
-      // tfDragInfo.startCorners — the quad exactly as it was at
-      // pointer-down — rather than the live tfCorners, so every frame is
-      // an independent, from-scratch solve against the same fixed
-      // starting shape instead of compounding small changes onto
-      // whatever the previous frame's output happened to be.
-      candidate=PerspectiveController.dragAxisVP(tfDragInfo.startCorners,tfDragInfo.axisId,p,tfDragInfo.fixedOtherVP);
-    } else if(tfDrag==='horizon'){
-      const dy=p.y-tfDragInfo.startP.y;
-      candidate=PerspectiveController.dragHorizon(tfDragInfo.startCorners,tfDragInfo.startVP1,tfDragInfo.startVP2,dy);
-    }
-    // Reject any update that would fold the quad into a self-intersecting
-    // or reflex shape — that's exactly the configuration that sends the
-    // Heckbert homography's perspective divide through zero inside the
-    // unit square (points shoot to infinity, warp looks "tangled"). This
-    // caps every perspective interaction — corner, edge, VP, horizon — at
-    // the same source of instability instead of patching each one.
-    if(PerspectiveController.isValidQuad(candidate)) tfCorners=candidate;
-    _tfRedraw();
-    return;
+  let candidate=tfCorners;
+  if(tfDrag==='pcorner'){
+    candidate=tfCorners.map((c,i)=>i===tfCornerDrag?{
+      x:tfDragInfo.startCorner.x+(p.x-tfDragInfo.startP.x),
+      y:tfDragInfo.startCorner.y+(p.y-tfDragInfo.startP.y)
+    }:c);
+  } else if(tfDrag==='pedge'){
+    // Translate both endpoints of the edge by the same delta — moves
+    // that whole side (and drags the perspective distortion along with
+    // it) while leaving the edge's own length/angle, and the opposite
+    // side, untouched.
+    const dx=p.x-tfDragInfo.startP.x, dy=p.y-tfDragInfo.startP.y;
+    const i0=tfDragInfo.edgeIndex, i1=(tfDragInfo.edgeIndex+1)%tfCorners.length;
+    candidate=tfCorners.map((c,i)=>{
+      if(i===i0) return {x:tfDragInfo.startA.x+dx,y:tfDragInfo.startA.y+dy};
+      if(i===i1) return {x:tfDragInfo.startB.x+dx,y:tfDragInfo.startB.y+dy};
+      return c;
+    });
+  } else if(tfDrag==='pmove'){
+    const dx=p.x-tfDragInfo.startP.x, dy=p.y-tfDragInfo.startP.y;
+    candidate=tfCorners.map((c,i)=>({x:tfDragInfo.startCorners[i].x+dx, y:tfDragInfo.startCorners[i].y+dy}));
+  } else if(tfDrag==='vp'){
+    // Dragging a vanishing point rotates that axis's two edges rigidly
+    // about their own near anchors (never pulls/stretches a corner) so
+    // the resulting VP lands under the pointer and neither edge
+    // touching the dragged axis ever shrinks or expands. Solved from
+    // tfDragInfo.startCorners — the quad exactly as it was at
+    // pointer-down — rather than the live tfCorners, so every frame is
+    // an independent, from-scratch solve against the same fixed
+    // starting shape instead of compounding small changes onto
+    // whatever the previous frame's output happened to be.
+    candidate=PerspectiveController.dragAxisVP(tfDragInfo.startCorners,tfDragInfo.axisId,p,tfDragInfo.fixedOtherVP);
+  } else if(tfDrag==='horizon'){
+    const dy=p.y-tfDragInfo.startP.y;
+    candidate=PerspectiveController.dragHorizon(tfDragInfo.startCorners,tfDragInfo.startVP1,tfDragInfo.startVP2,dy);
   }
+  // Reject any update that would fold the quad into a self-intersecting
+  // or reflex shape — that's exactly the configuration that sends the
+  // Heckbert homography's perspective divide through zero inside the
+  // unit square (points shoot to infinity, warp looks "tangled"). This
+  // caps every perspective interaction — corner, edge, VP, horizon — at
+  // the same source of instability instead of patching each one.
+  if(PerspectiveController.isValidQuad(candidate)) tfCorners=candidate;
+  _tfRedraw();
+}
+// Pointer capture (set in _tfPerspPointerDown) redirects every subsequent
+// pointermove/up/cancel to whichever element called setPointerCapture —
+// so once a perspective drag starts on perspGuideC, transformC never sees
+// these events again regardless of where the cursor actually is. That's
+// exactly what we want: it's what lets a VP be dragged from way outside
+// the artwork all the way back in without the drag ever "letting go".
+perspGuideC.addEventListener('pointermove',_tfPerspPointerMoveDrag);
+
+transformC.addEventListener('pointermove',e=>{
+  if(!tfActive||!tfDrag||tfPerspective) return;
+  e.preventDefault();
+  const p=getPos(e);
   if(tfDrag==='pivot'){
     // Pivot handle itself: re-derive its local coord from the mouse's
     // current world position under the *live* (unchanging during this
@@ -707,18 +813,22 @@ transformC.addEventListener('pointermove',e=>{
 function _tfEndDrag(e){
   if(!tfDrag) return;
   if(transformC.hasPointerCapture&&transformC.hasPointerCapture(e.pointerId)) transformC.releasePointerCapture(e.pointerId);
+  if(perspGuideC.hasPointerCapture&&perspGuideC.hasPointerCapture(e.pointerId)) perspGuideC.releasePointerCapture(e.pointerId);
   tfDrag=null;tfDragInfo=null;tfCornerDrag=null;
 }
 transformC.addEventListener('pointerup',_tfEndDrag);
 transformC.addEventListener('pointercancel',_tfEndDrag);
+perspGuideC.addEventListener('pointerup',_tfEndDrag);
+perspGuideC.addEventListener('pointercancel',_tfEndDrag);
+
+perspGuideC.addEventListener('pointermove',e=>{
+  if(!tfActive||tfDrag||!tfPerspective) return;
+  const hit=_tfHitTestPerspective(getPos(e));
+  perspGuideC.style.cursor=hit?((hit.mode==='pcorner'||hit.mode==='pedge'||hit.mode==='vp')?'crosshair':hit.mode==='horizon'?'ns-resize':'move'):'default';
+});
 
 transformC.addEventListener('pointermove',e=>{
-  if(!tfActive||tfDrag) return;
-  if(tfPerspective){
-    const hit=_tfHitTestPerspective(getPos(e));
-    transformC.style.cursor=hit?((hit.mode==='pcorner'||hit.mode==='pedge'||hit.mode==='vp')?'crosshair':hit.mode==='horizon'?'ns-resize':'move'):'default';
-    return;
-  }
+  if(!tfActive||tfDrag||tfPerspective) return;
   const hit=_tfHitTest(getPos(e));
   transformC.style.cursor=hit?(hit.mode==='pivot'?'crosshair':hit.mode==='rotate'?'grab':hit.mode==='scale'?'nwse-resize':'move'):'default';
 });
@@ -807,5 +917,22 @@ function _tfSetPerspective(on){
   }
   tfPerspective=on;
   _tfSyncToggleUI();
+  _tfSyncGuideCanvasActive();
   _tfRedraw();
 }
+// ── Continuous guide re-sync during zoom/pan/rotate ─────────────────
+// perspGuideC's guide points are computed in viewport (screen) space at
+// draw-time (_tfToViewportPoint), unlike everything drawn on tfCtx, which
+// stays correct automatically under any zoom/pan/rotate because it's
+// inside canvas-wrap and rides along with its CSS transform for free.
+// Zooming/panning the canvas doesn't route through any of transform-tool's
+// own drag handlers (it's handled entirely in core-state.js), so without
+// this, the guide overlay would only refresh on the next VP/corner drag —
+// visibly drifting out of alignment with the artwork the moment you zoom
+// or pan while Perspective mode is active. A lightweight per-frame resync
+// (same pattern as brush-size-cursor.js's loop) keeps it pixel-locked to
+// the artwork no matter what moved the view.
+(function _tfGuideSyncLoop(){
+  if(tfActive&&tfPerspective) _tfDrawHandlesPerspective(true);
+  requestAnimationFrame(_tfGuideSyncLoop);
+})();
