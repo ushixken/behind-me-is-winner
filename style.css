@@ -85,13 +85,20 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;fon
 .tval{font-size:11px;color:var(--text2);min-width:20px;}
 
 /* ── MAIN AREA ────────────────────────────────────────────── */
-#main-area{display:flex;flex:1;overflow:hidden;position:relative;}
+#main-area{display:flex;flex:1;overflow:visible;position:relative;z-index:2;min-height:0;}
 
 /* ── CANVAS AREA ──────────────────────────────────────────── */
 #canvas-area{
   flex:1;background:#0e0e12;position:relative;overflow:hidden;min-width:100px;z-index:1;
   touch-action:none;-ms-touch-action:none;
 }
+/* Sits directly on top of canvas-area with the exact same box, but does NOT
+   clip its contents — this is what holds the floating/dockable panels so a
+   panel can never be cut off/hidden behind the timeline or anything else
+   when it's positioned near an edge. pointer-events:none lets clicks pass
+   through the empty parts of this layer to the canvas underneath; each
+   interactive child re-enables pointer-events itself. */
+#panel-layer{position:absolute;inset:0;overflow:visible;z-index:5;pointer-events:none;}
 /* canvas-wrap uses absolute positioning + CSS transform */
 #canvas-wrap{
   position:absolute;top:0;left:0;
@@ -257,7 +264,7 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 .layer-row.eye-blocked{border-color:var(--red) !important;background:rgba(226,75,74,0.08) !important;}
 .layer-group-row.eye-blocked{border-color:var(--red) !important;background:rgba(226,75,74,0.08) !important;}
 /* ── BOTTOM AREA (timeline + resize) ─────────────────────── */
-#bottom-area{display:flex;flex-direction:column;flex-shrink:0;}
+#bottom-area{display:flex;flex-direction:column;flex-shrink:0;position:relative;z-index:1;}
 #bottom-area.hidden{display:none;}
 
 /* ── TIMELINE ─────────────────────────────────────────────── */
@@ -406,8 +413,16 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
    to merge into a tabbed group (.fp-tabbar shows when >1 tab). */
 .float-panel{
   position:absolute;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;
-  box-shadow:0 8px 28px rgba(0,0,0,0.5);z-index:200;display:flex;flex-direction:column;
-  user-select:none;min-width:40px;min-height:40px;overflow:hidden;
+  box-shadow:0 8px 28px rgba(0,0,0,0.5);z-index:700;display:flex;flex-direction:column;
+  user-select:none;min-width:0;min-height:0;overflow:hidden;pointer-events:auto;touch-action:none;
+  cursor:default;
+  /* min-width/min-height are intentionally NOT hardcoded here — each panel's
+     real minimum is enforced in JS via PANEL_CFG's minSize (panels.js) or
+     MIN_W/MIN_H (tools-color.js etc). A CSS floor here previously fought
+     panels with a configured minimum below 40px (Tools: minSize 38) —
+     the browser would silently clamp to 40px while JS-positioned neighbors
+     assumed 38px, a 2px mismatch that let the next panel overlap and hide
+     this panel's border-right dock-separator line. */
 }
 .float-panel.fp-hidden{display:none;}
 /* Docked: strip all borders/shadows; each side gets exactly one 1px line on its inner edge */
@@ -445,11 +460,13 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 .fp-body{flex:1;display:none;overflow:auto;flex-direction:column;min-width:0;min-height:0;touch-action:pan-y;}
 .fp-body.active{display:flex;}
 .fp-dockzone{
-  position:absolute;background:var(--accent);
-  z-index:190;display:none;pointer-events:none;border-radius:2px;
-  box-shadow:0 0 8px rgba(127,119,221,0.7);
+  /* position set to fixed by JS so line renders at real screen seam */
+  background:var(--accent);
+  z-index:9990;display:none;pointer-events:none;border-radius:3px;
+
+  opacity:0;transition:opacity .1s;
 }
-.fp-dockzone.show{display:block;}
+.fp-dockzone.show{display:block;opacity:1;}
 .fp-mergezone{
   position:absolute;background:rgba(29,158,117,0.22);border:2px solid var(--green);
   z-index:195;display:none;pointer-events:none;border-radius:6px;
@@ -463,6 +480,33 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
   transition:background .12s,color .12s;line-height:1;margin-left:2px;
 }
 .fp-close:hover{background:rgba(226,75,74,0.25);color:var(--red);}
+
+/* ── SPLIT RESIZE HANDLE (seam between vertically stacked panels in a column) ─── */
+/* Rendered as a fixed-positioned element by JS (_syncSplitResizeHandle).
+   The 8px hit area sits over the seam; the visible 2px bar is drawn with ::after. */
+.fp-split-resize{
+  position:fixed;height:8px;cursor:row-resize;z-index:9999;
+  background:transparent;touch-action:none;-ms-touch-action:none;
+  transition:background .15s;
+}
+.fp-split-resize::after{
+  content:'';position:absolute;left:0;right:0;top:3px;height:2px;
+  background:var(--border2);border-radius:1px;transition:background .15s;
+}
+.fp-split-resize:hover::after,.fp-split-resize.dragging::after{
+  background:var(--accent);
+}
+
+/* ── FLOATING RESIZE HANDLES (4 edges of a free-floating panel) ─── */
+.fp-float-resize{position:absolute;background:transparent;touch-action:none;-ms-touch-action:none;}
+.fp-float-resize-left,.fp-float-resize-right{cursor:col-resize;}
+.fp-float-resize-top,.fp-float-resize-bottom{cursor:row-resize;}
+.fp-float-resize::after{content:'';position:absolute;background:var(--accent);opacity:0;transition:opacity .12s;}
+.fp-float-resize-right::after{top:0;bottom:0;right:0;width:2px;}
+.fp-float-resize-left::after{top:0;bottom:0;left:0;width:2px;}
+.fp-float-resize-top::after{left:0;right:0;top:0;height:2px;}
+.fp-float-resize-bottom::after{left:0;right:0;bottom:0;height:2px;}
+.fp-float-resize.dragging::after{opacity:1;}
 
 /* ── DOCK RESIZE HANDLE (inner edge of a docked panel) ─── */
 /* Each handle sits flush against the inner (canvas-facing) edge of its panel,
@@ -493,7 +537,7 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 
 /* ── MINI COLOR PICKER POPUP ─────────────────────────────── */
 #mini-picker{
-  position:fixed;z-index:10000;
+  position:fixed;z-index:10000;pointer-events:auto;
   filter:drop-shadow(0 8px 32px rgba(0,0,0,0.7));
   animation:miniPickerIn .13s cubic-bezier(.22,.68,0,1.2) both;
   touch-action:none;-ms-touch-action:none;
@@ -532,8 +576,17 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 
 /* Wheel: square, JS sets explicit px size via inline style */
 .cp-wheel-wrap{position:relative;flex-shrink:0;margin:0 auto;}
-#cp-wheel-canvas{position:absolute;top:0;left:0;cursor:crosshair;}
-#cp-sq-canvas{position:absolute;cursor:crosshair;}
+#cp-wheel-canvas{position:absolute;top:0;left:0;cursor:default;touch-action:none;-ms-touch-action:none;}
+#cp-sq-canvas{position:absolute;cursor:default;touch-action:none;-ms-touch-action:none;}
+/* Synthetic pick-point indicator shown while dragging on the wheel/square —
+   the native cursor can be suppressed by the browser while a pen pointer
+   is under setPointerCapture, so this guarantees you can always see where
+   you're picking from regardless of input device. */
+#cp-pick-cursor{
+  position:fixed;width:14px;height:14px;border-radius:50%;
+  border:1.5px solid rgba(255,255,255,0.95);box-shadow:0 0 0 1.5px rgba(0,0,0,0.85);
+  pointer-events:none;z-index:10001;display:none;transform:translate(-50%,-50%);box-sizing:border-box;
+}
 
 /* FG/BG swatches — scale with --cp-scale (JS keeps it in sync with wheel size) */
 #cp-swatch-stack{

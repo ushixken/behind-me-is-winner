@@ -125,9 +125,17 @@ refreshColorSwatches();
       }
       colorPanel.classList.remove('fp-hidden');
       colorPanel.classList.remove('dock-left','dock-right','dock-top','dock-bottom','docked');
+      // Reset to a sane floating size — without this the panel inherits whatever
+      // unconstrained dimensions it had while docked/merged, which can be enormous.
+      if(!colorPanel.style.width||parseFloat(colorPanel.style.width)>400) colorPanel.style.width='200px';
+      if(!colorPanel.style.height||parseFloat(colorPanel.style.height)>500) colorPanel.style.height='240px';
       colorPanel.style.left=(e.clientX-car.left-20)+'px';
       colorPanel.style.top=(e.clientY-car.top-10)+'px';
+      if(FloatPanels.setFloatSize){
+        FloatPanels.setFloatSize('color',parseFloat(colorPanel.style.width),parseFloat(colorPanel.style.height));
+      }
       FloatPanels.bringToFront(colorPanel);
+      if(FloatPanels.saveLayout) FloatPanels.saveLayout();
       syncColorPanelInputs();
       updateWindowChecks();
     }
@@ -581,11 +589,21 @@ function onNumberChange(){cpS1.value=cpN1.value;cpS2.value=cpN2.value;cpS3.value
     }
     setFromHsv(cpHue,cpSat,cpVal);
   }
+  // Synthetic pick-point indicator — see #cp-pick-cursor in style.css for why.
+  let _cpPickEl=document.getElementById('cp-pick-cursor');
+  if(!_cpPickEl){
+    _cpPickEl=document.createElement('div');
+    _cpPickEl.id='cp-pick-cursor';
+    document.body.appendChild(_cpPickEl);
+  }
+  function _showPickCursor(e){ _cpPickEl.style.left=e.clientX+'px'; _cpPickEl.style.top=e.clientY+'px'; _cpPickEl.style.display='block'; }
+  function _hidePickCursor(){ _cpPickEl.style.display='none'; }
+
   // Use setPointerCapture so drag tracking is tied to the physical press.
   // Capture auto-releases on pointerup — pen-tablet hover after lifting is ignored.
-  function onWheelMove(e){if(wheelDown)hitWheel(e);else if(sqDown)hitInner(e);}
+  function onWheelMove(e){if(wheelDown)hitWheel(e);else if(sqDown)hitInner(e);_showPickCursor(e);}
   function onWheelUp(e){
-    wheelDown=false;sqDown=false;
+    wheelDown=false;sqDown=false;_hidePickCursor();
     cpWheelCanvas.removeEventListener('pointermove',onWheelMove);
     cpWheelCanvas.removeEventListener('pointerup',onWheelUp);
     cpWheelCanvas.removeEventListener('pointercancel',onWheelUp);
@@ -601,20 +619,22 @@ function onNumberChange(){cpS1.value=cpN1.value;cpS2.value=cpN2.value;cpS3.value
         return;
       }
     }
+    _showPickCursor(e);
     cpWheelCanvas.setPointerCapture(e.pointerId);
     cpWheelCanvas.addEventListener('pointermove',onWheelMove);
     cpWheelCanvas.addEventListener('pointerup',onWheelUp);
     cpWheelCanvas.addEventListener('pointercancel',onWheelUp);
   });
-  function onSqMove(e){if(sqDown)hitInner(e);}
+  function onSqMove(e){if(sqDown)hitInner(e);_showPickCursor(e);}
   function onSqUp(e){
-    sqDown=false;
+    sqDown=false;_hidePickCursor();
     cpSqCanvas.removeEventListener('pointermove',onSqMove);
     cpSqCanvas.removeEventListener('pointerup',onSqUp);
     cpSqCanvas.removeEventListener('pointercancel',onSqUp);
   }
   cpSqCanvas.addEventListener('pointerdown',e=>{
     e.preventDefault();sqDown=true;hitInner(e);
+    _showPickCursor(e);
     cpSqCanvas.setPointerCapture(e.pointerId);
     cpSqCanvas.addEventListener('pointermove',onSqMove);
     cpSqCanvas.addEventListener('pointerup',onSqUp);
@@ -672,9 +692,16 @@ cpSwTransparent.addEventListener('click',()=>{setTool('eraser','Eraser');syncCol
   // point, so we do NOT measure/layout anything yet — offsetWidth/offsetHeight
   // would read as 0 while hidden. The real fit-to-content pass runs the first
   // time the panel is actually shown (see openColorPanel()).
+  // Preserve a fixed/default preferred size, but don't stomp a size already
+  // restored from the saved layout (FloatPanels.init()/_restoreLayout() run
+  // before this script, so panel.style.width/height are already applied if
+  // a prior session had resized/persisted this panel).
   const INIT_W=200,INIT_H=240;
-  panel.style.width=INIT_W+'px';
-  panel.style.height=INIT_H+'px';
+  if(!panel.style.width) panel.style.width=INIT_W+'px';
+  if(!panel.style.height) panel.style.height=INIT_H+'px';
+  if(typeof FloatPanels!=='undefined'&&FloatPanels.setFloatSize){
+    FloatPanels.setFloatSize('color',parseFloat(panel.style.width)||INIT_W,parseFloat(panel.style.height)||INIT_H);
+  }
 
   function isPanelVisible(){
     return !panel.classList.contains('fp-hidden') && panel.offsetParent!==null;
@@ -724,7 +751,7 @@ cpSwTransparent.addEventListener('click',()=>{setTool('eraser','Eraser');syncCol
     const pad=8*2+5*gaps; // padding + gaps
     const availH=panelH-titleH-toggleH-slidersH-pad;
     const availW=panelW-pad;
-    const wheelPx=Math.max(MIN_WHEEL,Math.min(availW,availH,500));
+    const wheelPx=Math.max(MIN_WHEEL,Math.min(availW,availH,300));
     const sc=wheelPx/240;
     document.documentElement.style.setProperty('--cp-scale',sc);
     // Size the wheel wrap and canvas
@@ -743,7 +770,9 @@ cpSwTransparent.addEventListener('click',()=>{setTool('eraser','Eraser');syncCol
     if(!isPanelVisible()) return;
     const neededH=measureNeededHeight(panel.offsetWidth);
     if(neededH>panel.offsetHeight){
-      panel.style.height=Math.min(MAX_H,neededH)+'px';
+      const h=Math.min(MAX_H,neededH);
+      panel.style.height=h+'px';
+      if(typeof FloatPanels!=='undefined'&&FloatPanels.setFloatSize) FloatPanels.setFloatSize('color',null,h);
     }
   }
 
@@ -763,7 +792,9 @@ cpSwTransparent.addEventListener('click',()=>{setTool('eraser','Eraser');syncCol
     const availW=panelW-pad;
     const wheelWanted=Math.max(MIN_WHEEL,Math.min(availW,500));
     const idealH=titleH+toggleH+slidersH+wheelWanted+pad;
-    panel.style.height=Math.max(MIN_H,Math.min(MAX_H,idealH))+'px';
+    const h=Math.max(MIN_H,Math.min(MAX_H,idealH));
+    panel.style.height=h+'px';
+    if(typeof FloatPanels!=='undefined'&&FloatPanels.setFloatSize) FloatPanels.setFloatSize('color',null,h);
   }
 
   function applyPanelSize(w,h){
@@ -771,6 +802,7 @@ cpSwTransparent.addEventListener('click',()=>{setTool('eraser','Eraser');syncCol
     h=Math.max(MIN_H,Math.min(MAX_H,h));
     panel.style.width=w+'px';
     panel.style.height=h+'px';
+    if(typeof FloatPanels!=='undefined'&&FloatPanels.setFloatSize) FloatPanels.setFloatSize('color',w,h);
     updateWheel();
   }
 
@@ -781,17 +813,30 @@ cpSwTransparent.addEventListener('click',()=>{setTool('eraser','Eraser');syncCol
     el.className='cp-re cp-re-'+side;
     el.dataset.side=side;
     panel.appendChild(el);
-    let active=false,sx=0,sy=0,sw=0,sh=0,sl=0,st=0;
+    let active=false,sx=0,sy=0,sw=0,sh=0,sl=0,st=0,dockedDrag=false,startDockW=0;
     el.addEventListener('pointerdown',e=>{
       e.preventDefault();e.stopPropagation();
       active=true;el.setPointerCapture(e.pointerId);
       sx=e.clientX;sy=e.clientY;
       sw=panel.offsetWidth;sh=panel.offsetHeight;
       sl=parseFloat(panel.style.left)||0;st=parseFloat(panel.style.top)||0;
+      dockedDrag=!!(typeof FloatPanels!=='undefined'&&FloatPanels.isDocked&&FloatPanels.isDocked('color'));
+      if(dockedDrag) startDockW=FloatPanels.getDockWidth('color')||sw;
     });
     el.addEventListener('pointermove',e=>{
       if(!active)return;
       const dx=e.clientX-sx,dy=e.clientY-sy;
+      if(dockedDrag){
+        // While docked/stacked, width is shared by the whole column (e.g.
+        // Color + Brush Presets) — drive that shared width instead of this
+        // panel's own style.width, so every panel in the stack resizes
+        // together. Height isn't handled here: a docked stack's height is
+        // owned by the split seam between panels, not free N/S edges.
+        if(!side.includes('w')&&!side.includes('e')) return; // pure n/s: no-op while docked
+        let nw=side.includes('w')?startDockW-dx:startDockW+dx;
+        FloatPanels.setDockWidth('color',nw);
+        return;
+      }
       let nw=sw,nh=sh,nl=sl,nt=st;
       if(side.includes('e')) nw=Math.max(MIN_W,Math.min(MAX_W,sw+dx));
       if(side.includes('w')){nw=Math.max(MIN_W,Math.min(MAX_W,sw-dx));nl=sl+(sw-nw);}
@@ -804,9 +849,17 @@ cpSwTransparent.addEventListener('click',()=>{setTool('eraser','Eraser');syncCol
       // (or clipping buttons) — this overrides the nh set just above.
       if(side==='w'||side==='e') fitHeightToWidth(nw);
       updateWheel();
+      if(typeof FloatPanels!=='undefined'&&FloatPanels.setFloatSize){
+        FloatPanels.setFloatSize('color',parseFloat(panel.style.width),parseFloat(panel.style.height));
+      }
     });
-    el.addEventListener('pointerup',()=>{active=false;});
-    el.addEventListener('pointercancel',()=>{active=false;});
+    function endResize(){
+      if(!active) return;
+      active=false;
+      if(typeof FloatPanels!=='undefined'&&FloatPanels.saveLayout) FloatPanels.saveLayout();
+    }
+    el.addEventListener('pointerup',endResize);
+    el.addEventListener('pointercancel',endResize);
   });
 
   // Whenever the color panel transitions from hidden to visible — no matter
@@ -830,13 +883,40 @@ cpSwTransparent.addEventListener('click',()=>{setTool('eraser','Eraser');syncCol
       });
     });
   }
+  // Only trigger the show-fix when the panel transitions from hidden→visible
+  // (fp-hidden removed). Reacting to every class change (dock-left, dragging-panel,
+  // etc.) caused a feedback loop during titlebar drags: ensureHeightFits() grew
+  // the panel, which changed its class, which triggered ensureHeightFits() again.
+  let _wasHidden=panel.classList.contains('fp-hidden');
   new MutationObserver(()=>{
-    if(isPanelVisible()) scheduleShowFix();
+    const hidden=panel.classList.contains('fp-hidden');
+    if(_wasHidden && !hidden) scheduleShowFix(); // became visible
+    _wasHidden=hidden;
   }).observe(panel,{attributes:true,attributeFilter:['class']});
 
   // Expose so other code (e.g. when sliders toggle) can ask for a redraw.
   window._cpUpdateWheel=updateWheel;
   window._cpEnsureHeightFits=ensureHeightFits;
+
+  // Re-fit the wheel whenever the panel's actual rendered size changes for
+  // ANY reason — not just this file's own 8 resize handles. When the panel
+  // is docked, its width/height are driven externally (dock-width drag,
+  // the split seam between stacked panels, a timeline-resize-triggered
+  // FloatPanels.render() reflow, browser window resize, etc.), and none of
+  // those code paths know to call updateWheel() themselves. A ResizeObserver
+  // catches all of them uniformly instead of us having to hunt down and
+  // hook every external trigger individually.
+  let _roPending=false;
+  const _ro=new ResizeObserver(()=>{
+    if(_roPending) return;
+    _roPending=true;
+    requestAnimationFrame(()=>{
+      _roPending=false;
+      if(!isPanelVisible()) return;
+      updateWheel();
+    });
+  });
+  _ro.observe(panel);
 })();
 
 // ── Init mode UI ──
