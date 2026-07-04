@@ -109,6 +109,7 @@
       <div class="dd-item" id="dd-show-colorpanel"><span class="dd-check" id="chk-colorpanel"></span>Color Panel</div>
       <div class="dd-item" id="dd-show-layers"><span class="dd-check" id="chk-layers">✓</span>Layers Panel</div>
       <div class="dd-item" id="dd-show-timeline"><span class="dd-check" id="chk-timeline">✓</span>Timeline</div>
+      <div class="dd-item" id="dd-show-keyframe-switcher"><span class="dd-check" id="chk-keyframe-switcher"></span>Keyframe Switcher</div>
       <div class="dd-item" id="dd-show-toolbar"><span class="dd-check" id="chk-toolbar">✓</span>Toolbar</div>
       <div class="dd-sep"></div>
       <div class="dd-item" id="dd-reset-layout">↺ Reset Layout</div>
@@ -247,6 +248,39 @@
           </div>
         </div>
     </div>
+    </div>
+
+    <!-- KEYFRAME SWITCHER PANEL (ported from the Krita "Keyframe Switcher" docker) -->
+    <div id="keyframe-switcher-panel" class="float-panel fp-hidden" data-panel="keyframe-switcher" style="top:16px;left:360px;width:200px;">
+      <div class="fp-tabbar" style="display:none;"></div>
+      <div class="fp-titlebar"><span class="fp-grip">⠿</span><span class="fp-name">Keyframe Switcher</span><span class="fp-close" title="Close panel">✕</span></div>
+      <div class="fp-body-wrap">
+        <div class="fp-body active" data-body="keyframe-switcher" style="flex-direction:column;">
+          <div class="kfsw-state">
+            <div class="tf-panel-label">Current State</div>
+            <div class="kfsw-row"><span>Frame</span><span id="kfsw-frame">—</span></div>
+            <div class="kfsw-row"><span>Layer</span><span id="kfsw-layer">—</span></div>
+            <div class="kfsw-row"><span>Keyframes</span><span id="kfsw-count">—</span></div>
+            <div class="kfsw-row"><span>Prev keyframe</span><span id="kfsw-prev">—</span></div>
+            <div class="kfsw-row"><span>Next keyframe</span><span id="kfsw-next">—</span></div>
+          </div>
+          <div class="kfsw-nav">
+            <button class="tbtn" id="kfsw-btn-prev" style="flex:1;" title="Jump to previous keyframe">◀ Prev</button>
+            <button class="tbtn" id="kfsw-btn-next" style="flex:1;" title="Jump to next keyframe">Next ▶</button>
+          </div>
+          <div class="kfsw-options">
+            <div class="tf-panel-label">Options</div>
+            <div class="kfsw-row">
+              <label for="kfsw-step">Frame step</label>
+              <input type="number" id="kfsw-step" min="1" max="100" value="1"/>
+            </div>
+            <label class="kfsw-checkbox" title="When checked, Prev/Next always move by the frame step and ignore keyframe positions entirely.">
+              <input type="checkbox" id="kfsw-bypass"/>
+              <span>Bypass keyframes</span>
+            </label>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- BRUSH PRESETS PANEL -->
@@ -1092,6 +1126,7 @@
 <script src="brush-presets.js"></script>
 <script src="timeline.js"></script>
 <script src="layers.js"></script>
+<script src="keyframe-switcher.js"></script>
 <script src="keybinds.js"></script>
 <script src="brush-size-drag.js"></script>
 <script src="brush-size-cursor.js"></script>

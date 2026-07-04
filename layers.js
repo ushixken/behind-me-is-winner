@@ -440,6 +440,7 @@ function updateWindowChecks(){
   document.getElementById('chk-layers').textContent=FloatPanels.isVisible('layers')?'✓':'';
   document.getElementById('chk-timeline').textContent=showTimeline?'✓':'';
   document.getElementById('chk-toolbar').textContent=showToolbar?'✓':'';
+  document.getElementById('chk-keyframe-switcher').textContent=FloatPanels.isVisible('keyframe-switcher')?'✓':'';
 }
 // Keep the Window-menu checkmarks in sync whenever a panel is shown/hidden/merged
 // from anywhere else (close button, drag-to-merge, drag-tab-out, etc.)
@@ -471,6 +472,10 @@ document.getElementById('dd-show-toolbar').onclick=()=>{
   showToolbar=!showToolbar;
   toolbarEl.style.display=showToolbar?'':'none';
   updateWindowChecks();centerCanvas();closeAllDropdowns();
+};
+document.getElementById('dd-show-keyframe-switcher').onclick=()=>{
+  FloatPanels.setVisible('keyframe-switcher',!FloatPanels.isVisible('keyframe-switcher'));
+  updateWindowChecks();closeAllDropdowns();
 };
 document.getElementById('dd-reset-layout').onclick=()=>{
   showTimeline=true;showToolbar=true;

@@ -221,8 +221,8 @@ document.addEventListener('keydown',e=>{
   for(const action in toolMap){ if(matchBind(e,action)){ e.preventDefault(); setTool(...toolMap[action]); break; } }
   if(matchBind(e,'newFrame')){createBlankKey();loadFrame(curLayer,curFrame);}
   if(matchBind(e,'delKeyframe')){e.preventDefault();deleteKeyframe();}
-  if(matchBind(e,'nextFrame')){e.preventDefault();goToFrame(curFrame+1);}
-  if(matchBind(e,'prevFrame')){e.preventDefault();goToFrame(curFrame-1);}
+  if(matchBind(e,'nextFrame')){e.preventDefault();kfswNavigate(+1);}
+  if(matchBind(e,'prevFrame')){e.preventDefault();kfswNavigate(-1);}
   // Space is reserved for canvas pan — Tab toggles play (handled in timeline.js)
   // Zoom keyboard shortcuts — center of canvas-area
   if(matchBind(e,'zoomIn')){e.preventDefault();const r=canvasArea.getBoundingClientRect();doZoom(1,r.width/2,r.height/2);}
