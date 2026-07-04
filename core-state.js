@@ -350,7 +350,7 @@ canvasArea.addEventListener('wheel',e=>{
 // Pan (Space+drag or middle mouse); Rotate (Shift+Space+drag)
 let panning=false,panSX=0,panSY=0,panSPX=0,panSPY=0;
 let spaceHeld=false,ctrlHeld=false,shiftHeld=false;
-let _zoomDrag=false,_zoomDragSX=0,_zoomDragStartZoom=0;
+let _zoomDrag=false,_zoomDragSX=0,_zoomDragStartZoom=0,_zoomDragCX=0,_zoomDragCY=0;
 let _rotateDrag=false,_rotateDragSX=0,_rotateDragSY=0,_rotateDragStartRot=0,_rotateDragCX=0,_rotateDragCY=0,_rotateDragGCX=0,_rotateDragGCY=0;
 
 // Capture phase on window + stopPropagation: Space (and especially Ctrl+Space)
@@ -438,6 +438,11 @@ function _spaceDragStart(clientX,isCtrl){
 function _spaceDragStartXY(clientX,clientY,isCtrl){
   if(isCtrl||ctrlHeld){
     _zoomDrag=true;_zoomDragSX=clientX;_zoomDragStartZoom=zoom;
+    // Anchor the zoom to wherever the drag actually started (in local
+    // canvas-area coordinates), not the canvas-area center — this matches
+    // how scroll-wheel zoom already anchors to the cursor position.
+    const r=canvasArea.getBoundingClientRect();
+    _zoomDragCX=clientX-r.left; _zoomDragCY=clientY-r.top;
     canvasArea.style.cursor='zoom-in';
   } else if(shiftHeld){
     const p=getNavPivot();
@@ -455,8 +460,9 @@ function _spaceDragMove(clientX,clientY){
   if(_zoomDrag){
     // drag right = zoom in, drag left = zoom out; 300px = 2x
     const dx=clientX-_zoomDragSX;
-    const p=getNavPivot();
-    const cx=p.cx,cy=p.cy;
+    // Zoom anchored to where the drag started, not the canvas-area center —
+    // matches scroll-wheel zoom's cursor-anchored behavior.
+    const cx=_zoomDragCX,cy=_zoomDragCY;
     const newZoom=Math.max(zoomMin,Math.min(zoomMax,_zoomDragStartZoom*Math.pow(2,dx/300)));
     panX=cx-(cx-panX)*(newZoom/zoom);
     panY=cy-(cy-panY)*(newZoom/zoom);
@@ -518,4 +524,3 @@ document.addEventListener('pointermove',e=>{
 document.addEventListener('pointerup',e=>{
   if(e.pointerType==='pen') _spaceDragEnd();
 });
-
