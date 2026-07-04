@@ -89,7 +89,27 @@ function loadFrame(li,fi){
   document.getElementById('frame-info').textContent='Frame '+(fi+1)+' / '+TOTAL;
   updateStatus();
 }
-function recomposite(li,fi){
+// PERF: recomposite() now accepts an optional `dirtyRect` ({x,y,w,h} in
+// canvas pixel space). When provided, the expensive per-layer compositing
+// loop below (which is what actually costs time — multiple canvas
+// allocations/clears for masked layers, N drawImage calls, etc.) is
+// clipped to that region via compCtx.clip(), so a single dab's worth of
+// change only re-touches the pixels around it instead of the entire
+// document, every single animation frame while a stroke is in progress.
+// When dirtyRect is omitted/null (every existing call site: loadFrame,
+// switchLayer, tool actions, undo, etc.), behavior is 100% unchanged —
+// full-canvas recomposite exactly as before. drawBg() and every layer draw
+// call is untouched code-wise; clip() just restricts which pixels those
+// same calls are allowed to touch, so compositing, masks, clipping,
+// opacity and blend order are all identical to the full-canvas path.
+function recomposite(li,fi,dirtyRect){
+  const clip = (dirtyRect && dirtyRect.w>0 && dirtyRect.h>0) ? dirtyRect : null;
+  if(clip){
+    compCtx.save();
+    compCtx.beginPath();
+    compCtx.rect(clip.x,clip.y,clip.w,clip.h);
+    compCtx.clip();
+  }
   drawBg();
   _ensureScratchCanvases();
   const curLForMask=layers[li];
@@ -111,7 +131,14 @@ function recomposite(li,fi){
       const isGrpStencil=(eff.stencil==='group-inside'||eff.stencil==='group-outside')&&eff.clipToGroup;
       const isCurGrpMask=l.groupId&&(layers.some(ol=>ol.clipToGroup===l.groupId&&(ol.stencil==='group-inside'||ol.stencil==='group-outside'))||_groupUsedAsGroupMaskSource(l.groupId));
       activeC.style.opacity='0';
-      srcCanvas=activeC;
+      // Mid-stroke, dabs live on the offscreen stroke-scratch canvas (not
+      // activeC) until pointerup commits them — see brush-engine.js. Use
+      // the live preview (activeC + in-progress stroke, pre-blended at
+      // brushOpacity) so the stroke is visible as it's drawn instead of
+      // only appearing once the stroke ends.
+      srcCanvas=(typeof _inStroke!=='undefined'&&_inStroke&&typeof _getLiveStrokePreview==='function')
+        ? _getLiveStrokePreview()
+        : activeC;
     } else {
       if(!layerVisible) continue;
       srcCanvas=getHeldKey(idx,fi);
@@ -178,9 +205,13 @@ function recomposite(li,fi){
   // clipped to them whenever that layer was selected.
   activeC.style.opacity=0;
 
-  // Push the finished frame to the VISIBLE canvas (displayC), pre-blurring by
-  // _displayBlurPx when zoomed out — see core-state.js _updateDisplayBlur for
-  // why. compC itself stays untouched/pixel-exact for eyedropper, export, etc.
+  if(clip) compCtx.restore();
+
+  // Final blit to the visible canvas is always full-canvas, unchanged from
+  // before: it's a single cheap drawImage (plus optional blur filter), and
+  // keeping it whole avoids any blur-edge seam at the dirty-rect boundary.
+  // compC itself already only had its dirty region touched above, so
+  // everything outside that region is simply the unchanged prior frame.
   displayCtx.clearRect(0,0,CW,CH);
   displayCtx.filter = _displayBlurPx>0.05 ? `blur(${_displayBlurPx}px)` : 'none';
   displayCtx.drawImage(compC,0,0);

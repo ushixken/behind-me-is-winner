@@ -686,9 +686,9 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 #tool-settings-panel .fp-body::-webkit-scrollbar-thumb,
 #brush-presets-panel .fp-body::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px;}
 
-/* Keep existing body styles */
-#tool-settings-body{
-  display:flex;flex-direction:column;gap:0;padding:0;width:100%;
+/* tool-settings-modal-body fills remaining modal height */
+#tool-settings-modal-body{
+  display:flex;flex-direction:column;flex:1;min-height:0;
 }
 .ts-section{
   border-bottom:1px solid var(--border);
@@ -770,9 +770,6 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 .ts-divider{height:1px;background:var(--border);margin:2px 0;}
 
 /* ── TOOL SETTINGS MODAL ──────────────────────────────────── */
-/* Now built on the shared .modal-overlay/.modal classes (same layout as
-   the Keybinds modal) — only the bits unique to this modal remain here:
-   the Simple/Advanced mode toggle and the scrollable body. */
 .ts-mode-toggle{display:flex;gap:2px;background:var(--bg4);border-radius:6px;padding:2px;flex-shrink:0;}
 .ts-mode-btn{
   padding:3px 10px;border-radius:5px;border:none;background:transparent;color:var(--text2);
@@ -781,12 +778,80 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 }
 .ts-mode-btn:hover{color:var(--text);}
 .ts-mode-btn.active{background:var(--accent-bg);color:var(--accent);}
-/* Simple mode: only Size / Flow / Hardness / Anti-alias stay visible —
-   every other section, plus the Spacing row and compat badges inside
-   Basic, are marked .ts-advanced-only and hidden here. */
+#tool-settings-modal-body{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;}
+
+/* ── PS-STYLE TWO-COLUMN LAYOUT ── */
+#tool-settings-body{
+  display:flex;flex-direction:row;flex:1;min-height:0;overflow:hidden;
+}
+
+/* LEFT SIDEBAR */
+.ts-ps-sidebar{
+  width:128px;flex-shrink:0;
+  background:var(--bg3);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;overflow-y:auto;overflow-x:hidden;
+  scrollbar-width:none;
+}
+.ts-ps-sidebar::-webkit-scrollbar{display:none;}
+
+.ts-ps-nav-item{
+  display:flex;align-items:center;gap:6px;
+  padding:7px 8px 7px 10px;
+  font-size:11px;color:var(--text2);cursor:pointer;
+  border-bottom:1px solid var(--border);
+  user-select:none;transition:background .1s,color .1s;
+  white-space:nowrap;overflow:hidden;flex-shrink:0;
+}
+.ts-ps-nav-item:hover{background:var(--bg4);color:var(--text);}
+.ts-ps-nav-item.active{
+  background:var(--accent-bg);color:var(--accent);
+  border-left:2px solid var(--accent);padding-left:8px;
+}
+.ts-ps-nav-no-check{
+  margin-left:14px;
+}
+
+/* Sidebar checkboxes */
+.ts-ps-nav-check{
+  accent-color:var(--accent);cursor:pointer;flex-shrink:0;
+  width:12px;height:12px;
+}
+
+/* RIGHT CONTENT PANELS — fixed size, internal scroll */
+.ts-ps-panels{
+  flex:1;min-width:0;min-height:0;position:relative;overflow:hidden;
+}
+
+/* Each panel is absolutely positioned to fill the panels area — ensures
+   the modal never resizes when switching between panels */
+.ts-ps-panel{
+  position:absolute;inset:0;
+  display:none;flex-direction:column;
+  overflow-y:auto;overflow-x:hidden;
+  overscroll-behavior:contain;touch-action:pan-y;
+  scrollbar-width:thin;scrollbar-color:var(--border2) transparent;
+}
+.ts-ps-panel::-webkit-scrollbar{width:5px;}
+.ts-ps-panel::-webkit-scrollbar-track{background:transparent;}
+.ts-ps-panel::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px;}
+.ts-ps-panel.active{display:flex;}
+/* Disabled panel: gray out all content and block interaction */
+.ts-ps-panel--disabled > .ts-section-body{
+  opacity:0.38;pointer-events:none;user-select:none;
+}
+.ts-ps-panel--disabled > .ts-section-body *{
+  cursor:not-allowed!important;
+}
+.ts-ps-panel > .ts-section-body{padding:8px 10px;gap:6px;}
+
+/* SIMPLE MODE: single-column, sidebar hidden, basic panel scrolls */
+#tool-settings-body.ts-mode-simple{flex-direction:column;}
+#tool-settings-body.ts-mode-simple .ts-ps-sidebar{display:none;}
+#tool-settings-body.ts-mode-simple .ts-ps-panels{position:static;overflow-y:auto;overflow-x:hidden;}
+#tool-settings-body.ts-mode-simple .ts-ps-panel{position:static;}
+#tool-settings-body.ts-mode-simple .ts-ps-panel[data-panel="basic"]{display:flex;}
+#tool-settings-body.ts-mode-simple .ts-ps-panel:not([data-panel="basic"]){display:none!important;}
 #tool-settings-body.ts-mode-simple .ts-advanced-only{display:none!important;}
-#tool-settings-modal-body{scrollbar-width:none;-ms-overflow-style:none;}
-#tool-settings-modal-body::-webkit-scrollbar{display:none;}
 
 /* ── BRUSH PRESETS PHOTOSHOP STYLE ────────────────────────── */
 /* Brush size control bar at the top of brush panel */
