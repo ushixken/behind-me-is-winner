@@ -101,11 +101,12 @@
   };
   chkBypass.onchange=()=>{
     try{localStorage.setItem(STORE_KEY_BYPASS,chkBypass.checked?'1':'0');}catch(e){}
-    // Without this, focus stays on the checkbox after clicking it, and the
-    // app's global keydown handler ignores keys while any <input> is
-    // focused (see ui-controls.js) — silently breaking the Next/Prev Frame
-    // keybinds until the user clicks elsewhere first.
-    chkBypass.blur();
+    // Without this, focus (and its blue outline) stays on the checkbox after
+    // clicking it. The keydown guard in ui-controls.js now lets shortcuts
+    // through even while a checkbox is focused, but clearing focus here too
+    // avoids the leftover outline. Deferred a tick so it runs after the
+    // browser's own click-focus handling settles.
+    setTimeout(()=>chkBypass.blur(),0);
   };
 
   // Krita's docker polled with a 400ms QTimer (plus a handful of Krita

@@ -209,7 +209,7 @@ document.getElementById('modal-zoom-ok').onclick=()=>{
 // KEYBOARD SHORTCUTS
 // ════════════════════════════════════════════════════════════════
 document.addEventListener('keydown',e=>{
-  if(e.target.tagName==='INPUT') return;
+  if(e.target.tagName==='INPUT'&&e.target.type!=='checkbox') return;
   if(matchBind(e,'undo')){e.preventDefault();undo();return;}
   if(matchBind(e,'redo')){e.preventDefault();redo();return;}
   if(matchBind(e,'copyFrame')){e.preventDefault();copyFrame();return;}
