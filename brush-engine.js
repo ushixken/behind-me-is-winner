@@ -77,6 +77,22 @@ window.brushTextureDepth   = 0.5;
 // final transparency as a layer-level composite — not individual dabs.
 let brushFlow = 1;
 
+// ── Dynamic Opacity tracking (Dynamics tab ▸ "Opacity" control) ─────────
+// This dropdown used to be labeled "Opacity / Flow" but its influence was
+// actually only ever applied to per-dab Flow alpha below — the real
+// stroke-level Opacity (brushOpacity, applied once in _commitStrokeCanvas)
+// never responded to pressure/tilt/velocity/fade at all, despite the
+// label. Renamed to just "Opacity" and rewired so it genuinely drives the
+// stroke's final Opacity ceiling; Flow's per-dab build-up rate is now
+// governed solely by the Flow slider (brushFlow), same as Opacity's own
+// slider governs the base ceiling — the two are independent again, as
+// they are in Photoshop/CSP.
+// Since Opacity is a single value applied once when the stroke commits
+// (not per dab), the selected control's influence is averaged across
+// every dab in the stroke and applied as one multiplier at commit time.
+let _dynOpacitySum = 0;
+let _dynOpacityCount = 0;
+
 // ── Stroke temp canvas ──────────────────────────────────────────────────
 // Opacity (brushOpacity) works at the stroke level: all dabs within a single
 // stroke accumulate on a scratch canvas; when the stroke ends the scratch is
@@ -102,16 +118,28 @@ function _ensureStrokeCanvas(){
   }
 }
 
+// Turns this stroke's accumulated Opacity-dynamics influence (averaged
+// across every dab that was stamped) into a 0..1 multiplier on brushOpacity.
+// Returns 1 (no change) when the control is Off or no dabs were tracked.
+function _getDynamicOpacityMultiplier(){
+  if(_dynOpacityCount === 0) return 1;
+  const avgInfluence = _dynOpacitySum / _dynOpacityCount;
+  const minO = _getMinFlow(); // shared min-floor field for this Dynamics section
+  return Math.max(0, Math.min(1, minO + (1 - minO) * avgInfluence));
+}
+
 // Composite the stroke scratch canvas onto activeC with stroke-level opacity,
 // then clear the scratch for the next stroke.
 function _commitStrokeCanvas(){
   if(!_strokeCanvas) return;
+  const dynOp = _getDynamicOpacityMultiplier();
   ctx.save();
-  ctx.globalAlpha = Math.max(0, Math.min(1, brushOpacity));
+  ctx.globalAlpha = Math.max(0, Math.min(1, brushOpacity * dynOp));
   ctx.globalCompositeOperation = 'source-over';
   ctx.drawImage(_strokeCanvas, 0, 0);
   ctx.restore();
   _strokeCtx.clearRect(0, 0, _strokeCanvas.width, _strokeCanvas.height);
+  _dynOpacitySum = 0; _dynOpacityCount = 0; // ready for the next stroke
 }
 
 // ── Live stroke preview ─────────────────────────────────────────────────
@@ -971,34 +999,61 @@ window._stopAirbrushSpray=_stopAirbrushSpray;
 // carry a faint first touch into a visible line.
 let _strokeDistSoFar = 0;
 function _strokeTaperFactor(baseSize){
-  // Scale the ease-in distance with brush size — a fixed pixel distance
-  // looked fine at one size but became unnoticeable on a big brush and
-  // disproportionately long on a tiny one, which is why the taper seemed to
-  // "go away" whenever the size was changed.
-  const taperDist = Math.max(10, baseSize*2.2);
-  if(_strokeDistSoFar >= taperDist) return 1;
-  const t = _strokeDistSoFar / taperDist;
-  const eased = t*t*(3-2*t); // smoothstep
-  // Starts at 50%, not 0%: a 0% start would make a plain click/dot (zero
-  // drag distance) nearly invisible — exactly the problem we're fixing.
-  // 50%→100% still reads as a clear taper on a dragged stroke (see TVPaint
-  // reference) without ever making the very first touch vanish.
-  return 0.5 + 0.5*eased;
+  // Taper disabled — every stroke now starts at full width immediately,
+  // no ease-in from a point. (Previously eased in over a capped distance;
+  // removed entirely per request since it was still visible/unwanted.)
+  return 1;
+}
+
+// Resolve the spacing FRACTION (of effective diameter) to use for the dab
+// currently being placed. This used to be duplicated inline in both
+// _strokeSegment and _stampQuadCurve, and neither copy ever looked at
+// window._tsSpacingVelocity — so the "Velocity Spacing" checkbox in the
+// Tool Settings panel (brush-presets.js) saved its state but had zero
+// effect on the actual stroke. Centralizing it here fixes both call sites
+// at once and makes the velocity behavior explicit:
+// when enabled, spacing widens as stroke speed increases (0..1 velocity ->
+// up to 2x the base spacing), which is what "Velocity Spacing" is meant to
+// do in Photoshop/CSP-style engines — fewer, more spread-out dabs on a
+// fast flick instead of stamping just as densely as a slow, deliberate
+// stroke.
+function _effectiveSpacingFrac(){
+  let spacing = (typeof window!=='undefined' && window._tsSpacing!=null) ? window._tsSpacing : 0.12;
+  if(typeof window!=='undefined' && window._brushAirbrush) spacing = Math.min(spacing, _AIRBRUSH_SPACING_FRAC);
+  if(typeof window!=='undefined' && window._tsSpacingVelocity){
+    const v = _getVelocity(); // 0..1, smoothed stroke speed
+    spacing = spacing * (1 + v); // up to 2x spacing at top speed
+  }
+  return spacing;
 }
 
 function _strokeSegment(ax,ay,bx,by,e,startPressure,endPressure){
   const sp = (startPressure !== undefined) ? startPressure : currentPressure;
   const ep = (endPressure   !== undefined) ? endPressure   : currentPressure;
   const dx=bx-ax,dy=by-ay,dist=Math.sqrt(dx*dx+dy*dy);
-  if(dist<0.1){currentPressure=ep;_stampDab(bx,by,e);return;}
+  if(dist<0.1){
+    // Same fix as the equivalent branch in _stampQuadCurve: bank the tiny
+    // distance instead of unconditionally stamping, so Spacing is still
+    // respected instead of bypassed for sub-0.1px segments.
+    _strokeSegCarryOver += dist;
+    const spacing=_effectiveSpacingFrac();
+    const spacingR=_computeSpacingRadius(e, ep);
+    const step=Math.max(0.5, spacingR*2*spacing);
+    currentPressure=ep;
+    if(_strokeSegCarryOver >= step){
+      _strokeSegCarryOver -= step;
+      _strokeDistSoFar += step;
+      _stampDab(bx,by,e);
+    }
+    return;
+  }
   // Start with negative carry-over so the first dab lands exactly one step
   // after the last dab of the previous segment (no remainder discarded).
   let traveled = -_strokeSegCarryOver;
   while(true){
     const tNow = Math.max(0, Math.min(1, traveled / dist));
     const interpP = sp + (ep - sp) * tNow;
-    let spacing = (typeof window!=='undefined' && window._tsSpacing!=null) ? window._tsSpacing : 0.12;
-    if(typeof window!=='undefined' && window._brushAirbrush) spacing = Math.min(spacing, _AIRBRUSH_SPACING_FRAC);
+    const spacing = _effectiveSpacingFrac();
     // CSP-style: step is always relative to the EFFECTIVE diameter at this
     // position (pressure/tilt scaled), not the base size. This keeps dab
     // overlap perfectly consistent regardless of pressure or stroke speed.
@@ -1053,13 +1108,36 @@ function _quadApproxLen(x0,y0,cx,cy,x1,y1){
 }
 function _stampQuadCurve(x0,y0,cx,cy,x1,y1,e,startPressure,endPressure){
   const len=_quadApproxLen(x0,y0,cx,cy,x1,y1);
-  if(len<0.1){currentPressure=endPressure;_stampDab(x1,y1,e);return;}
+  if(len<0.1){
+    // BUG FIX: this used to always call _stampDab() here regardless of
+    // Spacing. Heavily-smoothed slow strokes (see _smoothPoint's adaptive
+    // One Euro filter — it dampens hard at low speed) constantly produce
+    // curve segments under this 0.1px threshold, so a dab was stamped on
+    // almost every single pointermove no matter what Spacing % was set
+    // to — which is exactly why slow strokes looked continuous while fast
+    // strokes (whose bigger segments actually ran the real spacing loop
+    // below) showed correct gaps. We can't divide by this near-zero `len`
+    // safely (that's why the early-out exists at all), so instead of
+    // stamping, bank this sliver of distance into the shared carry-over
+    // and only stamp once enough slivers add up to a real spacing step —
+    // same rule the main loop below enforces.
+    _strokeSegCarryOver += len;
+    const spacing=_effectiveSpacingFrac();
+    const spacingR=_computeSpacingRadius(e, endPressure);
+    const step=Math.max(0.5, spacingR*2*spacing);
+    currentPressure=endPressure;
+    if(_strokeSegCarryOver >= step){
+      _strokeSegCarryOver -= step;
+      _strokeDistSoFar += step;
+      _stampDab(x1,y1,e);
+    }
+    return;
+  }
   let traveled=-_strokeSegCarryOver, px=x0, py=y0;
   while(true){
     const tNow = Math.max(0, Math.min(1, traveled / len));
     const interpP = startPressure + (endPressure - startPressure) * tNow;
-    let spacing = (typeof window!=='undefined' && window._tsSpacing!=null) ? window._tsSpacing : 0.12;
-    if(typeof window!=='undefined' && window._brushAirbrush) spacing = Math.min(spacing, _AIRBRUSH_SPACING_FRAC);
+    const spacing = _effectiveSpacingFrac();
     const spacingR = _computeSpacingRadius(e, interpP);
     const step = Math.max(0.5, spacingR * 2 * spacing);
     traveled += step;
@@ -1403,13 +1481,19 @@ function _computeEffectiveParams(e){
     }
   }
 
-  // Opacity/flow dynamics
+  // Opacity dynamics — accumulate this dab's influence so the AVERAGE
+  // across the whole stroke can be applied once, as a multiplier on
+  // brushOpacity, when the stroke commits (see _commitStrokeCanvas /
+  // _getDynamicOpacityMultiplier below). This intentionally does NOT touch
+  // `alpha` (that's Flow's per-dab build-up, controlled only by the Flow
+  // slider) — the old code modulated Flow here by mistake, which is why
+  // this control never actually affected Opacity despite its old label.
   if(opacityCtrl !== 'off'){
     const applyOpacity = (opacityCtrl === 'pressure' || opacityCtrl === 'tilt') ? isPenStroke : true;
     if(applyOpacity){
       const influence = _resolveControl(opacityCtrl, e);
-      const minA = baseAlpha * _getMinFlow();
-      alpha = Math.max(0.02, minA + (baseAlpha - minA) * influence);
+      _dynOpacitySum += influence;
+      _dynOpacityCount++;
     }
   }
 
@@ -1425,11 +1509,14 @@ function _computeEffectiveParams(e){
   // at the very tip of a stroke, not an accidental disappearance.
   r = Math.max(0.5, r);
 
-  // Stroke-start taper: ease r in from the taper factor so every new stroke
-  // begins as a tapered point and grows into full size over
-  // _STROKE_TAPER_DIST px, exactly like TVPaint's pen — regardless of
-  // device or physical pressure.
-  const taper = _strokeTaperFactor(baseSize);
+  // Stroke-start taper: DISABLED per request — every dab now draws at its
+  // full computed width/alpha from the very first point of the stroke, no
+  // ease-in from a point. (Previously this fixed-distance ramp kept making
+  // large brushes look like they were "still growing" for a big chunk of
+  // any normal-length stroke — see taper history above.) _strokeTaperFactor
+  // is left defined but unused, so this can be re-enabled by restoring the
+  // line below if a tapered start is wanted again later.
+  const taper = 1; // was: _strokeTaperFactor(baseSize);
   r *= taper;
   // Only ease ALPHA with the taper in AA mode. AA-off (pencil/pixelated)
   // mode is meant to be a flat, solid, hard-edged stamp with no partial
@@ -1547,6 +1634,7 @@ activeC.addEventListener('pointerdown',e=>{
   _smoothedPressure = currentPressure; // snap smoothing to actual pressure at stroke start (no ramp-in lag)
   _lastKnownPressure = currentPressure;
   _strokeDabCount = 0; // reset fade counter
+  _dynOpacitySum = 0; _dynOpacityCount = 0; // reset per-stroke Opacity dynamics average
   _strokeDistSoFar = 0; // reset start-of-stroke taper
   _pendingDabs.length = 0; // discard any unflushed tail from a previous stroke
   _frameDirty = null; // discard any stale accumulation from a previous/aborted stroke
