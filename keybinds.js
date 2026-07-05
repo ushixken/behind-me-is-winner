@@ -29,9 +29,22 @@ const KEYBIND_DEFAULTS={
   flipVertical:   {label:'Flip Vertical',   key:'v',          ctrl:false, shift:false, alt:false},
   brushResize:    {label:'Resize Brush (hold + drag)', key:'s', ctrl:false, shift:false, alt:false},
   flipperBypass:  {label:'Flipper: Enable Bypass (hold)', key:'Shift', ctrl:false, shift:false, alt:false},
+  increaseExposure: {label:'Increase Exposure', key:'1', ctrl:false, shift:false, alt:false},
+  decreaseExposure: {label:'Decrease Exposure', key:'2', ctrl:false, shift:false, alt:false},
 };
 
 let keybinds={};
+
+// Grouping only — purely cosmetic for the Settings ▸ Keybinds list, doesn't
+// affect matchBind/storage/rebinding at all. Order here = display order.
+const KEYBIND_CATEGORIES=[
+  {name:'History',        actions:['undo','redo']},
+  {name:'Clipboard',      actions:['copyFrame','cutFrame','pasteFrame','pasteImage','clearFrame']},
+  {name:'Tools',          actions:['toolBrush','toolEraser','toolFill','toolLine','toolTransform','brushResize']},
+  {name:'Frames & Keyframes', actions:['newFrame','delKeyframe','nextFrame','prevFrame','flipperBypass','increaseExposure','decreaseExposure']},
+  {name:'View',           actions:['zoomIn','zoomOut','zoomReset','rotateReset']},
+  {name:'Transform',      actions:['flipHorizontal','flipVertical']},
+];
 
 function loadKeybinds(){
   keybinds=JSON.parse(JSON.stringify(KEYBIND_DEFAULTS));
@@ -136,19 +149,27 @@ function findBindConflict(action,combo){
 // ════════════════════════════════════════════════════════════════
 // KEYBINDS MODAL UI
 // ════════════════════════════════════════════════════════════════
+let _collapsedCats={}; // category name -> bool, persists while modal stays open
+
 function renderKeybindsList(){
   const list=document.getElementById('keybinds-list');
   if(!list) return;
   const searchEl=document.getElementById('keybinds-search');
   const q=(searchEl?searchEl.value:'').trim().toLowerCase();
   list.innerHTML='';
-  let anyVisible=false;
-  for(const action in keybinds){
+
+  function matches(action){
     const b=keybinds[action];
-    if(q && !b.label.toLowerCase().includes(q) && !formatBind(b).toLowerCase().includes(q)) continue;
-    anyVisible=true;
+    if(!b) return false;
+    if(!q) return true;
+    return b.label.toLowerCase().includes(q) || formatBind(b).toLowerCase().includes(q);
+  }
+
+  function buildRow(action){
+    const b=keybinds[action];
     const row=document.createElement('div');
-    row.className='modal-row';
+    row.className='modal-row keybinds-row';
+    row.style.cssText='margin-left:18px;';
     const label=document.createElement('label');
     label.style.width='150px';
     label.textContent=b.label;
@@ -160,8 +181,63 @@ function renderKeybindsList(){
     btn.onclick=()=>startRebind(action,btn);
     row.appendChild(label);
     row.appendChild(btn);
-    list.appendChild(row);
+    return row;
   }
+
+  function buildSection(name,actions){
+    const visibleActions=actions.filter(a=>keybinds[a] && matches(a));
+    if(!visibleActions.length) return false;
+
+    // Auto-expand a category while the user is actively searching, so
+    // matches aren't hidden behind a collapsed section.
+    const forceOpen=!!q;
+    const collapsed=!forceOpen && !!_collapsedCats[name];
+
+    const header=document.createElement('div');
+    header.className='keybinds-cat-header';
+    header.style.cssText=
+      'display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;'+
+      'font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;'+
+      'letter-spacing:0.03em;margin:'+(list.children.length?'12px':'0')+' 0 4px;'+
+      'padding:5px 8px;border-radius:5px;background:rgba(128,128,128,0.10);';
+
+    const arrow=document.createElement('span');
+    arrow.textContent=collapsed?'▶':'▼';
+    arrow.style.cssText='font-size:9px;width:10px;display:inline-block;color:var(--text2);';
+    const title=document.createElement('span');
+    title.textContent=name;
+    const count=document.createElement('span');
+    count.textContent=visibleActions.length;
+    count.style.cssText='margin-left:auto;font-size:10px;color:var(--text2);opacity:0.7;';
+
+    header.appendChild(arrow);
+    header.appendChild(title);
+    header.appendChild(count);
+    header.onclick=()=>{
+      _collapsedCats[name]=!collapsed;
+      renderKeybindsList();
+    };
+    list.appendChild(header);
+
+    if(!collapsed){
+      visibleActions.forEach(a=>list.appendChild(buildRow(a)));
+    }
+    return true;
+  }
+
+  let anyVisible=false;
+  const seen=new Set();
+
+  KEYBIND_CATEGORIES.forEach(cat=>{
+    cat.actions.forEach(a=>{ if(keybinds[a]) seen.add(a); });
+    if(buildSection(cat.name,cat.actions)) anyVisible=true;
+  });
+
+  // Any action not assigned to a category (e.g. added later and forgotten
+  // above) still shows up, under a catch-all, so nothing is ever hidden.
+  const leftover=Object.keys(keybinds).filter(a=>!seen.has(a));
+  if(leftover.length && buildSection('Other',leftover)) anyVisible=true;
+
   if(!anyVisible){
     const empty=document.createElement('div');
     empty.style.cssText='padding:14px 0;text-align:center;font-size:12px;color:var(--text2);';

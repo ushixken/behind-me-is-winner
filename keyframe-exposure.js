@@ -230,6 +230,21 @@
   btnIncrease.onclick = () => applyExposure(true);
   btnDecrease.onclick = () => applyExposure(false);
 
+  // Keyboard shortcuts (Settings ▸ Keybinds — default '1' / '2'). Same
+  // "don't steal keys from text inputs" guard used elsewhere (e.g.
+  // brush-size-drag.js), and respects the Decrease button being disabled
+  // in Bypass mode so the shortcut doesn't do something the UI hides.
+  document.addEventListener('keydown', e => {
+    if (e.repeat) return;
+    if (e.target && (e.target.tagName==='INPUT' || e.target.tagName==='TEXTAREA' || e.target.isContentEditable)) return;
+    if (typeof matchBind !== 'function') return;
+    if (matchBind(e, 'increaseExposure')) { e.preventDefault(); applyExposure(true); }
+    else if (matchBind(e, 'decreaseExposure')) {
+      if (btnDecrease.disabled) return;
+      e.preventDefault(); applyExposure(false);
+    }
+  });
+
   spinAmount.onchange = () => {
     const v = Math.max(1, Math.min(999, parseInt(spinAmount.value) || 2));
     spinAmount.value = v;
