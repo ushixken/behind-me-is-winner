@@ -1787,11 +1787,6 @@ function applyToolPreset(json){
     // extra ring just stays there forever even as AA keeps toggling fine.
     btn.blur();
   };
-  // Keyboard shortcut: A
-  document.addEventListener('keydown',e=>{
-    if(e.target.tagName==='INPUT') return;
-    if(e.key==='a'||e.key==='A'){window._setBrushAA(!brushAA);}
-  });
   updateAABtn();
 })();
 document.getElementById('onion-chk').onchange=updateOnion;

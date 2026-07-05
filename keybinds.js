@@ -27,7 +27,7 @@ const KEYBIND_DEFAULTS={
   rotateReset: {label:'Reset Rotation',     key:'0',          ctrl:true,  shift:true,  alt:false},
   flipHorizontal: {label:'Flip Horizontal', key:'h',          ctrl:false, shift:false, alt:false},
   flipVertical:   {label:'Flip Vertical',   key:'v',          ctrl:false, shift:false, alt:false},
-  brushResize: {label:'Resize Brush (hold + drag)', key:'s',  ctrl:false, shift:false, alt:false},
+  brushResize:    {label:'Resize Brush (hold + drag)', key:'s', ctrl:false, shift:false, alt:false},
 };
 
 let keybinds={};
@@ -106,9 +106,14 @@ function findBindConflict(action,combo){
 function renderKeybindsList(){
   const list=document.getElementById('keybinds-list');
   if(!list) return;
+  const searchEl=document.getElementById('keybinds-search');
+  const q=(searchEl?searchEl.value:'').trim().toLowerCase();
   list.innerHTML='';
+  let anyVisible=false;
   for(const action in keybinds){
     const b=keybinds[action];
+    if(q && !b.label.toLowerCase().includes(q) && !formatBind(b).toLowerCase().includes(q)) continue;
+    anyVisible=true;
     const row=document.createElement('div');
     row.className='modal-row';
     const label=document.createElement('label');
@@ -123,6 +128,12 @@ function renderKeybindsList(){
     row.appendChild(label);
     row.appendChild(btn);
     list.appendChild(row);
+  }
+  if(!anyVisible){
+    const empty=document.createElement('div');
+    empty.style.cssText='padding:14px 0;text-align:center;font-size:12px;color:var(--text2);';
+    empty.textContent='No keybinds match "'+q+'"';
+    list.appendChild(empty);
   }
 }
 
@@ -197,25 +208,47 @@ function syncKeybindMenuLabels(){
 }
 syncKeybindMenuLabels();
 
-document.getElementById('dd-keybind-settings').onclick=()=>{
+const _keybindSearchInput=document.getElementById('keybinds-search');
+if(_keybindSearchInput){
+  _keybindSearchInput.addEventListener('input',()=>{
+    renderKeybindsList();
+  });
+  // Prevent the search box keystrokes from being swallowed by the global
+  // key handler or triggering a rebind that's in progress.
+  _keybindSearchInput.addEventListener('keydown',e=>{
+    e.stopPropagation();
+    if(e.key==='Escape'){
+      _keybindSearchInput.value='';
+      renderKeybindsList();
+    }
+  });
+}
+
+function _openKeybindsModal(){
+  if(_keybindSearchInput) _keybindSearchInput.value='';
   renderKeybindsList();
   document.getElementById('modal-keybinds').classList.add('visible');
+  if(_keybindSearchInput) setTimeout(()=>_keybindSearchInput.focus(),50);
+}
+function _closeKeybindsModal(){
+  cancelRebind();
+  if(_keybindSearchInput) _keybindSearchInput.value='';
+  document.getElementById('modal-keybinds').classList.remove('visible');
+}
+
+document.getElementById('dd-keybind-settings').onclick=()=>{
+  _openKeybindsModal();
   closeAllDropdowns();
 };
-document.getElementById('modal-keybinds-close').onclick=()=>{
-  cancelRebind();
-  document.getElementById('modal-keybinds').classList.remove('visible');
-};
+document.getElementById('modal-keybinds-close').onclick=_closeKeybindsModal;
 document.getElementById('modal-keybinds').addEventListener('click',e=>{
-  if(e.target===document.getElementById('modal-keybinds')){
-    cancelRebind();
-    document.getElementById('modal-keybinds').classList.remove('visible');
-  }
+  if(e.target===document.getElementById('modal-keybinds')) _closeKeybindsModal();
 });
 document.getElementById('modal-keybinds-reset').onclick=()=>{
   if(!confirm('Reset all keybinds to their defaults?')) return;
   keybinds=JSON.parse(JSON.stringify(KEYBIND_DEFAULTS));
   saveKeybinds();
+  const q=_keybindSearchInput?_keybindSearchInput.value:'';
   renderKeybindsList();
   syncKeybindMenuLabels();
 };
