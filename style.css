@@ -869,6 +869,23 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 }
 .ts-ps-panel > .ts-section-body{padding:8px 10px;gap:6px;}
 
+/* Checkbox-gated panels: when the sidebar checkbox is unchecked, gray out
+   and fully disable that panel's content (including <select> dropdowns).
+   When checked, the panel is fully interactive. Driven purely by checkbox
+   state so it can't get out of sync with any toggle logic. */
+#tool-settings-body:has(#ts-ps-check-tip-image:not(:checked)) .ts-ps-panel[data-panel="tip-image"] > .ts-section-body,
+#tool-settings-body:has(#ts-ps-check-dynamics:not(:checked)) .ts-ps-panel[data-panel="dynamics"] > .ts-section-body,
+#tool-settings-body:has(#ts-ps-check-texture:not(:checked)) .ts-ps-panel[data-panel="texture"] > .ts-section-body,
+#tool-settings-body:has(#ts-ps-check-pressure:not(:checked)) .ts-ps-panel[data-panel="pressure"] > .ts-section-body{
+  opacity:0.38;pointer-events:none;user-select:none;
+}
+#tool-settings-body:has(#ts-ps-check-tip-image:not(:checked)) .ts-ps-panel[data-panel="tip-image"] > .ts-section-body *,
+#tool-settings-body:has(#ts-ps-check-dynamics:not(:checked)) .ts-ps-panel[data-panel="dynamics"] > .ts-section-body *,
+#tool-settings-body:has(#ts-ps-check-texture:not(:checked)) .ts-ps-panel[data-panel="texture"] > .ts-section-body *,
+#tool-settings-body:has(#ts-ps-check-pressure:not(:checked)) .ts-ps-panel[data-panel="pressure"] > .ts-section-body *{
+  cursor:not-allowed!important;
+}
+
 /* SIMPLE MODE: single-column, sidebar hidden, basic panel scrolls */
 #tool-settings-body.ts-mode-simple{flex-direction:column;}
 #tool-settings-body.ts-mode-simple .ts-ps-sidebar{display:none;}
@@ -877,6 +894,39 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 #tool-settings-body.ts-mode-simple .ts-ps-panel[data-panel="basic"]{display:flex;}
 #tool-settings-body.ts-mode-simple .ts-ps-panel:not([data-panel="basic"]){display:none!important;}
 #tool-settings-body.ts-mode-simple .ts-advanced-only{display:none!important;}
+
+/* Per-setting "eye" visibility toggle (Advanced tab only) — lets any
+   Basic-panel setting be shown/hidden in the Simple tab individually,
+   like a layer visibility toggle. The eye button itself is already
+   .ts-advanced-only so it only ever appears in Advanced mode. */
+.ts-eye-btn{
+  background:none;border:none;cursor:pointer;font-size:11px;line-height:1;
+  padding:2px;color:var(--text2);flex-shrink:0;position:relative;
+}
+.ts-eye-btn:hover{color:var(--text);}
+.ts-eye-btn.ts-eye-off{opacity:0.4;}
+.ts-eye-btn.ts-eye-off::after{
+  content:'';position:absolute;left:1px;right:1px;top:50%;height:1px;
+  background:currentColor;transform:rotate(-45deg);
+}
+/* In Simple mode, a field marked hidden by its eye toggle disappears
+   entirely (row + its divider), regardless of which setting it is. */
+#tool-settings-body.ts-mode-simple .ts-field.ts-simple-hidden{display:none!important;}
+
+/* SIMPLE MODE: shrink the modal to fit its content like the old design,
+   instead of keeping the fixed 480x480 box used for Advanced mode. */
+#tool-settings-modal:has(#tool-settings-body.ts-mode-simple){
+  width:380px!important;height:auto!important;min-width:380px;max-height:calc(100vh - 32px);
+}
+#tool-settings-modal:has(#tool-settings-body.ts-mode-simple) #tool-settings-modal-body{
+  overflow-y:auto;overflow-x:hidden;
+}
+#tool-settings-modal:has(#tool-settings-body.ts-mode-simple) .ts-ps-panels{
+  overflow:visible;
+}
+#tool-settings-modal:has(#tool-settings-body.ts-mode-simple) .ts-ps-panel.active{
+  overflow:visible;
+}
 
 /* ── BRUSH PRESETS PHOTOSHOP STYLE ────────────────────────── */
 /* Brush size control bar at the top of brush panel */

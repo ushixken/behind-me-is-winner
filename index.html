@@ -557,7 +557,7 @@
 
 <!-- ── TOOL SETTINGS MODAL ────────────────────────────────── -->
   <div class="modal-overlay" id="tool-settings-modal-overlay">
-    <div class="modal" id="tool-settings-modal" style="width:480px;height:480px;display:flex;flex-direction:column;overflow:hidden;">
+    <div class="modal" id="tool-settings-modal" style="width:480px;height:480px;display:flex;flex-direction:column;overflow:hidden;max-height:calc(100vh - 32px);">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
         <h2 style="margin-bottom:0;flex:1;">⚙ Tool Settings</h2>
         <div class="ts-mode-toggle" id="ts-mode-toggle">
@@ -604,35 +604,50 @@
                   <span class="ts-val size-val-edit" id="ts-size-val" title="Tap to type an exact size" tabindex="0">6</span>
                   <button class="size-unit-btn" id="ts-size-unit" type="button" title="Switch between pixels and millimeters">px</button>
                 </div>
-                <div class="ts-divider" style="margin:6px 0;"></div>
-                <div class="ts-row">
-                  <span class="ts-label">Opacity</span>
-                  <input type="range" class="ts-range" id="ts-opacity" min="1" max="100" value="100"/>
-                  <span class="ts-val" id="ts-opacity-val">100</span>
+                <div class="ts-field" data-eye="opacity">
+                  <div class="ts-divider" style="margin:6px 0;"></div>
+                  <div class="ts-row">
+                    <button type="button" class="ts-eye-btn ts-advanced-only" data-eye-btn="opacity" title="Show/hide in Simple tab">👁</button>
+                    <span class="ts-label">Opacity</span>
+                    <input type="range" class="ts-range" id="ts-opacity" min="1" max="100" value="100"/>
+                    <span class="ts-val" id="ts-opacity-val">100</span>
+                  </div>
                 </div>
-                <div class="ts-divider" style="margin:6px 0;"></div>
-                <div class="ts-row">
-                  <span class="ts-label">Flow</span>
-                  <input type="range" class="ts-range" id="ts-flow" min="1" max="100" value="100"/>
-                  <span class="ts-val" id="ts-flow-val">100</span>
+                <div class="ts-field" data-eye="flow">
+                  <div class="ts-divider" style="margin:6px 0;"></div>
+                  <div class="ts-row">
+                    <button type="button" class="ts-eye-btn ts-advanced-only" data-eye-btn="flow" title="Show/hide in Simple tab">👁</button>
+                    <span class="ts-label">Flow</span>
+                    <input type="range" class="ts-range" id="ts-flow" min="1" max="100" value="100"/>
+                    <span class="ts-val" id="ts-flow-val">100</span>
+                  </div>
                 </div>
-                <div class="ts-divider" style="margin:6px 0;"></div>
-                <div class="ts-row" title="How much paint each stamp/stroke lays down. Lower density builds up lighter, more transparent paint; higher density lays down more solid paint per pass — like Flow/Density controls in Photoshop or Clip Studio.">
-                  <span class="ts-label">Density</span>
-                  <input type="range" class="ts-range" id="ts-density" min="0" max="100" value="100"/>
-                  <span class="ts-val" id="ts-density-val">100</span>
+                <div class="ts-field" data-eye="density">
+                  <div class="ts-divider" style="margin:6px 0;"></div>
+                  <div class="ts-row" title="How much paint each stamp/stroke lays down. Lower density builds up lighter, more transparent paint; higher density lays down more solid paint per pass — like Flow/Density controls in Photoshop or Clip Studio.">
+                    <button type="button" class="ts-eye-btn ts-advanced-only" data-eye-btn="density" title="Show/hide in Simple tab">👁</button>
+                    <span class="ts-label">Density</span>
+                    <input type="range" class="ts-range" id="ts-density" min="0" max="100" value="100"/>
+                    <span class="ts-val" id="ts-density-val">100</span>
+                  </div>
                 </div>
-                <div class="ts-divider" style="margin:6px 0;"></div>
-                <div class="ts-row">
-                  <span class="ts-label">Hardness</span>
-                  <input type="range" class="ts-range" id="ts-hardness" min="0" max="100" value="55"/>
-                  <span class="ts-val" id="ts-hardness-val">55</span>
+                <div class="ts-field" data-eye="hardness">
+                  <div class="ts-divider" style="margin:6px 0;"></div>
+                  <div class="ts-row">
+                    <button type="button" class="ts-eye-btn ts-advanced-only" data-eye-btn="hardness" title="Show/hide in Simple tab">👁</button>
+                    <span class="ts-label">Hardness</span>
+                    <input type="range" class="ts-range" id="ts-hardness" min="0" max="100" value="55"/>
+                    <span class="ts-val" id="ts-hardness-val">55</span>
+                  </div>
                 </div>
-                <div class="ts-divider" style="margin:6px 0;"></div>
-                <div class="ts-row">
-                  <label class="ts-label-sm" style="flex:1;display:flex;align-items:center;gap:5px;cursor:pointer;">
-                    <input type="checkbox" class="ts-check" id="ts-aa" checked/> Anti-alias (AA)
-                  </label>
+                <div class="ts-field" data-eye="aa">
+                  <div class="ts-divider" style="margin:6px 0;"></div>
+                  <div class="ts-row">
+                    <button type="button" class="ts-eye-btn ts-advanced-only" data-eye-btn="aa" title="Show/hide in Simple tab">👁</button>
+                    <label class="ts-label-sm" style="flex:1;display:flex;align-items:center;gap:5px;cursor:pointer;">
+                      <input type="checkbox" class="ts-check" id="ts-aa" checked/> Anti-alias (AA)
+                    </label>
+                  </div>
                 </div>
               </div>
             </div>
@@ -690,8 +705,8 @@
                 <div class="ts-row">
                   <span class="ts-label">Control</span>
                   <select class="ts-select" id="ts-opacity-control">
-                    <option value="off">Off</option>
-                    <option value="pressure" selected>Pen Pressure</option>
+                    <option value="off" selected>Off</option>
+                    <option value="pressure">Pen Pressure</option>
                   </select>
                 </div>
               </div>

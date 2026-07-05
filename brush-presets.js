@@ -109,6 +109,7 @@
       item.addEventListener('click', e=>{
         // Don't switch panels when the checkbox itself is clicked
         if(e.target.classList.contains('ts-ps-nav-check')) return;
+        if(e.target.closest && e.target.closest('.ts-eye-btn')) return;
         const panelId=item.dataset.panel;
         if(panelId) activatePanel(panelId);
       });
@@ -122,6 +123,228 @@
     // Re-activate correct panel when switching to advanced mode
     // (the setTsMode function below calls applyTsMode which we hook here)
     window._tsPsActivateDefault=()=>activatePanel(lastPanel);
+  })();
+
+  // ── Checkbox-gated panels (Tip Image / Dynamics / Texture / Pressure) ──
+  // Unchecked should mean the panel is truly off, not just grayed out —
+  // any "Control" dropdown inside (e.g. Size/Opacity pressure control in
+  // Dynamics) is forced to its "Off" option so nothing keeps applying
+  // behind the gray-out, and the prior selection is restored when the box
+  // is checked again (same snapshot/restore idea as the AA off/on toggle
+  // above for hardness/opacity control).
+  (function initPsCheckGating(){
+    const GATED=['tip-image','dynamics','texture','pressure'];
+    const _preGate={}; // panelId -> {selectId: previousValue}
+
+    function panelFor(id){ return document.querySelector('.ts-ps-panel[data-panel="'+id+'"]'); }
+
+    function setGateState(id,on){
+      const panel=panelFor(id);
+      if(!panel) return;
+      panel.classList.toggle('ts-ps-panel--disabled',!on);
+      // Only selects that actually have an "Off" option are pressure/
+      // dynamics-style controls — force those to Off while gated off.
+      const selects=panel.querySelectorAll('select.ts-select');
+      if(!on){
+        const snap={};
+        selects.forEach(sel=>{
+          if(!sel.querySelector('option[value="off"]')) return;
+          snap[sel.id]=sel.value;
+          sel.value='off';
+        });
+        _preGate[id]=snap;
+      } else if(_preGate[id]){
+        selects.forEach(sel=>{
+          if(_preGate[id][sel.id]!==undefined) sel.value=_preGate[id][sel.id];
+        });
+        delete _preGate[id];
+      }
+    }
+
+    GATED.forEach(id=>{
+      const cb=document.getElementById('ts-ps-check-'+id);
+      if(!cb) return;
+      setGateState(id,cb.checked);
+      cb.addEventListener('change',()=>setGateState(id,cb.checked));
+    });
+  })();
+
+  // ── Per-setting Simple-tab visibility ("eye" toggles) ───────────────
+  // Each eyeable field in Advanced mode gets an eye button; clicking it
+  // shows/hides that individual setting in the Simple tab, like toggling
+  // a layer's visibility. Choice persists across sessions.
+  (function initSimpleVisibilityEyes(){
+    const EYE_KEY='tsSimpleFieldVisibility';
+    // What shows in Simple by default, before the user customizes anything.
+    const DEFAULTS={opacity:false,flow:true,density:false,hardness:true,aa:true,'dyn-size':true,'dyn-opacity':true};
+    let vis={};
+    try{ vis=JSON.parse(localStorage.getItem(EYE_KEY)||'{}'); }catch(e){ vis={}; }
+
+    function isVisible(key){
+      return vis[key]!==undefined ? vis[key] : (DEFAULTS[key]!==undefined?DEFAULTS[key]:true);
+    }
+    function applyField(key){
+      const field=document.querySelector('.ts-field[data-eye="'+key+'"]');
+      const btn=document.querySelector('.ts-eye-btn[data-eye-btn="'+key+'"]');
+      const on=isVisible(key);
+      if(field) field.classList.toggle('ts-simple-hidden',!on);
+      if(btn){
+        btn.classList.toggle('ts-eye-off',!on);
+        btn.title=on?'Visible in Simple tab — click to hide':'Hidden in Simple tab — click to show';
+      }
+    }
+    // Apply initial state to whatever eye buttons/fields exist right now.
+    document.querySelectorAll('.ts-eye-btn[data-eye-btn]').forEach(btn=>{
+      applyField(btn.dataset.eyeBtn);
+    });
+
+    // Delegated click handler — works even if this script runs before the
+    // modal's markup is fully parsed, and needs no per-button listeners.
+    document.addEventListener('click',e=>{
+      const btn=e.target.closest && e.target.closest('.ts-eye-btn[data-eye-btn]');
+      if(!btn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const key=btn.dataset.eyeBtn;
+      vis[key]=!isVisible(key);
+      try{ localStorage.setItem(EYE_KEY,JSON.stringify(vis)); }catch(err){}
+      applyField(key);
+    });
+  })();
+
+  // ── Whole-section Simple-tab visibility + drag-to-reorder ──────────────
+  // Eye button (inside the section heading in Advanced mode) toggles whether
+  // that section appears in Simple tab. Drag handle reorders sections in
+  // Simple tab — same pointer-event pattern as the timeline label drag.
+  (function initSimpleSectionEyes(){
+    const SECTION_EYE_KEY='tsSimpleSectionVisibility';
+    const SECTION_ORDER_KEY='tsSimpleSectionOrder';
+    // Default order matches DOM order: tip-image, dynamics, texture, pressure
+    const ALL_SECTIONS=['tip-image','dynamics','texture','pressure'];
+
+    let vis={};
+    try{ vis=JSON.parse(localStorage.getItem(SECTION_EYE_KEY)||'{}'); }catch(e){ vis={}; }
+    let order=ALL_SECTIONS.slice();
+    try{
+      const saved=JSON.parse(localStorage.getItem(SECTION_ORDER_KEY)||'null');
+      if(Array.isArray(saved) && saved.length===ALL_SECTIONS.length) order=saved;
+    }catch(e){}
+
+    function isVisible(key){ return !!vis[key]; }
+
+    function applySection(key){
+      const panel=document.querySelector('.ts-ps-panel[data-panel="'+key+'"]');
+      const btn=document.querySelector('.ts-eye-btn[data-eye-section="'+key+'"]');
+      const on=isVisible(key);
+      if(panel) panel.classList.toggle('ts-simple-section-visible',on);
+      if(btn){
+        btn.classList.toggle('ts-eye-off',!on);
+        btn.title=on?'Shown in Simple tab — click to hide':'Hidden from Simple tab — click to show';
+      }
+    }
+
+    // Apply saved DOM order — move panels inside ts-ps-panels to match
+    function applyOrder(){
+      const container=document.querySelector('.ts-ps-panels');
+      if(!container) return;
+      // basic panel stays first, then reorder the section panels
+      const basicPanel=container.querySelector('.ts-ps-panel[data-panel="basic"]');
+      const importPanel=container.querySelector('.ts-ps-panel[data-panel="import"]');
+      // Remove and re-insert in saved order
+      order.forEach(key=>{
+        const panel=container.querySelector('.ts-ps-panel[data-panel="'+key+'"]');
+        if(panel) container.appendChild(panel);
+      });
+      // import always last
+      if(importPanel) container.appendChild(importPanel);
+    }
+
+    function saveOrder(){
+      try{ localStorage.setItem(SECTION_ORDER_KEY,JSON.stringify(order)); }catch(e){}
+    }
+
+    // Init: apply all sections
+    applyOrder();
+    ALL_SECTIONS.forEach(applySection);
+
+    // Eye toggle click
+    document.addEventListener('click',e=>{
+      const btn=e.target.closest && e.target.closest('.ts-eye-btn[data-eye-section]');
+      if(!btn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const key=btn.dataset.eyeSection;
+      vis[key]=!isVisible(key);
+      try{ localStorage.setItem(SECTION_EYE_KEY,JSON.stringify(vis)); }catch(err){}
+      applySection(key);
+    });
+
+    // ── Drag-to-reorder (pointer events, same pattern as timeline label drag)
+    let dragKey=null, dragEl=null;
+
+    document.addEventListener('pointerdown',e=>{
+      const handle=e.target.closest && e.target.closest('.ts-section-draghandle');
+      if(!handle) return;
+      const panel=handle.closest('.ts-ps-panel[data-panel]');
+      if(!panel) return;
+      dragKey=panel.dataset.panel;
+      dragEl=panel;
+      e.preventDefault();
+      e.stopPropagation();
+      dragEl.classList.add('ts-section-dragging');
+      document.addEventListener('pointermove',onSectionDragMove);
+      document.addEventListener('pointerup',onSectionDragUp);
+    });
+
+    function onSectionDragMove(e){
+      if(!dragKey) return;
+      // Find which panel the pointer is over
+      const panels=Array.from(document.querySelectorAll('.ts-ps-panels .ts-ps-panel[data-panel]'))
+        .filter(p=>p.dataset.panel!=='basic'&&p.dataset.panel!=='import'&&p!==dragEl);
+      // Clear all indicators
+      panels.forEach(p=>{p.classList.remove('ts-section-drop-above','ts-section-drop-below');});
+      let target=null,above=true;
+      for(const p of panels){
+        const r=p.getBoundingClientRect();
+        if(e.clientY>=r.top&&e.clientY<=r.bottom){
+          target=p;
+          above=e.clientY<r.top+r.height/2;
+          break;
+        }
+      }
+      if(target){
+        target.classList.add(above?'ts-section-drop-above':'ts-section-drop-below');
+      }
+    }
+
+    function onSectionDragUp(e){
+      document.removeEventListener('pointermove',onSectionDragMove);
+      document.removeEventListener('pointerup',onSectionDragUp);
+      if(!dragEl){ dragKey=null; return; }
+      dragEl.classList.remove('ts-section-dragging');
+      // Find drop target
+      const panels=Array.from(document.querySelectorAll('.ts-ps-panels .ts-ps-panel[data-panel]'))
+        .filter(p=>p.dataset.panel!=='basic'&&p.dataset.panel!=='import'&&p!==dragEl);
+      let targetKey=null, above=true;
+      panels.forEach(p=>{
+        if(p.classList.contains('ts-section-drop-above')){ targetKey=p.dataset.panel; above=true; }
+        if(p.classList.contains('ts-section-drop-below')){ targetKey=p.dataset.panel; above=false; }
+        p.classList.remove('ts-section-drop-above','ts-section-drop-below');
+      });
+      if(targetKey && targetKey!==dragKey){
+        // Reorder the `order` array
+        const fromIdx=order.indexOf(dragKey);
+        let toIdx=order.indexOf(targetKey);
+        if(fromIdx!==-1&&toIdx!==-1){
+          order.splice(fromIdx,1);
+          toIdx=order.indexOf(targetKey);
+          order.splice(above?toIdx:toIdx+1,0,dragKey);
+          saveOrder();
+          applyOrder();
+        }
+      }
+      dragKey=null; dragEl=null;
+    }
   })();
 
   // Pressure curve — drives the preview AND the actual brush pressure→size
