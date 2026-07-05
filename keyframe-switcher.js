@@ -115,4 +115,78 @@
   // same polling approach here — cheap, and immune to missing a hook.
   setInterval(refresh,400);
   refresh();
+
+  // ── Responsive compact mode — progressive row hiding, then scroll ────
+  //
+  // Both floating and docked use the same row-hiding sequence (height-driven).
+  // After all rows are hidden (kfsw-compact), behaviour differs:
+  //   FLOATING  — min-height is locked to compact height; can't shrink further.
+  //   DOCKED    — body becomes scrollable (like Layers panel); no min-height
+  //               enforced because the split handle controls height externally.
+  //
+  // Width never hides rows; only collapses the whole state block at ≤106px.
+  const kfswPanel = document.getElementById('keyframe-switcher-panel');
+  if(kfswPanel && typeof ResizeObserver !== 'undefined'){
+
+    function measuredContentHeight(){
+      const titlebar = kfswPanel.querySelector('.fp-titlebar');
+      const body     = kfswPanel.querySelector('.fp-body');
+      if(!body) return 0;
+      const tbH = titlebar ? titlebar.offsetHeight : 0;
+      const gap = 8;
+      let total = tbH + gap;
+      Array.from(body.children).forEach((c, i, arr) => {
+        if(getComputedStyle(c).display === 'none') return;
+        total += c.offsetHeight;
+        if(i < arr.length - 1) total += gap;
+      });
+      return total + gap;
+    }
+
+    function availableHeight(){
+      return kfswPanel.offsetHeight;
+    }
+
+    const HEIGHT_SEQ = [
+      'kfsw-hide-next',
+      'kfsw-hide-prev',
+      'kfsw-hide-keyframes',
+      'kfsw-hide-layer',
+      'kfsw-compact',
+    ];
+
+    const ro = new ResizeObserver(entries => {
+      for(const entry of entries){
+        const w = entry.contentRect.width;
+        const h = availableHeight();
+        const isDocked = kfswPanel.classList.contains('docked');
+
+        // Width axis: collapse whole state block at extreme narrow width only.
+        kfswPanel.classList.toggle('kfsw-compact', w < 106);
+
+        // Height axis: reset, then progressively hide rows until content fits.
+        HEIGHT_SEQ.forEach(cls => { if(cls !== 'kfsw-compact') kfswPanel.classList.remove(cls); });
+        if(!kfswPanel.classList.contains('kfsw-compact')){
+          for(const cls of HEIGHT_SEQ){
+            if(measuredContentHeight() <= h) break;
+            kfswPanel.classList.add(cls);
+          }
+        }
+
+        // Floating: lock min-height at compact floor so panel can't shrink further.
+        // Docked: clear min-height — split handle controls height, body scrolls.
+        if(!isDocked && kfswPanel.classList.contains('kfsw-compact')){
+          kfswPanel.style.minHeight = measuredContentHeight() + 'px';
+        } else {
+          kfswPanel.style.minHeight = '';
+        }
+      }
+    });
+    ro.observe(kfswPanel);
+  }
+
+  // Stop wheel events from bubbling to the canvas when scrolling the body
+  // (same pattern as the Layers and Brush Presets panels in layers.js).
+  const kfswBody = document.querySelector('#keyframe-switcher-panel .fp-body');
+  if(kfswBody) kfswBody.addEventListener('wheel', e => { e.stopPropagation(); }, {passive:true});
 })();

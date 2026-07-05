@@ -299,12 +299,27 @@ const FloatPanels=(function(){
   // clamp for docked cross-axis resize. `floatResizable`: whether the 4
   // floating edge-handles are attached at all (only Tools + Layers had
   // free-floating resize before; preserved as-is, not expanded).
+  // ── HOW TO ADD A NEW DOCKER ─────────────────────────────────────
+  // 1. HTML  (index.html): Add a <div class="float-panel" data-panel="YOUR-KEY"> block
+  //    following the same structure as the other panels (fp-tabbar, fp-titlebar,
+  //    fp-body-wrap > fp-body[data-body="YOUR-KEY"]).  The panel is auto-registered
+  //    by the querySelectorAll('.float-panel') loop in init() — no other wiring needed.
+  // 2. Config (here, PANEL_CFG): Add an entry keyed to YOUR-KEY with at minimum
+  //    minSize and maxSize (px width when docked left/right). Set floatResizable:true
+  //    to get the 4-edge floating resize handles.  Add a `get minHeight()` if the panel
+  //    has a responsive compact mode that locks its own min-height (see keyframe-switcher).
+  // 3. Default layout (DEFAULT_LAYOUT below): Optionally add YOUR-KEY so resetLayout()
+  //    restores a sensible default position (dock side + size, or float x/y/w/h).
+  // 4. Window menu (index.html #dd-show-YOUR-KEY + #chk-YOUR-KEY): Add a menu item
+  //    so the user can show/hide the panel via the Window menu.
+  // 5. Script: Load your panel's JS at the bottom of index.html (after panels.js).
+  // ───────────────────────────────────────────────────────────────
   const PANEL_CFG={
     tools:        {minSize:38,  maxSize:400, floatResizable:true,  contentFitHeight:true},
     'brush-presets':{minSize:150,maxSize:500, floatResizable:true},
     layers:       {minSize:120, maxSize:500, floatResizable:true},
     color:        {minSize:120, maxSize:500, floatResizable:false},
-    'keyframe-switcher':{minSize:120,maxSize:500,floatResizable:true},
+    'keyframe-switcher':{minSize:106,maxSize:500,floatResizable:true,get minHeight(){const p=document.getElementById('keyframe-switcher-panel');return p&&parseFloat(p.style.minHeight)||120;}},
   };
   function cfgOf(key){ return PANEL_CFG[key]||{minSize:120,maxSize:500}; }
 
@@ -834,23 +849,28 @@ const FloatPanels=(function(){
   // Writes ONLY to dockSize[key] — never reads offsetWidth/Height back
   // to decide the next frame's size, so repeated drags can't drift.
   function bindDockResize(panel,rh){
-    let resizing=false,startPx=0,startSize=0,side=null,key=null;
+    let resizing=false,startPx=0,startSize=0,side=null,hostKey=null;
     rh.addEventListener('pointerdown',e=>{
       e.preventDefault();e.stopPropagation();
-      key=panel.dataset.panel;
-      side=['left','right','top','bottom'].find(s=>dockOrder[s].includes(key));
+      const ownKey=panel.dataset.panel;
+      // Split children are not in dockOrder — resolve to the stack host so
+      // dragging the child's inner edge resizes the shared column width,
+      // same as dragging the host's edge. Without this, split children would
+      // never find a side and silently bail on every pointerdown.
+      hostKey=_splitHostOf(ownKey)||ownKey;
+      side=['left','right','top','bottom'].find(s=>dockOrder[s].includes(hostKey));
       if(!side) return;
       resizing=true;rh.setPointerCapture(e.pointerId);rh.classList.add('dragging');
       startPx=(side==='left'||side==='right')?e.clientX:e.clientY;
-      startSize=dockSize[key];
+      startSize=dockSize[hostKey];
     });
     rh.addEventListener('pointermove',e=>{
       if(!resizing) return;
       const cur=(side==='left'||side==='right')?e.clientX:e.clientY;
       let delta=cur-startPx;
       if(side==='right'||side==='bottom') delta=-delta;
-      const cfg=cfgOf(key);
-      dockSize[key]=Math.max(cfg.minSize,Math.min(cfg.maxSize,startSize+delta));
+      const cfg=cfgOf(hostKey);
+      dockSize[hostKey]=Math.max(cfg.minSize,Math.min(cfg.maxSize,startSize+delta));
       renderSide(side);
       if(typeof centerCanvas==='function') centerCanvas();
     });
@@ -888,12 +908,16 @@ const FloatPanels=(function(){
       el.className='fp-float-resize fp-float-resize-'+side;
       el.style.cssText='position:absolute;'+EDGE_CSS[side]+'z-index:10;touch-action:none;';
       panel.appendChild(el);
+      const cursorMap={right:'col-resize',left:'col-resize',bottom:'row-resize',top:'row-resize'};
       let active=false,sx=0,sy=0,startRect=null;
       el.addEventListener('pointerdown',e=>{
         if(panelMode[key]!=='floating') return;
         e.preventDefault();e.stopPropagation();
         active=true;el.setPointerCapture(e.pointerId);
         el.classList.add('dragging');
+        // Lock the cursor on <body> so it stays visible even when the pointer
+        // drifts outside the narrow resize handle strip during fast drags.
+        document.body.style.cursor=cursorMap[side]||'default';
         sx=e.clientX;sy=e.clientY;
         const r=floatRect[key]||{x:panel.offsetLeft,y:panel.offsetTop};
         startRect={x:r.x,y:r.y,w:panel.offsetWidth,h:panel.offsetHeight};
@@ -902,7 +926,7 @@ const FloatPanels=(function(){
         if(!active) return;
         const dx=e.clientX-sx, dy=e.clientY-sy;
         const r=Object.assign({},floatRect[key]||{},startRect);
-        const minH=cfg.contentFitHeight?_toolsMinHeight():120;
+        const minH=cfg.contentFitHeight?_toolsMinHeight():(cfg.minHeight||120);
         if(side==='right'){ r.w=Math.max(cfg.minSize,Math.min(cfg.maxSize,startRect.w+dx)); }
         else if(side==='left'){ r.w=Math.max(cfg.minSize,Math.min(cfg.maxSize,startRect.w-dx)); r.x=startRect.x+(startRect.w-r.w); }
         else if(side==='bottom'){ r.h=Math.max(minH,Math.min(700,startRect.h+dy)); }
@@ -915,7 +939,7 @@ const FloatPanels=(function(){
         if(r.h!=null) panel.style.height=r.h+'px';
         if(typeof centerCanvas==='function') centerCanvas();
       });
-      function end(){ if(!active) return; active=false; el.classList.remove('dragging'); _saveLayout(); }
+      function end(){ if(!active) return; active=false; el.classList.remove('dragging'); document.body.style.cursor=''; _saveLayout(); }
       el.addEventListener('pointerup',end);
       el.addEventListener('pointercancel',end);
     });
@@ -935,8 +959,11 @@ const FloatPanels=(function(){
     const rh=panel._dockResizeEl;
     if(!rh) return;
     const key=panel.dataset.panel;
-    // Hide dock resize handle for split children (they use the split handle instead)
-    const isDocked=panelMode[key]==='docked'&&!hiddenState[key]&&!_isSplitChild(key);
+    // Show dock resize handle for both host panels AND split children — the
+    // child's handle now resolves to the host's dockSize at drag time (see
+    // bindDockResize), so dragging the child's inner edge resizes the whole
+    // shared column, exactly like dragging the host's edge does.
+    const isDocked=panelMode[key]==='docked'&&!hiddenState[key];
     rh.style.display=isDocked?'block':'none';
   }
 
@@ -952,7 +979,10 @@ const FloatPanels=(function(){
       rh.className='fp-split-resize';
       document.body.appendChild(rh);
       childPanel._splitResizeEl=rh;
-      _bindSplitResizeDrag(rh,hostKey,childKey);
+      // Bind once; hostKey is NOT passed — the drag handler resolves it
+      // dynamically via splitHost[childKey] so re-stacking under a new host
+      // never leaves a stale closure pointing at the wrong dock side.
+      _bindSplitResizeDrag(rh,childKey);
     }
     // Position: horizontal bar at the top edge of the child panel
     const car=canvasArea.getBoundingClientRect();
@@ -975,7 +1005,12 @@ const FloatPanels=(function(){
     if(cp&&cp._splitResizeEl) cp._splitResizeEl.style.display='none';
   }
 
-  function _bindSplitResizeDrag(rh,hostKey,childKey){
+  // hostKey is NOT a parameter — it is resolved at drag time via splitHost[childKey].
+  // A stale closure-captured hostKey (from when the handle was first created) would
+  // look up the wrong dock side after a panel is re-stacked under a different host,
+  // making the seam handle silently do nothing on drag. Dynamic lookup fixes this for
+  // all panels, including the keyframe-switcher which gets re-stacked most often.
+  function _bindSplitResizeDrag(rh,childKey){
     let active=false,startY=0,startSize=0;
     rh.addEventListener('pointerdown',e=>{
       e.preventDefault();e.stopPropagation();
@@ -986,7 +1021,10 @@ const FloatPanels=(function(){
       if(!active) return;
       const dy=startY-e.clientY; // drag up = more space for child
       splitSize[childKey]=Math.max(60,Math.min(window.innerHeight-100,startSize+dy));
-      renderSide(['left','right','top','bottom'].find(s=>dockOrder[s].includes(hostKey))||'left');
+      // Resolve the current host dynamically — never use a cached value.
+      const currentHost=splitHost[childKey];
+      if(!currentHost) return;
+      renderSide(['left','right','top','bottom'].find(s=>dockOrder[s].includes(currentHost))||'left');
       // Reposition this handle live (renderSide already calls _syncSplitResizeHandle)
     });
     function end(){ if(!active) return; active=false; _saveLayout(); }
@@ -1071,11 +1109,17 @@ const FloatPanels=(function(){
       for(const other of allPanels){
         if(other===panel||other.classList.contains('fp-hidden')) continue;
         const ok=other.dataset.panel;
-        const otherSide=['left','right'].find(s=>dockOrder[s].includes(ok));
-        if(!otherSide||_isSplitChild(ok)) continue;
+        // If `other` is a split child, resolve to its host so the dragged
+        // panel joins the existing stack (stacking onto a child used to be
+        // silently ignored because _isSplitChild panels were skipped here).
+        const resolvedKey=_isSplitChild(ok)?(splitHost[ok]||ok):ok;
+        const otherSide=['left','right'].find(s=>dockOrder[s].includes(resolvedKey));
+        if(!otherSide) continue;
         const orc=other.getBoundingClientRect();
         if(e.clientX>=orc.left&&e.clientX<=orc.right&&e.clientY>=orc.top&&e.clientY<=orc.bottom){
-          _earlyStackTarget=other;
+          // Use the resolved host panel as the stack target so the drop
+          // lands on the correct host regardless of which stack member was hovered.
+          _earlyStackTarget=panelByKey(resolvedKey)||other;
           _earlyStackPos=(e.clientY>=orc.top+orc.height*0.5)?'after':'before';
           break;
         }
