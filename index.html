@@ -97,8 +97,7 @@
       <div class="dd-sep"></div>
       <div class="dd-item danger" id="dd-clear">🗑 Clear Frame<span class="dd-shortcut" id="dd-clear-shortcut">Delete</span></div>
       <div class="dd-sep"></div>
-      <div class="dd-item" id="dd-preferences">⚙ Preferences</div>
-      <div class="dd-item" id="dd-local-storage">💾 Local Storage</div>
+      <div class="dd-item" id="dd-preferences">Preferences</div>
     </div>
   </div>
 
@@ -847,13 +846,14 @@
 <!-- ── PREFERENCES MODAL ──────────────────────────────────── -->
 <div class="modal-overlay" id="modal-preferences">
   <div class="modal">
-    <h2>⚙ Preferences</h2>
+    <h2>Preferences</h2>
     <p style="font-size:11px;color:var(--text2);margin-bottom:14px;">App-wide settings, saved on this device.</p>
 
     <div id="pref-body">
       <div class="pref-ps-sidebar" id="pref-ps-sidebar">
         <div class="pref-ps-nav-item active" data-panel="renderer">Renderer</div>
         <div class="pref-ps-nav-item" data-panel="cursor">Cursor</div>
+        <div class="pref-ps-nav-item" data-panel="storage">Local Storage</div>
       </div>
 
       <div class="pref-ps-panels">
@@ -899,6 +899,18 @@
             </span>
           </label>
         </div>
+
+        <div class="pref-ps-panel" data-panel="storage">
+          <p style="font-size:11px;color:var(--text2);margin-bottom:4px;">These settings are saved on this device and loaded every time you open the app.</p>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+            <div style="font-size:12px;color:var(--text);"><b>Total:</b> <span id="ls-total-size">0 B</span></div>
+            <div style="display:flex;gap:8px;">
+              <button class="modal-btn danger" id="ls-delete-all" style="padding:5px 12px;">Delete All</button>
+              <button class="modal-btn" id="ls-get-zip" style="padding:5px 12px;">Get All as ZIP</button>
+            </div>
+          </div>
+          <div id="ls-list" style="max-height:260px;overflow-y:auto;border:1px solid var(--border2);border-radius:6px;"></div>
+        </div>
       </div>
     </div>
 
@@ -907,24 +919,6 @@
     </div>
   </div>
 </div>
-
-<!-- ── LOCAL STORAGE MODAL ────────────────────────────────── -->
-<div class="modal-overlay" id="modal-local-storage">
-  <div class="modal" style="min-width:420px;">
-    <h2>💾 Local Storage</h2>
-    <p style="font-size:11px;color:var(--text2);margin-bottom:14px;">These settings are saved on this device and loaded every time you open the app.</p>
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-      <div style="font-size:12px;color:var(--text);"><b>Total:</b> <span id="ls-total-size">0 B</span></div>
-      <div style="display:flex;gap:8px;">
-        <button class="modal-btn danger" id="ls-delete-all" style="padding:5px 12px;">Delete All</button>
-        <button class="modal-btn" id="ls-get-zip" style="padding:5px 12px;">Get All as ZIP</button>
-      </div>
-    </div>
-    <div id="ls-list" style="max-height:320px;overflow-y:auto;border:1px solid var(--border2);border-radius:6px;"></div>
-    <div class="modal-actions">
-      <button class="modal-btn primary" id="modal-local-storage-close">Close</button>
-    </div>
-  </div>
 </div>
 
 <!-- ── KEYBINDS MODAL ─────────────────────────────────────── -->

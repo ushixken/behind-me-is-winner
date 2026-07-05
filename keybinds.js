@@ -372,6 +372,7 @@ document.getElementById('modal-keybinds-reset').onclick=()=>{
   function activate(panelId){
     navItems.forEach(item=>item.classList.toggle('active',item.dataset.panel===panelId));
     panels.forEach(panel=>panel.classList.toggle('active',panel.dataset.panel===panelId));
+    if(panelId==='storage' && typeof window._renderLocalStorage==='function') window._renderLocalStorage();
   }
   navItems.forEach(item=>{
     item.addEventListener('click',()=>{
@@ -379,6 +380,9 @@ document.getElementById('modal-keybinds-reset').onclick=()=>{
       if(panelId) activate(panelId);
     });
   });
+  // Lets other modules (e.g. local-storage-panel.js's menu item) open
+  // Preferences directly to a specific tab instead of always "Renderer".
+  window._prefPsActivate=activate;
 })();
 
 document.getElementById('dd-preferences').onclick=()=>{
@@ -388,6 +392,12 @@ document.getElementById('dd-preferences').onclick=()=>{
   const cursorRadio=document.getElementById('pref-cursor-'+cursorStyle);
   (cursorRadio||document.getElementById('pref-cursor-crosshair')).checked=true;
   document.getElementById('modal-preferences').classList.add('visible');
+  // If Storage happens to still be the active tab from a prior open, make
+  // sure its list reflects anything saved/changed since then.
+  const storagePanel=document.querySelector('.pref-ps-panel[data-panel="storage"]');
+  if(storagePanel && storagePanel.classList.contains('active') && typeof window._renderLocalStorage==='function'){
+    window._renderLocalStorage();
+  }
   closeAllDropdowns();
 };
 function _setBrushRenderer(v){

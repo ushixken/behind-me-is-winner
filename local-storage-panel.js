@@ -127,17 +127,9 @@
     };
   }
 
-  document.getElementById('dd-local-storage').onclick=()=>{
-    render();
-    document.getElementById('modal-local-storage').classList.add('visible');
-    closeAllDropdowns();
-  };
-  document.getElementById('modal-local-storage-close').onclick=()=>{
-    document.getElementById('modal-local-storage').classList.remove('visible');
-  };
-  document.getElementById('modal-local-storage').addEventListener('click',e=>{
-    if(e.target===document.getElementById('modal-local-storage'))
-      document.getElementById('modal-local-storage').classList.remove('visible');
-  });
+  // Exposed so Preferences (keybinds.js) can refresh this list whenever
+  // the Local Storage tab is opened or becomes visible — this module no
+  // longer has its own menu entry or modal.
+  window._renderLocalStorage=render;
 
 })();
