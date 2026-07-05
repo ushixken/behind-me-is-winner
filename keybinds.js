@@ -28,6 +28,7 @@ const KEYBIND_DEFAULTS={
   flipHorizontal: {label:'Flip Horizontal', key:'h',          ctrl:false, shift:false, alt:false},
   flipVertical:   {label:'Flip Vertical',   key:'v',          ctrl:false, shift:false, alt:false},
   brushResize:    {label:'Resize Brush (hold + drag)', key:'s', ctrl:false, shift:false, alt:false},
+  flipperBypass:  {label:'Flipper: Enable Bypass (hold)', key:'Shift', ctrl:false, shift:false, alt:false},
 };
 
 let keybinds={};
@@ -67,9 +68,21 @@ function matchBind(e,action){
   const bk=_normKey(b.key.length===1?b.key.toLowerCase():b.key);
   const ek=_normKey(e.key.length===1?e.key.toLowerCase():e.key);
   if(ek!==bk) return false;
-  if(!!b.ctrl!==!!e.ctrlKey) return false;
-  if(!!b.shift!==!!e.shiftKey) return false;
-  if(!!b.alt!==!!e.altKey) return false;
+  // When the flipper bypass hold is active, its modifier key (e.g. Shift)
+  // should be transparent — don't let it break other keybinds that don't
+  // require that modifier. Strip it from the event's effective modifiers.
+  let ctrlHeld=!!e.ctrlKey, shiftHeld=!!e.shiftKey, altHeld=!!e.altKey;
+  if(action!=='flipperBypass' && window._flipperBypassHeld){
+    const bypassKey=(keybinds['flipperBypass']||{}).key||'';
+    // Only strip the bypass modifier if THIS bind doesn't itself require it —
+    // otherwise a bind like Shift+E would never see its required shift.
+    if(bypassKey==='Shift' && !b.shift) shiftHeld=false;
+    else if(bypassKey==='Control' && !b.ctrl) ctrlHeld=false;
+    else if(bypassKey==='Alt' && !b.alt) altHeld=false;
+  }
+  if(!!b.ctrl!==ctrlHeld) return false;
+  if(!!b.shift!==shiftHeld) return false;
+  if(!!b.alt!==altHeld) return false;
   return true;
 }
 

@@ -101,13 +101,55 @@
   };
   chkBypass.onchange=()=>{
     try{localStorage.setItem(STORE_KEY_BYPASS,chkBypass.checked?'1':'0');}catch(e){}
-    // Without this, focus (and its blue outline) stays on the checkbox after
-    // clicking it. The keydown guard in ui-controls.js now lets shortcuts
-    // through even while a checkbox is focused, but clearing focus here too
-    // avoids the leftover outline. Deferred a tick so it runs after the
-    // browser's own click-focus handling settles.
     setTimeout(()=>chkBypass.blur(),0);
   };
+
+  // ── Hold-key bypass (default: Shift) ──────────────────────────
+  // Holding the bound key force-enables bypass as a temporary mode.
+  // The key is also "transparent" — matchBind() in keybinds.js strips it
+  // from modifier checks so other keybinds (nextFrame, prevFrame, etc.)
+  // still fire normally while it's held.
+  let _bypassHoldActive=false;
+  let _bypassBeforeHold=false;
+  window._flipperBypassHeld=false;
+
+  function _matchFlipperBypass(e){
+    const b=keybinds['flipperBypass'];
+    if(!b) return false;
+    const k=b.key;
+    // Lone modifier keys arrive as e.key === 'Shift' etc.
+    if(k==='Shift'||k==='Control'||k==='Alt'){
+      return e.key===k && !!b.ctrl===!!e.ctrlKey && !!b.alt===!!e.altKey;
+    }
+    return matchBind(e,'flipperBypass');
+  }
+
+  document.addEventListener('keydown',e=>{
+    if(e.repeat) return;
+    if(e.target&&(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA'||e.target.isContentEditable)) return;
+    if(!_matchFlipperBypass(e)) return;
+    if(_bypassHoldActive) return;
+    _bypassHoldActive=true;
+    window._flipperBypassHeld=true;
+    _bypassBeforeHold=chkBypass.checked;
+    if(!chkBypass.checked){
+      chkBypass.checked=true;
+      chkBypass.dispatchEvent(new Event('change'));
+    }
+  });
+
+  function _releaseBypassHold(){
+    if(!_bypassHoldActive) return;
+    _bypassHoldActive=false;
+    window._flipperBypassHeld=false;
+    if(!_bypassBeforeHold&&chkBypass.checked){
+      chkBypass.checked=false;
+      chkBypass.dispatchEvent(new Event('change'));
+    }
+  }
+
+  document.addEventListener('keyup',e=>{ if(_matchFlipperBypass(e)) _releaseBypassHold(); });
+  window.addEventListener('blur',_releaseBypassHold);
 
   // Krita's docker polled with a 400ms QTimer (plus a handful of Krita
   // notifier signals) since there's no single choke point every frame/layer
@@ -161,8 +203,7 @@
         const h = availableHeight();
         const isDocked = kfswPanel.classList.contains('docked');
 
-        // Width axis only: kfsw-compact hides nav labels and "Enable".
-        // Never triggered by height so "Enable Bypass" is width-controlled only.
+        // Width axis: collapse whole state block at extreme narrow width only.
         kfswPanel.classList.toggle('kfsw-compact', w < 106);
 
         // Height axis: reset, then progressively hide rows until content fits.
@@ -174,8 +215,7 @@
           }
         }
 
-        // Floating: always lock min-height to the current content height so the
-        // panel never clips remaining content after all hide steps are applied.
+        // Floating: lock min-height at compact floor so panel can't shrink further.
         // Docked: clear min-height — split handle controls height, body scrolls.
         if(!isDocked){
           kfswPanel.style.minHeight = measuredContentHeight() + 'px';
