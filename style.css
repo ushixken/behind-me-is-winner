@@ -761,9 +761,16 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 #keyframe-switcher-panel.kfsw-hide-prev    #kfsw-row-prev{display:none;}
 #keyframe-switcher-panel.kfsw-hide-keyframes #kfsw-row-keyframes{display:none;}
 #keyframe-switcher-panel.kfsw-hide-layer   #kfsw-row-layer{display:none;}
-/* Compact: hide entire state block (only Frame row would remain) */
+/* Compact: hide entire state block; shrink nav buttons to arrows only; shorten bypass */
 #keyframe-switcher-panel.kfsw-compact .kfsw-state{display:none;}
 #keyframe-switcher-panel.kfsw-compact .fp-body{gap:5px;}
+/* Full/short nav button label spans */
+.kfsw-nav-full{display:inline;}
+.kfsw-nav-short{display:none;}
+.kfsw-bypass-full{display:inline;}
+#keyframe-switcher-panel.kfsw-compact .kfsw-nav-full{display:none;}
+#keyframe-switcher-panel.kfsw-compact .kfsw-nav-short{display:inline;}
+#keyframe-switcher-panel.kfsw-compact .kfsw-bypass-full{display:none;}
 /* Hard minimum size so the panel never crushes below its nav buttons */
 #keyframe-switcher-panel{min-width:106px;}
 
