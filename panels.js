@@ -282,6 +282,7 @@ const FloatPanels=(function(){
   const panelMode={};
   const mergedHost={};
   const hiddenState={};
+  let reopenCascade=0;
 
   // ── Vertical sub-split state ─────────────────────────────────────
   // splitChildren[hostKey] = [childKey, ...] — panels stacked vertically
@@ -701,6 +702,35 @@ const FloatPanels=(function(){
     render();
     _saveLayout();
   }
+  function _centerFloatingPanel(key){
+    if(panelMode[key]!=='floating') return;
+    const panel=panelByKey(key);
+    if(!panel) return;
+    const car=canvasArea.getBoundingClientRect();
+    const width=(floatRect[key]&&floatRect[key].w) || panel.offsetWidth || 240;
+    const height=(floatRect[key]&&floatRect[key].h) || panel.offsetHeight || 180;
+    const baseX=Math.round((car.width-width)/2);
+    const baseY=Math.round((car.height-height)/2);
+    const offsets=[
+      {x:0,y:0},
+      {x:28,y:20},
+      {x:-24,y:32},
+      {x:36,y:-18},
+      {x:-32,y:-10},
+      {x:18,y:42},
+    ];
+    const offset=offsets[reopenCascade%offsets.length];
+    reopenCascade++;
+    const maxX=Math.max(8,car.width-width-8);
+    const maxY=Math.max(8,car.height-height-8);
+    const x=Math.min(maxX,Math.max(8,baseX+offset.x));
+    const y=Math.min(maxY,Math.max(8,baseY+offset.y));
+    floatRect[key]=Object.assign(floatRect[key]||{},{
+      x,y,
+      w:(floatRect[key]&&floatRect[key].w)!=null?floatRect[key].w:width,
+      h:(floatRect[key]&&floatRect[key].h)!=null?floatRect[key].h:height
+    });
+  }
 
   // Let a panel with its own bespoke resize logic (e.g. the Color panel's
   // wheel-fit resize handles) report its current floating size back into
@@ -826,11 +856,14 @@ const FloatPanels=(function(){
     const shell=panelByKey(key);
     if(!shell) return;
     if(visible){
+      const wasHidden=!!hiddenState[key];
       hiddenState[key]=false;
       if(panelMode[key]==='merged'){
         activateTab(panelByKey(mergedHost[key]),key);
         hiddenState[mergedHost[key]]=false;
       } else {
+        if(wasHidden&&panelMode[key]==='floating') _centerFloatingPanel(key);
+        render();
         bringToFront(shell);
       }
     } else {
@@ -859,6 +892,14 @@ const FloatPanels=(function(){
     layers:{dock:'right',size:200},
     color:{x:130,y:16,w:200,h:240},
   };
+  const DEFAULT_VISIBILITY={
+    tools:true,
+    'brush-presets':true,
+    layers:true,
+    color:false,
+    'keyframe-switcher':false,
+    'keyframe-exposure':false,
+  };
   function resetLayout(){
     allPanels.forEach(panel=>{
       const key=panel.dataset.panel;
@@ -875,13 +916,13 @@ const FloatPanels=(function(){
       } else {
         undockToFloat(key,d.x||16,d.y||16,d.w||null,d.h||null);
       }
-      hiddenState[key]=false;
+      hiddenState[key]=!(DEFAULT_VISIBILITY[key] ?? true);
     });
     render();
-    setVisible('tools',true);
-    setVisible('brush-presets',true);
-    setVisible('layers',true);
-    setVisible('color',false);
+    allPanels.forEach(panel=>{
+      const key=panel.dataset.panel;
+      setWindowCheck(key,isVisible(key));
+    });
     _saveLayout();
     if(typeof fitCanvasToView==='function') requestAnimationFrame(()=>requestAnimationFrame(fitCanvasToView));
     else if(typeof centerCanvas==='function') requestAnimationFrame(centerCanvas);
