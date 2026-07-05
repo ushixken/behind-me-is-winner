@@ -74,11 +74,31 @@ function matchBind(e,action){
   let ctrlHeld=!!e.ctrlKey, shiftHeld=!!e.shiftKey, altHeld=!!e.altKey;
   if(action!=='flipperBypass' && window._flipperBypassHeld){
     const bypassKey=(keybinds['flipperBypass']||{}).key||'';
-    // Only strip the bypass modifier if THIS bind doesn't itself require it —
-    // otherwise a bind like Shift+E would never see its required shift.
-    if(bypassKey==='Shift' && !b.shift) shiftHeld=false;
-    else if(bypassKey==='Control' && !b.ctrl) ctrlHeld=false;
-    else if(bypassKey==='Alt' && !b.alt) altHeld=false;
+    const rawCtrl=!!e.ctrlKey, rawShift=!!e.shiftKey, rawAlt=!!e.altKey;
+    const bypassModRaw =
+      bypassKey==='Shift'?rawShift : bypassKey==='Control'?rawCtrl : bypassKey==='Alt'?rawAlt : false;
+    if(bypassModRaw){
+      // If the raw combo already matches THIS bind exactly, it wants the
+      // modifier on purpose — never strip it for its own check.
+      const rawMatchesThis = !!b.ctrl===rawCtrl && !!b.shift===rawShift && !!b.alt===rawAlt;
+      if(!rawMatchesThis){
+        // Also don't strip if some OTHER action is bound to this same key
+        // with this exact raw combo — that other bind wants the modifier
+        // intentionally (e.g. Shift+E for fill), so stripping it here would
+        // make both that bind AND this one match the same keystroke.
+        const exactOtherWantsModifier = Object.keys(keybinds).some(a=>{
+          if(a===action) return false;
+          const ob=keybinds[a];
+          const obk=_normKey(ob.key.length===1?ob.key.toLowerCase():ob.key);
+          return obk===bk && !!ob.ctrl===rawCtrl && !!ob.shift===rawShift && !!ob.alt===rawAlt;
+        });
+        if(!exactOtherWantsModifier){
+          if(bypassKey==='Shift') shiftHeld=false;
+          else if(bypassKey==='Control') ctrlHeld=false;
+          else if(bypassKey==='Alt') altHeld=false;
+        }
+      }
+    }
   }
   if(!!b.ctrl!==ctrlHeld) return false;
   if(!!b.shift!==shiftHeld) return false;
