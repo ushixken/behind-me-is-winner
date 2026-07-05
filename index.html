@@ -76,26 +76,26 @@
 
   <div class="mb-item" id="mb-file">File
     <div class="dropdown" id="dd-file">
-      <div class="dd-item" id="dd-new">📄 New Project</div>
+      <div class="dd-item" id="dd-new">New Project</div>
       <div class="dd-sep"></div>
-      <div class="dd-item" id="dd-import-image">🖼 Import Image…</div>
+      <div class="dd-item" id="dd-import-image">Import Image…</div>
       <div class="dd-sep"></div>
-      <div class="dd-item" id="dd-export">💾 Export PNG Sequence</div>
+      <div class="dd-item" id="dd-export">Export PNG Sequence</div>
     </div>
   </div>
 
   <div class="mb-item" id="mb-edit">Edit
     <div class="dropdown" id="dd-edit">
-      <div class="dd-item" id="dd-undo">↩ Undo<span class="dd-shortcut">Ctrl+Z</span></div>
-      <div class="dd-item" id="dd-redo">↪ Redo<span class="dd-shortcut">Ctrl+Y</span></div>
+      <div class="dd-item" id="dd-undo">Undo<span class="dd-shortcut">Ctrl+Z</span></div>
+      <div class="dd-item" id="dd-redo">Redo<span class="dd-shortcut">Ctrl+Y</span></div>
       <div class="dd-sep"></div>
-      <div class="dd-item" id="dd-cut">✂ Cut Frame<span class="dd-shortcut">Ctrl+X</span></div>
-      <div class="dd-item" id="dd-copy">⎘ Copy Frame<span class="dd-shortcut">Ctrl+C</span></div>
-      <div class="dd-item" id="dd-paste">⎗ Paste Frame<span class="dd-shortcut">Ctrl+V</span></div>
-      <div class="dd-item" id="dd-paste-image">🖼 Paste Image<span class="dd-shortcut">Ctrl+Shift+V</span></div>
-      <div class="dd-item" id="dd-duplicate">⿻ Duplicate Frame</div>
+      <div class="dd-item" id="dd-cut">Cut Frame<span class="dd-shortcut">Ctrl+X</span></div>
+      <div class="dd-item" id="dd-copy">Copy Frame<span class="dd-shortcut">Ctrl+C</span></div>
+      <div class="dd-item" id="dd-paste">Paste Frame<span class="dd-shortcut">Ctrl+V</span></div>
+      <div class="dd-item" id="dd-paste-image">Paste Image<span class="dd-shortcut">Ctrl+Shift+V</span></div>
+      <div class="dd-item" id="dd-duplicate">Duplicate Frame</div>
       <div class="dd-sep"></div>
-      <div class="dd-item danger" id="dd-clear">🗑 Clear Frame<span class="dd-shortcut" id="dd-clear-shortcut">Delete</span></div>
+      <div class="dd-item danger" id="dd-clear">Clear Frame<span class="dd-shortcut" id="dd-clear-shortcut">Delete</span></div>
       <div class="dd-sep"></div>
       <div class="dd-item" id="dd-preferences">Preferences</div>
     </div>
@@ -112,16 +112,16 @@
       <div class="dd-item" id="dd-show-keyframe-exposure"><span class="dd-check" id="chk-keyframe-exposure"></span>Exposure</div>
       <div class="dd-item" id="dd-show-toolbar"><span class="dd-check" id="chk-toolbar">✓</span>Toolbar</div>
       <div class="dd-sep"></div>
-      <div class="dd-item" id="dd-reset-layout">↺ Reset Layout</div>
-      <div class="dd-item" id="dd-center-canvas">⊕ Center Canvas</div>
+      <div class="dd-item" id="dd-reset-layout">Reset Layout</div>
+      <div class="dd-item" id="dd-center-canvas">Center Canvas</div>
     </div>
   </div>
 
   <div class="mb-item" id="mb-settings">Settings
     <div class="dropdown" id="dd-settings">
-      <div class="dd-item" id="dd-canvas-settings">⚙ Canvas &amp; Background</div>
-      <div class="dd-item" id="dd-zoom-settings">🔍 Zoom Settings</div>
-      <div class="dd-item" id="dd-keybind-settings">⌨ Keybinds</div>
+      <div class="dd-item" id="dd-canvas-settings">Canvas &amp; Background</div>
+      <div class="dd-item" id="dd-zoom-settings">Zoom Settings</div>
+      <div class="dd-item" id="dd-keybind-settings">Keybinds</div>
     </div>
   </div>
 </div>
@@ -130,7 +130,6 @@
 <div id="toolbar">
   <button class="tbtn" id="btn-undo" title="Undo Ctrl+Z">↩</button>
   <button class="tbtn" id="btn-redo" title="Redo Ctrl+Y">↪</button>
-  <button class="tbtn" id="btn-clear" title="Clear frame">🗑</button>
   <div class="tsep"></div>
   <button class="tbtn active" id="btn-aa" title="Toggle antialiasing (A) — ON: soft sub-pixel edges like TVPaint pen brush / OFF: hard pixel edges like TVPaint pencil or Clip Studio pixel pen" style="font-size:11px;padding:0 7px;letter-spacing:.02em;">AA</button>
   <div class="tsep"></div>
@@ -450,11 +449,11 @@
 
 <!-- ── CANVAS CONTEXT MENU ─────────────────────────────────── -->
 <div class="ctx-menu" id="ctx-menu">
-  <div class="ctx-item" id="ctx-cut">✂ Cut Frame<span class="ctx-shortcut">Ctrl+X</span></div>
-  <div class="ctx-item" id="ctx-copy">⎘ Copy Frame<span class="ctx-shortcut">Ctrl+C</span></div>
-  <div class="ctx-item" id="ctx-paste">⎗ Paste Frame<span class="ctx-shortcut">Ctrl+V</span></div>
+  <div class="ctx-item" id="ctx-cut">Cut Frame<span class="ctx-shortcut">Ctrl+X</span></div>
+  <div class="ctx-item" id="ctx-copy">Copy Frame<span class="ctx-shortcut">Ctrl+C</span></div>
+  <div class="ctx-item" id="ctx-paste">Paste Frame<span class="ctx-shortcut">Ctrl+V</span></div>
   <div class="ctx-sep"></div>
-  <div class="ctx-item" id="ctx-duplicate">⿻ Duplicate Frame</div>
+  <div class="ctx-item" id="ctx-duplicate">Duplicate Frame</div>
   <div class="ctx-sep"></div>
   <div class="ctx-item danger" id="ctx-delete">⌫ Delete Frame</div>
 </div>
@@ -924,7 +923,7 @@
 <!-- ── KEYBINDS MODAL ─────────────────────────────────────── -->
 <div class="modal-overlay" id="modal-keybinds">
   <div class="modal" style="min-width:380px;">
-    <h2>⌨ Keybinds</h2>
+    <h2>Keybinds</h2>
     <p style="font-size:11px;color:var(--text2);margin-bottom:12px;">Click a key field, then press a new key to rebind. Esc cancels.</p>
     <div style="font-size:11px;color:var(--text2);margin-bottom:10px;border:1px solid var(--border2);border-radius:6px;padding:8px 10px;">
       <div style="font-weight:600;color:var(--text);margin-bottom:6px;">Canvas Navigation (hold + drag, not rebindable)</div>

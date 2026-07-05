@@ -53,7 +53,6 @@ function setTool(t,lbl){
 }
 document.getElementById('btn-undo').onclick=undo;
 document.getElementById('btn-redo').onclick=redo;
-document.getElementById('btn-clear').onclick=()=>{clearCurrentFrame();};
 document.getElementById('btn-flip-h').onclick=toggleFlipH;
 document.getElementById('btn-flip-v').onclick=toggleFlipV;
 
