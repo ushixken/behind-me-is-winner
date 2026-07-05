@@ -304,6 +304,7 @@ const FloatPanels=(function(){
     'brush-presets':{minSize:150,maxSize:500, floatResizable:true},
     layers:       {minSize:120, maxSize:500, floatResizable:true},
     color:        {minSize:120, maxSize:500, floatResizable:false},
+    'keyframe-switcher':{minSize:120,maxSize:500,floatResizable:true},
   };
   function cfgOf(key){ return PANEL_CFG[key]||{minSize:120,maxSize:500}; }
 
@@ -481,7 +482,7 @@ const FloatPanels=(function(){
         panel.style.height=r.h!=null?r.h+'px':(panel.style.height||'');
       }
       // Split children are positioned by renderSide; hide their split handle if not split
-      if(!_isSplitChild(key)&&panel._splitResizeEl){
+      if((!_isSplitChild(key)||hiddenState[key])&&panel._splitResizeEl){
         panel._splitResizeEl.style.display='none';
       }
       const visuallyHidden=!!hiddenState[key]||mode==='merged';
@@ -787,10 +788,10 @@ const FloatPanels=(function(){
         const remaining=[...bodyWrapOf(host).querySelectorAll('.fp-body')];
         if(remaining.length&&!remaining.some(b=>b.classList.contains('active'))) activateTab(host,remaining[0].dataset.body);
         clearMerged(key);
-        setWindowCheck(key,false);
       }
       hiddenState[key]=true;
     }
+    setWindowCheck(key,visible);
     render();
     _saveLayout();
   }
