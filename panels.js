@@ -353,13 +353,61 @@ const FloatPanels=(function(){
   }
   function _isSplitChild(key){ return !!splitHost[key]; }
   function _splitHostOf(key){ return splitHost[key]||null; }
+  function _stackHostOf(key){ return splitHost[key]||key; }
+  function _dockSideOf(key){
+    const hostKey=_stackHostOf(key);
+    return ['left','right','top','bottom'].find(s=>dockOrder[s].includes(hostKey))||null;
+  }
+  function _stackKeys(hostKey){
+    return [hostKey,..._splitChildrenOf(hostKey)].filter(k=>!hiddenState[k]);
+  }
   // Return all visible split children for a host in order
   function _splitChildrenOf(hostKey){
     return (splitChildren[hostKey]||[]).filter(k=>!hiddenState[k]);
   }
+  function _stackLayout(hostKey){
+    const side=_dockSideOf(hostKey);
+    if(side!=='left'&&side!=='right') return null;
+    const car=canvasArea.getBoundingClientRect();
+    const items=_stackKeys(hostKey).map(key=>{
+      const panel=panelByKey(key);
+      if(!panel||hiddenState[key]) return null;
+      return {key,panel,rect:panel.getBoundingClientRect()};
+    }).filter(Boolean);
+    if(!items.length) return null;
+    const first=items[0].rect;
+    return {
+      side,
+      hostKey,
+      items,
+      left:first.left,
+      right:first.right,
+      top:items[0].rect.top,
+      bottom:items[items.length-1].rect.bottom,
+      columnTop:car.top,
+      columnBottom:car.bottom
+    };
+  }
+  function _stackInsertPoint(hostKey,clientY){
+    const layout=_stackLayout(hostKey);
+    if(!layout) return null;
+    for(let i=0;i<layout.items.length;i++){
+      const {rect}=layout.items[i];
+      if(clientY<rect.top+rect.height*0.5){
+        return {hostKey,side:layout.side,atIndex:i,lineY:rect.top,left:layout.left,width:layout.right-layout.left};
+      }
+    }
+    return {
+      hostKey,
+      side:layout.side,
+      atIndex:layout.items.length,
+      lineY:layout.bottom,
+      left:layout.left,
+      width:layout.right-layout.left
+    };
+  }
 
-  // Stack zone: blue outline on the bottom half of a specific docked panel,
-  // previewing a vertical sub-split drop.
+  // Stack zone: insertion line for vertical stack drops inside a dock column.
   const stackZoneEl=(function(){
     const el=document.createElement('div');
     el.className='fp-stackzone';
@@ -367,11 +415,8 @@ const FloatPanels=(function(){
     document.body.appendChild(el);
     return el;
   })();
-  function showStackZone(targetPanel,pos){
-    const r=targetPanel.getBoundingClientRect();
-    // Box outline on the top or bottom edge of the panel (like CSP/Krita dock preview)
-    const y=pos==='before'?r.top-2:r.bottom-2;
-    stackZoneEl.style.cssText=`position:fixed;left:${r.left}px;top:${y}px;width:${r.width}px;height:4px;display:block;pointer-events:none;z-index:10000;background:var(--accent);border-radius:3px;`;
+  function showStackZone(left,lineY,width){
+    stackZoneEl.style.cssText=`position:fixed;left:${left}px;top:${lineY-2}px;width:${width}px;height:4px;display:block;pointer-events:none;z-index:10000;background:var(--accent);border-radius:3px;`;
   }
   function hideStackZone(){ stackZoneEl.style.display='none'; }
 
@@ -604,54 +649,50 @@ const FloatPanels=(function(){
     render();
     _saveLayout();
   }
-  // Stack panel with a specific docked panel (vertical sub-split).
-  // pos:'after' (default) stacks `panel` below targetPanel, as targetPanel's
-  // (or its existing host's) child — same as before.
-  // pos:'before' stacks `panel` above targetPanel: `panel` takes over
-  // targetPanel's dock slot and becomes the new host, with targetPanel
-  // (and anything already stacked under it) becoming its children.
-  function applyStackDock(panel,targetPanel,pos){
+  function _applyStackInsert(panel,hostKey,atIndex){
     const key=panel.dataset.panel;
-    const targetKey=targetPanel.dataset.panel;
-    // Determine which side the target is docked on
-    const side=['left','right','top','bottom'].find(s=>dockOrder[s].includes(targetKey));
-    if(!side||(side!=='left'&&side!=='right')) return; // only support left/right for now
+    const side=_dockSideOf(hostKey);
+    if(side!=='left'&&side!=='right') return;
+    const hostIndex=dockOrder[side].indexOf(hostKey);
+    if(hostIndex===-1) return;
 
-    if(pos==='before'){
-      const idx=dockOrder[side].indexOf(targetKey);
-      const oldChildren=splitChildren[targetKey]?[...splitChildren[targetKey]]:[];
-      const targetWidth=dockSize[targetKey];
-      // Pull the dragged panel out of wherever it currently lives (if it
-      // was itself a stack host, this correctly hands its old slot off to
-      // one of its own children rather than orphaning them — see
-      // _removeFromAllDockOrders).
-      _removeFromAllDockOrders(key);
-      // Pull target out of its slot too, WITHOUT touching its children's
-      // records yet — we're about to explicitly re-parent them under `key`.
-      const ti=dockOrder[side].indexOf(targetKey);
-      if(ti!==-1) dockOrder[side].splice(ti,1);
-      delete splitChildren[targetKey];
-      panelMode[key]='docked';
-      dockOrder[side].splice(idx,0,key);
-      dockSize[key]=targetWidth;
-      _addSplitChild(key,targetKey);
-      oldChildren.forEach(ck=>_addSplitChild(key,ck));
-      render();
-      _saveLayout();
-      return;
-    }
+    const visibleStack=_stackKeys(hostKey).filter(k=>k!==key);
+    const insertIndex=Math.max(0,Math.min(atIndex,visibleStack.length));
+    visibleStack.splice(insertIndex,0,key);
 
-    // Ensure the dragged panel is removed from all dock orders and splits
+    const hiddenChildren=(splitChildren[hostKey]||[]).filter(k=>hiddenState[k]&&k!==key);
+    const rebuiltStack=[...visibleStack,...hiddenChildren];
+    const newHost=rebuiltStack[0];
+    const newChildren=rebuiltStack.slice(1);
+    const sharedWidth=(dockSize[hostKey]??dockSize[newHost]??cfgOf(newHost).minSize??180);
+
     _removeFromAllDockOrders(key);
-    // Now dock it on the same side so dockSize is maintained, but mark as split child
+
+    dockOrder[side]=dockOrder[side].filter(k=>k!==hostKey&&!rebuiltStack.includes(k));
+    delete splitChildren[hostKey];
+    rebuiltStack.forEach(k=>{ delete splitHost[k]; });
+
     panelMode[key]='docked';
-    dockOrder[side]; // don't add to dockOrder — it's positioned by the split system
-    if(dockSize[key]==null) dockSize[key]=cfgOf(key).minSize||180;
-    _addSplitChild(targetKey,key);
-    // Make sure splitSize is seeded
-    if(!splitSize[key]) splitSize[key]=180;
+    panelMode[newHost]='docked';
+    dockOrder[side].splice(hostIndex,0,newHost);
+    dockSize[newHost]=sharedWidth;
+    newChildren.forEach(childKey=>{
+      panelMode[childKey]='docked';
+      _addSplitChild(newHost,childKey);
+      if(!splitSize[childKey]) splitSize[childKey]=180;
+    });
+
     render();
     _saveLayout();
+  }
+  // Stack panel with a specific docked panel (vertical sub-split).
+  function applyStackDock(panel,targetPanel,pos){
+    const targetKey=targetPanel.dataset.panel;
+    const hostKey=_stackHostOf(targetKey);
+    const visibleStack=_stackKeys(hostKey).filter(k=>k!==panel.dataset.panel);
+    const targetIndex=visibleStack.indexOf(targetKey);
+    if(targetIndex===-1) return;
+    _applyStackInsert(panel,hostKey,pos==='before'?targetIndex:targetIndex+1);
   }
 
   function floatAt(panel,x,y){
@@ -1069,8 +1110,7 @@ const FloatPanels=(function(){
     const key=panel.dataset.panel;
     const DRAG_THRESHOLD=4;
     let dragging=false,moved=false,dx=0,dy=0,curDock=null,curMergeTarget=null,curAtIndex=null;
-    let curStackTarget=null; // panel to stack under (vertical sub-split)
-    let curStackPos='after'; // 'after' = stack below target, 'before' = stack above target
+    let curStackDrop=null; // {hostKey, side, atIndex, lineY, left, width}
     let startX=0,startY=0,wasDocked=false,origDockSide=null;
     bar.addEventListener('pointerdown',e=>{
       if(e.target.classList.contains('fp-close')) return;
@@ -1078,7 +1118,7 @@ const FloatPanels=(function(){
       dragging=true;moved=false;bar.setPointerCapture(e.pointerId);
       startX=e.clientX;startY=e.clientY;
       wasDocked=panelMode[key]==='docked';
-      origDockSide=wasDocked?['left','right','top','bottom'].find(s=>dockOrder[s].includes(key)):null;
+      origDockSide=wasDocked?_dockSideOf(key):null;
       if(wasDocked) panel._savedWidth=panel.offsetWidth+'px';
       bringToFront(panel);
       const r=panel.getBoundingClientRect();
@@ -1106,25 +1146,19 @@ const FloatPanels=(function(){
       // ── Stack-target check (top or bottom half of a left/right docked
       // panel) ── Do this FIRST so it can suppress the top/bottom edge-dock
       // line that would otherwise fire when the cursor is near car.top/bottom.
-      let _earlyStackTarget=null,_earlyStackPos='after';
-      for(const other of allPanels){
-        if(other===panel||other.classList.contains('fp-hidden')) continue;
-        const ok=other.dataset.panel;
-        // If `other` is a split child, resolve to its host so the dragged
-        // panel joins the existing stack (stacking onto a child used to be
-        // silently ignored because _isSplitChild panels were skipped here).
-        const resolvedKey=_isSplitChild(ok)?(splitHost[ok]||ok):ok;
-        const otherSide=['left','right'].find(s=>dockOrder[s].includes(resolvedKey));
-        if(!otherSide) continue;
-        const orc=other.getBoundingClientRect();
-        if(e.clientX>=orc.left&&e.clientX<=orc.right&&e.clientY>=orc.top&&e.clientY<=orc.bottom){
-          // Use the resolved host panel as the stack target so the drop
-          // lands on the correct host regardless of which stack member was hovered.
-          _earlyStackTarget=panelByKey(resolvedKey)||other;
-          _earlyStackPos=(e.clientY>=orc.top+orc.height*0.5)?'after':'before';
-          break;
-        }
-      }
+      let _earlyStackDrop=null;
+      ['left','right'].forEach(side=>{
+        if(_earlyStackDrop) return;
+        dockOrder[side].forEach(hostKey=>{
+          if(_earlyStackDrop||hiddenState[hostKey]) return;
+          const layout=_stackLayout(hostKey);
+          if(!layout) return;
+          const withinX=e.clientX>=layout.left&&e.clientX<=layout.right;
+          const withinY=e.clientY>=layout.columnTop&&e.clientY<=layout.columnBottom;
+          if(!withinX||!withinY) return;
+          _earlyStackDrop=_stackInsertPoint(hostKey,e.clientY);
+        });
+      });
 
       // Check dock boundaries FIRST. Reaching the true outer edge of an
       // already-occupied side means hovering over the panel sitting
@@ -1136,7 +1170,7 @@ const FloatPanels=(function(){
       // through to "am I dropping onto a panel to merge/tab with it."
       let best=null; // {side, atIndex, dist, lineOffset}
       // Skip top/bottom edge-dock scan when we're hovering a panel's top/bottom half
-      const _skipSides=_earlyStackTarget?[_earlyStackPos==='before'?'top':'bottom']:[];
+      const _skipSides=_earlyStackDrop?['top','bottom']:[];
       ['left','right','top','bottom'].filter(s=>!_skipSides.includes(s)).forEach(side=>{
         const stack=dockOrder[side].filter(k=>k!==key);
         const axisPos=(side==='left'||side==='right')?e.clientX:e.clientY;
@@ -1157,32 +1191,38 @@ const FloatPanels=(function(){
         }
       });
 
-      if(_earlyStackTarget){
-        curStackTarget=_earlyStackTarget;curStackPos=_earlyStackPos;curDock=null;curMergeTarget=null;
+      const preferEdgeDock=!!(best&&(best.side==='left'||best.side==='right'));
+
+      if(preferEdgeDock){
+        curDock=best.side;curAtIndex=best.atIndex;curMergeTarget=null;curStackDrop=null;
+        hideStackZone();
+        showEdgeZone(best.side,best.lineOffset);
+      } else if(_earlyStackDrop){
+        curStackDrop=_earlyStackDrop;curDock=null;curMergeTarget=null;
         hideZones();
-        showStackZone(_earlyStackTarget,_earlyStackPos);
+        showStackZone(_earlyStackDrop.left,_earlyStackDrop.lineY,_earlyStackDrop.width);
       } else if(best){
-        curDock=best.side;curAtIndex=best.atIndex;curMergeTarget=null;curStackTarget=null;
+        curDock=best.side;curAtIndex=best.atIndex;curMergeTarget=null;curStackDrop=null;
         hideStackZone();
         showEdgeZone(best.side,best.lineOffset);
       } else {
-        curStackTarget=null;
+        curStackDrop=null;
         {
           // Fall through to merge check (only if not hovering a docked panel at all)
           let mergeTarget=null;
           for(const other of allPanels){
             if(other===panel||other.classList.contains('fp-hidden')) continue;
             const ok=other.dataset.panel;
-            if(['left','right','top','bottom'].some(s=>dockOrder[s].includes(ok))) continue; // docked → not merge
+            if(_dockSideOf(ok)) continue; // docked → not merge
             const orc=other.getBoundingClientRect();
             if(e.clientX>=orc.left&&e.clientX<=orc.right&&e.clientY>=orc.top&&e.clientY<=orc.bottom){mergeTarget=other;break;}
           }
           if(mergeTarget){
-            curMergeTarget=mergeTarget;curDock=null;curStackTarget=null;
+            curMergeTarget=mergeTarget;curDock=null;curStackDrop=null;
             hideStackZone();
             showMergeZone(mergeTarget);
           } else {
-            curMergeTarget=null;curDock=null;curStackTarget=null;
+            curMergeTarget=null;curDock=null;curStackDrop=null;
             hideZones();
           }
         }
@@ -1192,8 +1232,8 @@ const FloatPanels=(function(){
       if(!dragging) return;
       dragging=false;moved=false;panel.classList.remove('dragging-panel');
       hideZones();
-      if(curStackTarget){
-        applyStackDock(panel,curStackTarget,curStackPos);
+      if(curStackDrop){
+        _applyStackInsert(panel,curStackDrop.hostKey,curStackDrop.atIndex);
       } else if(curMergeTarget){
         mergeInto(panel,curMergeTarget);
       } else if(curDock){
@@ -1206,7 +1246,7 @@ const FloatPanels=(function(){
         // to center just because a floating panel was nudged.
         _saveLayout();
       }
-      curDock=null;curMergeTarget=null;curStackTarget=null;curStackPos='after';origDockSide=null;
+      curDock=null;curMergeTarget=null;curStackDrop=null;origDockSide=null;
     }
     document.addEventListener('pointerup',endDrag);
     document.addEventListener('pointercancel',endDrag);
@@ -1221,7 +1261,7 @@ const FloatPanels=(function(){
       if(!dragging) return;
       dragging=false;moved=false;panel.classList.remove('dragging-panel');
       hideZones();
-      curDock=null;curMergeTarget=null;curStackTarget=null;curStackPos='after';origDockSide=null;
+      curDock=null;curMergeTarget=null;curStackDrop=null;origDockSide=null;
     });
   }
 
@@ -1339,13 +1379,13 @@ const FloatPanels=(function(){
     // New, explicit API for the (now-deduplicated) resize handles that used
     // to live in ui-controls.js. They no longer touch panel state directly.
     isDocked(key){ return panelMode[key]==='docked'; },
-    getDockSide(key){ return ['left','right','top','bottom'].find(s=>dockOrder[s].includes(key))||null; },
+    getDockSide(key){ return _dockSideOf(key); },
     // Whole-stack width resize. When panels are stacked (split) in the same
     // dock column they all share one width — the host's dockSize — so any
     // of their edges can drive it. `key` may be the host OR any of its
     // split children; we resolve to the shared host automatically.
     isSplitChild:_isSplitChild,
-    getStackHost(key){ return _splitHostOf(key)||key; },
+    getStackHost(key){ return _stackHostOf(key); },
     getDockWidth(key){ return dockSize[_splitHostOf(key)||key]; },
     setDockWidth(key,widthPx){
       const hostKey=_splitHostOf(key)||key;
