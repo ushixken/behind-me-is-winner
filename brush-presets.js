@@ -15,15 +15,9 @@
   bindRange('ts-density','ts-density-val','',v=>{brushDensity=v/100;});
   // Hardness
   bindRange('ts-hardness','ts-hardness-val','',v=>{brushHardness=v/100;_aaDabCache.clear();_stampCache.clear();});
-  // Spacing (stored but influences stroke step)
-  bindRange('ts-spacing','ts-spacing-val','%',v=>{window._tsSpacing=v/100;});
-  // Velocity Spacing checkbox — when off, dab step uses fixed base size (default)
-  window._tsSpacingVelocity = false;
-  const tsSpacingVel = document.getElementById('ts-spacing-velocity');
-  if(tsSpacingVel){
-    tsSpacingVel.checked = !!window._tsSpacingVelocity;
-    tsSpacingVel.onchange = () => { window._tsSpacingVelocity = tsSpacingVel.checked; };
-  }
+  // Spacing is fixed, not a user-adjustable Tool Setting — the brush
+  // engine's _effectiveSpacingFrac() just uses its built-in default (0.12)
+  // and never varies with stroke velocity or acceleration.
   // Airbrush spray rate (dabs/sec while held, independent of movement)
   bindRange('ts-airbrush-rate','ts-airbrush-rate-val','',v=>{window._tsAirbrushRate=v/100;});
   // Dynamics
@@ -604,22 +598,6 @@ function applyToolPreset(json){
       preview:{shape:'circle',hardness:0.95},
       settings:{'ts-size':8.1,'ts-hardness':100,'ts-opacity':100,'ts-flow':100,'ts-density':100,'ts-spacing':1,'ts-roundness':100,'ts-aa':true}
     },
-    {
-      id:'soft-round', name:'Soft Round',
-      preview:{shape:'circle',hardness:0.05},
-      settings:{'ts-size':30,'ts-hardness':0,'ts-opacity':80,'ts-flow':100,'ts-density':100,'ts-spacing':15,'ts-roundness':100,'ts-aa':true}
-    },
-    {
-      // Photoshop / Clip Studio style airbrush: very soft round tip, low
-      // per-dab flow, tight spacing for a smooth spray-cone edge, and the
-      // 'ts-airbrush' flag turns on the "keeps spraying/building up while
-      // held still" behavior in the engine (see _startAirbrushSpray in
-      // brush-engine.js) — this is the one thing that makes it feel like a
-      // real airbrush instead of just another soft round brush.
-      id:'airbrush', name:'Airbrush',
-      preview:{shape:'circle',hardness:0},
-      settings:{'ts-size':60,'ts-hardness':0,'ts-opacity':18,'ts-flow':100,'ts-density':100,'ts-spacing':8,'ts-roundness':100,'ts-aa':true,'ts-airbrush':true,'ts-airbrush-rate':55}
-    },
   ];
   // User-created presets (saved via the ➕ button). Restored from storage.
   let _customPresets = [];
@@ -633,7 +611,7 @@ function applyToolPreset(json){
   // create new empty folders via the 📁+ button for brushes they add later.
   let _groups = [
     { id:'general', label:'General Brushes', icon:'🖌', default:true, collapsed:false,
-      ids:['hard-round','soft-round','airbrush'] }
+      ids:['hard-round'] }
   ];
 
   // ── Per-preset settings store ───────────────────────────────────

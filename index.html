@@ -598,7 +598,6 @@
             <!-- BASIC / TIP SHAPE -->
             <div class="ts-ps-panel active" data-panel="basic">
               <div class="ts-section-body">
-                <div class="ts-compat-row ts-advanced-only"><span class="ts-badge all">PS</span><span class="ts-badge csp">CSP</span><span class="ts-badge kr">Krita</span></div>
                 <div class="ts-row">
                   <span class="ts-label">Size</span>
                   <input type="range" class="ts-range" id="ts-size" min="1" max="2000" step="0.1" value="6"/>
@@ -630,16 +629,6 @@
                   <span class="ts-val" id="ts-hardness-val">55</span>
                 </div>
                 <div class="ts-divider" style="margin:6px 0;"></div>
-                <div class="ts-row ts-advanced-only">
-                  <span class="ts-label">Spacing</span>
-                  <input type="range" class="ts-range" id="ts-spacing" min="1" max="200" value="12"/>
-                  <span class="ts-val" id="ts-spacing-val">12%</span>
-                </div>
-                <div class="ts-row ts-advanced-only">
-                  <label class="ts-label-sm" style="flex:1;display:flex;align-items:center;gap:5px;cursor:pointer;" title="When on, dab spacing grows with stroke speed — fast flicks create wider gaps. When off, spacing is always a fixed % of brush size regardless of speed.">
-                    <input type="checkbox" class="ts-check" id="ts-spacing-velocity"/> Velocity Spacing
-                  </label>
-                </div>
                 <div class="ts-row">
                   <label class="ts-label-sm" style="flex:1;display:flex;align-items:center;gap:5px;cursor:pointer;">
                     <input type="checkbox" class="ts-check" id="ts-aa" checked/> Anti-alias (AA)
@@ -651,7 +640,6 @@
             <!-- BRUSH TIP IMAGE -->
             <div class="ts-ps-panel" data-panel="tip-image" id="ts-tip-image-section">
               <div class="ts-section-body">
-                <div class="ts-compat-row"><span class="ts-badge all">PS</span><span class="ts-badge kr">Krita</span><span class="ts-badge" style="background:rgba(127,119,221,0.15);border-color:rgba(127,119,221,0.3);color:var(--accent);">ABR</span></div>
                 <div style="display:flex;gap:7px;align-items:flex-start;">
                   <canvas id="ts-tip-preview" width="64" height="64"
                     style="width:64px;height:64px;border-radius:5px;border:1px solid var(--border2);
@@ -689,16 +677,12 @@
             <!-- DYNAMICS -->
             <div class="ts-ps-panel" data-panel="dynamics">
               <div class="ts-section-body">
-                <div class="ts-compat-row"><span class="ts-badge all">PS</span><span class="ts-badge csp">CSP</span><span class="ts-badge kr">Krita</span></div>
                 <div class="ts-label-sm" style="color:var(--text);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px;">Size</div>
                 <div class="ts-row">
                   <span class="ts-label">Control</span>
                   <select class="ts-select" id="ts-size-control">
                     <option value="off">Off</option>
                     <option value="pressure" selected>Pen Pressure</option>
-                    <option value="tilt">Pen Tilt</option>
-                    <option value="velocity">Velocity</option>
-                    <option value="fade">Fade</option>
                   </select>
                 </div>
                 <div class="ts-divider"></div>
@@ -708,9 +692,6 @@
                   <select class="ts-select" id="ts-opacity-control">
                     <option value="off">Off</option>
                     <option value="pressure" selected>Pen Pressure</option>
-                    <option value="tilt">Pen Tilt</option>
-                    <option value="velocity">Velocity</option>
-                    <option value="fade">Fade</option>
                   </select>
                 </div>
               </div>
@@ -719,7 +700,6 @@
             <!-- TEXTURE -->
             <div class="ts-ps-panel" data-panel="texture">
               <div class="ts-section-body">
-                <div class="ts-compat-row"><span class="ts-badge all">PS</span><span class="ts-badge csp">CSP</span><span class="ts-badge kr">Krita</span></div>
                 <div style="display:flex;gap:7px;align-items:flex-start;">
                   <canvas id="ts-texture-preview" width="64" height="64"
                     style="width:64px;height:64px;border-radius:5px;border:1px solid var(--border2);
@@ -783,7 +763,6 @@
             <!-- PRESSURE CURVE -->
             <div class="ts-ps-panel" data-panel="pressure">
               <div class="ts-section-body">
-                <div class="ts-compat-row"><span class="ts-badge all">PS</span><span class="ts-badge csp">CSP</span><span class="ts-badge kr">Krita</span></div>
                 <canvas class="ts-curve-canvas" id="ts-pressure-curve" width="180" height="60" title="Click to reset, drag points to edit"></canvas>
                 <div class="ts-pill-row" style="margin-top:3px;">
                   <button class="ts-pill active" id="ts-curve-linear">Linear</button>
@@ -798,11 +777,6 @@
             <div class="ts-ps-panel" data-panel="import">
               <div class="ts-section-body">
                 <p style="font-size:9px;color:var(--text2);line-height:1.4;margin-bottom:4px;">Paste or load settings from Photoshop (.abr metadata), Clip Studio (.sut), or Krita (.kpp) to map parameters into this panel.</p>
-                <div class="ts-pill-row" style="margin-bottom:4px;">
-                  <span class="ts-badge all">PS .abr</span>
-                  <span class="ts-badge csp">CSP .sut</span>
-                  <span class="ts-badge kr">Krita .kpp</span>
-                </div>
                 <button class="ts-import-btn" id="ts-btn-import-preset">📂 Load Preset File…</button>
                 <button class="ts-import-btn" id="ts-btn-paste-json" style="margin-top:3px;">📋 Paste JSON Settings</button>
                 <div class="ts-divider" style="margin:6px 0;"></div>

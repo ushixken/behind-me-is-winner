@@ -81,17 +81,25 @@ let brushFlow = 1;
 // This dropdown used to be labeled "Opacity / Flow" but its influence was
 // actually only ever applied to per-dab Flow alpha below — the real
 // stroke-level Opacity (brushOpacity, applied once in _commitStrokeCanvas)
-// never responded to pressure/tilt/velocity/fade at all, despite the
-// label. Renamed to just "Opacity" and rewired so it genuinely drives the
-// stroke's final Opacity ceiling; Flow's per-dab build-up rate is now
-// governed solely by the Flow slider (brushFlow), same as Opacity's own
-// slider governs the base ceiling — the two are independent again, as
-// they are in Photoshop/CSP.
-// Since Opacity is a single value applied once when the stroke commits
-// (not per dab), the selected control's influence is averaged across
-// every dab in the stroke and applied as one multiplier at commit time.
-let _dynOpacitySum = 0;
-let _dynOpacityCount = 0;
+// never responded to pressure at all, despite the label.
+//
+// A later revision tried fixing this by averaging/peaking the influence
+// across the whole stroke and applying it ONCE, as a single multiplier,
+// when the stroke committed on pointerup. That made the control feel
+// broken in a different way: while actually drawing, every dab painted at
+// full alpha (the live preview only ever used brushOpacity, never the
+// dynamic multiplier), so a light touch still looked solid black in real
+// time — the opacity would only "snap" down to some fixed low value after
+// lifting the pen, instead of tracking pressure as it happened.
+//
+// Fixed here by applying the pressure influence PER DAB, in real time —
+// exactly like Size dynamics already does — instead of deferring it to
+// stroke-end. Each dab's alpha is scaled by its own instantaneous pressure
+// reading, so light pressure paints light immediately and heavy pressure
+// paints dark immediately, live, matching what the user is actually doing
+// with the pen at that moment. brushOpacity itself remains a separate,
+// constant stroke-level cap applied once at commit (see
+// _commitStrokeCanvas), unaffected by this per-dab control.
 
 // ── Stroke temp canvas ──────────────────────────────────────────────────
 // Opacity (brushOpacity) works at the stroke level: all dabs within a single
@@ -118,28 +126,19 @@ function _ensureStrokeCanvas(){
   }
 }
 
-// Turns this stroke's accumulated Opacity-dynamics influence (averaged
-// across every dab that was stamped) into a 0..1 multiplier on brushOpacity.
-// Returns 1 (no change) when the control is Off or no dabs were tracked.
-function _getDynamicOpacityMultiplier(){
-  if(_dynOpacityCount === 0) return 1;
-  const avgInfluence = _dynOpacitySum / _dynOpacityCount;
-  const minO = _getMinFlow(); // shared min-floor field for this Dynamics section
-  return Math.max(0, Math.min(1, minO + (1 - minO) * avgInfluence));
-}
-
 // Composite the stroke scratch canvas onto activeC with stroke-level opacity,
-// then clear the scratch for the next stroke.
+// then clear the scratch for the next stroke. Per-dab pressure influence on
+// Opacity is already baked into each dab's alpha as it was painted (see
+// _computeEffectiveParams), so this only needs to apply the constant
+// brushOpacity ceiling — no separate end-of-stroke multiplier.
 function _commitStrokeCanvas(){
   if(!_strokeCanvas) return;
-  const dynOp = _getDynamicOpacityMultiplier();
   ctx.save();
-  ctx.globalAlpha = Math.max(0, Math.min(1, brushOpacity * dynOp));
+  ctx.globalAlpha = Math.max(0, Math.min(1, brushOpacity));
   ctx.globalCompositeOperation = 'source-over';
   ctx.drawImage(_strokeCanvas, 0, 0);
   ctx.restore();
   _strokeCtx.clearRect(0, 0, _strokeCanvas.width, _strokeCanvas.height);
-  _dynOpacitySum = 0; _dynOpacityCount = 0; // ready for the next stroke
 }
 
 // ── Live stroke preview ─────────────────────────────────────────────────
@@ -1007,23 +1006,13 @@ function _strokeTaperFactor(baseSize){
 
 // Resolve the spacing FRACTION (of effective diameter) to use for the dab
 // currently being placed. This used to be duplicated inline in both
-// _strokeSegment and _stampQuadCurve, and neither copy ever looked at
-// window._tsSpacingVelocity — so the "Velocity Spacing" checkbox in the
-// Tool Settings panel (brush-presets.js) saved its state but had zero
-// effect on the actual stroke. Centralizing it here fixes both call sites
-// at once and makes the velocity behavior explicit:
-// when enabled, spacing widens as stroke speed increases (0..1 velocity ->
-// up to 2x the base spacing), which is what "Velocity Spacing" is meant to
-// do in Photoshop/CSP-style engines — fewer, more spread-out dabs on a
-// fast flick instead of stamping just as densely as a slow, deliberate
-// stroke.
+// _strokeSegment and _stampQuadCurve — centralized here so both call sites
+// stay in sync. Spacing is always fixed: it never widens or narrows based
+// on stroke velocity or acceleration, only on the Spacing slider (and the
+// airbrush cap).
 function _effectiveSpacingFrac(){
-  let spacing = (typeof window!=='undefined' && window._tsSpacing!=null) ? window._tsSpacing : 0.12;
+  let spacing = (typeof window!=='undefined' && window._tsSpacing!=null) ? window._tsSpacing : 0;
   if(typeof window!=='undefined' && window._brushAirbrush) spacing = Math.min(spacing, _AIRBRUSH_SPACING_FRAC);
-  if(typeof window!=='undefined' && window._tsSpacingVelocity){
-    const v = _getVelocity(); // 0..1, smoothed stroke speed
-    spacing = spacing * (1 + v); // up to 2x spacing at top speed
-  }
   return spacing;
 }
 
@@ -1312,21 +1301,9 @@ function _getPressure(e){
   return 1.0;
 }
 
-function _getTilt(e){
-  // tiltX/tiltY: –90..90 degrees; 0 = perpendicular to surface.
-  // Normalise to 0..1 (0 = perfectly vertical, 1 = fully tilted).
-  const tx = e.tiltX || 0;
-  const ty = e.tiltY || 0;
-  return Math.min(1, Math.sqrt(tx*tx + ty*ty) / 90);
-}
-
-function _getVelocity(){
-  // Velocity is tracked as a running average of dab spacing (pixels/ms).
-  // Normalise: 0 at rest → 1 at fast strokes. Capped to avoid runaway.
-  return Math.min(1, _strokeVelocity / 20.0); // 20 px/ms = "fast"
-}
-
-// Stroke velocity tracking (pixels per ms) for velocity-mapped controls.
+// Stroke velocity tracking (pixels per ms) — used only by the "flick tail"
+// buffering heuristic in _queueDab, not by any size/opacity dynamics control
+// (those support Pen Pressure only).
 let _strokeVelocity = 0;
 let _lastMoveTime = 0;
 let _lastMoveX = 0, _lastMoveY = 0;
@@ -1340,7 +1317,6 @@ function _updateVelocity(x, y, t){
   _lastMoveTime = t; _lastMoveX = x; _lastMoveY = y;
 }
 
-// Fade: stroke age in dabs (incremented each dab, reset per stroke)
 let _strokeDabCount = 0;
 // Read the size/opacity dynamics controls set in the Tool Settings panel.
 // Default size control is 'pressure' (not 'off') so pen pressure works immediately.
@@ -1430,33 +1406,16 @@ function _resolveControl(ctrl, e){
       // minimum further downstream, so the mark never fully disappears.
       return Math.max(0, Math.min(1, _applyPressureCurve(_smoothedPressure)));
     }
-    case 'tilt': {
-      const t = e ? _getTilt(e) : 0;
-      // Tilt: 0 = pen vertical (full size), 1 = pen flat (min size). Invert = more tilt -> smaller.
-      return Math.max(0.01, 1 - t);
-    }
-    case 'velocity': {
-      const v = _getVelocity();
-      // Fast stroke = smaller/more transparent (matches PS velocity behaviour).
-      return Math.max(0.01, 1 - v);
-    }
-    case 'fade': {
-      // Fade: full size at dab 0, reaches minSize by dab ~200.
-      const fadeLen = 200;
-      return Math.max(0, 1 - Math.min(1, _strokeDabCount / fadeLen));
-    }
     default: return 1.0; // 'off' or unknown
   }
 }
 
 // Return effective brush radius and alpha for the current dab, factoring in
-// pressure / tilt / velocity / fade depending on Tool Settings panel selection.
-// Mouse/trackpad always have currentPressure===1.0 and tilt===0, so they are
-// unaffected by pressure/tilt. Velocity and fade affect all input types.
+// Pen Pressure when the Tool Settings panel has it selected (the only
+// dynamics control supported — mouse/trackpad always have
+// currentPressure===1.0, so they are unaffected).
 // Pure (no side effects) so callers can "peek" at the current radius — e.g.
-// to compute dab spacing — without disturbing fade-stroke state. The fade
-// counter itself is incremented separately, exactly once per dab actually
-// stamped (see _stampDab).
+// to compute dab spacing.
 function _computeEffectiveParams(e){
   const baseSize=getBrushSize();
   // Flow (brushFlow) controls per-dab alpha — how fast paint builds up within
@@ -1469,31 +1428,47 @@ function _computeEffectiveParams(e){
   const sizeCtrl   = _getSizeControl();
   const opacityCtrl= _getOpacityControl();
 
+  // Both Size and Opacity dynamics read the SAME underlying pressure signal
+  // when both are set to Pen Pressure. Resolving it independently for each
+  // (two separate calls into _resolveControl, each advancing the shared
+  // pressure-smoothing EMA by its own step) made Opacity settle one extra
+  // EMA step further toward the live reading than Size within the very
+  // same dab — a small but constant phase/lag mismatch between width and
+  // darkness. Once dabs overlap at tight spacing that mismatch shows up as
+  // a periodic "twisted rope" / bead pattern along the stroke instead of a
+  // smooth taper (this is the "visible circles" look vs. TVPaint's smooth
+  // transition). Fix: resolve pressure exactly once per dab and share the
+  // result, so width and opacity always move in lockstep with the same
+  // instantaneous pressure sample.
+  let _pressureInfluence = null;
+  function _getPressureInfluence(){
+    if(_pressureInfluence===null) _pressureInfluence = _resolveControl('pressure', e);
+    return _pressureInfluence;
+  }
+
   // Size dynamics
   if(sizeCtrl !== 'off'){
-    // Pressure/tilt: only auto-apply when drawing with a pen (mouse has no real pressure/tilt).
-    // Velocity and fade apply to all devices.
-    const applySize = (sizeCtrl === 'pressure' || sizeCtrl === 'tilt') ? isPenStroke : true;
+    // Pressure: only auto-apply when drawing with a pen (mouse has no real pressure).
+    const applySize = (sizeCtrl === 'pressure') ? isPenStroke : true;
     if(applySize){
-      const influence = _resolveControl(sizeCtrl, e);
+      const influence = (sizeCtrl === 'pressure') ? _getPressureInfluence() : _resolveControl(sizeCtrl, e);
       const minR = (baseSize/2) * _getMinSize();
       r = minR + (baseSize/2 - minR) * influence;
     }
   }
 
-  // Opacity dynamics — accumulate this dab's influence so the AVERAGE
-  // across the whole stroke can be applied once, as a multiplier on
-  // brushOpacity, when the stroke commits (see _commitStrokeCanvas /
-  // _getDynamicOpacityMultiplier below). This intentionally does NOT touch
-  // `alpha` (that's Flow's per-dab build-up, controlled only by the Flow
-  // slider) — the old code modulated Flow here by mistake, which is why
-  // this control never actually affected Opacity despite its old label.
+  // Opacity dynamics — applied per dab, in real time, exactly like Size
+  // above: each dab's alpha is scaled by its own instantaneous pressure
+  // reading right now, so a light touch paints light immediately and a
+  // hard press paints dark immediately, live, while the stroke is still
+  // being drawn. brushOpacity (the stroke-level cap) is applied separately
+  // and unchanged, once, at commit time (see _commitStrokeCanvas).
   if(opacityCtrl !== 'off'){
-    const applyOpacity = (opacityCtrl === 'pressure' || opacityCtrl === 'tilt') ? isPenStroke : true;
+    const applyOpacity = (opacityCtrl === 'pressure') ? isPenStroke : true;
     if(applyOpacity){
-      const influence = _resolveControl(opacityCtrl, e);
-      _dynOpacitySum += influence;
-      _dynOpacityCount++;
+      const influence = (opacityCtrl === 'pressure') ? _getPressureInfluence() : _resolveControl(opacityCtrl, e);
+      const minO = _getMinFlow();
+      alpha *= Math.max(0, Math.min(1, minO + (1 - minO) * influence));
     }
   }
 
@@ -1554,7 +1529,7 @@ function _getEffectiveBrushParams(e){
   return params;
 }
 
-// Returns the pressure/tilt/velocity-scaled radius for spacing calculations ONLY.
+// Returns the pressure-scaled radius for spacing calculations ONLY.
 // Excludes taper and the visibility floor so the step size always tracks the
 // actual rendered dab size — matching CSP's behaviour where spacing is always
 // relative to the current effective brush diameter, not the base size.
@@ -1563,12 +1538,14 @@ function _computeSpacingRadius(e, interpolatedPressure){
   const sizeCtrl = _getSizeControl();
   let r = baseSize / 2;
   if(sizeCtrl !== 'off'){
-    const applySize = (sizeCtrl === 'pressure' || sizeCtrl === 'tilt') ? _isDrawingWithPen : true;
+    const applySize = (sizeCtrl === 'pressure') ? _isDrawingWithPen : true;
     if(applySize){
       const savedPressure = currentPressure;
+      const savedSmoothed = _smoothedPressure;
       currentPressure = interpolatedPressure;
       const influence = _resolveControl(sizeCtrl, e);
       currentPressure = savedPressure;
+      _smoothedPressure = savedSmoothed;
       const minR = (baseSize / 2) * _getMinSize();
       r = minR + (baseSize / 2 - minR) * influence;
     }
@@ -1634,7 +1611,6 @@ activeC.addEventListener('pointerdown',e=>{
   _smoothedPressure = currentPressure; // snap smoothing to actual pressure at stroke start (no ramp-in lag)
   _lastKnownPressure = currentPressure;
   _strokeDabCount = 0; // reset fade counter
-  _dynOpacitySum = 0; _dynOpacityCount = 0; // reset per-stroke Opacity dynamics average
   _strokeDistSoFar = 0; // reset start-of-stroke taper
   _pendingDabs.length = 0; // discard any unflushed tail from a previous stroke
   _frameDirty = null; // discard any stale accumulation from a previous/aborted stroke
