@@ -152,7 +152,7 @@
       'kfsw-hide-prev',
       'kfsw-hide-keyframes',
       'kfsw-hide-layer',
-      'kfsw-compact',
+      'kfsw-hide-state',
     ];
 
     const ro = new ResizeObserver(entries => {
@@ -161,11 +161,12 @@
         const h = availableHeight();
         const isDocked = kfswPanel.classList.contains('docked');
 
-        // Width axis: collapse whole state block at extreme narrow width only.
+        // Width axis only: kfsw-compact hides nav labels and "Enable".
+        // Never triggered by height so "Enable Bypass" is width-controlled only.
         kfswPanel.classList.toggle('kfsw-compact', w < 106);
 
         // Height axis: reset, then progressively hide rows until content fits.
-        HEIGHT_SEQ.forEach(cls => { if(cls !== 'kfsw-compact') kfswPanel.classList.remove(cls); });
+        HEIGHT_SEQ.forEach(cls => kfswPanel.classList.remove(cls));
         if(!kfswPanel.classList.contains('kfsw-compact')){
           for(const cls of HEIGHT_SEQ){
             if(measuredContentHeight() <= h) break;
@@ -173,9 +174,10 @@
           }
         }
 
-        // Floating: lock min-height at compact floor so panel can't shrink further.
+        // Floating: always lock min-height to the current content height so the
+        // panel never clips remaining content after all hide steps are applied.
         // Docked: clear min-height — split handle controls height, body scrolls.
-        if(!isDocked && kfswPanel.classList.contains('kfsw-compact')){
+        if(!isDocked){
           kfswPanel.style.minHeight = measuredContentHeight() + 'px';
         } else {
           kfswPanel.style.minHeight = '';

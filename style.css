@@ -761,6 +761,7 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 #keyframe-switcher-panel.kfsw-hide-prev    #kfsw-row-prev{display:none;}
 #keyframe-switcher-panel.kfsw-hide-keyframes #kfsw-row-keyframes{display:none;}
 #keyframe-switcher-panel.kfsw-hide-layer   #kfsw-row-layer{display:none;}
+#keyframe-switcher-panel.kfsw-hide-state   .kfsw-state{display:none;}
 /* Compact: hide entire state block; shrink nav buttons to arrows only; shorten bypass */
 #keyframe-switcher-panel.kfsw-compact .kfsw-state{display:none;}
 #keyframe-switcher-panel.kfsw-compact .fp-body{gap:5px;}
