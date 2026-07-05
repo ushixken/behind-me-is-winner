@@ -320,6 +320,7 @@ const FloatPanels=(function(){
     layers:       {minSize:120, maxSize:500, floatResizable:true},
     color:        {minSize:120, maxSize:500, floatResizable:false},
     'keyframe-switcher':{minSize:106,maxSize:500,floatResizable:true,get minHeight(){const p=document.getElementById('keyframe-switcher-panel');return p&&parseFloat(p.style.minHeight)||120;}},
+    'keyframe-exposure':{minSize:106,maxSize:500,floatResizable:true,get minHeight(){const p=document.getElementById('keyframe-exposure-panel');return p&&parseFloat(p.style.minHeight)||160;}},
   };
   function cfgOf(key){ return PANEL_CFG[key]||{minSize:120,maxSize:500}; }
 

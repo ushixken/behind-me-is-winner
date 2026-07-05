@@ -110,6 +110,7 @@
       <div class="dd-item" id="dd-show-layers"><span class="dd-check" id="chk-layers">✓</span>Layers Panel</div>
       <div class="dd-item" id="dd-show-timeline"><span class="dd-check" id="chk-timeline">✓</span>Timeline</div>
       <div class="dd-item" id="dd-show-keyframe-switcher"><span class="dd-check" id="chk-keyframe-switcher"></span>Keyframe Switcher</div>
+      <div class="dd-item" id="dd-show-keyframe-exposure"><span class="dd-check" id="chk-keyframe-exposure"></span>Keyframe Exposure</div>
       <div class="dd-item" id="dd-show-toolbar"><span class="dd-check" id="chk-toolbar">✓</span>Toolbar</div>
       <div class="dd-sep"></div>
       <div class="dd-item" id="dd-reset-layout">↺ Reset Layout</div>
@@ -279,6 +280,39 @@
               <span>Bypass keyframes</span>
             </label>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- KEYFRAME EXPOSURE PANEL (ported from the Krita "Keyframe Exposure" docker) -->
+    <div id="keyframe-exposure-panel" class="float-panel fp-hidden" data-panel="keyframe-exposure" style="top:16px;left:580px;width:220px;">
+      <div class="fp-tabbar" style="display:none;"></div>
+      <div class="fp-titlebar"><span class="fp-grip">⠿</span><span class="fp-name">Keyframe Exposure</span><span class="fp-close" title="Close panel">✕</span></div>
+      <div class="fp-body-wrap">
+        <div class="fp-body active" data-body="keyframe-exposure" style="flex-direction:column;">
+          <div class="kfexp-info-box" id="kfexp-info-box">
+            <div class="tf-panel-label">Info</div>
+            <div class="kfexp-info" id="kfexp-info">Insert/Remove hold frames at the <b>current</b> keyframe only. Seek to a keyframe, set value, then Increase or Decrease.</div>
+          </div>
+          <div class="kfexp-controls">
+            <div class="tf-panel-label" id="kfexp-options-label">Options</div>
+            <div class="kfsw-row">
+              <label for="kfexp-amount">Frames</label>
+              <input type="number" id="kfexp-amount" min="1" max="999" value="2"/>
+            </div>
+            <label class="kfsw-checkbox" title="When checked, forces the gap to the next keyframe to exactly the Exposure value.">
+              <input type="checkbox" id="kfexp-bypass"/>
+              <span><span class="kfexp-bypass-full">Enable </span>Bypass</span>
+            </label>
+          </div>
+          <div class="kfexp-buttons">
+            <button class="tbtn kfexp-btn" id="kfexp-btn-increase" title="Insert hold frames at the current keyframe (shift subsequent keys right)."><span class="kfexp-label-full">Increase Exposure</span><span class="kfexp-label-short">+</span></button>
+            <button class="tbtn kfexp-btn" id="kfexp-btn-decrease" title="Remove hold frames at the current keyframe (shift subsequent keys left)."><span class="kfexp-label-full">Decrease Exposure</span><span class="kfexp-label-short">−</span></button>
+          </div>
+          <div class="kfexp-hint-box" id="kfexp-hint-box">
+            <span class="kfexp-hint">Tip: assign shortcuts via Settings → Keybinds.</span>
+          </div>
+          <div class="kfexp-status" id="kfexp-status"></div>
         </div>
       </div>
     </div>
@@ -1116,6 +1150,7 @@
 <script src="timeline.js"></script>
 <script src="layers.js"></script>
 <script src="keyframe-switcher.js"></script>
+<script src="keyframe-exposure.js"></script>
 <script src="keybinds.js"></script>
 <script src="brush-size-drag.js"></script>
 <script src="brush-size-cursor.js"></script>
