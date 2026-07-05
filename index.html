@@ -846,50 +846,61 @@
 
 <!-- ── PREFERENCES MODAL ──────────────────────────────────── -->
 <div class="modal-overlay" id="modal-preferences">
-  <div class="modal" style="min-width:380px;">
+  <div class="modal">
     <h2>⚙ Preferences</h2>
     <p style="font-size:11px;color:var(--text2);margin-bottom:14px;">App-wide settings, saved on this device.</p>
 
-    <div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Renderer</div>
-    <p style="font-size:11px;color:var(--text2);margin-bottom:10px;">Controls how the brush's soft (AA) edge is rasterized while drawing. This only affects the antialiased brush — the hard-edge pencil/pixel mode is unaffected either way.</p>
-    <label style="display:flex;align-items:flex-start;gap:8px;padding:8px;border-radius:8px;border:1px solid var(--border2);margin-bottom:8px;cursor:pointer;">
-      <input type="radio" name="pref-renderer" id="pref-renderer-gpu" value="gpu" style="margin-top:2px;"/>
-      <span>
-        <span style="font-weight:600;color:var(--text);display:block;">GPU (Hardware-accelerated) — default</span>
-        <span style="font-size:11px;color:var(--text2);">Uses the browser's built-in accelerated canvas rendering. Fastest option, recommended for most people.</span>
-      </span>
-    </label>
-    <label style="display:flex;align-items:flex-start;gap:8px;padding:8px;border-radius:8px;border:1px solid var(--border2);margin-bottom:14px;cursor:pointer;">
-      <input type="radio" name="pref-renderer" id="pref-renderer-cpu" value="cpu" style="margin-top:2px;"/>
-      <span>
-        <span style="font-weight:600;color:var(--text);display:block;">CPU (Software)</span>
-        <span style="font-size:11px;color:var(--text2);">Rasterizes each brush dab by hand on the CPU instead, similar to TVPaint's software brush engine. Heavier on the CPU by design — try this only if you have a specific reason to want software rendering.</span>
-      </span>
-    </label>
+    <div id="pref-body">
+      <div class="pref-ps-sidebar" id="pref-ps-sidebar">
+        <div class="pref-ps-nav-item active" data-panel="renderer">Renderer</div>
+        <div class="pref-ps-nav-item" data-panel="cursor">Cursor</div>
+      </div>
 
-    <div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Cursor</div>
-    <p style="font-size:11px;color:var(--text2);margin-bottom:10px;">Controls what the pointer looks like while it's over the canvas.</p>
-    <label style="display:flex;align-items:flex-start;gap:8px;padding:8px;border-radius:8px;border:1px solid var(--border2);margin-bottom:8px;cursor:pointer;">
-      <input type="radio" name="pref-cursor" id="pref-cursor-crosshair" value="crosshair" style="margin-top:2px;"/>
-      <span>
-        <span style="font-weight:600;color:var(--text);display:block;">Crosshair — default</span>
-        <span style="font-size:11px;color:var(--text2);">The standard fine crosshair.</span>
-      </span>
-    </label>
-    <label style="display:flex;align-items:flex-start;gap:8px;padding:8px;border-radius:8px;border:1px solid var(--border2);margin-bottom:8px;cursor:pointer;">
-      <input type="radio" name="pref-cursor" id="pref-cursor-point" value="point" style="margin-top:2px;"/>
-      <span>
-        <span style="font-weight:600;color:var(--text);display:block;">Point</span>
-        <span style="font-size:11px;color:var(--text2);">A small dot marking the exact draw point, without crosshair lines.</span>
-      </span>
-    </label>
-    <label style="display:flex;align-items:flex-start;gap:8px;padding:8px;border-radius:8px;border:1px solid var(--border2);margin-bottom:14px;cursor:pointer;">
-      <input type="radio" name="pref-cursor" id="pref-cursor-brush" value="brush" style="margin-top:2px;"/>
-      <span>
-        <span style="font-weight:600;color:var(--text);display:block;">Brush Size</span>
-        <span style="font-size:11px;color:var(--text2);">A live circle showing the exact brush/eraser radius, scaled with zoom.</span>
-      </span>
-    </label>
+      <div class="pref-ps-panels">
+        <div class="pref-ps-panel active" data-panel="renderer">
+          <p style="font-size:11px;color:var(--text2);margin-bottom:4px;">Controls how the brush's soft (AA) edge is rasterized while drawing. This only affects the antialiased brush — the hard-edge pencil/pixel mode is unaffected either way.</p>
+          <label style="display:flex;align-items:flex-start;gap:8px;padding:8px;border-radius:8px;border:1px solid var(--border2);cursor:pointer;">
+            <input type="radio" name="pref-renderer" id="pref-renderer-gpu" value="gpu" style="margin-top:2px;"/>
+            <span>
+              <span style="font-weight:600;color:var(--text);display:block;">GPU (Hardware-accelerated) — default</span>
+              <span style="font-size:11px;color:var(--text2);">Uses the browser's built-in accelerated canvas rendering. Fastest option, recommended for most people.</span>
+            </span>
+          </label>
+          <label style="display:flex;align-items:flex-start;gap:8px;padding:8px;border-radius:8px;border:1px solid var(--border2);cursor:pointer;">
+            <input type="radio" name="pref-renderer" id="pref-renderer-cpu" value="cpu" style="margin-top:2px;"/>
+            <span>
+              <span style="font-weight:600;color:var(--text);display:block;">CPU (Software)</span>
+              <span style="font-size:11px;color:var(--text2);">Rasterizes each brush dab by hand on the CPU instead, similar to TVPaint's software brush engine. Heavier on the CPU by design — try this only if you have a specific reason to want software rendering.</span>
+            </span>
+          </label>
+        </div>
+
+        <div class="pref-ps-panel" data-panel="cursor">
+          <p style="font-size:11px;color:var(--text2);margin-bottom:4px;">Controls what the pointer looks like while it's over the canvas.</p>
+          <label style="display:flex;align-items:flex-start;gap:8px;padding:8px;border-radius:8px;border:1px solid var(--border2);cursor:pointer;">
+            <input type="radio" name="pref-cursor" id="pref-cursor-crosshair" value="crosshair" style="margin-top:2px;"/>
+            <span>
+              <span style="font-weight:600;color:var(--text);display:block;">Crosshair — default</span>
+              <span style="font-size:11px;color:var(--text2);">The standard fine crosshair.</span>
+            </span>
+          </label>
+          <label style="display:flex;align-items:flex-start;gap:8px;padding:8px;border-radius:8px;border:1px solid var(--border2);cursor:pointer;">
+            <input type="radio" name="pref-cursor" id="pref-cursor-point" value="point" style="margin-top:2px;"/>
+            <span>
+              <span style="font-weight:600;color:var(--text);display:block;">Point</span>
+              <span style="font-size:11px;color:var(--text2);">A small dot marking the exact draw point, without crosshair lines.</span>
+            </span>
+          </label>
+          <label style="display:flex;align-items:flex-start;gap:8px;padding:8px;border-radius:8px;border:1px solid var(--border2);cursor:pointer;">
+            <input type="radio" name="pref-cursor" id="pref-cursor-brush" value="brush" style="margin-top:2px;"/>
+            <span>
+              <span style="font-weight:600;color:var(--text);display:block;">Brush Size</span>
+              <span style="font-size:11px;color:var(--text2);">A live circle showing the exact brush/eraser radius, scaled with zoom.</span>
+            </span>
+          </label>
+        </div>
+      </div>
+    </div>
 
     <div class="modal-actions">
       <button class="modal-btn primary" id="modal-preferences-close">Done</button>

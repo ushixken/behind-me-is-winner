@@ -363,6 +363,24 @@ document.getElementById('modal-keybinds-reset').onclick=()=>{
 };
 
 // ── PREFERENCES MODAL (Edit ▸ Preferences) ──────────────────────────────
+// Sidebar tab-switching, mirroring the Advanced Tool Settings layout but
+// scoped to pref-ps-* elements only (ts-ps-* is queried globally by
+// brush-presets.js, so reusing those classes here would collide with it).
+(function initPrefPsNav(){
+  const navItems=document.querySelectorAll('#pref-ps-sidebar .pref-ps-nav-item');
+  const panels=document.querySelectorAll('.pref-ps-panels .pref-ps-panel');
+  function activate(panelId){
+    navItems.forEach(item=>item.classList.toggle('active',item.dataset.panel===panelId));
+    panels.forEach(panel=>panel.classList.toggle('active',panel.dataset.panel===panelId));
+  }
+  navItems.forEach(item=>{
+    item.addEventListener('click',()=>{
+      const panelId=item.dataset.panel;
+      if(panelId) activate(panelId);
+    });
+  });
+})();
+
 document.getElementById('dd-preferences').onclick=()=>{
   const gpuRadio=document.getElementById('pref-renderer-gpu');
   const cpuRadio=document.getElementById('pref-renderer-cpu');

@@ -1170,3 +1170,44 @@ input.size-val-input{
   color:var(--text);font-size:11px;padding:4px 6px;outline:none;cursor:pointer;
 }
 .img-fit-row select:focus{border-color:var(--accent);}
+/* ── PREFERENCES MODAL — PS-style two-column layout (mirrors the
+   Advanced Tool Settings sidebar, but its own classes since ts-ps-*
+   selectors are queried globally by brush-presets.js) ── */
+#modal-preferences .modal{min-width:520px;max-width:560px;}
+#pref-body{display:flex;flex-direction:row;gap:0;min-height:320px;max-height:60vh;}
+
+.pref-ps-sidebar{
+  width:128px;flex-shrink:0;
+  background:var(--bg3);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;overflow-y:auto;overflow-x:hidden;
+  scrollbar-width:none;
+}
+.pref-ps-sidebar::-webkit-scrollbar{display:none;}
+
+.pref-ps-nav-item{
+  display:flex;align-items:center;gap:6px;
+  padding:9px 8px 9px 10px;
+  font-size:11px;color:var(--text2);cursor:pointer;
+  border-bottom:1px solid var(--border);
+  user-select:none;transition:background .1s,color .1s;
+  white-space:nowrap;overflow:hidden;flex-shrink:0;
+}
+.pref-ps-nav-item:hover{background:var(--bg4);color:var(--text);}
+.pref-ps-nav-item.active{
+  background:var(--accent-bg);color:var(--accent);
+  border-left:2px solid var(--accent);padding-left:8px;
+}
+
+.pref-ps-panels{flex:1;min-width:0;min-height:0;position:relative;overflow:hidden;}
+.pref-ps-panel{
+  position:absolute;inset:0;
+  display:none;flex-direction:column;
+  overflow-y:auto;overflow-x:hidden;
+  overscroll-behavior:contain;touch-action:pan-y;
+  scrollbar-width:thin;scrollbar-color:var(--border2) transparent;
+  padding:12px 14px;gap:8px;
+}
+.pref-ps-panel::-webkit-scrollbar{width:5px;}
+.pref-ps-panel::-webkit-scrollbar-track{background:transparent;}
+.pref-ps-panel::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px;}
+.pref-ps-panel.active{display:flex;}
