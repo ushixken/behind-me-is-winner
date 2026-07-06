@@ -356,8 +356,7 @@ const _TIP_DAB_CACHE_MAX=32;
 // Returns {canvas,w,h} — same contract as _buildAAStamp.
 function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   const tipC=window.brushTipCanvas;
-  if(!tipC) return null;
-  const tipV=window.brushTipVersion||0;
+  const tipV=tipC?(window.brushTipVersion||0):-1;
   const softAlpha=!!window.brushTipSoftAlpha;
   const tipMode=window.brushTipMode||'multiply';
   const r=_quant(rRaw,_Q_R), alpha=_quant(alphaRaw,_Q_ALPHA);
@@ -376,8 +375,8 @@ function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   // losing its actual shape entirely. Scaling by the tip's own aspect
   // ratio (its longer side maps to the current brush diameter, 2*rr) keeps
   // the true silhouette at every brush size.
-  const tipNativeW=tipC.width||tipC.naturalWidth||1;
-  const tipNativeH=tipC.height||tipC.naturalHeight||1;
+  const tipNativeW=tipC?(tipC.width||tipC.naturalWidth||1):1;
+  const tipNativeH=tipC?(tipC.height||tipC.naturalHeight||1):1;
   const tipScale=(2*rr)/Math.max(tipNativeW,tipNativeH);
   const dabW=Math.max(1,tipNativeW*tipScale), dabH=Math.max(1,tipNativeH*tipScale);
 
@@ -400,9 +399,13 @@ function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   // the tip has alpha > 0, and scales that alpha proportionally). Drawn at
   // its aspect-correct size (dabW×dabH), centered in the padded canvas —
   // not stretched to fill the whole w×h square.
-  tc.globalCompositeOperation='destination-in';
-  tc.drawImage(tipC,0,0,tipNativeW,tipNativeH,(w-dabW)/2,(h-dabH)/2,dabW,dabH);
-  tc.globalCompositeOperation='source-over';
+  if(tipC){
+    tc.globalCompositeOperation='destination-in';
+    tc.imageSmoothingEnabled=true;
+    tc.imageSmoothingQuality='high';
+    tc.drawImage(tipC,0,0,tipNativeW,tipNativeH,(w-dabW)/2,(h-dabH)/2,dabW,dabH);
+    tc.globalCompositeOperation='source-over';
+  }
 
   // Step 3: Per-pixel — apply the radial hardness falloff on top of the tip
   // mask (soft-alpha mode) or just scale by the requested alpha (hard mode),
@@ -418,10 +421,8 @@ function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
       const dx=(px+0.5)-cx, dy=(py+0.5)-cy;
       const t=Math.sqrt(dx*dx+dy*dy)/rr;
       let falloff;
-      if(softAlpha && tipMode!=='replace'){
-        if(t>=1) falloff=0;
-        else if(t<=inner) falloff=1;
-        else falloff=1-(t-inner)/outerSpan;
+      if(!tipC || (softAlpha && tipMode!=='replace')){
+        falloff=_roundBrushFalloff(t,inner,hardness);
       } else {
         // Hard / replace mode: no radial blend — use tip alpha verbatim.
         falloff=t>=1?0:1;
@@ -513,7 +514,20 @@ function _buildAAStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   _aaDabCache.set(key,stamp);
   return stamp;
 }
+function _drawUnifiedTipStamp(x,y,r,rgb,alpha,composite){
+  const dc=(_inStroke && composite!=='erase')?_strokeCtx:ctx;
+  const stamp=_buildTipStamp(r,rgb,alpha,composite,brushHardness);
+  dc.save();
+  dc.globalCompositeOperation=composite==='erase'?'destination-out':'source-over';
+  dc.imageSmoothingEnabled=true;
+  dc.drawImage(stamp.canvas,x-stamp.w/2,y-stamp.h/2);
+  dc.restore();
+}
 function _dabAAGpu(x,y,r,rgb,alpha,composite){
+  if(window.brushTipCanvas || r>=4){
+    _drawUnifiedTipStamp(x,y,r,rgb,alpha,composite);
+    return;
+  }
   // When a custom tip image is loaded, build a pre-shaped stamp (cached)
   // and blit it — no gradient is drawn. Falls back to the radial gradient
   // path below when no tip is set, preserving existing behaviour exactly.
@@ -586,6 +600,10 @@ function _dabAAGpu(x,y,r,rgb,alpha,composite){
 // only the rasterization backend differs (hand-written per-pixel math vs.
 // the browser's hardware gradient/fill).
 function _dabAACpu(x,y,r,rgb,alpha,composite){
+  if(window.brushTipCanvas || r>=4){
+    _drawUnifiedTipStamp(x,y,r,rgb,alpha,composite);
+    return;
+  }
   // When a custom tip image is loaded, use the exact same pre-shaped tip
   // stamp the GPU path uses (see _dabAAGpu) instead of the plain radial
   // falloff below. Without this branch, switching to the CPU renderer
@@ -833,7 +851,6 @@ function _drawDabNow(d){
 function _queueDab(d){
   _drawDabNow(d);
   return;
-  _pendingDabs.push(d);
   // Only hold dabs back while the stroke is actually moving fast enough for
   // a deceleration "flick tail" to be meaningful. On a slow/deliberate
   // stroke _strokeVelocity stays low, so there's no reason to withhold
@@ -841,24 +858,10 @@ function _queueDab(d){
   // and the rendered line that only closes on pointerup (exactly the
   // "brush lagging behind on a slow stroke" bug). Draw immediately whenever
   // we're below the fast-stroke threshold.
-  const isFastEnoughForTail = _strokeVelocity > 0.5; // px/ms-ish threshold, tune to taste
-  if(!isFastEnoughForTail){
-    while(_pendingDabs.length) _drawDabNow(_pendingDabs.shift());
-    return;
-  }
   if(_pendingDabs.length>_TAIL_BUFFER) _drawDabNow(_pendingDabs.shift());
 }
 function _flushStrokeTail(){
-  const n=_pendingDabs.length;
-  for(let i=0;i<n;i++){
-    const d=_pendingDabs[i];
-    const t = n>1 ? i/(n-1) : 1;
-    const eased = t*t*(3-2*t); // smoothstep, 0 at oldest -> 1 at newest/last
-    const tailFactor = 1 - eased*(1-_TAIL_MIN);
-    d.r *= tailFactor;
-    if(brushAA) d.alpha *= (0.35 + 0.65*tailFactor);
-    _drawDabNow(d);
-  }
+  for(const d of _pendingDabs) _drawDabNow(d);
   _pendingDabs.length=0;
 }
 
@@ -1228,8 +1231,9 @@ function _curveAddPoint(x,y,pressure,e){
 function _flushCurveTail(e){
   if(_curveP0===null||_curveP1===null) return;
   const B=_curveP1;
-  const startPt = {x:(_curveP0.x+B.x)/2, y:(_curveP0.y+B.y)/2};
-  _stampQuadCurve(startPt.x,startPt.y,B.x,B.y,B.x,B.y,e,(_curvePr0+_curvePr1)/2,_curvePr1);
+  currentPressure=_curvePr1;
+  _stampDab(B.x,B.y,_lastPointerEvent||e);
+  _strokeSegCarryOver=0;
   _curveP0=null;_curveP1=null;
 }
 
@@ -1607,7 +1611,7 @@ function _computeSpacingRadius(e, interpolatedPressure){
       r = minR + (baseSize / 2 - minR) * influence;
     }
   }
-  return Math.max(0.05, r);
+  return Math.max(0.05,r);
 }
 
 // Carry-over: leftover distance from the end of each segment so the first
