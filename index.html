@@ -602,21 +602,14 @@
 
           <!-- ── PS-STYLE SIDEBAR (Advanced mode only) ── -->
           <div class="ts-ps-sidebar ts-advanced-only">
-            <div class="ts-ps-nav-item active" data-panel="basic">Tip Shape</div>
-            <div class="ts-ps-nav-item" data-panel="tip-image">
-              <input type="checkbox" class="ts-ps-nav-check" id="ts-ps-check-tip-image">
-              <span>Brush Tip Image</span>
-            </div>
+            <div class="ts-ps-nav-item active" data-panel="tip-image">Tip Shape</div>
             <div class="ts-ps-nav-item" data-panel="dynamics">
-              <input type="checkbox" class="ts-ps-nav-check" id="ts-ps-check-dynamics" checked>
               <span>Dynamics</span>
             </div>
             <div class="ts-ps-nav-item" data-panel="texture">
-              <input type="checkbox" class="ts-ps-nav-check" id="ts-ps-check-texture">
               <span>Texture</span>
             </div>
             <div class="ts-ps-nav-item" data-panel="pressure">
-              <input type="checkbox" class="ts-ps-nav-check" id="ts-ps-check-pressure">
               <span>Pressure Curve</span>
             </div>
             <div class="ts-ps-nav-item" data-panel="import">
@@ -630,11 +623,12 @@
             <!-- BASIC / TIP SHAPE -->
             <div class="ts-ps-panel active" data-panel="basic">
               <div class="ts-section-body">
-                <div class="ts-row">
+                <div class="ts-row ts-field" data-eye="size">
                   <span class="ts-label">Size</span>
                   <input type="range" class="ts-range" id="ts-size" min="1" max="2000" step="0.1" value="6"/>
                   <span class="ts-val size-val-edit" id="ts-size-val" title="Tap to type an exact size" tabindex="0">6</span>
                   <button class="size-unit-btn" id="ts-size-unit" type="button" title="Switch between pixels and millimeters">px</button>
+                  <button type="button" class="ts-simple-settings-btn ts-simple-only" data-simple-settings="size" title="Size settings">⚙</button>
                 </div>
                 <div class="ts-field" data-eye="opacity">
                   <div class="ts-divider" style="margin:6px 0;"></div>
@@ -642,7 +636,8 @@
                     <button type="button" class="ts-eye-btn ts-advanced-only" data-eye-btn="opacity" title="Show/hide in Simple tab">👁</button>
                     <span class="ts-label">Opacity</span>
                     <input type="range" class="ts-range" id="ts-opacity" min="1" max="100" value="100"/>
-                    <span class="ts-val" id="ts-opacity-val">100</span>
+                    <span class="ts-val ts-value-edit" data-value-target="ts-opacity" tabindex="0" id="ts-opacity-val">100</span>
+                    <button type="button" class="ts-simple-settings-btn ts-simple-only" data-simple-settings="opacity" title="Opacity settings">⚙</button>
                   </div>
                 </div>
                 <div class="ts-field" data-eye="flow">
@@ -651,7 +646,8 @@
                     <button type="button" class="ts-eye-btn ts-advanced-only" data-eye-btn="flow" title="Show/hide in Simple tab">👁</button>
                     <span class="ts-label">Flow</span>
                     <input type="range" class="ts-range" id="ts-flow" min="1" max="100" value="100"/>
-                    <span class="ts-val" id="ts-flow-val">100</span>
+                    <span class="ts-val ts-value-edit" data-value-target="ts-flow" tabindex="0" id="ts-flow-val">100</span>
+                    <button type="button" class="ts-simple-settings-btn ts-simple-only" data-simple-settings="flow" title="Flow settings">⚙</button>
                   </div>
                 </div>
                 <div class="ts-field" data-eye="density">
@@ -669,7 +665,8 @@
                     <button type="button" class="ts-eye-btn ts-advanced-only" data-eye-btn="hardness" title="Show/hide in Simple tab">👁</button>
                     <span class="ts-label">Hardness</span>
                     <input type="range" class="ts-range" id="ts-hardness" min="0" max="100" value="55"/>
-                    <span class="ts-val" id="ts-hardness-val">55</span>
+                    <span class="ts-val ts-value-edit" data-value-target="ts-hardness" tabindex="0" id="ts-hardness-val">55</span>
+                    <button type="button" class="ts-simple-settings-btn ts-simple-only" data-simple-settings="hardness" title="Hardness settings">⚙</button>
                   </div>
                 </div>
                   <div class="ts-field" data-eye="spacing">
@@ -678,7 +675,8 @@
                       <button type="button" class="ts-eye-btn ts-advanced-only" data-eye-btn="spacing" title="Show/hide in Simple tab">👁</button>
                       <span class="ts-label">Spacing</span>
                       <input type="range" class="ts-range" id="ts-spacing" min="1" max="200" value="12"/>
-                      <span class="ts-val" id="ts-spacing-val">12%</span>
+                      <span class="ts-val ts-value-edit" data-value-target="ts-spacing" tabindex="0" id="ts-spacing-val">12%</span>
+                      <button type="button" class="ts-simple-settings-btn ts-simple-only" data-simple-settings="spacing" title="Spacing settings">⚙</button>
                     </div>
                   </div>
                 <div class="ts-field" data-eye="aa">
@@ -696,6 +694,18 @@
             <!-- BRUSH TIP IMAGE -->
             <div class="ts-ps-panel" data-panel="tip-image" id="ts-tip-image-section">
               <div class="ts-section-body">
+                <div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-size"><button type="button" class="ts-eye-btn" data-eye-btn="size">👁</button><span class="ts-label">Size</span><input type="range" class="ts-range" min="1" max="2000" step="0.1"><span class="ts-val ts-value-edit" data-value-target="ts-size" data-size-value="true" tabindex="0"></span><button class="size-unit-btn ts-advanced-size-unit" type="button">px</button></div>
+                <div class="ts-divider"></div>
+                <div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-opacity"><button type="button" class="ts-eye-btn" data-eye-btn="opacity">👁</button><span class="ts-label">Opacity</span><input type="range" class="ts-range" min="1" max="100"><span class="ts-val ts-value-edit" data-value-target="ts-opacity" tabindex="0"></span></div>
+                <div class="ts-divider"></div>
+                <div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-flow"><button type="button" class="ts-eye-btn" data-eye-btn="flow">👁</button><span class="ts-label">Flow</span><input type="range" class="ts-range" min="1" max="100"><span class="ts-val ts-value-edit" data-value-target="ts-flow" tabindex="0"></span></div>
+                <div class="ts-divider"></div>
+                <div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-hardness"><button type="button" class="ts-eye-btn" data-eye-btn="hardness">👁</button><span class="ts-label">Hardness</span><input type="range" class="ts-range" min="0" max="100"><span class="ts-val ts-value-edit" data-value-target="ts-hardness" tabindex="0"></span></div>
+                <div class="ts-divider"></div>
+                <div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-spacing" data-mirror-suffix="%"><button type="button" class="ts-eye-btn" data-eye-btn="spacing">👁</button><span class="ts-label">Spacing</span><input type="range" class="ts-range" min="1" max="200"><span class="ts-val ts-value-edit" data-value-target="ts-spacing" tabindex="0"></span></div>
+                <div class="ts-divider"></div>
+                <div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-aa"><button type="button" class="ts-eye-btn" data-eye-btn="aa">👁</button><label class="ts-label-sm ts-mirror-check-label"><input type="checkbox" class="ts-check"> Anti-aliasing</label></div>
+                <div class="ts-divider"></div>
                 <div style="display:flex;gap:7px;align-items:flex-start;">
                   <canvas id="ts-tip-preview" width="64" height="64"
                     style="width:64px;height:64px;border-radius:5px;border:1px solid var(--border2);
@@ -741,6 +751,25 @@
                     <option value="pressure" selected>Pen Pressure</option>
                   </select>
                 </div>
+                <div class="ts-row" id="ts-min-size-row">
+                  <span class="ts-label">Minimum Size</span>
+                  <input type="range" class="ts-range" id="ts-min-size" min="0" max="100" value="5"/>
+                  <span class="ts-val" id="ts-min-size-val">5%</span>
+                </div>
+                <div class="ts-divider"></div>
+                <div class="ts-label-sm" style="color:var(--text);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px;">Flow</div>
+                <div class="ts-row">
+                  <span class="ts-label">Control</span>
+                  <select class="ts-select" id="ts-flow-control">
+                    <option value="off" selected>Off</option>
+                    <option value="pressure">Pen Pressure</option>
+                  </select>
+                </div>
+                <div class="ts-row" id="ts-min-flow-row" style="display:none;">
+                  <span class="ts-label">Minimum Flow</span>
+                  <input type="range" class="ts-range" id="ts-min-flow" min="0" max="100" value="0"/>
+                  <span class="ts-val" id="ts-min-flow-val">0%</span>
+                </div>
                 <div class="ts-divider"></div>
                 <div class="ts-label-sm" style="color:var(--text);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px;">Opacity</div>
                 <div class="ts-row">
@@ -754,7 +783,7 @@
             </div>
 
             <!-- TEXTURE -->
-            <div class="ts-ps-panel" data-panel="texture">
+            <div class="ts-ps-panel ts-placeholder-panel" data-panel="texture" data-placeholder="Texture controls are not available yet.">
               <div class="ts-section-body">
                 <div style="display:flex;gap:7px;align-items:flex-start;">
                   <canvas id="ts-texture-preview" width="64" height="64"
@@ -817,7 +846,7 @@
             </div>
 
             <!-- PRESSURE CURVE -->
-            <div class="ts-ps-panel" data-panel="pressure">
+            <div class="ts-ps-panel ts-placeholder-panel" data-panel="pressure" data-placeholder="Pressure curve editing is not available yet.">
               <div class="ts-section-body">
                 <canvas class="ts-curve-canvas" id="ts-pressure-curve" width="180" height="60" title="Click to reset, drag points to edit"></canvas>
                 <div class="ts-pill-row" style="margin-top:3px;">
@@ -849,6 +878,7 @@
         <button class="modal-btn primary" id="tool-settings-modal-close">Done</button>
       </div>
     </div><!-- /tool-settings-modal -->
+    <div id="ts-simple-settings-popup" class="ts-simple-settings-popup" aria-hidden="true"></div>
   </div><!-- /tool-settings-modal-overlay -->
 
 <!-- ── PREFERENCES MODAL ──────────────────────────────────── -->

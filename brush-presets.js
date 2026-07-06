@@ -26,6 +26,19 @@
   // Dynamics
   bindRange('ts-min-size','ts-min-size-val','%');
   bindRange('ts-min-flow','ts-min-flow-val','%');
+  function syncDynamicsMinimums(){
+    const sizeControl=document.getElementById('ts-size-control');
+    const flowControl=document.getElementById('ts-flow-control');
+    const minSizeRow=document.getElementById('ts-min-size-row');
+    const minFlowRow=document.getElementById('ts-min-flow-row');
+    if(minSizeRow) minSizeRow.style.display=sizeControl&&sizeControl.value==='pressure'?'':'none';
+    if(minFlowRow) minFlowRow.style.display=flowControl&&flowControl.value==='pressure'?'':'none';
+  }
+  const sizeControl=document.getElementById('ts-size-control');
+  const flowControl=document.getElementById('ts-flow-control');
+  if(sizeControl) sizeControl.addEventListener('input',syncDynamicsMinimums);
+  if(flowControl) flowControl.addEventListener('input',syncDynamicsMinimums);
+  syncDynamicsMinimums();
   // Transfer / Texture
   bindRange('ts-texture-scale','ts-texture-scale-val','%');
   bindRange('ts-texture-depth','ts-texture-depth-val','');
@@ -118,9 +131,10 @@
       });
     });
 
-    // Restore last panel or default to basic
-    let lastPanel='basic';
-    try{ lastPanel=sessionStorage.getItem('tsPsPanel')||'basic'; }catch(e){}
+    // Restore last panel or default to Tip Shape
+    let lastPanel='tip-image';
+    try{ lastPanel=sessionStorage.getItem('tsPsPanel')||'tip-image'; }catch(e){}
+    if(lastPanel==='basic') lastPanel='tip-image';
     activatePanel(lastPanel);
 
     // Re-activate correct panel when switching to advanced mode
@@ -179,7 +193,7 @@
   (function initSimpleVisibilityEyes(){
     const EYE_KEY='tsSimpleFieldVisibility';
     // What shows in Simple by default, before the user customizes anything.
-    const DEFAULTS={opacity:false,flow:true,density:false,hardness:true,aa:true,'dyn-size':true,'dyn-opacity':true};
+    const DEFAULTS={size:true,opacity:false,flow:true,density:false,hardness:true,spacing:false,aa:true};
     let vis={};
     try{ vis=JSON.parse(localStorage.getItem(EYE_KEY)||'{}'); }catch(e){ vis={}; }
 
@@ -188,13 +202,13 @@
     }
     function applyField(key){
       const field=document.querySelector('.ts-field[data-eye="'+key+'"]');
-      const btn=document.querySelector('.ts-eye-btn[data-eye-btn="'+key+'"]');
+      const buttons=document.querySelectorAll('.ts-eye-btn[data-eye-btn="'+key+'"]');
       const on=isVisible(key);
       if(field) field.classList.toggle('ts-simple-hidden',!on);
-      if(btn){
+      buttons.forEach(btn=>{
         btn.classList.toggle('ts-eye-off',!on);
         btn.title=on?'Visible in Simple tab — click to hide':'Hidden in Simple tab — click to show';
-      }
+      });
     }
     // Apply initial state to whatever eye buttons/fields exist right now.
     document.querySelectorAll('.ts-eye-btn[data-eye-btn]').forEach(btn=>{
@@ -439,6 +453,134 @@
   document.getElementById('ts-mode-simple')?.addEventListener('click',()=>setTsMode('simple'));
   document.getElementById('ts-mode-advanced')?.addEventListener('click',()=>setTsMode('advanced'));
   applyTsMode();
+
+  (function initAdvancedMainControlMirrors(){
+    document.querySelectorAll('.ts-advanced-mirror-row[data-mirror-target]').forEach(row=>{
+      const source=document.getElementById(row.dataset.mirrorTarget);
+      const mirror=row.querySelector('input[type="range"],input[type="checkbox"]');
+      const value=row.querySelector('.ts-val');
+      if(!source||!mirror) return;
+      const syncFromSource=()=>{
+        if(source.type==='checkbox') mirror.checked=source.checked;
+        else mirror.value=source.value;
+        if(value){
+          if(row.dataset.mirrorTarget==='ts-size' && window._brushSizeUnit){
+            const px=+source.value;
+            value.textContent=window._brushSizeUnit.unit==='mm'?String(Math.round(window._brushSizeUnit.pxToMm(px)*100)/100):String(Math.round(px*10)/10);
+          } else value.textContent=source.value+(row.dataset.mirrorSuffix||'');
+        }
+      };
+      const syncToSource=()=>{
+        if(source.type==='checkbox') source.checked=mirror.checked;
+        else source.value=mirror.value;
+        source.dispatchEvent(new Event('input',{bubbles:true}));
+        source.dispatchEvent(new Event('change',{bubbles:true}));
+        syncFromSource();
+      };
+      mirror.addEventListener('input',syncToSource);
+      mirror.addEventListener('change',syncToSource);
+      source.addEventListener('input',syncFromSource);
+      source.addEventListener('change',syncFromSource);
+      syncFromSource();
+    });
+  })();
+
+  (function initEditableToolValues(){
+    document.querySelectorAll('.ts-row').forEach(row=>{
+      const slider=row.querySelector('input[type="range"][id]');
+      const display=row.querySelector('.ts-val');
+      if(!slider||!display||display.classList.contains('size-val-edit')) return;
+      display.classList.add('ts-value-edit');
+      display.dataset.valueTarget=display.dataset.valueTarget||slider.id;
+      display.tabIndex=0;
+    });
+    function beginEdit(display){
+      if(display.querySelector('input')) return;
+      const source=document.getElementById(display.dataset.valueTarget);
+      if(!source) return;
+      const original=display.textContent;
+      const input=document.createElement('input');
+      input.type='number';input.className='size-val-input';
+      input.min=source.min;input.max=source.max;input.step=source.step||'1';
+      input.value=parseFloat(original)||0;
+      display.textContent='';display.appendChild(input);input.focus();input.select();
+      let finished=false;
+      const finish=apply=>{
+        if(finished) return;finished=true;
+        if(apply){
+          let value=parseFloat(input.value);
+          if(Number.isFinite(value)){
+            if(display.dataset.sizeValue==='true' && window._brushSizeUnit?.unit==='mm') value=window._brushSizeUnit.mmToPx(value);
+            value=Math.max(+source.min,Math.min(+source.max,value));
+            source.value=value;source.dispatchEvent(new Event('input',{bubbles:true}));source.dispatchEvent(new Event('change',{bubbles:true}));
+          }
+        }
+        display.textContent=original;
+        source.dispatchEvent(new Event('input',{bubbles:true}));
+      };
+      input.addEventListener('keydown',event=>{if(event.key==='Enter') finish(true);else if(event.key==='Escape') finish(false);});
+      input.addEventListener('blur',()=>finish(true));
+    }
+    document.addEventListener('click',event=>{const display=event.target.closest&&event.target.closest('.ts-value-edit');if(display) beginEdit(display);});
+    document.addEventListener('keydown',event=>{if((event.key==='Enter'||event.key===' ')&&event.target.classList?.contains('ts-value-edit')){event.preventDefault();beginEdit(event.target);}});
+    const advancedUnit=document.querySelector('.ts-advanced-size-unit');
+    const simpleUnit=document.getElementById('ts-size-unit');
+    if(advancedUnit&&simpleUnit){
+      const syncUnit=()=>{advancedUnit.textContent=simpleUnit.textContent;advancedUnit.classList.toggle('active-mm',simpleUnit.classList.contains('active-mm'));document.getElementById('ts-size')?.dispatchEvent(new Event('input',{bubbles:true}));};
+      advancedUnit.addEventListener('click',()=>{simpleUnit.click();syncUnit();});
+      simpleUnit.addEventListener('click',()=>setTimeout(syncUnit,0));
+      syncUnit();
+    }
+  })();
+
+  (function initSimpleSettingsPopup(){
+    const popup=document.getElementById('ts-simple-settings-popup');
+    const modal=document.getElementById('tool-settings-modal');
+    if(!popup||!modal) return;
+    const configs={
+      size:{title:'Size Settings',controls:[['Control','ts-size-control'],['Minimum Size','ts-min-size']]},
+      flow:{title:'Flow Settings',controls:[['Control','ts-flow-control'],['Minimum Flow','ts-min-flow']]},
+      opacity:{title:'Opacity Settings',controls:[['Control','ts-opacity-control']]}
+    };
+    function closePopup(){
+      popup.classList.remove('open');popup.setAttribute('aria-hidden','true');
+      document.querySelectorAll('.ts-simple-settings-btn.active').forEach(btn=>btn.classList.remove('active'));
+    }
+    function addControl(labelText,sourceId){
+      const source=document.getElementById(sourceId);
+      if(!source) return;
+      const row=document.createElement('div');row.className='ts-row';
+      const label=document.createElement('span');label.className='ts-label';label.textContent=labelText;
+      const control=source.cloneNode(true);control.removeAttribute('id');
+      control.value=source.value;
+      control.addEventListener('input',()=>{source.value=control.value;source.dispatchEvent(new Event('input',{bubbles:true}));});
+      row.append(label,control);
+      if(source.type==='range'){
+        const value=document.createElement('span');value.className='ts-val';
+        const update=()=>{value.textContent=control.value+'%';};control.addEventListener('input',update);update();row.appendChild(value);
+      }
+      popup.appendChild(row);
+    }
+    function openPopup(button,key){
+      popup.replaceChildren();
+      const config=configs[key];
+      const title=document.createElement('div');title.className='ts-simple-popup-title';title.textContent=config?config.title:key[0].toUpperCase()+key.slice(1)+' Settings';popup.appendChild(title);
+      if(config) config.controls.forEach(control=>addControl(control[0],control[1]));
+      else{const empty=document.createElement('div');empty.className='ts-simple-popup-empty';empty.textContent='No extra settings yet.';popup.appendChild(empty);}
+      document.querySelectorAll('.ts-simple-settings-btn.active').forEach(btn=>btn.classList.remove('active'));
+      button.classList.add('active');popup.classList.add('open');popup.setAttribute('aria-hidden','false');
+      const rect=modal.getBoundingClientRect();
+      const left=Math.min(window.innerWidth-popup.offsetWidth-8,rect.right+8);
+      popup.style.left=Math.max(8,left)+'px';popup.style.top=Math.max(8,rect.top+52)+'px';
+    }
+    document.addEventListener('click',event=>{
+      const button=event.target.closest&&event.target.closest('.ts-simple-settings-btn');
+      if(button){event.preventDefault();event.stopPropagation();if(button.classList.contains('active')) closePopup();else openPopup(button,button.dataset.simpleSettings);return;}
+      if(!popup.contains(event.target)) closePopup();
+    });
+    document.getElementById('ts-mode-advanced')?.addEventListener('click',closePopup);
+    document.getElementById('tool-settings-modal-close')?.addEventListener('click',closePopup);
+  })();
 
   // (Window menu toggle is wired below in the window menu block)
 
@@ -719,7 +861,7 @@
 // Preset get/apply
 function getToolPreset(){
   const ids=['ts-size','ts-opacity','ts-flow','ts-density','ts-hardness','ts-spacing','ts-airbrush','ts-airbrush-rate',
-    'ts-min-size','ts-size-control','ts-opacity-control','ts-min-flow',
+    'ts-min-size','ts-size-control','ts-flow-control','ts-opacity-control','ts-min-flow',
     'ts-texture-scale','ts-texture-depth'];
   const out={};
   ids.forEach(id=>{
@@ -874,6 +1016,11 @@ function applyToolPreset(json){
     const spEl   = document.getElementById('ts-spacing');
     const rdEl   = document.getElementById('ts-roundness');
     const arEl   = document.getElementById('ts-airbrush-rate');
+    const sizeCtrlEl=document.getElementById('ts-size-control');
+    const flowCtrlEl=document.getElementById('ts-flow-control');
+    const opacityCtrlEl=document.getElementById('ts-opacity-control');
+    const minSizeEl=document.getElementById('ts-min-size');
+    const minFlowEl=document.getElementById('ts-min-flow');
     _presetSettings[presetId] = Object.assign(
       _presetSettings[presetId] || {},
       {
@@ -887,6 +1034,11 @@ function applyToolPreset(json){
         'ts-aa':         !!brushAA,
         'ts-airbrush':   !!window._brushAirbrush,
         'ts-airbrush-rate': arEl ? +arEl.value : 55,
+        'ts-size-control': sizeCtrlEl ? sizeCtrlEl.value : 'pressure',
+        'ts-flow-control': flowCtrlEl ? flowCtrlEl.value : 'off',
+        'ts-opacity-control': opacityCtrlEl ? opacityCtrlEl.value : 'off',
+        'ts-min-size': minSizeEl ? +minSizeEl.value : 5,
+        'ts-min-flow': minFlowEl ? +minFlowEl.value : 0,
       }
     );
   }

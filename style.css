@@ -947,6 +947,23 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 .ts-ps-panel::-webkit-scrollbar-track{background:transparent;}
 .ts-ps-panel::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px;}
 .ts-ps-panel.active{display:flex;}
+.ts-placeholder-panel > .ts-section-body{
+  opacity:.42;pointer-events:none;user-select:none;
+}
+.ts-placeholder-panel > .ts-section-body > *{visibility:hidden;}
+.ts-placeholder-panel::before{
+  content:"Coming Soon";
+  position:absolute;top:10px;left:10px;z-index:2;
+  padding:3px 7px;border:1px solid var(--border2);border-radius:999px;
+  color:var(--text2);background:var(--bg3);font-size:9px;font-weight:600;
+  letter-spacing:.05em;text-transform:uppercase;
+}
+.ts-placeholder-panel::after{
+  content:attr(data-placeholder) "\A\A Control                         Disabled\A\A Amount                         ─────────  0%";
+  white-space:pre-wrap;position:absolute;top:42px;left:10px;right:10px;
+  padding:12px;border:1px solid var(--border2);border-radius:6px;
+  color:var(--text2);background:var(--bg2);font-size:10px;line-height:1.7;
+}
 /* Disabled panel: gray out all content and block interaction */
 .ts-ps-panel--disabled > .ts-section-body{
   opacity:0.38;pointer-events:none;user-select:none;
@@ -955,6 +972,15 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
   cursor:not-allowed!important;
 }
 .ts-ps-panel > .ts-section-body{padding:8px 10px;gap:6px;}
+.ts-visibility-heading{
+  color:var(--text2);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;
+}
+.ts-visibility-row{
+  display:flex;align-items:center;gap:7px;min-height:22px;padding:2px 4px;
+  color:var(--text2);font-size:10px;border-radius:4px;
+}
+.ts-visibility-row:hover{background:var(--bg3);color:var(--text);}
+.ts-visibility-row .ts-eye-btn{position:static;flex:0 0 auto;}
 
 /* Checkbox-gated panels: when the sidebar checkbox is unchecked, gray out
    and fully disable that panel's content (including <select> dropdowns).
@@ -981,6 +1007,20 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 #tool-settings-body.ts-mode-simple .ts-ps-panel[data-panel="basic"]{display:flex;}
 #tool-settings-body.ts-mode-simple .ts-ps-panel:not([data-panel="basic"]){display:none!important;}
 #tool-settings-body.ts-mode-simple .ts-advanced-only{display:none!important;}
+#tool-settings-body:not(.ts-mode-simple) .ts-simple-only{display:none!important;}
+.ts-simple-settings-btn{
+  width:22px;height:22px;flex:0 0 22px;padding:0;border:1px solid var(--border2);
+  border-radius:4px;background:var(--bg3);color:var(--text2);cursor:pointer;font-size:11px;
+}
+.ts-simple-settings-btn:hover,.ts-simple-settings-btn.active{color:var(--accent);border-color:var(--accent);background:var(--accent-bg);}
+.ts-simple-settings-popup{
+  display:none;position:fixed;z-index:10020;width:220px;padding:10px;
+  border:1px solid var(--border2);border-radius:7px;background:var(--bg2);
+  box-shadow:0 10px 30px rgba(0,0,0,.45);color:var(--text);
+}
+.ts-simple-settings-popup.open{display:flex;flex-direction:column;gap:8px;}
+.ts-simple-popup-title{font-size:11px;font-weight:600;padding-bottom:6px;border-bottom:1px solid var(--border);}
+.ts-simple-popup-empty{font-size:10px;color:var(--text2);padding:6px 0;}
 
 /* Per-setting "eye" visibility toggle (Advanced tab only) — lets any
    Basic-panel setting be shown/hidden in the Simple tab individually,
@@ -1211,3 +1251,10 @@ input.size-val-input{
 .pref-ps-panel::-webkit-scrollbar-track{background:transparent;}
 .pref-ps-panel::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px;}
 .pref-ps-panel.active{display:flex;}
+
+.ts-advanced-mirror-row .ts-eye-btn{position:relative;flex:0 0 auto;}
+.ts-advanced-mirror-row .ts-mirror-unit{font-size:9px;color:var(--text2);min-width:14px;}
+.ts-advanced-mirror-row .ts-mirror-check-label{display:flex;align-items:center;gap:5px;flex:1;}
+
+.ts-value-edit{cursor:text;border-radius:3px;padding:1px 3px;min-width:30px!important;transition:background .12s,color .12s;}
+.ts-value-edit:hover,.ts-value-edit:focus{background:var(--bg4,rgba(255,255,255,0.08));color:var(--text1);outline:none;}

@@ -1395,8 +1395,9 @@ let _strokeDabCount = 0;
 // element reference once and cache it — el.value is still read fresh every
 // call (so live slider changes still apply instantly), only the expensive
 // getElementById traversal is removed from the hot path.
-let _elSizeControl, _elOpacityControl, _elMinSize, _elMinFlow;
+let _elSizeControl, _elFlowControl, _elOpacityControl, _elMinSize, _elMinFlow;
 function _getSizeControl(){ if(_elSizeControl===undefined) _elSizeControl=document.getElementById('ts-size-control'); return _elSizeControl?_elSizeControl.value:'pressure'; }
+function _getFlowControl(){ if(_elFlowControl===undefined) _elFlowControl=document.getElementById('ts-flow-control'); return _elFlowControl?_elFlowControl.value:'off'; }
 function _getOpacityControl(){ if(_elOpacityControl===undefined) _elOpacityControl=document.getElementById('ts-opacity-control'); return _elOpacityControl?_elOpacityControl.value:'pressure'; }
 function _getMinSize(){ if(_elMinSize===undefined) _elMinSize=document.getElementById('ts-min-size'); return _elMinSize?(+_elMinSize.value/100):0.05; }
 function _getMinFlow(){ if(_elMinFlow===undefined) _elMinFlow=document.getElementById('ts-min-flow'); return _elMinFlow?(+_elMinFlow.value/100):0; }
@@ -1482,12 +1483,13 @@ function _computeEffectiveParams(e){
   const baseSize=getBrushSize();
   // Flow (brushFlow) controls per-dab alpha — how fast paint builds up within
   // a stroke. brushOpacity is applied at the stroke level (see _commitStrokeCanvas).
-  const baseAlpha=brushFlow;
+  let baseAlpha=brushFlow;
   const isPenStroke = _isDrawingWithPen;
   let r=baseSize/2;
   let alpha=baseAlpha;
 
   const sizeCtrl   = _getSizeControl();
+  const flowCtrl   = _getFlowControl();
   const opacityCtrl= _getOpacityControl();
 
   // Both Size and Opacity dynamics read the SAME underlying pressure signal
@@ -1506,6 +1508,16 @@ function _computeEffectiveParams(e){
   function _getPressureInfluence(){
     if(_pressureInfluence===null) _pressureInfluence = _resolveControl('pressure', e);
     return _pressureInfluence;
+  }
+
+  if(flowCtrl !== 'off'){
+    const applyFlow=(flowCtrl==='pressure')?isPenStroke:true;
+    if(applyFlow){
+      const influence=(flowCtrl==='pressure')?_getPressureInfluence():_resolveControl(flowCtrl,e);
+      const minFlow=_getMinFlow();
+      baseAlpha*=Math.max(0,Math.min(1,minFlow+(1-minFlow)*influence));
+      alpha=baseAlpha;
+    }
   }
 
   // Size dynamics
@@ -1529,8 +1541,7 @@ function _computeEffectiveParams(e){
     const applyOpacity = (opacityCtrl === 'pressure') ? isPenStroke : true;
     if(applyOpacity){
       const influence = (opacityCtrl === 'pressure') ? _getPressureInfluence() : _resolveControl(opacityCtrl, e);
-      const minO = _getMinFlow();
-      alpha *= Math.max(0, Math.min(1, minO + (1 - minO) * influence));
+      alpha *= Math.max(0,Math.min(1,influence));
     }
   }
 
