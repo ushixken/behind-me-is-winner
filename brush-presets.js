@@ -533,14 +533,57 @@
     }
   })();
 
+  (function initPressureCurveEditors(){
+    const popup=document.getElementById('ts-pressure-editor-popup');
+    const editor=document.getElementById('ts-pressure-editor-canvas');
+    if(!popup||!editor) return;
+    window._tsCustomPressureCurves=window._tsCustomPressureCurves||{};
+    const presets=window.PRESSURE_CURVES||{linear:[[0,1],[1,0]]};
+    let activeSetting=null,points=null,dragIndex=-1;
+    function curvePoints(setting){
+      const select=document.getElementById('ts-'+setting+'-pressure-curve');
+      const mode=select?select.value:'linear';
+      const custom=window._tsCustomPressureCurves[setting];
+      if(mode==='custom'&&custom) return custom.map(point=>point.slice());
+      const source=presets[mode]||presets.linear;
+      if(source.length===2) return [[0,1],[1/3,2/3],[2/3,1/3],[1,0]];
+      return source.map(point=>point.slice());
+    }
+    function draw(canvas,curve,handles){
+      const context=canvas.getContext('2d'),width=canvas.width,height=canvas.height,pad=handles?12:4;
+      context.clearRect(0,0,width,height);context.fillStyle='#17191f';context.fillRect(0,0,width,height);
+      context.strokeStyle='rgba(255,255,255,.09)';context.lineWidth=1;
+      for(let i=0;i<=4;i++){const x=pad+(width-pad*2)*i/4,y=pad+(height-pad*2)*i/4;context.beginPath();context.moveTo(x,pad);context.lineTo(x,height-pad);context.stroke();context.beginPath();context.moveTo(pad,y);context.lineTo(width-pad,y);context.stroke();}
+      context.strokeStyle='#7aa2ff';context.lineWidth=2;context.beginPath();
+      for(let i=0;i<=64;i++){const x=i/64,y=_evalPressureCurveYFromPoints(curve,x);const px=pad+x*(width-pad*2),py=pad+y*(height-pad*2);if(i===0)context.moveTo(px,py);else context.lineTo(px,py);}context.stroke();
+      if(handles){context.fillStyle='#d8e2ff';curve.forEach(point=>{context.beginPath();context.arc(pad+point[0]*(width-pad*2),pad+point[1]*(height-pad*2),4,0,Math.PI*2);context.fill();});}
+    }
+    function _evalPressureCurveYFromPoints(curve,x){
+      if(curve.length===2) return 1-x;
+      let lo=0,hi=1;for(let i=0;i<20;i++){const mid=(lo+hi)/2;if(_bezierPointAt(curve,mid)[0]<x)lo=mid;else hi=mid;}return _bezierPointAt(curve,(lo+hi)/2)[1];
+    }
+    function refreshPreviews(){document.querySelectorAll('.ts-pressure-preview').forEach(canvas=>draw(canvas,curvePoints(canvas.dataset.pressureSetting),false));}
+    function openEditor(setting,anchor){activeSetting=setting;points=curvePoints(setting);popup.classList.add('open');popup.setAttribute('aria-hidden','false');const rect=anchor.getBoundingClientRect();popup.style.left=Math.min(window.innerWidth-popup.offsetWidth-8,rect.right+8)+'px';popup.style.top=Math.max(8,Math.min(window.innerHeight-popup.offsetHeight-8,rect.top))+'px';draw(editor,points,true);}
+    function closeEditor(){popup.classList.remove('open');popup.setAttribute('aria-hidden','true');dragIndex=-1;}
+    window._openPressureCurveEditor=openEditor;
+    document.querySelectorAll('.ts-pressure-preview').forEach(canvas=>canvas.addEventListener('click',()=>openEditor(canvas.dataset.pressureSetting,canvas)));
+    document.querySelectorAll('[id$="-pressure-curve"]').forEach(select=>select.addEventListener('input',()=>{const setting=select.id.replace('ts-','').replace('-pressure-curve','');if(select.value!=='custom')delete window._tsCustomPressureCurves[setting];refreshPreviews();}));
+    editor.addEventListener('pointerdown',event=>{const rect=editor.getBoundingClientRect(),pad=12,x=(event.clientX-rect.left-pad)/(rect.width-pad*2),y=(event.clientY-rect.top-pad)/(rect.height-pad*2);let best=Infinity;points.forEach((point,index)=>{const distance=Math.hypot(point[0]-x,point[1]-y);if(distance<best){best=distance;dragIndex=index;}});editor.setPointerCapture(event.pointerId);});
+    editor.addEventListener('pointermove',event=>{if(dragIndex<0)return;const rect=editor.getBoundingClientRect(),pad=12;let x=Math.max(0,Math.min(1,(event.clientX-rect.left-pad)/(rect.width-pad*2))),y=Math.max(0,Math.min(1,(event.clientY-rect.top-pad)/(rect.height-pad*2)));if(dragIndex===0)x=0;if(dragIndex===points.length-1)x=1;if(dragIndex>0)x=Math.max(points[dragIndex-1][0]+.01,x);if(dragIndex<points.length-1)x=Math.min(points[dragIndex+1][0]-.01,x);points[dragIndex]=[x,y];window._tsCustomPressureCurves[activeSetting]=points.map(point=>point.slice());const select=document.getElementById('ts-'+activeSetting+'-pressure-curve');if(select){select.value='custom';select.dispatchEvent(new Event('input',{bubbles:true}));}draw(editor,points,true);refreshPreviews();});
+    editor.addEventListener('pointerup',()=>{dragIndex=-1;});
+    document.getElementById('ts-pressure-reset').addEventListener('click',()=>{const select=document.getElementById('ts-'+activeSetting+'-pressure-curve');if(select&&select.value==='custom'){select.value='linear';delete window._tsCustomPressureCurves[activeSetting];select.dispatchEvent(new Event('input',{bubbles:true}));}points=curvePoints(activeSetting);draw(editor,points,true);refreshPreviews();});
+    document.getElementById('ts-pressure-done').addEventListener('click',closeEditor);
+    window._refreshPressureCurvePreviews=refreshPreviews;
+    refreshPreviews();
+  })();
   (function initSimpleSettingsPopup(){
     const popup=document.getElementById('ts-simple-settings-popup');
     const modal=document.getElementById('tool-settings-modal');
     if(!popup||!modal) return;
     const configs={
-      size:{title:'Size Settings',controls:[['Control','ts-size-control'],['Minimum Size','ts-min-size']]},
-      flow:{title:'Flow Settings',controls:[['Control','ts-flow-control'],['Minimum Flow','ts-min-flow']]},
-      opacity:{title:'Opacity Settings',controls:[['Control','ts-opacity-control']]}
+      size:{title:'Size Settings',controls:[['Control','ts-size-control'],['Minimum Size','ts-min-size'],['Pressure Curve','ts-size-pressure-curve']]},
+      flow:{title:'Flow Settings',controls:[['Control','ts-flow-control'],['Minimum Flow','ts-min-flow'],['Pressure Curve','ts-flow-pressure-curve']]},
+      opacity:{title:'Opacity Settings',controls:[['Control','ts-opacity-control'],['Pressure Curve','ts-opacity-pressure-curve']]}
     };
     function closePopup(){
       popup.classList.remove('open');popup.setAttribute('aria-hidden','true');
@@ -555,6 +598,9 @@
       control.value=source.value;
       control.addEventListener('input',()=>{source.value=control.value;source.dispatchEvent(new Event('input',{bubbles:true}));});
       row.append(label,control);
+      if(sourceId.endsWith('-pressure-curve')){
+        const preview=document.createElement('canvas');preview.className='ts-pressure-preview';preview.width=92;preview.height=38;preview.dataset.pressureSetting=sourceId.replace('ts-','').replace('-pressure-curve','');preview.title='Click to edit pressure curve';preview.addEventListener('click',()=>window._openPressureCurveEditor?.(preview.dataset.pressureSetting,preview));row.appendChild(preview);setTimeout(()=>window._refreshPressureCurvePreviews?.(),0);
+      }
       if(source.type==='range'){
         const value=document.createElement('span');value.className='ts-val';
         const update=()=>{value.textContent=control.value+'%';};control.addEventListener('input',update);update();row.appendChild(value);
@@ -720,6 +766,7 @@
         const fn=document.getElementById('ts-tip-filename');
         if(fn){ fn.textContent=file.name; fn.style.display=''; }
         window._syncTipUI();
+        if(typeof window._captureActiveBrushPreset==='function') window._captureActiveBrushPreset(true);
       };
       img.onerror=()=>{ URL.revokeObjectURL(url); };
       img.src=url;
@@ -745,6 +792,7 @@
         if(fn){ fn.textContent=''; fn.style.display='none'; }
         if(tipFileInput) tipFileInput.value='';
         window._syncTipUI();
+        if(typeof window._captureActiveBrushPreset==='function') window._captureActiveBrushPreset(true);
       };
     }
     if(tipModeEl){
@@ -753,6 +801,7 @@
         // Bust caches so the new mode takes effect on the next dab.
         if(typeof window.setBrushTip==='function' && window.brushTipCanvas)
           window.setBrushTip(window.brushTipCanvas);
+        if(typeof window._captureActiveBrushPreset==='function') window._captureActiveBrushPreset(true);
       };
     }
     if(tipSoftEl){
@@ -760,6 +809,7 @@
         window.brushTipSoftAlpha=tipSoftEl.checked;
         if(typeof window.setBrushTip==='function' && window.brushTipCanvas)
           window.setBrushTip(window.brushTipCanvas);
+        if(typeof window._captureActiveBrushPreset==='function') window._captureActiveBrushPreset(true);
       };
     }
 
@@ -861,7 +911,7 @@
 // Preset get/apply
 function getToolPreset(){
   const ids=['ts-size','ts-opacity','ts-flow','ts-density','ts-hardness','ts-spacing','ts-airbrush','ts-airbrush-rate',
-    'ts-min-size','ts-size-control','ts-flow-control','ts-opacity-control','ts-min-flow',
+    'ts-min-size','ts-size-control','ts-size-pressure-curve','ts-flow-control','ts-flow-pressure-curve','ts-opacity-control','ts-opacity-pressure-curve','ts-min-flow',
     'ts-texture-scale','ts-texture-depth'];
   const out={};
   ids.forEach(id=>{
@@ -869,6 +919,7 @@ function getToolPreset(){
     if(el) out[id]=(el.type==='checkbox'?el.checked:el.value);
   });
   out['ts-aa']=document.getElementById('ts-aa').checked;
+  out['ts-pressure-curves']=JSON.parse(JSON.stringify(window._tsCustomPressureCurves||{}));
 
   // ── Brush tip & texture image data (stored as data URLs for JSON export) ──
   // These are only written when an image is actually loaded; absent keys mean
@@ -904,13 +955,16 @@ function applyToolPreset(json){
   Object.entries(json).forEach(([id,val])=>{
     // Skip virtual/non-DOM keys handled separately below.
     if(id==='ts-tip-dataurl'||id==='ts-texture-dataurl'||
-       id==='ts-tip-mode'||id==='ts-tip-soft-alpha'||id==='ts-texture-depth-custom') return;
+       id==='ts-tip-mode'||id==='ts-tip-soft-alpha'||id==='ts-texture-depth-custom'||id==='ts-pressure-curves') return;
     const el=document.getElementById(id);
     if(!el) return;
     if(el.type==='checkbox') el.checked=!!val;
     else el.value=val;
     el.dispatchEvent(new Event('input'));
   });
+
+  window._tsCustomPressureCurves=JSON.parse(JSON.stringify(json['ts-pressure-curves']||{}));
+  if(typeof window._refreshPressureCurvePreviews==='function') window._refreshPressureCurvePreviews();
 
   // ── Restore tip image ──────────────────────────────────────────────────
   if(json['ts-tip-dataurl']){
@@ -965,7 +1019,7 @@ function applyToolPreset(json){
       // rendering fix for the pixel-width clamp that makes hardness=100 read
       // as "hard" at any size instead of a razor-thin single-pixel ring).
       preview:{shape:'circle',hardness:0.95},
-      settings:{'ts-size':8.1,'ts-hardness':100,'ts-opacity':100,'ts-flow':100,'ts-density':100,'ts-spacing':1,'ts-roundness':100,'ts-aa':true}
+      settings:{'ts-size':6,'ts-hardness':100,'ts-opacity':100,'ts-flow':100,'ts-density':100,'ts-spacing':1,'ts-roundness':100,'ts-aa':true,'ts-size-control':'pressure','ts-min-size':0}
     },
     {
       id:'soft-round', name:'Soft Round',
@@ -1010,37 +1064,20 @@ function applyToolPreset(json){
   BRUSH_PRESETS.forEach(_seedPresetSettings);
 
   // Capture the current slider state into the active preset's per-preset slot
-  function _captureToPreset(presetId){
+  function _captureToPreset(presetId,captureTip=false){
     if(!presetId) return;
-    const sizeEl = document.getElementById('ts-size');
-    const spEl   = document.getElementById('ts-spacing');
-    const rdEl   = document.getElementById('ts-roundness');
-    const arEl   = document.getElementById('ts-airbrush-rate');
-    const sizeCtrlEl=document.getElementById('ts-size-control');
-    const flowCtrlEl=document.getElementById('ts-flow-control');
-    const opacityCtrlEl=document.getElementById('ts-opacity-control');
-    const minSizeEl=document.getElementById('ts-min-size');
-    const minFlowEl=document.getElementById('ts-min-flow');
-    _presetSettings[presetId] = Object.assign(
-      _presetSettings[presetId] || {},
-      {
-        'ts-size':       sizeEl ? +sizeEl.value : toolSizes[tool] || 12,
-        'ts-hardness':   Math.round(brushHardness * 100),
-        'ts-opacity':    Math.round(brushOpacity * 100),
-        'ts-flow':       Math.round(brushFlow * 100),
-        'ts-density':    Math.round(brushDensity * 100),
-        'ts-spacing':    spEl  ? +spEl.value  : 12,
-        'ts-roundness':  rdEl  ? +rdEl.value  : 100,
-        'ts-aa':         !!brushAA,
-        'ts-airbrush':   !!window._brushAirbrush,
-        'ts-airbrush-rate': arEl ? +arEl.value : 55,
-        'ts-size-control': sizeCtrlEl ? sizeCtrlEl.value : 'pressure',
-        'ts-flow-control': flowCtrlEl ? flowCtrlEl.value : 'off',
-        'ts-opacity-control': opacityCtrlEl ? opacityCtrlEl.value : 'off',
-        'ts-min-size': minSizeEl ? +minSizeEl.value : 5,
-        'ts-min-flow': minFlowEl ? +minFlowEl.value : 0,
-      }
-    );
+    const settings=_presetSettings[presetId]||(_presetSettings[presetId]={});
+    document.querySelectorAll('#tool-settings-body input[id]:not([type=file]),#tool-settings-body select[id]').forEach(control=>{
+      settings[control.id]=control.type==='checkbox'?control.checked:control.value;
+    });
+    settings['ts-pressure-curves']=JSON.parse(JSON.stringify(window._tsCustomPressureCurves||{}));
+    if(captureTip){
+      if(window.brushTipCanvas){
+        try{settings['ts-tip-dataurl']=window.brushTipCanvas.toDataURL('image/png');}catch(e){}
+        settings['ts-tip-mode']=window.brushTipMode||'multiply';
+        settings['ts-tip-soft-alpha']=!!window.brushTipSoftAlpha;
+      } else {delete settings['ts-tip-dataurl'];delete settings['ts-tip-mode'];delete settings['ts-tip-soft-alpha'];}
+    }
   }
 
   // ── Per-tool memory ─────────────────────────────────────────────
@@ -1049,13 +1086,14 @@ function applyToolPreset(json){
   // incoming tool's saved settings — so "brush=preset1, eraser=preset2" each
   // stick, and manual tweaks to either are remembered too.
   let _toolState = {
-    brush:  {presetId:'hard-round', size:8.1, hardness:50,  opacity:100, flow:100, density:100, spacing:1, roundness:100, aa:true, airbrush:false},
+    brush:  {presetId:'hard-round', size:6, hardness:100,  opacity:100, flow:100, density:100, spacing:1, roundness:100, aa:true, airbrush:false},
     eraser: {presetId:'hard-round', size:20, hardness:55, opacity:100, flow:100, density:100, spacing:12, roundness:100, aa:true, airbrush:false},
   };
   // Which tab is shown in the preset panel (brush|eraser) — follows setTool()
   let _activeTab = 'brush';
   // Which preset is currently shown active/highlighted in the grid
   let _activePresetId = 'hard-round';
+  let _applyingPresetSettings=false;
   // Drag state (kept in JS, not dataTransfer — reading dataTransfer.getData
   // during dragover is unreliable cross-browser, so we just track it here)
   let _drag = null; // {type:'group',id} | {type:'item',id,fromGroup}
@@ -1069,6 +1107,20 @@ function applyToolPreset(json){
       }));
     }catch(e){ /* storage unavailable — fail silently, in-memory state still works */ }
   }
+  window._captureActiveBrushPreset=(captureTip=false)=>{_captureToPreset(_activePresetId,captureTip);persist();};
+  let _persistSettingsTimer=null;
+  const TIP_SETTING_IDS=new Set(['ts-tip-mode','ts-tip-soft-alpha']);
+  function captureActivePresetFromEvent(event){
+    if(_applyingPresetSettings||!event.target||!event.target.closest('#tool-settings-body')||!event.target.id) return;
+    if(!event.target.matches('input:not([type=file]),select')) return;
+    const captureTip=TIP_SETTING_IDS.has(event.target.id);
+    _captureToPreset(_activePresetId, captureTip);
+    clearTimeout(_persistSettingsTimer);
+    _persistSettingsTimer=setTimeout(persist,100);
+  }
+  document.addEventListener('input',captureActivePresetFromEvent);
+  document.addEventListener('change',captureActivePresetFromEvent);
+
   function loadPersisted(){
     try{
       const raw=localStorage.getItem(STORE_KEY);
@@ -1620,6 +1672,14 @@ function applyToolPreset(json){
   // ── Apply a preset's settings to the tool settings sliders ───
   function applyPresetSettings(p){
     const s = p.settings;
+    window._tsCustomPressureCurves=JSON.parse(JSON.stringify(s['ts-pressure-curves']||{}));
+    if(typeof window._refreshPressureCurvePreviews==='function') window._refreshPressureCurvePreviews();
+    Object.entries(s).forEach(([id,value])=>{
+      const control=document.getElementById(id);
+      if(!control||!control.matches('#tool-settings-body input:not([type=file]),#tool-settings-body select')) return;
+      if(control.type==='checkbox') control.checked=!!value;
+      else control.value=value;
+    });
     const mapping = {
       'ts-size': {slider:'ts-size', val:'ts-size-val', suffix:'', extra: v=>{toolSizes[tool]=v; const bpSz=document.getElementById('bp-sz'); if(bpSz)bpSz.value=v; if(typeof refreshSizeUI==='function')refreshSizeUI(); _aaDabCache.clear();_stampCache.clear();}},
       'ts-hardness': {slider:'ts-hardness', val:'ts-hardness-val', suffix:'', extra: v=>{brushHardness=v/100; _aaDabCache.clear();_stampCache.clear();}},
@@ -1632,7 +1692,11 @@ function applyToolPreset(json){
       'ts-airbrush': null,
       'ts-airbrush-rate': {slider:'ts-airbrush-rate', val:'ts-airbrush-rate-val', suffix:'', extra: v=>{window._tsAirbrushRate=v/100;}},
     };
+    ['ts-size-pressure-curve','ts-flow-pressure-curve','ts-opacity-pressure-curve'].forEach(id=>{
+      const el=document.getElementById(id);if(el){el.value=s[id]||'linear';el.dispatchEvent(new Event('input',{bubbles:true}));}
+    });
     Object.entries(s).forEach(([key,val])=>{
+      if(key==='ts-pressure-curves') return;
       if(key==='ts-aa'){
         _setBrushAA(!!val);
         return;
@@ -1649,6 +1713,10 @@ function applyToolPreset(json){
         if(vl){vl.textContent=val+(m.suffix||'');}
         if(m.extra) m.extra(+val);
       }
+    });
+    Object.keys(s).forEach(key=>{
+      const source=document.getElementById(key);
+      if(source&&source.matches('#tool-settings-body input:not([type=file]),#tool-settings-body select')) source.dispatchEvent(new Event('input',{bubbles:true}));
     });
     // Airbrush is a per-preset on/off, like Photoshop/CSP — presets that
     // don't mention it explicitly should switch it off rather than leaking
@@ -1711,27 +1779,15 @@ function applyToolPreset(json){
   }
   function restoreLiveState(t){
     if(t!=='brush' && t!=='eraser') return;
-    const st=_toolState[t];
-    toolSizes[t]=st.size;
-    brushHardness=st.hardness/100;
-    brushOpacity=(st.opacity!=null?st.opacity:100)/100;
-    brushFlow=(st.flow!=null?st.flow:100)/100;
-    brushDensity=(st.density!=null?st.density:100)/100;
-    window._tsSpacing=st.spacing/100;
-    window._tsRoundness=st.roundness/100;
-    brushAA=!!st.aa;
-    _aaDabCache.clear();_stampCache.clear();
-    _activePresetId=st.presetId;
-    const setv=(id,v,suf)=>{const el=document.getElementById(id); if(el) el.value=v; const ve=document.getElementById(id+'-val'); if(ve) ve.textContent=v+(suf||'');};
-    setv('ts-hardness',st.hardness); setv('ts-opacity',st.opacity!=null?st.opacity:100); setv('ts-flow',st.flow!=null?st.flow:100); setv('ts-density',st.density!=null?st.density:100);
-    setv('ts-spacing',st.spacing,'%'); setv('ts-roundness',st.roundness);
-    const tsAaEl=document.getElementById('ts-aa'); if(tsAaEl) tsAaEl.checked=st.aa;
-    const aaBtn=document.getElementById('btn-aa'); if(aaBtn) aaBtn.classList.toggle('active',st.aa);
-    if(typeof window._setAirbrush==='function') window._setAirbrush(!!st.airbrush);
-    const tsSzEl=document.getElementById('ts-size'); if(tsSzEl) tsSzEl.value=st.size;
-    const bpSzEl=document.getElementById('bp-sz'); if(bpSzEl) bpSzEl.value=st.size;
-    if(typeof refreshSizeUI==='function') refreshSizeUI();
-    if(typeof applyTransform==='function') applyTransform();
+    const presetId=_toolState[t].presetId;
+    const preset=findPreset(presetId);
+    if(!preset) return;
+    _seedPresetSettings(preset);
+    _activePresetId=presetId;
+    const savedSettings=Object.assign({},preset.settings||{},_presetSettings[presetId]||{});
+    _applyingPresetSettings=true;
+    try{applyPresetSettings({settings:savedSettings});}
+    finally{_applyingPresetSettings=false;}
   }
 
   // ── Select a preset (always for the currently active tab/tool) ─
@@ -1752,10 +1808,11 @@ function applyToolPreset(json){
     // Build a merged settings object: preset.settings as base, then any user-saved
     // tweaks on top, so the preset remembers whatever the user last set on it.
     const savedSettings = Object.assign({}, p.settings || {}, _presetSettings[p.id] || {});
-    applyPresetSettings({ settings: savedSettings });
-
     _activePresetId = id;
     _toolState[targetTool].presetId = id;
+    _applyingPresetSettings=true;
+    try{ applyPresetSettings({ settings: savedSettings }); }
+    finally{ _applyingPresetSettings=false; }
     captureLiveState(targetTool);
     persist();
     refreshGrid();
@@ -1785,9 +1842,8 @@ function applyToolPreset(json){
   document.querySelectorAll('.bp-tool-tab').forEach(btn=>{
     btn.onclick=()=>{
       const t=btn.dataset.bpTool;
-      switchTab(t);
-      if(tool!==t) setTool(t, t==='brush'?'Brush':'Eraser');
-      else { restoreLiveState(t); refreshGrid(); }
+      if(tool!==t) window.setTool(t,t==='brush'?'Brush':'Eraser');
+      else {switchTab(t);restoreLiveState(t);refreshGrid();}
     };
   });
 

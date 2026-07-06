@@ -61,6 +61,7 @@
     if(typeof _aaDabCache!=='undefined') _aaDabCache.clear();
     if(typeof _stampCache!=='undefined') _stampCache.clear();
     refreshSizeUI();
+    if(typeof window._captureActiveBrushPreset==='function') window._captureActiveBrushPreset(false);
   }
 
   // Turn a size readout span into a tap/click-to-type text field.
@@ -166,6 +167,10 @@
     const bpUnitBtn=document.getElementById('bp-sz-unit'); if(bpUnitBtn) bpUnitBtn.addEventListener('click', toggleUnit);
     wireRobustDrag(document.getElementById('ts-size'));
     wireRobustDrag(document.getElementById('bp-sz'));
+    const tsSize=document.getElementById('ts-size');
+    const presetSize=document.getElementById('bp-sz');
+    if(tsSize) tsSize.addEventListener('input',()=>applyNewSize(+tsSize.value));
+    if(presetSize) presetSize.addEventListener('input',()=>applyNewSize(+presetSize.value));
     refreshSizeUI();
   });
 })();

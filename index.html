@@ -609,9 +609,6 @@
             <div class="ts-ps-nav-item" data-panel="texture">
               <span>Texture</span>
             </div>
-            <div class="ts-ps-nav-item" data-panel="pressure">
-              <span>Pressure Curve</span>
-            </div>
             <div class="ts-ps-nav-item" data-panel="import">
               <span class="ts-ps-nav-no-check">Import / Export</span>
             </div>
@@ -756,6 +753,11 @@
                   <input type="range" class="ts-range" id="ts-min-size" min="0" max="100" value="5"/>
                   <span class="ts-val" id="ts-min-size-val">5%</span>
                 </div>
+                <div class="ts-row">
+                  <span class="ts-label">Pressure Curve</span>
+                  <select class="ts-select" id="ts-size-pressure-curve"><option value="linear" selected>Linear</option><option value="soft">Soft</option><option value="hard">Hard</option><option value="s">S-curve</option><option value="custom">Custom</option></select>
+                  <canvas class="ts-pressure-preview" data-pressure-setting="size" width="92" height="38" title="Click to edit pressure curve"></canvas>
+                </div>
                 <div class="ts-divider"></div>
                 <div class="ts-label-sm" style="color:var(--text);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px;">Flow</div>
                 <div class="ts-row">
@@ -770,6 +772,11 @@
                   <input type="range" class="ts-range" id="ts-min-flow" min="0" max="100" value="0"/>
                   <span class="ts-val" id="ts-min-flow-val">0%</span>
                 </div>
+                <div class="ts-row">
+                  <span class="ts-label">Pressure Curve</span>
+                  <select class="ts-select" id="ts-flow-pressure-curve"><option value="linear" selected>Linear</option><option value="soft">Soft</option><option value="hard">Hard</option><option value="s">S-curve</option><option value="custom">Custom</option></select>
+                  <canvas class="ts-pressure-preview" data-pressure-setting="flow" width="92" height="38" title="Click to edit pressure curve"></canvas>
+                </div>
                 <div class="ts-divider"></div>
                 <div class="ts-label-sm" style="color:var(--text);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px;">Opacity</div>
                 <div class="ts-row">
@@ -778,6 +785,11 @@
                     <option value="off" selected>Off</option>
                     <option value="pressure">Pen Pressure</option>
                   </select>
+                </div>
+                <div class="ts-row">
+                  <span class="ts-label">Pressure Curve</span>
+                  <select class="ts-select" id="ts-opacity-pressure-curve"><option value="linear" selected>Linear</option><option value="soft">Soft</option><option value="hard">Hard</option><option value="s">S-curve</option><option value="custom">Custom</option></select>
+                  <canvas class="ts-pressure-preview" data-pressure-setting="opacity" width="92" height="38" title="Click to edit pressure curve"></canvas>
                 </div>
               </div>
             </div>
@@ -845,19 +857,6 @@
               </div>
             </div>
 
-            <!-- PRESSURE CURVE -->
-            <div class="ts-ps-panel ts-placeholder-panel" data-panel="pressure" data-placeholder="Pressure curve editing is not available yet.">
-              <div class="ts-section-body">
-                <canvas class="ts-curve-canvas" id="ts-pressure-curve" width="180" height="60" title="Click to reset, drag points to edit"></canvas>
-                <div class="ts-pill-row" style="margin-top:3px;">
-                  <button class="ts-pill active" id="ts-curve-linear">Linear</button>
-                  <button class="ts-pill" id="ts-curve-soft">Soft</button>
-                  <button class="ts-pill" id="ts-curve-hard">Hard</button>
-                  <button class="ts-pill" id="ts-curve-s">S-curve</button>
-                </div>
-              </div>
-            </div>
-
             <!-- IMPORT / EXPORT -->
             <div class="ts-ps-panel" data-panel="import">
               <div class="ts-section-body">
@@ -879,6 +878,7 @@
       </div>
     </div><!-- /tool-settings-modal -->
     <div id="ts-simple-settings-popup" class="ts-simple-settings-popup" aria-hidden="true"></div>
+    <div id="ts-pressure-editor-popup" class="ts-pressure-editor-popup" aria-hidden="true"><div class="ts-simple-popup-title">Pressure Curve</div><canvas id="ts-pressure-editor-canvas" width="240" height="150"></canvas><div class="ts-pressure-editor-actions"><button type="button" class="ts-pill" id="ts-pressure-reset">Reset</button><button type="button" class="ts-pill active" id="ts-pressure-done">Done</button></div></div>
   </div><!-- /tool-settings-modal-overlay -->
 
 <!-- ── PREFERENCES MODAL ──────────────────────────────────── -->

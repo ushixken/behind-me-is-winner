@@ -1258,3 +1258,10 @@ input.size-val-input{
 
 .ts-value-edit{cursor:text;border-radius:3px;padding:1px 3px;min-width:30px!important;transition:background .12s,color .12s;}
 .ts-value-edit:hover,.ts-value-edit:focus{background:var(--bg4,rgba(255,255,255,0.08));color:var(--text1);outline:none;}
+
+.ts-pressure-preview{width:92px;height:38px;flex:0 0 92px;border:1px solid var(--border2);border-radius:4px;cursor:pointer;background:var(--bg2);}
+.ts-pressure-preview:hover{border-color:var(--accent);}
+.ts-pressure-editor-popup{display:none;position:fixed;z-index:10030;width:260px;padding:10px;border:1px solid var(--border2);border-radius:7px;background:var(--bg2);box-shadow:0 10px 30px rgba(0,0,0,.45);}
+.ts-pressure-editor-popup.open{display:flex;flex-direction:column;gap:8px;}
+#ts-pressure-editor-canvas{width:240px;height:150px;border:1px solid var(--border2);border-radius:5px;touch-action:none;cursor:crosshair;}
+.ts-pressure-editor-actions{display:flex;justify-content:flex-end;gap:6px;}
