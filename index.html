@@ -658,8 +658,8 @@
                   <div class="ts-divider" style="margin:6px 0;"></div>
                   <div class="ts-row" title="How much paint each stamp/stroke lays down. Lower density builds up lighter, more transparent paint; higher density lays down more solid paint per pass — like Flow/Density controls in Photoshop or Clip Studio.">
                     <button type="button" class="ts-eye-btn ts-advanced-only" data-eye-btn="density" title="Show/hide in Simple tab">👁</button>
-                    <span class="ts-label">Density</span>
-                    <input type="range" class="ts-range" id="ts-density" min="0" max="100" value="100"/>
+                    <span class="ts-label">Density (Coming Soon)</span>
+                    <input type="range" class="ts-range" id="ts-density" min="0" max="100" value="100" disabled/>
                     <span class="ts-val" id="ts-density-val">100</span>
                   </div>
                 </div>
@@ -672,6 +672,15 @@
                     <span class="ts-val" id="ts-hardness-val">55</span>
                   </div>
                 </div>
+                  <div class="ts-field" data-eye="spacing">
+                    <div class="ts-divider" style="margin:6px 0;"></div>
+                    <div class="ts-row">
+                      <button type="button" class="ts-eye-btn ts-advanced-only" data-eye-btn="spacing" title="Show/hide in Simple tab">👁</button>
+                      <span class="ts-label">Spacing</span>
+                      <input type="range" class="ts-range" id="ts-spacing" min="1" max="200" value="12"/>
+                      <span class="ts-val" id="ts-spacing-val">12%</span>
+                    </div>
+                  </div>
                 <div class="ts-field" data-eye="aa">
                   <div class="ts-divider" style="margin:6px 0;"></div>
                   <div class="ts-row">

@@ -15,6 +15,9 @@
   bindRange('ts-density','ts-density-val','',v=>{brushDensity=v/100;});
   // Hardness
   bindRange('ts-hardness','ts-hardness-val','',v=>{brushHardness=v/100;_aaDabCache.clear();_stampCache.clear();});
+  bindRange('ts-spacing','ts-spacing-val','%',v=>{window._tsSpacing=v/100;});
+  const spacingEl=document.getElementById('ts-spacing');
+  window._tsSpacing=spacingEl?(+spacingEl.value/100):0.12;
   // Spacing is fixed, not a user-adjustable Tool Setting — the brush
   // engine's _effectiveSpacingFrac() just uses its built-in default (0.12)
   // and never varies with stroke velocity or acceleration.
@@ -502,6 +505,7 @@
   document.getElementById('ts-flow-val').textContent=document.getElementById('ts-flow').value;
   document.getElementById('ts-density-val').textContent=document.getElementById('ts-density').value;
   document.getElementById('ts-hardness-val').textContent=document.getElementById('ts-hardness').value;
+  document.getElementById('ts-spacing-val').textContent=document.getElementById('ts-spacing').value+'%';
 
   // ════════════════════════════════════════════════════════════════
   // BRUSH TIP IMAGE — UI wiring
@@ -821,6 +825,16 @@ function applyToolPreset(json){
       preview:{shape:'circle',hardness:0.95},
       settings:{'ts-size':8.1,'ts-hardness':100,'ts-opacity':100,'ts-flow':100,'ts-density':100,'ts-spacing':1,'ts-roundness':100,'ts-aa':true}
     },
+    {
+      id:'soft-round', name:'Soft Round',
+      preview:{shape:'circle',hardness:0.08},
+      settings:{'ts-size':32,'ts-hardness':10,'ts-opacity':100,'ts-flow':100,'ts-density':100,'ts-spacing':5,'ts-roundness':100,'ts-aa':true,'ts-airbrush':false}
+    },
+    {
+      id:'soft-airbrush', name:'Soft Airbrush',
+      preview:{shape:'circle',hardness:0},
+      settings:{'ts-size':60,'ts-hardness':0,'ts-opacity':100,'ts-flow':18,'ts-density':100,'ts-spacing':3,'ts-roundness':100,'ts-aa':true,'ts-airbrush':true,'ts-airbrush-rate':55}
+    },
   ];
   // User-created presets (saved via the ➕ button). Restored from storage.
   let _customPresets = [];
@@ -834,7 +848,7 @@ function applyToolPreset(json){
   // create new empty folders via the 📁+ button for brushes they add later.
   let _groups = [
     { id:'general', label:'General Brushes', icon:'🖌', default:true, collapsed:false,
-      ids:['hard-round'] }
+      ids:['hard-round','soft-round','soft-airbrush'] }
   ];
 
   // ── Per-preset settings store ───────────────────────────────────
@@ -922,6 +936,12 @@ function applyToolPreset(json){
     }catch(e){ /* corrupt/unavailable storage — just use defaults */ }
   }
   loadPersisted();
+  const generalGroup=_groups.find(group=>group.id==='general')||_groups.find(group=>group.default)||_groups[0];
+  if(generalGroup){
+    ['hard-round','soft-round','soft-airbrush'].forEach(id=>{
+      if(!generalGroup.ids.includes(id)) generalGroup.ids.push(id);
+    });
+  }
 
   function allPresets(){ return BRUSH_PRESETS.concat(_customPresets); }
   function findPreset(id){ return allPresets().find(p=>p.id===id); }

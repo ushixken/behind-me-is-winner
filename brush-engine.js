@@ -232,24 +232,17 @@ function _quant(v,step){return Math.round(v/step)*step;}
 // so a big hard brush still gets a crisp, near-constant-width edge instead
 // of a soft gradient that scales with size.
 const _EDGE_PX_MIN = 0.6;  // thinnest the AA rim is ever allowed to be
-const _EDGE_PX_MAX = 3.0;  // widest the AA rim is ever allowed to be, at any brush size
 function _edgeWidthPx(r, hardness){
-  const raw = (1-hardness) * r; // old behavior: proportional to radius
+  return Math.min(r,Math.max(_EDGE_PX_MIN,(1-hardness)*r));
   // Hard Round / Soft Round / eraser etc. keep the exact original
   // behavior: rim width is proportional to (1-hardness)*r, clamped to a
   // flat 3px max at any size. Left untouched on purpose.
-  const cap = _EDGE_PX_MAX;
   // Airbrush-only exception: the Airbrush preset (hardness=0, size 60) is
   // meant to be a true soft spray-cone dot — like Clip Studio's airbrush —
   // where the feather spans the ENTIRE radius, not just a thin 3px rim
   // around a flat opaque core. That's what made it look like a hard-edged
   // blob instead of a smooth gaussian spray. Scoped strictly to
   // window._brushAirbrush so Hard Round/Soft Round/eraser are unaffected.
-  if(typeof window!=='undefined' && window._brushAirbrush){
-    const airbrushCap = Math.max(_EDGE_PX_MAX, r*0.9);
-    return Math.max(_EDGE_PX_MIN, Math.min(airbrushCap, raw));
-  }
-  return Math.max(_EDGE_PX_MIN, Math.min(cap, raw));
 }
 // Returns the inner-core fraction (0..1) equivalent to a clamped, constant-
 // pixel-width edge band for a brush of true radius r. Everything downstream
@@ -257,8 +250,16 @@ function _edgeWidthPx(r, hardness){
 // replacement for `hardness` at the point each renderer computes its falloff.
 function _effectiveInnerFrac(r, hardness){
   const rr = Math.max(0.05, r);
-  const edgePx = _edgeWidthPx(rr, Math.max(0,Math.min(0.99,hardness)));
+  const edgePx = _edgeWidthPx(rr, Math.max(0,Math.min(1,hardness)));
   return Math.max(0, Math.min(0.999, 1 - edgePx/rr));
+}
+
+function _roundBrushFalloff(t,inner,hardness){
+  if(t>=1) return 0;
+  if(t<=inner) return 1;
+  const u=(t-inner)/Math.max(0.0001,1-inner);
+  if(hardness>=0.95) return 1-u;
+  return 1-u*u*(3-2*u);
 }
 
 // _aaDabCache (defined below, near _buildAAStamp) is a real Map cache of
@@ -341,8 +342,6 @@ function _airbrushFalloff(t){
 // stamp. Only a mild compensation is applied here (not a heavy dampening)
 // so tighter spacing doesn't cause the stroke to over-saturate too fast,
 // without erasing each dab's own visible falloff.
-const _AIRBRUSH_SPACING_FRAC = 0.025;
-const _AIRBRUSH_ALPHA_SCALE  = 0.85;
 const _aaDabCache=new Map(); // key -> {canvas,w,h}
 const _AA_DAB_CACHE_MAX=64;
 
@@ -484,11 +483,7 @@ function _buildAAStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
       const dist=Math.sqrt(dx*dx+dy*dy);
       const t=dist/rr;
       let a;
-      if(isAirbrush){
-        a=alpha*_airbrushFalloff(t);
-      } else if(t>=1) a=0;
-      else if(t<=inner) a=alpha;
-      else a=alpha*(1-(t-inner)/outerSpan);
+      a=alpha*_roundBrushFalloff(t,inner,hardness);
       if(a<=0) continue; // leave fully transparent (already zeroed by createImageData)
       // When a tip image is loaded, multiply the computed falloff alpha by the
       // tip pixel's luminance (average of RGB channels — tip images are stored
@@ -545,15 +540,16 @@ function _dabAAGpu(x,y,r,rgb,alpha,composite){
   dc.globalCompositeOperation=composite==='erase'?'destination-out':'source-over';
   const grad=dc.createRadialGradient(x,y,0,x,y,rr);
   const c0=composite==='erase'?[0,0,0]:rgb;
-  if(isAirbrush){
+  if(brushHardness<0.95){
     // Sample the true-gaussian curve at several stops — canvas gradients
     // only interpolate linearly BETWEEN stops, so enough stops are needed
     // to read as a smooth curve rather than a linear ramp. Every other
     // brush (below, in the else branch) is completely untouched.
-    const STOPS=10;
+    const inner=_effectiveInnerFrac(rr,brushHardness);
+    const STOPS=12;
     for(let i=0;i<=STOPS;i++){
       const t=i/STOPS;
-      const a=alpha*_airbrushFalloff(t);
+      const a=alpha*_roundBrushFalloff(t,inner,brushHardness);
       grad.addColorStop(t,`rgba(${c0[0]},${c0[1]},${c0[2]},${a})`);
     }
   } else {
@@ -629,7 +625,7 @@ function _dabAACpu(x,y,r,rgb,alpha,composite){
       const dx=wx-x, dy=wy-y;
       const t=Math.sqrt(dx*dx+dy*dy)/rr;
       if(t>=1) continue;
-      let a = isAirbrush ? alpha*_airbrushFalloff(t) : (t<=inner ? alpha : alpha*(1-(t-inner)/outerSpan));
+      let a=alpha*_roundBrushFalloff(t,inner,brushHardness);
       a=Math.min(1,Math.max(0,a));
       if(a<=0) continue;
       if(composite==='erase'){
@@ -835,6 +831,8 @@ function _drawDabNow(d){
   _growDirtyRect(d.x,d.y,d.r);
 }
 function _queueDab(d){
+  _drawDabNow(d);
+  return;
   _pendingDabs.push(d);
   // Only hold dabs back while the stroke is actually moving fast enough for
   // a deceleration "flick tail" to be meaningful. On a slow/deliberate
@@ -957,6 +955,7 @@ function _stampDab(x,y,e){
 // clock, independent of whether pointermove ever fires again.
 let _airbrushTimer=null;
 let _lastPointerEvent=null;
+let _airbrushTimerX=0,_airbrushTimerY=0;
 function _airbrushIntervalMs(){
   const rate=(typeof window!=='undefined' && window._tsAirbrushRate!=null) ? window._tsAirbrushRate : 0.55;
   // rate 0..1 -> interval 50ms (gentle, slow build-up) down to 6ms (dense,
@@ -967,8 +966,15 @@ function _airbrushIntervalMs(){
 }
 function _startAirbrushSpray(){
   _stopAirbrushSpray();
+  _airbrushTimerX=lx;
+  _airbrushTimerY=ly;
   _airbrushTimer=setInterval(()=>{
     if(!drawing || !window._brushAirbrush){ _stopAirbrushSpray(); return; }
+    if(lx!==_airbrushTimerX || ly!==_airbrushTimerY){
+      _airbrushTimerX=lx;
+      _airbrushTimerY=ly;
+      return;
+    }
     _stampDab(lx,ly,_lastPointerEvent);
     _scheduleRecomposite();
   }, _airbrushIntervalMs());
@@ -1011,15 +1017,43 @@ function _strokeTaperFactor(baseSize){
 // on stroke velocity or acceleration, only on the Spacing slider (and the
 // airbrush cap).
 function _effectiveSpacingFrac(){
-  let spacing = (typeof window!=='undefined' && window._tsSpacing!=null) ? window._tsSpacing : 0;
-  if(typeof window!=='undefined' && window._brushAirbrush) spacing = Math.min(spacing, _AIRBRUSH_SPACING_FRAC);
-  return spacing;
+  return (typeof window!=='undefined' && window._tsSpacing!=null) ? window._tsSpacing : 0;
+}
+
+function _walkDabArc(length,pointAt,e,startPressure,endPressure){
+  if(length<=0){currentPressure=endPressure;return;}
+  let distance=0;
+  while(distance<length){
+    const sample=pointAt(distance);
+    const pressure=startPressure+(endPressure-startPressure)*sample.t;
+    const spacingR=_computeSpacingRadius(e,pressure);
+    const step=Math.max(0.5,spacingR*2*_effectiveSpacingFrac());
+    const needed=Math.max(0,step-_strokeSegCarryOver);
+    const remaining=length-distance;
+    if(needed>remaining){
+      _strokeSegCarryOver+=remaining;
+      break;
+    }
+    distance+=needed;
+    const dab=pointAt(distance);
+    currentPressure=startPressure+(endPressure-startPressure)*dab.t;
+    _strokeDistSoFar+=step;
+    _stampDab(dab.x,dab.y,e);
+    _strokeSegCarryOver=0;
+    if(needed===0 && remaining===0) break;
+  }
+  currentPressure=endPressure;
 }
 
 function _strokeSegment(ax,ay,bx,by,e,startPressure,endPressure){
   const sp = (startPressure !== undefined) ? startPressure : currentPressure;
   const ep = (endPressure   !== undefined) ? endPressure   : currentPressure;
   const dx=bx-ax,dy=by-ay,dist=Math.sqrt(dx*dx+dy*dy);
+  _walkDabArc(dist,d=>{
+    const t=dist>0?d/dist:1;
+    return{x:ax+dx*t,y:ay+dy*t,t};
+  },e,sp,ep);
+  return;
   if(dist<0.1){
     // Same fix as the equivalent branch in _stampQuadCurve: bank the tiny
     // distance instead of unconditionally stamping, so Spacing is still
@@ -1091,12 +1125,38 @@ function _quadPoint(x0,y0,cx,cy,x1,y1,t){
 // Rough arc-length estimate (control-polygon length) — good enough to pick
 // a dab count; exact arc length isn't needed since dab spacing is already
 // approximate/adaptive elsewhere in this engine.
-function _quadApproxLen(x0,y0,cx,cy,x1,y1){
-  const d1=Math.hypot(cx-x0,cy-y0), d2=Math.hypot(x1-cx,y1-cy), d3=Math.hypot(x1-x0,y1-y0);
-  return (d1+d2+d3)/2;
+function _quadArcTable(x0,y0,cx,cy,x1,y1){
+  const controlLen=Math.hypot(cx-x0,cy-y0)+Math.hypot(x1-cx,y1-cy);
+  const chordLen=Math.hypot(x1-x0,y1-y0);
+  const divisions=Math.max(8,Math.min(256,Math.ceil(Math.max(controlLen,chordLen)/0.5)));
+  const table=new Array(divisions+1);
+  let prev={x:x0,y:y0},length=0;
+  table[0]={t:0,x:x0,y:y0,length:0};
+  for(let i=1;i<=divisions;i++){
+    const t=i/divisions;
+    const pt=_quadPoint(x0,y0,cx,cy,x1,y1,t);
+    length+=Math.hypot(pt.x-prev.x,pt.y-prev.y);
+    table[i]={t,x:pt.x,y:pt.y,length};
+    prev=pt;
+  }
+  return table;
+}
+function _quadPointAtLength(table,distance){
+  let lo=1,hi=table.length-1;
+  while(lo<hi){
+    const mid=(lo+hi)>>1;
+    if(table[mid].length<distance) lo=mid+1; else hi=mid;
+  }
+  const b=table[lo],a=table[lo-1];
+  const span=b.length-a.length;
+  const f=span>0?(distance-a.length)/span:0;
+  return{t:a.t+(b.t-a.t)*f,x:a.x+(b.x-a.x)*f,y:a.y+(b.y-a.y)*f};
 }
 function _stampQuadCurve(x0,y0,cx,cy,x1,y1,e,startPressure,endPressure){
-  const len=_quadApproxLen(x0,y0,cx,cy,x1,y1);
+  const arcTable=_quadArcTable(x0,y0,cx,cy,x1,y1);
+  const len=arcTable[arcTable.length-1].length;
+  _walkDabArc(len,d=>_quadPointAtLength(arcTable,d),e,startPressure,endPressure);
+  return;
   if(len<0.1){
     // BUG FIX: this used to always call _stampDab() here regardless of
     // Spacing. Heavily-smoothed slow strokes (see _smoothPoint's adaptive
@@ -1122,20 +1182,18 @@ function _stampQuadCurve(x0,y0,cx,cy,x1,y1,e,startPressure,endPressure){
     }
     return;
   }
-  let traveled=-_strokeSegCarryOver, px=x0, py=y0;
+  let traveled=-_strokeSegCarryOver;
   while(true){
-    const tNow = Math.max(0, Math.min(1, traveled / len));
-    const interpP = startPressure + (endPressure - startPressure) * tNow;
+    const sampleNow=_quadPointAtLength(arcTable,Math.max(0,Math.min(len,traveled)));
+    const interpP = startPressure + (endPressure - startPressure) * sampleNow.t;
     const spacing = _effectiveSpacingFrac();
     const spacingR = _computeSpacingRadius(e, interpP);
     const step = Math.max(0.5, spacingR * 2 * spacing);
     traveled += step;
     if(traveled > len) break;
-    const t = traveled / len;
-    currentPressure = startPressure + (endPressure - startPressure) * t;
-    const pt = _quadPoint(x0,y0,cx,cy,x1,y1,t);
-    _strokeDistSoFar += Math.hypot(pt.x-px, pt.y-py);
-    px=pt.x; py=pt.y;
+    const pt=_quadPointAtLength(arcTable,traveled);
+    currentPressure = startPressure + (endPressure - startPressure) * pt.t;
+    _strokeDistSoFar += step;
     _stampDab(pt.x, pt.y, e);
   }
   _strokeSegCarryOver = Math.max(0, traveled - len);
@@ -1509,7 +1567,8 @@ function _computeEffectiveParams(e){
   // means more overlapping dabs/strokes are needed to reach solid paint,
   // which is what gives smooth, artifact-free accumulation rather than a
   // hard ceiling or banding.
-  alpha *= Math.max(0, Math.min(1, brushDensity));
+  // Reserved for a future tip-mask density implementation. Applying it to
+  // alpha here would make Density functionally identical to Flow.
 
   // Airbrush-only: dabs are placed ~5x more densely than a normal brush
   // (see _AIRBRUSH_SPACING_FRAC in _strokeSegment/_stampQuadCurve), so each
@@ -1519,8 +1578,6 @@ function _computeEffectiveParams(e){
   // Flow/Opacity settings intend. This keeps user Flow/Opacity/pressure
   // behavior fully intact (it scales the already-computed alpha, doesn't
   // replace it) and only ever applies while Airbrush mode is on.
-  if(typeof window!=='undefined' && window._brushAirbrush) alpha *= _AIRBRUSH_ALPHA_SCALE;
-
   return{r:Math.max(0.05,r), alpha:Math.max(0.01,Math.min(1,alpha))};
 }
 function _getEffectiveBrushParams(e){
