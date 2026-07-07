@@ -1025,31 +1025,81 @@ function applyToolPreset(json){
   // and out of sync with the real brush shapes. Brush and Eraser each just
   // remember their OWN last-picked preset + size/hardness/flow/etc, tracked
   // in _toolState below, completely independently of one another.
+  // ========================================
+  // DEFAULT BUILT-IN BRUSH PRESETS
+  // ========================================
+  // Add future built-in brushes to BRUSH_PRESETS and override only the values
+  // that differ from this complete editable baseline.
+  const DEFAULT_BUILTIN_BRUSH_SETTINGS = {
+    'ts-size':6,
+    'ts-opacity':100,
+    'ts-flow':100,
+    'ts-density':100,
+    'ts-hardness':100,
+    'ts-spacing':1,
+    'ts-spacing-mode':'manual',
+    'ts-roundness':100,
+    'ts-aa':true,
+    'ts-size-control':'pressure',
+    'ts-min-size':5,
+    'ts-size-pressure-curve':'linear',
+    'ts-flow-control':'off',
+    'ts-min-flow':0,
+    'ts-flow-pressure-curve':'linear',
+    'ts-opacity-control':'off',
+    'ts-opacity-pressure-curve':'linear',
+    'ts-airbrush':false,
+    'ts-airbrush-rate':55,
+    'ts-tip-mode':'multiply',
+    'ts-tip-soft-alpha':true,
+    'ts-texture-invert':false,
+    'ts-texture-scale':100,
+    'ts-texture-brightness':0,
+    'ts-texture-contrast':0,
+    'ts-texture-each':false,
+    'ts-texture-mode':'multiply',
+    'ts-texture-depth-custom':50,
+    'ts-pressure-curves':{}
+  };
+  const builtinBrushSettings=overrides=>Object.assign({},DEFAULT_BUILTIN_BRUSH_SETTINGS,{'ts-pressure-curves':{}},overrides);
+
   const BRUSH_PRESETS = [
     {
-      id:'hard-round', name:'Hard Round',
-      // Photoshop/Photopea's "Hard Round" is a crisp, essentially unfeathered
-      // disc — only a hairline of antialiasing at the rim, not a 50/50 soft
-      // falloff. hardness=50 (the old value) made the soft-edge BAND half the
-      // brush's radius wide, which is invisible on a small brush but turns
-      // into a huge blurry gradient on a large one (see brush-engine.js edge
-      // rendering fix for the pixel-width clamp that makes hardness=100 read
-      // as "hard" at any size instead of a razor-thin single-pixel ring).
+      id:'hard-round',
+      name:'Hard Round',
       preview:{shape:'circle',hardness:0.95},
-      settings:{'ts-size':6,'ts-hardness':100,'ts-opacity':100,'ts-flow':100,'ts-density':100,'ts-spacing':1,'ts-spacing-mode':'auto','ts-roundness':100,'ts-aa':true,'ts-size-control':'pressure','ts-min-size':0,'ts-flow-control':'off','ts-min-flow':15}
+      settings:builtinBrushSettings({
+        'ts-size':6,
+        'ts-spacing':1,
+        'ts-spacing-mode':'auto',
+        'ts-min-size':0,
+        'ts-min-flow':15
+      })
     },
     {
-      id:'soft-round', name:'Soft Round',
+      id:'soft-round',
+      name:'Soft Round',
       preview:{shape:'circle',hardness:0.08},
-      settings:{'ts-size':32,'ts-hardness':10,'ts-opacity':100,'ts-flow':100,'ts-density':100,'ts-spacing':5,'ts-spacing-mode':'manual','ts-roundness':100,'ts-aa':true,'ts-airbrush':false}
+      settings:builtinBrushSettings({
+        'ts-size':32,
+        'ts-hardness':10,
+        'ts-spacing':5
+      })
     },
     {
-      id:'soft-airbrush', name:'Soft Airbrush',
+      id:'soft-airbrush',
+      name:'Soft Airbrush',
       preview:{shape:'circle',hardness:0},
-      settings:{'ts-size':60,'ts-hardness':0,'ts-opacity':100,'ts-flow':18,'ts-density':100,'ts-spacing':3,'ts-spacing-mode':'manual','ts-roundness':100,'ts-aa':true,'ts-airbrush':true,'ts-airbrush-rate':55}
-    },
-  ];
-  // User-created presets (saved via the ➕ button). Restored from storage.
+      settings:builtinBrushSettings({
+        'ts-size':60,
+        'ts-flow':18,
+        'ts-hardness':0,
+        'ts-spacing':3,
+        'ts-airbrush':true,
+        'ts-airbrush-rate':55
+      })
+    }
+  ];  // User-created presets (saved via the ➕ button). Restored from storage.
   let _customPresets = [];
 
   // ── Groups (folders) ───────────────────────────────────────────
