@@ -1179,6 +1179,7 @@ function applyToolPreset(json){
     }catch(e){ /* storage unavailable — fail silently, in-memory state still works */ }
   }
   window._captureActiveBrushPreset=(captureTip=false)=>{_captureToPreset(_activePresetId,captureTip);persist();};
+
   let _persistSettingsTimer=null;
   const TIP_SETTING_IDS=new Set(['ts-tip-mode','ts-tip-soft-alpha']);
   function captureActivePresetFromEvent(event){
@@ -1186,6 +1187,7 @@ function applyToolPreset(json){
     if(!event.target.matches('input:not([type=file]),select')) return;
     const captureTip=TIP_SETTING_IDS.has(event.target.id);
     _captureToPreset(_activePresetId, captureTip);
+
     clearTimeout(_persistSettingsTimer);
     _persistSettingsTimer=setTimeout(persist,100);
   }
