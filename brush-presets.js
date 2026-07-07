@@ -517,8 +517,8 @@
       const fixed=mode.value==='fixed';
       const simpleRow=document.getElementById('ts-spacing-manual-row');
       const advancedRow=document.getElementById('ts-advanced-spacing-manual-row');
-      if(simpleRow){ simpleRow.style.display=''; simpleRow.title=fixed?'':'Auto spacing automatically adjusts spacing for smoother brush strokes.'; }
-      if(advancedRow){ advancedRow.style.display=''; advancedRow.title=fixed?'':'Auto spacing automatically adjusts spacing for smoother brush strokes.'; }
+      if(simpleRow){ simpleRow.style.display=fixed?'':'none'; simpleRow.title=fixed?'':'Auto spacing automatically adjusts spacing for smoother brush strokes.'; }
+      if(advancedRow){ advancedRow.style.display=fixed?'':'none'; advancedRow.title=fixed?'':'Auto spacing automatically adjusts spacing for smoother brush strokes.'; }
       const spacing=document.getElementById('ts-spacing');
       if(spacing){
         spacing.disabled=!fixed;
