@@ -668,7 +668,46 @@ function _dabAACpu(x,y,r,rgb,alpha,composite){
 }
 // Renderer preference dispatch Ã¢â‚¬â€ see brushRenderer in core-state.js and the
 // Preferences modal (Edit Ã¢â€“Â¸ Preferences).
-function _dabAA(x,y,r,rgb,alpha,composite){
+function _dabAATinyCoverage(x,y,r,rgb,alpha,composite){
+  const dc=(_inStroke&&composite!=='erase')?_strokeCtx:ctx;
+  const rr=Math.max(0.05,r),pad=1;
+  const sx=Math.max(0,Math.floor(x-rr-pad)),sy=Math.max(0,Math.floor(y-rr-pad));
+  const ex=Math.min(dc.canvas.width,Math.ceil(x+rr+pad)),ey=Math.min(dc.canvas.height,Math.ceil(y+rr+pad));
+  const width=ex-sx,height=ey-sy;
+  if(width<=0||height<=0) return;
+  const image=dc.getImageData(sx,sy,width,height),data=image.data;
+  const inner=_effectiveInnerFrac(rr,brushHardness);
+  const samples=4,invSamples=1/(samples*samples);
+  for(let py=0;py<height;py++){
+    for(let px=0;px<width;px++){
+      let coverage=0;
+      for(let sampleY=0;sampleY<samples;sampleY++){
+        for(let sampleX=0;sampleX<samples;sampleX++){
+          const wx=sx+px+(sampleX+0.5)/samples;
+          const wy=sy+py+(sampleY+0.5)/samples;
+          const t=Math.hypot(wx-x,wy-y)/rr;
+          coverage+=_roundBrushFalloff(t,inner,brushHardness);
+        }
+      }
+      const sourceAlpha=Math.max(0,Math.min(1,alpha*coverage*invSamples));
+      if(sourceAlpha<=0) continue;
+      const offset=(py*width+px)*4;
+      if(composite==='erase'){
+        data[offset+3]*=1-sourceAlpha;
+      }else{
+        const destinationAlpha=data[offset+3]/255;
+        const outputAlpha=sourceAlpha+destinationAlpha*(1-sourceAlpha);
+        data[offset]=(rgb[0]*sourceAlpha+data[offset]*destinationAlpha*(1-sourceAlpha))/outputAlpha;
+        data[offset+1]=(rgb[1]*sourceAlpha+data[offset+1]*destinationAlpha*(1-sourceAlpha))/outputAlpha;
+        data[offset+2]=(rgb[2]*sourceAlpha+data[offset+2]*destinationAlpha*(1-sourceAlpha))/outputAlpha;
+        data[offset+3]=outputAlpha*255;
+      }
+    }
+  }
+  dc.putImageData(image,sx,sy);
+}function _dabAA(x,y,r,rgb,alpha,composite){
+  const tinyGeneratedHardRound=r<=1&&!window._brushAirbrush&&!window.brushTipCanvas&&brushHardness>=0.995;
+  if(tinyGeneratedHardRound){_dabAATinyCoverage(x,y,r,rgb,alpha,composite);return;}
   if(brushRenderer==='cpu') _dabAACpu(x,y,r,rgb,alpha,composite);
   else _dabAAGpu(x,y,r,rgb,alpha,composite);
 }
@@ -842,23 +881,28 @@ function _drawAutoHardRoundSegment(d){
   if(!eligible){_autoHardRoundPrevDab=null;return false;}
   const previous=_autoHardRoundPrevDab;
   _autoHardRoundPrevDab={x:d.x,y:d.y,r:d.r,rgb:d.rgb.slice(),alpha:d.alpha};
-  if(!previous){_dabAA(d.x,d.y,d.r,d.rgb,d.alpha,d.composite);return true;}
   const dc=_inStroke?_strokeCtx:ctx;
+  let x0=previous?Math.round(previous.x):Math.round(d.x);
+  let y0=previous?Math.round(previous.y):Math.round(d.y);
+  const x1=Math.round(d.x),y1=Math.round(d.y);
+  const dx=Math.abs(x1-x0),sx=x0<x1?1:-1;
+  const dy=-Math.abs(y1-y0),sy=y0<y1?1:-1;
+  let error=dx+dy,first=!!previous;
   dc.save();
   dc.globalCompositeOperation='source-over';
   dc.globalAlpha=d.alpha;
-  dc.strokeStyle='rgb('+d.rgb[0]+','+d.rgb[1]+','+d.rgb[2]+')';
-  dc.lineWidth=Math.max(0.1,previous.r+d.r);
-  dc.lineCap='round';
-  dc.lineJoin='round';
-  dc.beginPath();
-  dc.moveTo(previous.x,previous.y);
-  dc.lineTo(d.x,d.y);
-  dc.stroke();
+  dc.fillStyle='rgb('+d.rgb[0]+','+d.rgb[1]+','+d.rgb[2]+')';
+  while(true){
+    if(!first) dc.fillRect(x0,y0,1,1);
+    first=false;
+    if(x0===x1&&y0===y1) break;
+    const twice=error*2;
+    if(twice>=dy){error+=dy;x0+=sx;}
+    if(twice<=dx){error+=dx;y0+=sy;}
+  }
   dc.restore();
   return true;
-}
-function _drawDabNow(d){
+}function _drawDabNow(d){
   if(!_drawAutoHardRoundSegment(d)){
     if(brushAA) _dabAA(d.x,d.y,d.r,d.rgb,d.alpha,d.composite);
     else _dabAliased(d.x,d.y,d.r,d.rgb,d.alpha,d.composite);
