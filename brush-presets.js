@@ -1041,7 +1041,7 @@ function applyToolPreset(json){
     'ts-roundness':100,
     'ts-aa':true,
     'ts-size-control':'pressure',
-    'ts-min-size':5,
+    'ts-min-size':1,
     'ts-size-pressure-curve':'linear',
     'ts-flow-control':'off',
     'ts-min-flow':0,
@@ -1071,9 +1071,10 @@ function applyToolPreset(json){
       settings:builtinBrushSettings({
         'ts-size':6,
         'ts-spacing':1,
+        'ts-hardness':100,
         'ts-spacing-mode':'auto',
         'ts-min-size':0,
-        'ts-min-flow':15
+        'ts-min-flow':0
       })
     },
     {
@@ -1082,8 +1083,11 @@ function applyToolPreset(json){
       preview:{shape:'circle',hardness:0.08},
       settings:builtinBrushSettings({
         'ts-size':32,
-        'ts-hardness':10,
-        'ts-spacing':5
+        'ts-hardness':6,
+        'ts-spacing-mode':'auto',
+        'ts-size-control':'off',
+        'ts-spacing':5,
+        'ts-flow':60,
       })
     },
     {
@@ -1091,12 +1095,11 @@ function applyToolPreset(json){
       name:'Soft Airbrush',
       preview:{shape:'circle',hardness:0},
       settings:builtinBrushSettings({
-        'ts-size':60,
-        'ts-flow':18,
+        'ts-size':400,
+        'ts-flow':10,
         'ts-hardness':0,
-        'ts-spacing':3,
-        'ts-airbrush':true,
-        'ts-airbrush-rate':55
+        'ts-spacing':40,
+        'ts-size-control':'off'
       })
     }
   ];  // User-created presets (saved via the ➕ button). Restored from storage.
@@ -1156,6 +1159,7 @@ function applyToolPreset(json){
     brush:  {presetId:'hard-round', size:6, hardness:100,  opacity:100, flow:100, density:100, spacing:1, roundness:100, aa:true, airbrush:false},
     eraser: {presetId:'hard-round', size:20, hardness:55, opacity:100, flow:100, density:100, spacing:12, roundness:100, aa:true, airbrush:false},
   };
+  let _toolPresetSizes={brush:{'hard-round':6},eraser:{'hard-round':20}};
   // Which tab is shown in the preset panel (brush|eraser) — follows setTool()
   let _activeTab = 'brush';
   // Which preset is currently shown active/highlighted in the grid
@@ -1170,7 +1174,7 @@ function applyToolPreset(json){
   function persist(){
     try{
       localStorage.setItem(STORE_KEY, JSON.stringify({
-        v:2, customPresets:_customPresets, groups:_groups, toolState:_toolState, presetSettings:_presetSettings
+        v:2, customPresets:_customPresets, groups:_groups, toolState:_toolState, toolPresetSizes:_toolPresetSizes, presetSettings:_presetSettings
       }));
     }catch(e){ /* storage unavailable — fail silently, in-memory state still works */ }
   }
@@ -1198,6 +1202,10 @@ function applyToolPreset(json){
       if(data && data.toolState){
         if(data.toolState.brush)  _toolState.brush  = Object.assign({}, _toolState.brush,  data.toolState.brush);
         if(data.toolState.eraser) _toolState.eraser = Object.assign({}, _toolState.eraser, data.toolState.eraser);
+      }
+      if(data && data.toolPresetSizes){
+        if(data.toolPresetSizes.brush) Object.assign(_toolPresetSizes.brush,data.toolPresetSizes.brush);
+        if(data.toolPresetSizes.eraser) Object.assign(_toolPresetSizes.eraser,data.toolPresetSizes.eraser);
       }
       // Restore per-preset settings; built-ins will be merged/overridden with
       // the user's saved tweaks so they survive a page reload
@@ -1829,10 +1837,27 @@ function applyToolPreset(json){
   // AND separate manual tweaks (size/hardness/flow/spacing/roundness/AA),
   // since the underlying brushHardness/brushOpacity/brushAA/etc globals are
   // shared by the engine and would otherwise leak between the two tools.
+  function rememberToolPresetSize(t,presetId){
+    if((t!=='brush'&&t!=='eraser')||!presetId) return;
+    _toolPresetSizes[t][presetId]=toolSizes[t];
+  }
+  function restoreToolPresetSize(t,presetId,fallback){
+    const stored=_toolPresetSizes[t][presetId];
+    const size=Number.isFinite(+stored)?+stored:+fallback;
+    _toolPresetSizes[t][presetId]=size;
+    _toolState[t].size=size;
+    toolSizes[t]=size;
+    const sizeControl=document.getElementById('ts-size');
+    if(sizeControl){sizeControl.value=size;sizeControl.dispatchEvent(new Event('input',{bubbles:true}));}
+    const presetSize=document.getElementById('bp-sz');
+    if(presetSize) presetSize.value=size;
+    if(typeof refreshSizeUI==='function') refreshSizeUI();
+  }
   function captureLiveState(t){
     if(t!=='brush' && t!=='eraser') return;
     const st=_toolState[t];
     st.size = toolSizes[t];
+    rememberToolPresetSize(t,_activePresetId);
     st.hardness = Math.round(brushHardness*100);
     st.opacity = Math.round(brushOpacity*100);
     st.flow = Math.round(brushFlow*100);
@@ -1855,8 +1880,11 @@ function applyToolPreset(json){
     _activePresetId=presetId;
     const savedSettings=Object.assign({},preset.settings||{},_presetSettings[presetId]||{});
     _applyingPresetSettings=true;
-    try{applyPresetSettings({settings:savedSettings});}
-    finally{_applyingPresetSettings=false;}
+    try{
+      applyPresetSettings({settings:savedSettings});
+      restoreToolPresetSize(t,presetId,savedSettings['ts-size']);
+
+    }finally{_applyingPresetSettings=false;}
   }
 
   // ── Select a preset (always for the currently active tab/tool) ─
@@ -1868,6 +1896,7 @@ function applyToolPreset(json){
 
     // Save the outgoing preset's current slider state before switching away
     if(_activePresetId && _activePresetId !== id){
+      rememberToolPresetSize(targetTool,_activePresetId);
       _captureToPreset(_activePresetId);
     }
 
@@ -1880,8 +1909,10 @@ function applyToolPreset(json){
     _activePresetId = id;
     _toolState[targetTool].presetId = id;
     _applyingPresetSettings=true;
-    try{ applyPresetSettings({ settings: savedSettings }); }
-    finally{ _applyingPresetSettings=false; }
+    try{
+      applyPresetSettings({ settings: savedSettings });
+      restoreToolPresetSize(targetTool,id,savedSettings['ts-size']);
+    }finally{ _applyingPresetSettings=false; }
     captureLiveState(targetTool);
     persist();
     refreshGrid();
