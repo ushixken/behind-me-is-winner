@@ -113,6 +113,19 @@ let _strokeCtx    = null; // its 2D context
 // True while a stroke is being painted to _strokeCanvas (between pointerdown
 // and the end-of-stroke composite). Used to switch dab targets.
 let _inStroke = false;
+let _strokeReplayDabs = [];
+let _strokeReplayBase = null;
+let _replayingTaper = false;
+
+function _beginEndTaperCapture(){
+  _strokeReplayDabs.length=0;
+  _strokeReplayBase=null;
+  if((_getStartTaper()<=0&&_getEndTaper()<=0)||tool!=='eraser') return;
+  _strokeReplayBase=document.createElement('canvas');
+  _strokeReplayBase.width=activeC.width;
+  _strokeReplayBase.height=activeC.height;
+  _strokeReplayBase.getContext('2d').drawImage(activeC,0,0);
+}
 
 function _ensureStrokeCanvas(){
   const w = activeC.width, h = activeC.height;
@@ -916,23 +929,51 @@ function _drawAutoHardRoundSegment(d){
   }
   _growDirtyRect(d.x,d.y,d.r);
 }
+function _taperDistance(amount){return 320*amount;}
 function _queueDab(d){
+  if(!_replayingTaper&&(_getStartTaper()>0||_getEndTaper()>0)) _strokeReplayDabs.push(Object.assign({},d,{rgb:d.rgb.slice()}));
   _drawDabNow(d);
-  return;
-  // Only hold dabs back while the stroke is actually moving fast enough for
-  // a deceleration "flick tail" to be meaningful. On a slow/deliberate
-  // stroke _strokeVelocity stays low, so there's no reason to withhold
-  // drawing Ã¢â‚¬â€ doing so just creates a visible static gap between the pen
-  // and the rendered line that only closes on pointerup (exactly the
-  // "brush lagging behind on a slow stroke" bug). Draw immediately whenever
-  // we're below the fast-stroke threshold.
-  if(_pendingDabs.length>_TAIL_BUFFER) _drawDabNow(_pendingDabs.shift());
 }
 function _flushStrokeTail(){
-  for(const d of _pendingDabs) _drawDabNow(d);
-  _pendingDabs.length=0;
+  const startAmount=_getStartTaper(),endAmount=_getEndTaper();
+  if((startAmount<=0&&endAmount<=0)||!_strokeReplayDabs.length){_strokeReplayDabs.length=0;_strokeReplayBase=null;return;}
+  const factors=new Array(_strokeReplayDabs.length).fill(1);
+  const distances=new Array(_strokeReplayDabs.length).fill(0);
+  for(let i=1;i<_strokeReplayDabs.length;i++){
+    const previous=_strokeReplayDabs[i-1],current=_strokeReplayDabs[i];
+    distances[i]=distances[i-1]+Math.hypot(current.x-previous.x,current.y-previous.y);
+  }
+  const totalDistance=distances[distances.length-1];
+  let startDistance=_taperDistance(startAmount),endDistance=_taperDistance(endAmount);
+  const requestedDistance=startDistance+endDistance;
+  if(totalDistance>0&&requestedDistance>totalDistance){
+    const scale=totalDistance/requestedDistance;
+    startDistance*=scale;
+    endDistance*=scale;
+  }
+  if(totalDistance>0){
+    for(let i=0;i<_strokeReplayDabs.length;i++){
+      if(startDistance>0){const progress=Math.max(0,Math.min(1,distances[i]/startDistance));factors[i]=progress*progress*(3-2*progress);}
+      if(endDistance>0){const progress=Math.max(0,Math.min(1,(totalDistance-distances[i])/endDistance));factors[i]=Math.min(factors[i],progress*progress*(3-2*progress));}
+    }
+  }
+  if(tool==='eraser'){
+    if(!_strokeReplayBase){_strokeReplayDabs.length=0;return;}
+    ctx.save();ctx.globalAlpha=1;ctx.globalCompositeOperation='copy';ctx.drawImage(_strokeReplayBase,0,0);ctx.restore();
+  }else if(_strokeCtx){
+    _strokeCtx.clearRect(0,0,_strokeCanvas.width,_strokeCanvas.height);
+  }
+  _autoHardRoundPrevDab=null;
+  _replayingTaper=true;
+  for(let i=0;i<_strokeReplayDabs.length;i++){
+    const d=_strokeReplayDabs[i];
+    _drawDabNow(Object.assign({},d,{r:Math.max(0.05,d.r*factors[i])}));
+  }
+  _replayingTaper=false;
+  _autoHardRoundPrevDab=null;
+  _strokeReplayDabs.length=0;
+  _strokeReplayBase=null;
 }
-
 // Ã¢â€â‚¬Ã¢â€â‚¬ Input smoothing (TVPaint calls this "Line Smoothing") Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 // Raw pointer input Ã¢â‚¬â€ especially high-frequency pointerrawupdate samples on
 // pen tablets, but mouse jitter too Ã¢â‚¬â€ is never perfectly straight; stamping
@@ -1011,7 +1052,22 @@ function _stampDab(x,y,e){
   const isErase=tool==='eraser';
   const rgb=isErase?[0,0,0]:_hexToRGB(color);
   const composite=isErase?'erase':'paint';
-  _queueDab({x,y,r,alpha,rgb,composite});
+  const scatterEnabled=!!window._tsScatterEnabled;
+  const count=scatterEnabled?Math.min(50,Math.max(1,Math.round(window._tsScatterCount||1))):1;
+  const scatterRotation=Math.random()*Math.PI*2;
+  const goldenAngle=Math.PI*(3-Math.sqrt(5));
+  for(let dabIndex=0;dabIndex<count;dabIndex++){
+    let dabX=x,dabY=y;
+    if(scatterEnabled&&window._tsScatterAmount>0){
+      const radialSample=count===1?Math.random():(dabIndex+Math.random())/count;
+      const angularJitter=(Math.random()-0.5)*(Math.PI*2/count);
+      const angle=scatterRotation+dabIndex*goldenAngle+angularJitter;
+      const distance=Math.sqrt(radialSample)*r*2*window._tsScatterAmount;
+      dabX+=Math.cos(angle)*distance;
+      dabY+=Math.sin(angle)*distance;
+    }
+    _queueDab({x:dabX,y:dabY,r,alpha,rgb,composite});
+  }
 }
 
 // Ã¢â€â‚¬Ã¢â€â‚¬ Airbrush continuous spray (Photoshop "Airbrush" toggle / Clip Studio
@@ -1075,10 +1131,11 @@ window._stopAirbrushSpray=_stopAirbrushSpray;
 // carry a faint first touch into a visible line.
 let _strokeDistSoFar = 0;
 function _strokeTaperFactor(baseSize){
-  // Taper disabled Ã¢â‚¬â€ every stroke now starts at full width immediately,
-  // no ease-in from a point. (Previously eased in over a capped distance;
-  // removed entirely per request since it was still visible/unwanted.)
-  return 1;
+  const amount=_getStartTaper();
+  if(amount<=0) return 1;
+  const length=_taperDistance(amount);
+  const progress=Math.max(0,Math.min(1,_strokeDistSoFar/length));
+  return progress*progress*(3-2*progress);
 }
 
 // Resolve the spacing FRACTION (of effective diameter) to use for the dab
@@ -1497,12 +1554,15 @@ let _strokeDabCount = 0;
 // element reference once and cache it Ã¢â‚¬â€ el.value is still read fresh every
 // call (so live slider changes still apply instantly), only the expensive
 // getElementById traversal is removed from the hot path.
-let _elSizeControl, _elFlowControl, _elOpacityControl, _elMinSize, _elMinFlow;
+let _elSizeControl, _elFlowControl, _elOpacityControl, _elMinSize, _elMinFlow, _elTaperMode, _elStartTaper, _elEndTaper;
 function _getSizeControl(){ if(_elSizeControl===undefined) _elSizeControl=document.getElementById('ts-size-control'); return _elSizeControl?_elSizeControl.value:'pressure'; }
 function _getFlowControl(){ if(_elFlowControl===undefined) _elFlowControl=document.getElementById('ts-flow-control'); return _elFlowControl?_elFlowControl.value:'off'; }
 function _getOpacityControl(){ if(_elOpacityControl===undefined) _elOpacityControl=document.getElementById('ts-opacity-control'); return _elOpacityControl?_elOpacityControl.value:'pressure'; }
 function _getMinSize(){ if(_elMinSize===undefined) _elMinSize=document.getElementById('ts-min-size'); return _elMinSize?(+_elMinSize.value/100):0.05; }
 function _getMinFlow(){ if(_elMinFlow===undefined) _elMinFlow=document.getElementById('ts-min-flow'); return _elMinFlow?(+_elMinFlow.value/100):0; }
+function _getTaperMode(){ if(_elTaperMode===undefined) _elTaperMode=document.getElementById('ts-taper-mode'); return _elTaperMode?_elTaperMode.value:'off'; }
+function _getStartTaper(){ if(_getTaperMode()!=='percentage') return 0; if(_elStartTaper===undefined) _elStartTaper=document.getElementById('ts-start-taper'); return _elStartTaper?(+_elStartTaper.value/100):0; }
+function _getEndTaper(){ if(_getTaperMode()!=='percentage') return 0; if(_elEndTaper===undefined) _elEndTaper=document.getElementById('ts-end-taper'); return _elEndTaper?(+_elEndTaper.value/100):0; }
 function _getPressureCurve(setting){ const el=document.getElementById('ts-'+setting+'-pressure-curve'); const mode=el?el.value:'linear'; if(mode==='custom'){const custom=window._tsCustomPressureCurves&&window._tsCustomPressureCurves[setting];return custom||'linear';} return mode; }
 
 // Pressure curve Ã¢â‚¬â€ the Tool Settings panel draws a Linear/Soft/Hard/S-curve preview
@@ -1676,15 +1736,14 @@ function _computeEffectiveParams(e){
   // any normal-length stroke Ã¢â‚¬â€ see taper history above.) _strokeTaperFactor
   // is left defined but unused, so this can be re-enabled by restoring the
   // line below if a tapered start is wanted again later.
-  const taper = 1; // was: _strokeTaperFactor(baseSize);
-  r *= taper;
+
   // Only ease ALPHA with the taper in AA mode. AA-off (pencil/pixelated)
   // mode is meant to be a flat, solid, hard-edged stamp with no partial
   // alpha anywhere Ã¢â‚¬â€ fading opacity in at the tip would put in-between
   // (non-solid) colors back in, exactly the gradient the pixelated mode is
   // supposed to avoid. In AA-off mode the taper is carried entirely by
   // width (r), same as a real pencil point narrowing rather than fading.
-  if(brushAA) alpha *= (0.35 + 0.65*taper); // width carries most of the taper; opacity eases more gently so the tip stays visible rather than vanishing
+
 
   // Density: scales the per-dab alpha contribution independently of
   // opacity/flow and pressure dynamics above (applied last so it works
@@ -1809,7 +1868,7 @@ activeC.addEventListener('pointerdown',e=>{
   if(tool==='fill'){pushUndo();ensureKey();floodFill(p.x,p.y,color);saveActiveToKey();recomposite(curLayer,curFrame);return;}
   if(tool==='line'){lineStart=p;return;}
   activeC.setPointerCapture(e.pointerId);
-  pushUndo();ensureKey();drawing=true;lx=p.x;ly=p.y;
+  pushUndo();ensureKey();_beginEndTaperCapture();drawing=true;lx=p.x;ly=p.y;
   _autoHardRoundPrevDab=null;
   _resetCurve(p.x,p.y,currentPressure);
   _lastPointerEvent=e;
@@ -1868,7 +1927,7 @@ function _pointerEndStroke(e){
   _stopAirbrushSpray();
   if(activeGroupId){drawing=false;lineStart=null;_pendingDabs.length=0;return;}
   if(tool==='line'&&lineStart){
-    pushUndo();ensureKey();const p=getPos(e);
+    pushUndo();ensureKey();_beginEndTaperCapture();const p=getPos(e);
     if(tool!=='eraser'){_ensureStrokeCanvas();_inStroke=true;}
     // Line tool: stamp dabs along the line (respects hardness/opacity)
     _strokeSegment(lineStart.x,lineStart.y,p.x,p.y,e,currentPressure,currentPressure);

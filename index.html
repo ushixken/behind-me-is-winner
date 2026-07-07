@@ -606,6 +606,9 @@
             <div class="ts-ps-nav-item" data-panel="dynamics">
               <span>Dynamics</span>
             </div>
+            <div class="ts-ps-nav-item" data-panel="taper">
+              <span>Taper</span>
+            </div>
             <div class="ts-ps-nav-item" data-panel="texture">
               <span>Texture</span>
             </div>
@@ -671,7 +674,7 @@
                     <div class="ts-row">
                       <button type="button" class="ts-eye-btn ts-advanced-only" data-eye-btn="spacing" title="Show/hide in Simple tab">👁</button>
                       <span class="ts-label">Spacing Mode</span>
-                      <select class="ts-select" id="ts-spacing-mode"><option value="auto">Auto</option><option value="manual">Manual</option></select>
+                      <select class="ts-select" id="ts-spacing-mode"><option value="fixed-distance" selected>Fixed Distance</option><option value="auto" title="Auto spacing automatically adjusts spacing for smoother brush strokes.">Auto</option><option value="velocity" disabled title="Coming Soon � This spacing mode will be available in a future update.">Velocity (Coming Soon)</option><option value="pen-pressure" disabled title="Coming Soon � This spacing mode will be available in a future update.">Pen Pressure (Coming Soon)</option></select>
                     </div>
                     <div class="ts-row" id="ts-spacing-manual-row">
                       <span class="ts-label">Spacing</span>
@@ -703,7 +706,7 @@
                 <div class="ts-divider"></div>
                 <div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-hardness"><button type="button" class="ts-eye-btn" data-eye-btn="hardness">👁</button><span class="ts-label">Hardness</span><input type="range" class="ts-range" min="0" max="100"><span class="ts-val ts-value-edit" data-value-target="ts-hardness" tabindex="0"></span></div>
                 <div class="ts-divider"></div>
-                <div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-spacing-mode"><button type="button" class="ts-eye-btn" data-eye-btn="spacing">👁</button><span class="ts-label">Spacing Mode</span><select class="ts-select"><option value="auto">Auto</option><option value="manual">Manual</option></select></div><div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-spacing" data-mirror-suffix="%" id="ts-advanced-spacing-manual-row"><span class="ts-label">Spacing</span><input type="range" class="ts-range" min="1" max="200"><span class="ts-val ts-value-edit" data-value-target="ts-spacing" tabindex="0"></span></div>
+                <div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-spacing-mode"><button type="button" class="ts-eye-btn" data-eye-btn="spacing">👁</button><span class="ts-label">Spacing Mode</span><select class="ts-select"><option value="fixed-distance" selected>Fixed Distance</option><option value="auto" title="Auto spacing automatically adjusts spacing for smoother brush strokes.">Auto</option><option value="velocity" disabled title="Coming Soon This spacing mode will be available in a future update.">Velocity (Coming Soon)</option><option value="pen-pressure" disabled title="Coming Soon This spacing mode will be available in a future update.">Pen Pressure (Coming Soon)</option></select></div><div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-spacing" data-mirror-suffix="%" id="ts-advanced-spacing-manual-row"><span class="ts-label">Spacing</span><input type="range" class="ts-range" min="1" max="200"><span class="ts-val ts-value-edit" data-value-target="ts-spacing" tabindex="0"></span></div>
                 <div class="ts-divider"></div>
                 <div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-aa"><button type="button" class="ts-eye-btn" data-eye-btn="aa">👁</button><label class="ts-label-sm ts-mirror-check-label"><input type="checkbox" class="ts-check"> Anti-aliasing</label></div>
                 <div class="ts-divider"></div>
@@ -757,6 +760,7 @@
                   <input type="range" class="ts-range" id="ts-min-size" min="0" max="100" value="5"/>
                   <span class="ts-val" id="ts-min-size-val">5%</span>
                 </div>
+
                 <div class="ts-row">
                   <span class="ts-label">Pressure Curve</span>
                   <select class="ts-select" id="ts-size-pressure-curve"><option value="linear" selected>Linear</option><option value="soft">Soft</option><option value="hard">Hard</option><option value="s">S-curve</option><option value="custom">Custom</option></select>
@@ -798,6 +802,22 @@
               </div>
             </div>
 
+            <!-- TAPER -->
+            <div class="ts-ps-panel" data-panel="taper">
+              <div class="ts-section-body">
+                <div class="ts-row">
+                  <span class="ts-label">Taper Mode</span>
+                  <select class="ts-select" id="ts-taper-mode">
+                    <option value="off" selected>Off</option>
+                    <option value="percentage">Percentage</option>
+                    <option value="length" disabled>Length (Coming Soon)</option>
+                    <option value="fade" disabled>Fade (Coming Soon)</option>
+                  </select>
+                </div>
+                <div class="ts-row" title="Reduces brush size at the beginning of the stroke."><span class="ts-label">Start Taper</span><input type="range" class="ts-range" id="ts-start-taper" min="0" max="100" value="0" disabled/><span class="ts-val" id="ts-start-taper-val">0%</span></div>
+                <div class="ts-row" title="Reduces brush size at the end of the stroke."><span class="ts-label">End Taper</span><input type="range" class="ts-range" id="ts-end-taper" min="0" max="100" value="0" disabled/><span class="ts-val" id="ts-end-taper-val">0%</span></div>
+              </div>
+            </div>
             <!-- TEXTURE -->
             <div class="ts-ps-panel ts-placeholder-panel" data-panel="texture" data-placeholder="Texture controls are not available yet.">
               <div class="ts-section-body">

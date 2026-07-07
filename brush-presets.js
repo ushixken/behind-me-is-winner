@@ -25,6 +25,30 @@
   bindRange('ts-airbrush-rate','ts-airbrush-rate-val','',v=>{window._tsAirbrushRate=v/100;});
   // Dynamics
   bindRange('ts-min-size','ts-min-size-val','%');
+  bindRange('ts-start-taper','ts-start-taper-val','%');
+  bindRange('ts-end-taper','ts-end-taper-val','%');
+  function syncTaperMode(){
+    const mode=document.getElementById('ts-taper-mode');
+    const enabled=!!mode&&mode.value==='percentage';
+    ['ts-start-taper','ts-end-taper'].forEach(id=>{const control=document.getElementById(id);if(control) control.disabled=!enabled;});
+  }
+  const taperMode=document.getElementById('ts-taper-mode');
+  if(taperMode) taperMode.addEventListener('input',syncTaperMode);
+  syncTaperMode();
+  bindRange('ts-scatter-amount','ts-scatter-amount-val','%',v=>{window._tsScatterAmount=v/100;});
+  bindRange('ts-scatter-count','ts-scatter-count-val','',v=>{window._tsScatterCount=Math.min(50,Math.max(1,Math.round(v)));});
+  const scatterEnabledEl=document.getElementById('ts-scatter-enabled');
+  const scatterAmountEl=document.getElementById('ts-scatter-amount');
+  const scatterCountEl=document.getElementById('ts-scatter-count');
+  function syncScatter(){
+    window._tsScatterEnabled=!!scatterEnabledEl?.checked;
+    window._tsScatterAmount=scatterAmountEl?(+scatterAmountEl.value/100):0;
+    window._tsScatterCount=scatterCountEl?Math.min(50,Math.max(1,Math.round(+scatterCountEl.value))):1;
+    if(scatterAmountEl) scatterAmountEl.disabled=!window._tsScatterEnabled;
+    if(scatterCountEl) scatterCountEl.disabled=!window._tsScatterEnabled;
+  }
+  if(scatterEnabledEl) scatterEnabledEl.addEventListener('input',syncScatter);
+  syncScatter();
   bindRange('ts-min-flow','ts-min-flow-val','%');
   function syncDynamicsMinimums(){
     const sizeControl=document.getElementById('ts-size-control');
@@ -463,6 +487,7 @@
       const syncFromSource=()=>{
         if(source.type==='checkbox') mirror.checked=source.checked;
         else mirror.value=source.value;
+        mirror.disabled=source.disabled;
         if(value){
           if(row.dataset.mirrorTarget==='ts-size' && window._brushSizeUnit){
             const px=+source.value;
@@ -489,13 +514,17 @@
     const mode=document.getElementById('ts-spacing-mode');
     if(!mode) return;
     const sync=()=>{
-      const manual=mode.value==='manual';
+      const fixed=mode.value==='fixed';
       const simpleRow=document.getElementById('ts-spacing-manual-row');
       const advancedRow=document.getElementById('ts-advanced-spacing-manual-row');
-      if(simpleRow) simpleRow.style.display=manual?'':'none';
-      if(advancedRow) advancedRow.style.display=manual?'':'none';
+      if(simpleRow){ simpleRow.style.display=''; simpleRow.title=fixed?'':'Auto spacing automatically adjusts spacing for smoother brush strokes.'; }
+      if(advancedRow){ advancedRow.style.display=''; advancedRow.title=fixed?'':'Auto spacing automatically adjusts spacing for smoother brush strokes.'; }
       const spacing=document.getElementById('ts-spacing');
-      if(spacing) spacing.disabled=!manual;
+      if(spacing){
+        spacing.disabled=!fixed;
+        spacing.title=fixed?'':'Auto spacing automatically adjusts spacing for smoother brush strokes.';
+        spacing.dispatchEvent(new Event('change',{bubbles:true}));
+      }
     };
     mode.addEventListener('input',sync);
     mode.addEventListener('change',sync);
@@ -927,8 +956,8 @@
 
 // Preset get/apply
 function getToolPreset(){
-  const ids=['ts-size','ts-opacity','ts-flow','ts-density','ts-hardness','ts-spacing','ts-spacing-mode','ts-airbrush','ts-airbrush-rate',
-    'ts-min-size','ts-size-control','ts-size-pressure-curve','ts-flow-control','ts-flow-pressure-curve','ts-opacity-control','ts-opacity-pressure-curve','ts-min-flow',
+  const ids=['ts-size','ts-opacity','ts-flow','ts-density','ts-hardness','ts-spacing','ts-spacing-mode','ts-scatter-enabled','ts-scatter-amount','ts-scatter-count','ts-airbrush','ts-airbrush-rate',
+    'ts-min-size','ts-taper-mode','ts-start-taper','ts-end-taper','ts-size-control','ts-size-pressure-curve','ts-flow-control','ts-flow-pressure-curve','ts-opacity-control','ts-opacity-pressure-curve','ts-min-flow',
     'ts-texture-scale','ts-texture-depth'];
   const out={};
   ids.forEach(id=>{
@@ -1037,11 +1066,17 @@ function applyToolPreset(json){
     'ts-density':100,
     'ts-hardness':100,
     'ts-spacing':1,
-    'ts-spacing-mode':'manual',
+    'ts-spacing-mode':'fixed',
     'ts-roundness':100,
+    'ts-scatter-enabled':false,
+    'ts-scatter-amount':0,
+    'ts-scatter-count':1,
     'ts-aa':true,
     'ts-size-control':'pressure',
     'ts-min-size':1,
+    'ts-taper-mode':'off',
+    'ts-start-taper':0,
+    'ts-end-taper':0,
     'ts-size-pressure-curve':'linear',
     'ts-flow-control':'off',
     'ts-min-flow':0,
@@ -1074,7 +1109,10 @@ function applyToolPreset(json){
         'ts-hardness':100,
         'ts-spacing-mode':'auto',
         'ts-min-size':0,
-        'ts-min-flow':0
+        'ts-min-flow':0,
+        'ts-taper-mode':'pressure',
+        'ts-start-taper':0,
+        'ts-end-taper':10,
       })
     },
     {
@@ -1749,16 +1787,25 @@ function applyToolPreset(json){
   // ── Apply a preset's settings to the tool settings sliders ───
   function applyPresetSettings(p){
     const s = p.settings;
+    if(!('ts-scatter-enabled' in s)) s['ts-scatter-enabled']=false;
+    if(!('ts-scatter-amount' in s)) s['ts-scatter-amount']=0;
+    if(!('ts-scatter-count' in s)) s['ts-scatter-count']=1;
     window._tsCustomPressureCurves=JSON.parse(JSON.stringify(s['ts-pressure-curves']||{}));
     if(typeof window._refreshPressureCurvePreviews==='function') window._refreshPressureCurvePreviews();
     const spacingMode=document.getElementById('ts-spacing-mode');
-    if(spacingMode&&!('ts-spacing-mode' in s)){spacingMode.value='manual';spacingMode.dispatchEvent(new Event('input',{bubbles:true}));}
+    if(spacingMode){
+      const savedMode=s['ts-spacing-mode'];
+      s['ts-spacing-mode']=(savedMode==='auto'||savedMode==='fixed')?savedMode:'fixed';
+    }
     Object.entries(s).forEach(([id,value])=>{
       const control=document.getElementById(id);
       if(!control||!control.matches('#tool-settings-body input:not([type=file]),#tool-settings-body select')) return;
       if(control.type==='checkbox') control.checked=!!value;
       else control.value=value;
     });
+    if(spacingMode) spacingMode.dispatchEvent(new Event('input',{bubbles:true}));
+    const taperMode=document.getElementById('ts-taper-mode');
+    if(taperMode) taperMode.dispatchEvent(new Event('input',{bubbles:true}));
     const mapping = {
       'ts-size': {slider:'ts-size', val:'ts-size-val', suffix:'', extra: v=>{toolSizes[tool]=v; const bpSz=document.getElementById('bp-sz'); if(bpSz)bpSz.value=v; if(typeof refreshSizeUI==='function')refreshSizeUI(); _aaDabCache.clear();_stampCache.clear();}},
       'ts-hardness': {slider:'ts-hardness', val:'ts-hardness-val', suffix:'', extra: v=>{brushHardness=v/100; _aaDabCache.clear();_stampCache.clear();}},
@@ -1987,7 +2034,7 @@ function applyToolPreset(json){
     const preset = {
       id, name, custom:true,
       preview:{ shape: roundness<60?'ellipse':'circle', hardness: hardness/100, aliased:!brushAA },
-      settings:{ 'ts-size':size, 'ts-hardness':hardness, 'ts-opacity':opacity, 'ts-flow':flow, 'ts-density':density, 'ts-spacing':spacing, 'ts-spacing-mode':'manual', 'ts-roundness':roundness, 'ts-aa':!!brushAA }
+      settings:{ 'ts-size':size, 'ts-hardness':hardness, 'ts-opacity':opacity, 'ts-flow':flow, 'ts-density':density, 'ts-spacing':spacing, 'ts-spacing-mode':document.getElementById('ts-spacing-mode')?.value||'fixed', 'ts-scatter-enabled':!!document.getElementById('ts-scatter-enabled')?.checked, 'ts-scatter-amount':+(document.getElementById('ts-scatter-amount')?.value||0), 'ts-scatter-count':+(document.getElementById('ts-scatter-count')?.value||1), 'ts-roundness':roundness, 'ts-aa':!!brushAA }
     };
     _customPresets.push(preset);
     _seedPresetSettings(preset); // give it its own settings slot immediately
@@ -2034,7 +2081,10 @@ function applyToolPreset(json){
               settings:{
                 'ts-size':clampedSize,
                 'ts-spacing':Math.min(200,Math.max(1,b.spacing||25)),
-                'ts-spacing-mode':'manual',
+                'ts-spacing-mode':'fixed',
+                'ts-scatter-enabled':false,
+                'ts-scatter-amount':0,
+                'ts-scatter-count':1,
                 'ts-tip-dataurl':b.canvas.toDataURL('image/png'),
                 'ts-tip-mode':'replace',
                 'ts-tip-soft-alpha':true,
