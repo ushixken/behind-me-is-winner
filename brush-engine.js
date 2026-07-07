@@ -836,12 +836,12 @@ function _applyTextureToDab(dc, x, y, r, alpha){
 const _TAIL_BUFFER = 3;
 const _TAIL_MIN = 0.12; // how thin the very last point of a flick gets
 let _pendingDabs = [];
-let _tinyHardRoundPrevDab=null;
-function _drawTinyHardRoundSegment(d){
-  const eligible=brushAA&&d.composite==='paint'&&d.r<=1&&!window._brushAirbrush&&!window.brushTipCanvas&&!window.brushTextureCanvas&&brushHardness>=0.995;
-  if(!eligible){_tinyHardRoundPrevDab=null;return false;}
-  const previous=_tinyHardRoundPrevDab;
-  _tinyHardRoundPrevDab={x:d.x,y:d.y,r:d.r,rgb:d.rgb.slice(),alpha:d.alpha};
+let _autoHardRoundPrevDab=null;
+function _drawAutoHardRoundSegment(d){
+  const eligible=d.composite==='paint'&&_usesAutoHardRoundRaster(d.r);
+  if(!eligible){_autoHardRoundPrevDab=null;return false;}
+  const previous=_autoHardRoundPrevDab;
+  _autoHardRoundPrevDab={x:d.x,y:d.y,r:d.r,rgb:d.rgb.slice(),alpha:d.alpha};
   if(!previous){_dabAA(d.x,d.y,d.r,d.rgb,d.alpha,d.composite);return true;}
   const dc=_inStroke?_strokeCtx:ctx;
   dc.save();
@@ -859,7 +859,7 @@ function _drawTinyHardRoundSegment(d){
   return true;
 }
 function _drawDabNow(d){
-  if(!_drawTinyHardRoundSegment(d)){
+  if(!_drawAutoHardRoundSegment(d)){
     if(brushAA) _dabAA(d.x,d.y,d.r,d.rgb,d.alpha,d.composite);
     else _dabAliased(d.x,d.y,d.r,d.rgb,d.alpha,d.composite);
   }
@@ -1044,30 +1044,32 @@ function _strokeTaperFactor(baseSize){
 // on stroke velocity or acceleration, only on the Spacing slider (and the
 // airbrush cap).
 function _effectiveSpacingFrac(){
+  const mode=document.getElementById('ts-spacing-mode');
+  if(mode&&mode.value==='auto'&&tool==='brush'&&!window._brushAirbrush&&!window.brushTipCanvas&&brushHardness>=0.995) return 0.01;
   return (typeof window!=='undefined' && window._tsSpacing!=null) ? window._tsSpacing : 0;
 }
 
 let _hardRoundTailCoverageOnly=false;
+let _flowSpacingRatio=1;
+function _flowRatioForStep(step,radius){
+  // Treat Flow as paint deposited per unit of travel. For source-over dabs,
+  // preserving transmittance makes a group of dense low-alpha dabs match a
+  // smaller group of wider-spaced dabs over the same stroke distance.
+  const pressureSized=_isDrawingWithPen&&_getSizeControl()==='pressure';
+  const referenceStep=Math.max(pressureSized?0.05:0.5,radius*2*0.12);
+  return Math.max(0.01,Math.min(4,step/referenceStep));
+}
+function _usesAutoHardRoundRaster(radius){
+  return false;
+}
 function _walkDabArc(length,pointAt,e,startPressure,endPressure){
   if(length<=0){currentPressure=endPressure;return;}
-  const hardRoundPressureTail=tool==='brush'&&_isDrawingWithPen&&!window._brushAirbrush&&!window.brushTipCanvas&&brushHardness>=0.995&&_getSizeControl()==='pressure'&&endPressure<startPressure;
-  const pressureAt=sample=>{
-    let t=sample.t;
-    if(hardRoundPressureTail){
-      const rawPressure=startPressure+(endPressure-startPressure)*t;
-      if(_computeSpacingRadius(e,rawPressure)<1) t=t*t*(3-2*t);
-    }
-    return startPressure+(endPressure-startPressure)*t;
-  };
-  let distance=0,lastStampedDistance=-Infinity,tinyTailReached=false;
+  let distance=0;
   while(distance<length){
     const sample=pointAt(distance);
-    const pressure=pressureAt(sample);
+    const pressure=startPressure+(endPressure-startPressure)*sample.t;
     const spacingR=_computeSpacingRadius(e,pressure);
-    const tinyTail=hardRoundPressureTail&&spacingR<1;
-    if(tinyTail) tinyTailReached=true;
-    const minimumStep=tinyTail?Math.max(0.05,spacingR*0.35):0.5;
-    const step=Math.max(minimumStep,spacingR*2*_effectiveSpacingFrac());
+    const step=Math.max(0.5,spacingR*2*_effectiveSpacingFrac());
     const needed=Math.max(0,step-_strokeSegCarryOver);
     const remaining=length-distance;
     if(needed>remaining){
@@ -1076,24 +1078,16 @@ function _walkDabArc(length,pointAt,e,startPressure,endPressure){
     }
     distance+=needed;
     const dab=pointAt(distance);
-    currentPressure=pressureAt(dab);
+    currentPressure=startPressure+(endPressure-startPressure)*dab.t;
     _strokeDistSoFar+=step;
-    _hardRoundTailCoverageOnly=tinyTail;
-    try{_stampDab(dab.x,dab.y,e);}finally{_hardRoundTailCoverageOnly=false;}
-    lastStampedDistance=distance;
+    _flowSpacingRatio=_flowRatioForStep(step,spacingR);
+    try{_stampDab(dab.x,dab.y,e);}
+    finally{_flowSpacingRatio=1;}
     _strokeSegCarryOver=0;
-    if(needed===0 && remaining===0) break;
-  }
-  if(tinyTailReached&&length-lastStampedDistance>0.01){
-    const end=pointAt(length);
-    currentPressure=endPressure;
-    _hardRoundTailCoverageOnly=true;
-    try{_stampDab(end.x,end.y,e);}finally{_hardRoundTailCoverageOnly=false;}
-    _strokeSegCarryOver=0;
+    if(needed===0&&remaining===0) break;
   }
   currentPressure=endPressure;
 }
-
 function _strokeSegment(ax,ay,bx,by,e,startPressure,endPressure){
   const sp = (startPressure !== undefined) ? startPressure : currentPressure;
   const ep = (endPressure   !== undefined) ? endPressure   : currentPressure;
@@ -1344,7 +1338,7 @@ function _scheduleRecomposite(){
 //     the old `drawing` flag blindly.
 function _endStroke(){
   _stopAirbrushSpray();
-  _tinyHardRoundPrevDab=null;
+  _autoHardRoundPrevDab=null;
   if(drawing){drawing=false;_flushStrokeTail();if(_inStroke){_inStroke=false;_commitStrokeCanvas();}saveActiveToKey();_scheduleRecomposite();}
   lineStart=null;
   _pendingDabs.length=0;
@@ -1581,11 +1575,17 @@ function _computeEffectiveParams(e){
   if(flowCtrl !== 'off'&&!_hardRoundTailCoverageOnly){
     const applyFlow=(flowCtrl==='pressure')?isPenStroke:true;
     if(applyFlow){
-      const influence=(flowCtrl==='pressure')?_applyPressureCurve(_getPressureInfluence(),_getPressureCurve('flow')):_resolveControl(flowCtrl,e);
+      let influence=(flowCtrl==='pressure')?_applyPressureCurve(_getPressureInfluence(),_getPressureCurve('flow')):_resolveControl(flowCtrl,e);
+      if(flowCtrl==='pressure'&&sizeCtrl==='pressure'&&isPenStroke) influence=Math.sqrt(influence);
       const minFlow=_getMinFlow();
       baseAlpha*=Math.max(0,Math.min(1,minFlow+(1-minFlow)*influence));
       alpha=baseAlpha;
     }
+  }
+
+  if(_flowSpacingRatio!==1&&alpha<1){
+    alpha=1-Math.pow(1-alpha,_flowSpacingRatio);
+    baseAlpha=alpha;
   }
 
   // Size dynamics
@@ -1766,7 +1766,7 @@ activeC.addEventListener('pointerdown',e=>{
   if(tool==='line'){lineStart=p;return;}
   activeC.setPointerCapture(e.pointerId);
   pushUndo();ensureKey();drawing=true;lx=p.x;ly=p.y;
-  _tinyHardRoundPrevDab=null;
+  _autoHardRoundPrevDab=null;
   _resetCurve(p.x,p.y,currentPressure);
   _lastPointerEvent=e;
   if(tool!=='eraser'){_ensureStrokeCanvas();_inStroke=true;}

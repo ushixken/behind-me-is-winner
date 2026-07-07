@@ -457,7 +457,7 @@
   (function initAdvancedMainControlMirrors(){
     document.querySelectorAll('.ts-advanced-mirror-row[data-mirror-target]').forEach(row=>{
       const source=document.getElementById(row.dataset.mirrorTarget);
-      const mirror=row.querySelector('input[type="range"],input[type="checkbox"]');
+      const mirror=row.querySelector('input[type="range"],input[type="checkbox"],select');
       const value=row.querySelector('.ts-val');
       if(!source||!mirror) return;
       const syncFromSource=()=>{
@@ -483,6 +483,23 @@
       source.addEventListener('change',syncFromSource);
       syncFromSource();
     });
+  })();
+
+  (function initSpacingMode(){
+    const mode=document.getElementById('ts-spacing-mode');
+    if(!mode) return;
+    const sync=()=>{
+      const manual=mode.value==='manual';
+      const simpleRow=document.getElementById('ts-spacing-manual-row');
+      const advancedRow=document.getElementById('ts-advanced-spacing-manual-row');
+      if(simpleRow) simpleRow.style.display=manual?'':'none';
+      if(advancedRow) advancedRow.style.display=manual?'':'none';
+      const spacing=document.getElementById('ts-spacing');
+      if(spacing) spacing.disabled=!manual;
+    };
+    mode.addEventListener('input',sync);
+    mode.addEventListener('change',sync);
+    sync();
   })();
 
   (function initEditableToolValues(){
@@ -910,7 +927,7 @@
 
 // Preset get/apply
 function getToolPreset(){
-  const ids=['ts-size','ts-opacity','ts-flow','ts-density','ts-hardness','ts-spacing','ts-airbrush','ts-airbrush-rate',
+  const ids=['ts-size','ts-opacity','ts-flow','ts-density','ts-hardness','ts-spacing','ts-spacing-mode','ts-airbrush','ts-airbrush-rate',
     'ts-min-size','ts-size-control','ts-size-pressure-curve','ts-flow-control','ts-flow-pressure-curve','ts-opacity-control','ts-opacity-pressure-curve','ts-min-flow',
     'ts-texture-scale','ts-texture-depth'];
   const out={};
@@ -1019,17 +1036,17 @@ function applyToolPreset(json){
       // rendering fix for the pixel-width clamp that makes hardness=100 read
       // as "hard" at any size instead of a razor-thin single-pixel ring).
       preview:{shape:'circle',hardness:0.95},
-      settings:{'ts-size':6,'ts-hardness':100,'ts-opacity':100,'ts-flow':100,'ts-density':100,'ts-spacing':1,'ts-roundness':100,'ts-aa':true,'ts-size-control':'pressure','ts-min-size':0}
+      settings:{'ts-size':6,'ts-hardness':100,'ts-opacity':100,'ts-flow':100,'ts-density':100,'ts-spacing':1,'ts-spacing-mode':'auto','ts-roundness':100,'ts-aa':true,'ts-size-control':'pressure','ts-min-size':0,'ts-flow-control':'off','ts-min-flow':15}
     },
     {
       id:'soft-round', name:'Soft Round',
       preview:{shape:'circle',hardness:0.08},
-      settings:{'ts-size':32,'ts-hardness':10,'ts-opacity':100,'ts-flow':100,'ts-density':100,'ts-spacing':5,'ts-roundness':100,'ts-aa':true,'ts-airbrush':false}
+      settings:{'ts-size':32,'ts-hardness':10,'ts-opacity':100,'ts-flow':100,'ts-density':100,'ts-spacing':5,'ts-spacing-mode':'manual','ts-roundness':100,'ts-aa':true,'ts-airbrush':false}
     },
     {
       id:'soft-airbrush', name:'Soft Airbrush',
       preview:{shape:'circle',hardness:0},
-      settings:{'ts-size':60,'ts-hardness':0,'ts-opacity':100,'ts-flow':18,'ts-density':100,'ts-spacing':3,'ts-roundness':100,'ts-aa':true,'ts-airbrush':true,'ts-airbrush-rate':55}
+      settings:{'ts-size':60,'ts-hardness':0,'ts-opacity':100,'ts-flow':18,'ts-density':100,'ts-spacing':3,'ts-spacing-mode':'manual','ts-roundness':100,'ts-aa':true,'ts-airbrush':true,'ts-airbrush-rate':55}
     },
   ];
   // User-created presets (saved via the ➕ button). Restored from storage.
@@ -1674,6 +1691,8 @@ function applyToolPreset(json){
     const s = p.settings;
     window._tsCustomPressureCurves=JSON.parse(JSON.stringify(s['ts-pressure-curves']||{}));
     if(typeof window._refreshPressureCurvePreviews==='function') window._refreshPressureCurvePreviews();
+    const spacingMode=document.getElementById('ts-spacing-mode');
+    if(spacingMode&&!('ts-spacing-mode' in s)){spacingMode.value='manual';spacingMode.dispatchEvent(new Event('input',{bubbles:true}));}
     Object.entries(s).forEach(([id,value])=>{
       const control=document.getElementById(id);
       if(!control||!control.matches('#tool-settings-body input:not([type=file]),#tool-settings-body select')) return;
@@ -1885,7 +1904,7 @@ function applyToolPreset(json){
     const preset = {
       id, name, custom:true,
       preview:{ shape: roundness<60?'ellipse':'circle', hardness: hardness/100, aliased:!brushAA },
-      settings:{ 'ts-size':size, 'ts-hardness':hardness, 'ts-opacity':opacity, 'ts-flow':flow, 'ts-density':density, 'ts-spacing':spacing, 'ts-roundness':roundness, 'ts-aa':!!brushAA }
+      settings:{ 'ts-size':size, 'ts-hardness':hardness, 'ts-opacity':opacity, 'ts-flow':flow, 'ts-density':density, 'ts-spacing':spacing, 'ts-spacing-mode':'manual', 'ts-roundness':roundness, 'ts-aa':!!brushAA }
     };
     _customPresets.push(preset);
     _seedPresetSettings(preset); // give it its own settings slot immediately
@@ -1932,6 +1951,7 @@ function applyToolPreset(json){
               settings:{
                 'ts-size':clampedSize,
                 'ts-spacing':Math.min(200,Math.max(1,b.spacing||25)),
+                'ts-spacing-mode':'manual',
                 'ts-tip-dataurl':b.canvas.toDataURL('image/png'),
                 'ts-tip-mode':'replace',
                 'ts-tip-soft-alpha':true,
