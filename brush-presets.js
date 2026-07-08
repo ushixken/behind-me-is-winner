@@ -107,30 +107,34 @@
   // exact settings that were there before, so nothing is lost.
   let _preAA=null; // {opacityCtrl, hardness} snapshot taken the moment AA was switched off
   function _setBrushAA(on){
-    if(!!on===!!brushAA) return;
+    const nextAA=!!on;
+    const changed=nextAA!==!!brushAA;
     const ctrlEl=document.getElementById('ts-opacity-control');
-    if(!on){
-      _preAA={ opacityCtrl: ctrlEl?ctrlEl.value:'pressure', hardness: brushHardness };
+    if(changed&&!nextAA){
+      _preAA={opacityCtrl:ctrlEl?ctrlEl.value:'pressure',hardness:brushHardness};
       if(ctrlEl) ctrlEl.value='off';
       brushHardness=1;
-      const hEl=document.getElementById('ts-hardness'); if(hEl) hEl.value=100;
-      const hVal=document.getElementById('ts-hardness-val'); if(hVal) hVal.textContent=100;
-    } else if(_preAA){
+      const hEl=document.getElementById('ts-hardness');if(hEl)hEl.value=100;
+      const hVal=document.getElementById('ts-hardness-val');if(hVal)hVal.textContent=100;
+    }else if(changed&&nextAA&&_preAA){
       if(ctrlEl) ctrlEl.value=_preAA.opacityCtrl;
       brushHardness=_preAA.hardness;
-      const hPct=Math.round(_preAA.hardness*100);
-      const hEl=document.getElementById('ts-hardness'); if(hEl) hEl.value=hPct;
-      const hVal=document.getElementById('ts-hardness-val'); if(hVal) hVal.textContent=hPct;
+      const hardnessPercent=Math.round(_preAA.hardness*100);
+      const hEl=document.getElementById('ts-hardness');if(hEl)hEl.value=hardnessPercent;
+      const hVal=document.getElementById('ts-hardness-val');if(hVal)hVal.textContent=hardnessPercent;
       _preAA=null;
     }
-    brushAA=!!on;
-    _aaDabCache.clear();_stampCache.clear();
-    const cb=document.getElementById('ts-aa'); if(cb) cb.checked=brushAA;
-    const btn=document.getElementById('btn-aa'); if(btn) btn.classList.toggle('active',brushAA);
+    brushAA=nextAA;
+    if(changed){_aaDabCache.clear();_stampCache.clear();}
+    const checkbox=document.getElementById('ts-aa');
+    if(checkbox){
+      checkbox.checked=brushAA;
+      checkbox.dispatchEvent(new Event('input',{bubbles:true}));
+    }
+    const button=document.getElementById('btn-aa');if(button)button.classList.toggle('active',brushAA);
     document.getElementById('stat-tool').textContent=(tool==='brush'?(brushAA?'Brush':'Pencil'):tool.charAt(0).toUpperCase()+tool.slice(1));
-    if(typeof applyTransform==='function') applyTransform();
-  }
-  window._setBrushAA=_setBrushAA;
+    if(typeof applyTransform==='function')applyTransform();
+  }  window._setBrushAA=_setBrushAA;
 
   // AA checkbox in Tool Settings mirrors toolbar AA button
   const tsAA=document.getElementById('ts-aa');
@@ -1174,7 +1178,7 @@ function applyToolPreset(json){
         'ts-min-size':0,
         'ts-min-flow':0,
         'ts-taper-mode':'percentage',
-        'ts-start-taper':0,
+        'ts-start-taper':1,
         'ts-end-taper':10,
       })
     },
@@ -1225,19 +1229,20 @@ function applyToolPreset(json){
   // are written here whenever the slider values change while that preset is
   // active, so switching presets never bleeds settings between them.
   let _presetSettings = {}; // { [presetId]: { 'ts-size':…, 'ts-hardness':…, … } }
+  const _presetSettingsKey=(presetId,toolType='brush')=>toolType+':'+presetId;
 
-  function _seedPresetSettings(preset){
-    if(!_presetSettings[preset.id]){
-      _presetSettings[preset.id] = Object.assign({}, preset.settings || {});
-    }
+  function _seedPresetSettings(preset,toolType='brush'){
+    const key=_presetSettingsKey(preset.id,toolType);
+    if(!_presetSettings[key]) _presetSettings[key]=Object.assign({},preset.settings||{});
   }
   // Seed built-ins immediately
   BRUSH_PRESETS.forEach(_seedPresetSettings);
 
   // Capture the current slider state into the active preset's per-preset slot
-  function _captureToPreset(presetId,captureTip=false){
+  function _captureToPreset(presetId,captureTip=false,toolType=(tool==='eraser'?'eraser':'brush')){
     if(!presetId) return;
-    const settings=_presetSettings[presetId]||(_presetSettings[presetId]={});
+    const key=_presetSettingsKey(presetId,toolType);
+    const settings=_presetSettings[key]||(_presetSettings[key]={});
     document.querySelectorAll('#tool-settings-body input[id]:not([type=file]),#tool-settings-body select[id]').forEach(control=>{
       settings[control.id]=control.type==='checkbox'?control.checked:control.value;
     });
@@ -1316,7 +1321,22 @@ function applyToolPreset(json){
       // Restore per-preset settings; built-ins will be merged/overridden with
       // the user's saved tweaks so they survive a page reload
       if(data && data.presetSettings && typeof data.presetSettings === 'object'){
-        Object.assign(_presetSettings, data.presetSettings);
+        Object.entries(data.presetSettings).forEach(([key,value])=>{
+          if(key.includes(':')){
+            const restored=Object.assign({},value);
+            if(key==='eraser:hard-round') restored['ts-aa']=true;
+            _presetSettings[key]=restored;
+            return;
+          }
+          const migrated=Object.assign({},value);
+          if(key==='hard-round'&&Number(migrated['ts-hardness'])===55&&String(migrated['ts-spacing-mode'])!=='auto'&&Number(migrated['ts-spacing'])===12&&Number(migrated['ts-min-size'])===5){
+            migrated['ts-hardness']=100;
+            migrated['ts-spacing-mode']='auto';
+            migrated['ts-spacing']=1;
+            migrated['ts-min-size']=0;
+          }
+          _presetSettings[_presetSettingsKey(key,'brush')]=migrated;
+        });
       }
     }catch(e){ /* corrupt/unavailable storage — just use defaults */ }
   }
@@ -1373,9 +1393,35 @@ function applyToolPreset(json){
   // ── Draw a preset's grid thumbnail, using its real tip image when the
   //    preset has one (imported ABR / custom-uploaded tips) instead of
   //    always falling back to the generic circle/square/ellipse shapes.
+  function _paintTipThumbnail(canvas,img,settings,width,height,allowUpscale=false){
+    canvas.width=width; canvas.height=height;
+    const context=canvas.getContext('2d');
+    context.clearRect(0,0,width,height);
+    const pad=6,maxW=width-pad*2,maxH=height-pad*2;
+    const rotation=((Number(settings&&settings['ts-angle'])||0)*Math.PI)/180;
+    const minimumRoundness=(Number(settings&&settings['ts-tip-min-roundness'])||0)/100;
+    const roundness=Math.max(minimumRoundness,(Number(settings&&settings['ts-tip-roundness'])||100)/100);
+    const imageWidth=img.width||img.naturalWidth||1,imageHeight=img.height||img.naturalHeight||1;
+    const compressWidth=imageWidth<imageHeight;
+    const shapedWidth=imageWidth*(compressWidth?roundness:1);
+    const shapedHeight=imageHeight*(compressWidth?1:roundness);
+    const rotatedWidth=Math.abs(shapedWidth*Math.cos(rotation))+Math.abs(shapedHeight*Math.sin(rotation));
+    const rotatedHeight=Math.abs(shapedWidth*Math.sin(rotation))+Math.abs(shapedHeight*Math.cos(rotation));
+    const scale=Math.min(maxW/Math.max(1,rotatedWidth),maxH/Math.max(1,rotatedHeight),allowUpscale?Infinity:1);
+    context.save();
+    context.fillStyle='rgba(232,232,240,0.95)';
+    context.fillRect(0,0,width,height);
+    context.globalCompositeOperation='destination-in';
+    context.translate(width/2,height/2);
+    if(rotation) context.rotate(rotation);
+    if(settings&&(settings['ts-tip-flip-x']||settings['ts-tip-flip-y'])) context.scale(settings['ts-tip-flip-x']?-1:1,settings['ts-tip-flip-y']?-1:1);
+    context.drawImage(img,-shapedWidth*scale/2,-shapedHeight*scale/2,shapedWidth*scale,shapedHeight*scale);
+    context.restore();
+  }
+  window._paintTipThumbnail=_paintTipThumbnail;
   const _tipThumbCache = {}; // presetId -> HTMLImageElement (decoded once, reused)
   function drawPresetThumb(canvas, p){
-    const s = _presetSettings[p.id];
+    const s = _presetSettings[_presetSettingsKey(p.id,'brush')];
     const dataURL = s && s['ts-tip-dataurl'];
     if(!dataURL){
       drawPreview(canvas, Object.assign({}, p.preview, {isEraser:_activeTab==='eraser'}));
@@ -1385,26 +1431,7 @@ function applyToolPreset(json){
     canvas.width=W; canvas.height=H;
     const ctx2=canvas.getContext('2d');
     function paint(img){
-      ctx2.clearRect(0,0,W,H);
-      const pad=6;
-      const maxW=W-pad*2,maxH=H-pad*2;
-      const rotation=(((Number(s&&s['ts-angle'])||0)*Math.PI)/180);
-      const roundness=Math.max(Number(s&&s['ts-tip-min-roundness'])||0,Number(s&&s['ts-tip-roundness'])||100)/100;
-      const compressWidth=img.width<img.height;
-      const shapedW=img.width*(compressWidth?roundness:1),shapedH=img.height*(compressWidth?1:roundness);
-      const rotatedW=Math.abs(shapedW*Math.cos(rotation))+Math.abs(shapedH*Math.sin(rotation));
-      const rotatedH=Math.abs(shapedW*Math.sin(rotation))+Math.abs(shapedH*Math.cos(rotation));
-      const scale=Math.min(maxW/Math.max(1,rotatedW),maxH/Math.max(1,rotatedH),1);
-      const dw=Math.max(1,shapedW*scale),dh=Math.max(1,shapedH*scale);
-      ctx2.save();
-      ctx2.fillStyle = _activeTab==='eraser' ? 'rgba(226,75,74,0.95)' : 'rgba(232,232,240,0.95)';
-      ctx2.fillRect(0,0,W,H);
-      ctx2.globalCompositeOperation='destination-in';
-      ctx2.translate(W/2,H/2);
-      if(rotation) ctx2.rotate(rotation);
-      if(s&&((s['ts-tip-flip-x'])||(s['ts-tip-flip-y']))) ctx2.scale(s['ts-tip-flip-x']?-1:1,s['ts-tip-flip-y']?-1:1);
-      ctx2.drawImage(img,-dw/2,-dh/2,dw,dh);
-      ctx2.restore();
+      _paintTipThumbnail(canvas,img,s,W,H,false);
     }
     const cached=_tipThumbCache[p.id];
     if(cached && cached.complete && cached.src===dataURL){
@@ -1488,7 +1515,7 @@ function applyToolPreset(json){
       const pasted = Object.assign({}, JSON.parse(JSON.stringify(_bpCopiedPreset)), {id, name: _bpCopiedPreset.name+' Copy', custom:true});
       _customPresets.push(pasted);
       // Seed the pasted preset's own settings slot (copied from the source preset's saved settings)
-      _presetSettings[id] = JSON.parse(JSON.stringify(_presetSettings[_bpCopiedPreset.id] || pasted.settings || {}));
+      _presetSettings[_presetSettingsKey(id,tool==='eraser'?'eraser':'brush')] = JSON.parse(JSON.stringify(_presetSettings[_presetSettingsKey(_bpCopiedPreset.id,tool==='eraser'?'eraser':'brush')] || pasted.settings || {}));
       // Insert after the target if we have one, otherwise append to general group
       const targetGroupId = _bpCtxTargetId
         ? (_groups.find(g=>g.ids.includes(_bpCtxTargetId))||_groups.find(g=>g.default)||_groups[0]).id
@@ -1581,8 +1608,13 @@ function applyToolPreset(json){
     _bgCtxTargetId = grpId;
     const pasteItem = document.getElementById('bg-ctx-paste');
     if(pasteItem) pasteItem.style.opacity = _bpCopiedGroup ? '1' : '0.4';
+    const deleteItem=document.getElementById('bg-ctx-delete');
+    const targetGroup=_groups.find(group=>group.id===grpId);
+    const containsBuiltin=!!(targetGroup&&targetGroup.ids.some(id=>BRUSH_PRESETS.some(preset=>preset.id===id)));
+    const canDelete=!!targetGroup&&!targetGroup.default&&!containsBuiltin;
+    if(deleteItem){deleteItem.style.opacity=canDelete?'1':'0.4';deleteItem.style.pointerEvents=canDelete?'auto':'none';}
     bgCtxMenu.style.left = Math.min(e.clientX, window.innerWidth - 170) + 'px';
-    bgCtxMenu.style.top  = Math.min(e.clientY, window.innerHeight - 110) + 'px';
+    bgCtxMenu.style.top  = Math.min(e.clientY, window.innerHeight - 150) + 'px';
     bgCtxMenu.classList.add('visible');
   }
 
@@ -1642,6 +1674,56 @@ function applyToolPreset(json){
       persist();
       buildGrid();
     };
+
+    const deleteGroupModal=document.getElementById('modal-delete-brush-group');
+    let pendingDeleteGroupId=null;
+    const closeDeleteGroupModal=()=>{
+      pendingDeleteGroupId=null;
+      deleteGroupModal.classList.remove('visible');
+    };
+    const deleteBrushGroup=groupId=>{
+      const group=_groups.find(candidate=>candidate.id===groupId);
+      if(!group||group.default) return;
+      const containsBuiltin=group.ids.some(id=>BRUSH_PRESETS.some(preset=>preset.id===id));
+      if(containsBuiltin) return;
+      const deletedIds=new Set(group.ids);
+      if(deletedIds.has(_activePresetId)) selectPreset('hard-round');
+      for(const toolType of ['brush','eraser']){
+        if(deletedIds.has(_toolState[toolType].presetId)) _toolState[toolType].presetId='hard-round';
+        for(const id of deletedIds) delete _toolPresetSizes[toolType][id];
+      }
+      _customPresets=_customPresets.filter(preset=>!deletedIds.has(preset.id));
+      for(const id of deletedIds){delete _presetSettings[_presetSettingsKey(id,'brush')];delete _presetSettings[_presetSettingsKey(id,'eraser')];}
+      _groups=_groups.filter(candidate=>candidate.id!==group.id);
+      _bgCtxTargetId=null;
+      persist();
+      buildGrid();
+      refreshGrid();
+    };
+
+    document.getElementById('bg-ctx-delete').onclick=()=>{
+      bgCtxMenu.classList.remove('visible');
+      pendingDeleteGroupId=_bgCtxTargetId;
+      deleteGroupModal.classList.add('visible');
+    };
+
+    window._openBrushGroupDeleteModal=groupId=>{
+      _bgCtxTargetId=groupId;
+      pendingDeleteGroupId=groupId;
+      deleteGroupModal.classList.add('visible');
+    };
+    document.getElementById('delete-brush-group-cancel').onclick=closeDeleteGroupModal;
+    document.getElementById('delete-brush-group-confirm').onclick=()=>{
+      const groupId=pendingDeleteGroupId;
+      closeDeleteGroupModal();
+      if(groupId) deleteBrushGroup(groupId);
+    };
+    deleteGroupModal.addEventListener('click',event=>{
+      if(event.target===deleteGroupModal) closeDeleteGroupModal();
+    });
+    document.addEventListener('keydown',event=>{
+      if(event.key==='Escape'&&deleteGroupModal.classList.contains('visible')) closeDeleteGroupModal();
+    });
   }
 
   //  Create a single bp-item element (draggable + reorderable)
@@ -1659,6 +1741,8 @@ function applyToolPreset(json){
     const lbl = document.createElement('div');
     lbl.className='bp-name';
     lbl.textContent=p.name;
+    lbl.title=p.name;
+    item.title=p.name;
     item.appendChild(prev);
     item.appendChild(lbl);
     item.onclick=()=>selectPreset(p.id);
@@ -1750,7 +1834,7 @@ function applyToolPreset(json){
       hd.className='bp-group-hd'+(grp.collapsed?' collapsed':'');
       hd.draggable=true;
       hd.innerHTML=`<span class="bp-group-grip">⠿</span><span class="bp-group-toggle">▾</span><span class="bp-group-name">${grp.icon} ${grp.label}</span><span class="bp-group-count">${grp.ids.length}</span>`+
-        (grp.default ? '' : '<span class="bp-group-del" title="Delete folder (brushes move to General Brushes)">✕</span>');
+        (grp.default ? '' : '<span class="bp-group-del" title="Delete group">✕</span>');
       hd.addEventListener('click', e=>{
         if(e.target.classList.contains('bp-group-del')) return; // handled separately
         if(e.target.closest('.bp-group-name') && e.detail===2) return; // double-click handled below
@@ -1773,14 +1857,9 @@ function applyToolPreset(json){
       });
       const delBtn = hd.querySelector('.bp-group-del');
       if(delBtn){
-        delBtn.addEventListener('click', e=>{
+        delBtn.addEventListener('click',e=>{
           e.stopPropagation();
-          if(!confirm(`Delete folder "${grp.label}"? Its brushes will move into General Brushes.`)) return;
-          const general = _groups.find(g=>g.default) || _groups[0];
-          general.ids = general.ids.concat(grp.ids.filter(id=>!general.ids.includes(id)));
-          _groups = _groups.filter(g=>g.id!==grp.id);
-          persist();
-          buildGrid();
+          if(typeof window._openBrushGroupDeleteModal==='function') window._openBrushGroupDeleteModal(grp.id);
         });
       }
       hd.addEventListener('dragstart', e=>{
@@ -1864,6 +1943,10 @@ function applyToolPreset(json){
     if(!('ts-rotation-mode' in s)||s['ts-rotation-mode']==='fixed') s['ts-rotation-mode']='fixed-rotation';
     if(!('ts-angle' in s)) s['ts-angle']=0;
     if(!('ts-tip-roundness' in s)) s['ts-tip-roundness']=100;
+    if(!('ts-size-jitter' in s)) s['ts-size-jitter']=0;
+    if(!('ts-angle-jitter' in s)) s['ts-angle-jitter']=0;
+    if(!('ts-round-jitter' in s)) s['ts-round-jitter']=0;
+    if(!('ts-tip-min-roundness' in s)) s['ts-tip-min-roundness']=0;
     if(!('ts-tip-flip-x' in s)) s['ts-tip-flip-x']=false;
     if(!('ts-tip-flip-y' in s)) s['ts-tip-flip-y']=false;
     if(!('ts-scatter-enabled' in s)) s['ts-scatter-enabled']=false;
@@ -2013,9 +2096,10 @@ function applyToolPreset(json){
     const presetId=_toolState[t].presetId;
     const preset=findPreset(presetId);
     if(!preset) return;
-    _seedPresetSettings(preset);
+    _seedPresetSettings(preset,t);
     _activePresetId=presetId;
-    const savedSettings=Object.assign({},preset.settings||{},_presetSettings[presetId]||{});
+    const savedSettings=Object.assign({},preset.settings||{},_presetSettings[_presetSettingsKey(presetId,t)]||{});
+    if(t==='eraser') savedSettings['ts-aa']=true;
     _applyingPresetSettings=true;
     try{
       applyPresetSettings({settings:savedSettings});
@@ -2038,11 +2122,12 @@ function applyToolPreset(json){
     }
 
     // Ensure the incoming preset has its own settings slot (seed from preset.settings if first visit)
-    _seedPresetSettings(p);
+    _seedPresetSettings(p,targetTool);
 
     // Build a merged settings object: preset.settings as base, then any user-saved
     // tweaks on top, so the preset remembers whatever the user last set on it.
-    const savedSettings = Object.assign({}, p.settings || {}, _presetSettings[p.id] || {});
+    const savedSettings = Object.assign({},p.settings||{},_presetSettings[_presetSettingsKey(p.id,targetTool)]||{});
+    if(targetTool==='eraser') savedSettings['ts-aa']=true;
     _activePresetId = id;
     _toolState[targetTool].presetId = id;
     _applyingPresetSettings=true;
@@ -2144,69 +2229,114 @@ function applyToolPreset(json){
     const fi=document.createElement('input');
     fi.type='file'; fi.accept='.abr';
     fi.onchange=()=>{
-      const f=fi.files[0]; if(!f) return;
-      const r=new FileReader();
-      r.onload=ev=>{
+      const file=fi.files[0]; if(!file) return;
+      const reader=new FileReader();
+      reader.onload=event=>{
         try{
-          const brushes=parseABR(ev.target.result);
+          const brushes=parseABR(event.target.result);
           if(!brushes||!brushes.length){
             showInfo('No readable brush tips found in this ABR file.','ABR Import');
             return;
           }
-          // onImport receives the chosen tip and turns it into a saved
-          // brush preset, exactly like the ➕ "add brush" flow above.
-          showABRImportResults(brushes, f.name, () => showABRPicker(brushes,f.name,(b)=>{
-            const id='c'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
-            const sizeEl=document.getElementById('ts-size');
-            const clampedSize=Math.max(sizeEl?+sizeEl.min:1,Math.min(sizeEl?+sizeEl.max:2000,b.size));
-            // Same mapping layer used by the picker's live-apply path, so a
-            // saved preset always reflects the exact same parameters that
-            // would have been applied had this tip been picked directly.
-            const mapped=_mapABRValuesToSettings(b.values,b.features);
+          const fileBase=file.name.replace(/\.abr$/i,'').trim()||'Imported ABR';
+          const detectedGroupName=String(brushes.groupName||'').trim();
+          const resolvedBaseName=brush=>{
+            const parsed=String(brush.name||'').trim().replace(/\s+/g,' ');
+            return !parsed||/^(?:ABR )?Brush\s+\d+$/i.test(parsed)?fileBase:parsed;
+          };
+          const nameCounts=new Map();
+          brushes.forEach(brush=>{
+            const base=resolvedBaseName(brush);
+            const key=base.toLocaleLowerCase();
+            nameCounts.set(key,(nameCounts.get(key)||0)+1);
+          });
+          const nameIndexes=new Map();
+          const names=brushes.map(brush=>{
+            const base=resolvedBaseName(brush);
+            const key=base.toLocaleLowerCase();
+            if((nameCounts.get(key)||0)===1) return base;
+            const index=(nameIndexes.get(key)||0)+1;
+            nameIndexes.set(key,index);
+            return base+' '+String(index).padStart(2,'0');
+          });
+
+          function createPreset(brush,name,group){
+            const id='c'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+            const sizeControl=document.getElementById('ts-size');
+            const clampedSize=Math.max(sizeControl?+sizeControl.min:1,Math.min(sizeControl?+sizeControl.max:2000,brush.size));
+            const mapped=_mapABRValuesToSettings(brush.values,brush.features);
             const preset={
-              id, name:b.name||f.name.replace(/\.abr$/i,''), custom:true,
-              preview:{ shape:'image', hardness:1, aliased:false },
+              id,name,custom:true,
+              preview:{shape:'image',hardness:1,aliased:false},
               settings:{
                 'ts-size':clampedSize,
-                'ts-spacing':Math.min(200,Math.max(1,b.spacing||25)),
+                'ts-spacing':Math.min(200,Math.max(1,brush.spacing||25)),
                 'ts-spacing-mode':'fixed',
                 'ts-rotation-mode':'fixed-rotation',
                 'ts-angle':0,
                 'ts-scatter-enabled':false,
                 'ts-scatter-amount':0,
                 'ts-scatter-count':1,
-                'ts-tip-dataurl':b.canvas.toDataURL('image/png'),
-                'ts-tip-reference-diameter':b.referenceDiameter||null,
+                'ts-tip-dataurl':brush.canvas.toDataURL('image/png'),
+                'ts-tip-reference-diameter':brush.referenceDiameter||null,
                 'ts-tip-mode':'replace',
                 'ts-tip-soft-alpha':true,
                 ...mapped
               },
               abrMeta:{
-                sourceFile:f.name,
-                importedName:b.name,
-                features:Object.assign({},b.features||{}),
-                values:Object.assign({},b.values||{}),
-                detectedSettings:_abrDetectedSettings(b,mapped),
-                unsupported:_abrUnsupportedList(b.features)
+                sourceFile:file.name,
+                importedName:brush.name,
+                groupName:detectedGroupName||fileBase,
+                features:Object.assign({},brush.features||{}),
+                values:Object.assign({},brush.values||{}),
+                detectedSettings:_abrDetectedSettings(brush,mapped),
+                unsupported:_abrUnsupportedList(brush.features)
               }
             };
             _customPresets.push(preset);
             _seedPresetSettings(preset);
-            const general=_groups.find(g=>g.default)||_groups[0];
-            general.ids.push(id);
-            persist();
-            buildGrid();
-            selectPreset(id);
-          }));
-        } catch(e){
-          showInfo('Could not parse the ABR file: '+e.message,'ABR Import Error');
+            group.ids.push(id);
+            return id;
+          }
+
+          showABRImportResults(brushes,file.name,()=>{
+            if(brushes.length===1){
+              showABRPicker(brushes,file.name,brush=>{
+                const general=_groups.find(group=>group.default)||_groups[0];
+                const id=createPreset(brush,names[0],general);
+                persist(); buildGrid(); selectPreset(id);
+              });
+              return;
+            }
+
+            const groupBaseName=detectedGroupName||fileBase;
+            let groupName=groupBaseName,groupSuffix=2;
+            while(_groups.some(group=>group.label.toLocaleLowerCase()===groupName.toLocaleLowerCase())){
+              groupName=groupBaseName+' ('+groupSuffix+++')';
+            }
+            const group={id:'g'+Date.now().toString(36)+Math.random().toString(36).slice(2,7),label:groupName,icon:'',default:false,collapsed:false,ids:[]};
+            _groups.push(group);
+            let firstId=null;
+            brushes.forEach((brush,index)=>{
+              const id=createPreset(brush,names[index],group);
+              if(!firstId) firstId=id;
+            });
+            persist(); buildGrid();
+            if(firstId) selectPreset(firstId);
+            showInfo('Imported '+brushes.length+' brushes into "'+groupName+'".','ABR Import');
+          });
+        }catch(error){
+          if(/Unsupported ABR version/i.test(error&&error.message||'')){
+            showInfo('This ABR version is not supported yet.','ABR Import Error');
+          }else{
+            showInfo('Could not parse the ABR file: '+error.message,'ABR Import Error');
+          }
         }
       };
-      r.readAsArrayBuffer(f);
+      reader.readAsArrayBuffer(file);
     };
     fi.click();
   };
-
   //  Initial state
   buildGrid();
   selectPreset(_toolState.brush.presetId);
@@ -2852,6 +2982,55 @@ function parseABR(buffer) {
       return false;
     }
 
+    // ── Pass 1: extract all per-tip names from the 8BIM 'desc' section ──
+    // The 'desc' section is a Photoshop descriptor tree that holds the
+    // complete brush-preset definitions for every tip in the file, in the
+    // same order as the pixel blocks inside 'samp'. Each brush preset is a
+    // sub-descriptor that contains an 'Nm  ' or 'Nm' TEXT key with the
+    // brush's display name. Collecting all TEXT values in file order gives
+    // us the per-tip name list; we then apply names[i] to samp tip i.
+    let tipNamesFromDesc = [];
+    {
+      const savedOffset = offset;
+      if (reachSection('desc')) {
+        const descSize = readUint32();
+        const descStart = offset;
+        const descEnd   = Math.min(descStart + descSize, buffer.byteLength);
+        const dscBytes  = new Uint8Array(buffer, descStart, descEnd - descStart);
+        const dscDv     = new DataView(buffer, descStart, descEnd - descStart);
+        const dscLen    = dscBytes.length;
+
+        // Associate names only with descriptors that actually reference
+        // sampledData. This avoids shifting names when computed brushes or
+        // nested Sampled Brush labels appear between sampled image tips.
+        let pendingPresetName=null;
+        for(let textOff=0;textOff<dscLen-8;textOff++){
+          if(dscBytes[textOff]!==0x54||dscBytes[textOff+1]!==0x45||dscBytes[textOff+2]!==0x58||dscBytes[textOff+3]!==0x54) continue;
+          const stringLength=dscDv.getUint32(textOff+4,false);
+          if(stringLength<=0||stringLength>500||textOff+8+stringLength*2>dscLen) continue;
+          let value='';
+          for(let character=0;character<stringLength;character++){
+            const code=dscDv.getUint16(textOff+8+character*2,false);
+            if(code!==0) value+=String.fromCharCode(code);
+          }
+          value=value.trim().replace(/\s+/g,' ');
+          let key='',cursor=textOff-1;
+          while(cursor>=0&&dscBytes[cursor]>=32&&dscBytes[cursor]<=126&&key.length<50){
+            key=String.fromCharCode(dscBytes[cursor--])+key;
+          }
+          key=key.trim();
+          if(/(?:^|\s)Nm$/.test(key)){
+            if(value&&!/^Sampled Brush\s+\d+$/i.test(value)) pendingPresetName=value;
+          }else if(/sampledData$/.test(key)&&pendingPresetName){
+            tipNamesFromDesc.push(pendingPresetName);
+            pendingPresetName=null;
+          }
+          textOff+=8+stringLength*2-1;
+        }
+      }
+      offset = savedOffset; // restore so reachSection('samp') scans from the start
+    }
+
     if (!reachSection('samp')) {
       throw new Error('Could not find a sampled-brush ("samp") section in this ABR file.');
     }
@@ -2909,9 +3088,13 @@ function parseABR(buffer) {
           const width = right - left, height = bottom - top;
           const pixels = readSampledPixels(width, height, depth, compressed);
           if (pixels) {
+            // Use the name collected from the 'desc' section at the matching
+            // index. tipNamesFromDesc[index] was populated in order, so
+            // tip 0 gets names[0], tip 1 gets names[1], etc.
+            const tipName = tipNamesFromDesc[index] || ('Brush ' + (index + 1));
             index++;
             brushes.push({
-              name: 'Brush ' + index,
+              name: tipName,
               size: Math.max(width, height),
               spacing: 25,
               canvas: grayscaleToTipCanvas(pixels, width, height)
@@ -2935,17 +3118,49 @@ function parseABR(buffer) {
   const values = _extractABRDescriptorValues(buffer);
   brushes.features = features;
   brushes.values = values;
-  // Prefer the actual Photoshop preset name (e.g. "soft strokes") pulled
-  // from the descriptor over the generic "Brush N" placeholder. For a
-  // single-tip file this is unambiguous; for multi-tip files it's the
-  // shared preset name Photoshop groups all these tips under, so append
-  // an index to keep tiles distinguishable.
-  brushes.forEach((b, i) => {
-    const parsedName=(b.name||'').trim();
-    if(values.name) b.name=brushes.length>1?(values.name+' '+String(i+1).padStart(2,'0')):values.name;
-    if(values.diameter!=null&&Number(values.diameter)>0){ const PS_TO_CSS_PX=72/96; const cssPx=Number(values.diameter)*PS_TO_CSS_PX; b.referenceDiameter=cssPx; b.size=cssPx; }
+  // The file-level descriptor name (first Nm/TEXT in the whole file) is the
+  // Photoshop group/preset name that contains all tips. Use it as groupName
+  // only — do NOT overwrite each tip's own name with it.
+  const fileLevelName=String(values.name||'').trim().replace(/\s+/g,' ');
+  const groupBaseName=fileLevelName.replace(/[\s._-]*\d{3,}[\s._-]*$/,'').trim()||fileLevelName;
+  // The first Nm is a brush name, not a reliable Photoshop folder name.
+  // Keep folder identity separate; the import flow falls back to the ABR filename.
+
+  // Resolve each tip's display name first, then count duplicates so we only
+  // append a disambiguating index when names are truly duplicated.
+  function resolveTipName(rawName) {
+    const n=(rawName||'').trim().replace(/\s+/g,' ');
+    const isFallback=!n||/^(?:ABR )?Brush\s+\d+$/i.test(n);
+    if(isFallback) return fileLevelName||(groupBaseName?groupBaseName+' Brush':'')||'ABR Brush';
+    return n;
+  }
+  const nameCounts=new Map();
+  brushes.forEach(b=>{
+    const key=resolveTipName(b.name).toLocaleLowerCase();
+    nameCounts.set(key,(nameCounts.get(key)||0)+1);
+  });
+  const nameIndexes=new Map();
+
+  brushes.forEach((b,i)=>{
+    // Resolve the best name for this tip:
+    //   1. The per-tip name extracted from its own descriptor (already in b.name
+    //      for v6/v10, or from readUCS2Text for v1/v2).
+    //   2. Fall back to the file-level name (single-tip files, legacy formats).
+    //   3. Last resort: generic numbered placeholder.
+    let tipName=resolveTipName(b.name);
+
+    // Append a disambiguating counter only when the same name appears more
+    // than once in this file (e.g. two tips literally both named "DRAW - Loose").
+    const key=tipName.toLocaleLowerCase();
+    if((nameCounts.get(key)||0)>1){
+      const idx=(nameIndexes.get(key)||0)+1;
+      nameIndexes.set(key,idx);
+      tipName=tipName+' '+String(idx).padStart(2,'0');
+    }
+    b.name=tipName||('ABR Brush '+String(i+1).padStart(2,'0'));
+
+    if(values.diameter!=null&&Number(values.diameter)>0){const photoshopDiameter=Number(values.diameter);b.referenceDiameter=photoshopDiameter;b.size=photoshopDiameter;}
     if(values.spacing!=null) b.spacing=Math.max(1,Math.min(200,Math.round(values.spacing)));
-    else if(!parsedName||/^Brush \d+$/i.test(parsedName)) b.name='ABR Brush '+String(i+1).padStart(2,'0');
     b.features=features;
     b.values=values;
   });
@@ -3137,36 +3352,11 @@ function showABRPicker(brushes, filename, onImport) {
       cursor:'pointer', transition:'border-color .15s,background .15s',
     });
 
-    // Preview canvas — checkerboard so transparency reads clearly
-    const cv = document.createElement('canvas');
-    cv.width=64; cv.height=64;
-    Object.assign(cv.style,{width:'60px',height:'60px',
-      borderRadius:'4px',imageRendering:'pixelated'});
-    const cx2=cv.getContext('2d');
-    // checker
-    for(let gy=0;gy<8;gy++) for(let gx=0;gx<8;gx++){
-      cx2.fillStyle=(gx+gy)%2===0?'#3a3a3a':'#2a2a2a';
-      cx2.fillRect(gx*8,gy*8,8,8);
-    }
-    // tip silhouette (white on checker)
-    cx2.save();
-    cx2.fillStyle='#ffffff';
-    cx2.fillRect(0,0,64,64);
-    cx2.globalCompositeOperation='destination-in';
-    const pickerAngle=b.values&&b.values.angle!=null?(((-b.values.angle%360)+360)%360)*Math.PI/180:0;
-    const tipW=b.canvas.width||1,tipH=b.canvas.height||1;
-    const pickerRoundness=Math.max(0.01,Math.min(1,Number(b.values&&b.values.roundness)||100)/100);
-    const compressWidth=tipW<tipH;
-    const shapedW=tipW*(compressWidth?pickerRoundness:1),shapedH=tipH*(compressWidth?1:pickerRoundness);
-    const rotatedW=Math.abs(shapedW*Math.cos(pickerAngle))+Math.abs(shapedH*Math.sin(pickerAngle));
-    const rotatedH=Math.abs(shapedW*Math.sin(pickerAngle))+Math.abs(shapedH*Math.cos(pickerAngle));
-    const tipScale=Math.min(58/Math.max(1,rotatedW),58/Math.max(1,rotatedH));
-    cx2.translate(32,32);
-    if(pickerAngle) cx2.rotate(pickerAngle);
-    if(b.values&&(b.values.flipX||b.values.flipY)) cx2.scale(b.values.flipX?-1:1,b.values.flipY?-1:1);
-    cx2.drawImage(b.canvas,-shapedW*tipScale/2,-shapedH*tipScale/2,shapedW*tipScale,shapedH*tipScale);
-    cx2.restore();
-
+    // Render directly from the decoded ABR tip using the same path as preset thumbnails.
+    const cv=document.createElement('canvas');
+    Object.assign(cv.style,{width:'60px',height:'60px',borderRadius:'4px',imageRendering:'pixelated'});
+    const previewSettings=_mapABRValuesToSettings(b.values,b.features);
+    window._paintTipThumbnail(cv,b.canvas,previewSettings,64,64,true);
     // Label
     const lbl = document.createElement('span');
     Object.assign(lbl.style,{

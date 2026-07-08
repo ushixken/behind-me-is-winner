@@ -412,8 +412,7 @@ function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   // the true silhouette at every brush size.
   const tipNativeW=tipC?(tipC.width||tipC.naturalWidth||1):1;
   const tipNativeH=tipC?(tipC.height||tipC.naturalHeight||1):1;
-  const referenceDiameter=Number(window.brushTipReferenceDiameter);
-  const tipScale=(2*rr)/(Number.isFinite(referenceDiameter)&&referenceDiameter>0?referenceDiameter:Math.max(tipNativeW,tipNativeH));
+  const tipScale=(2*rr)/Math.max(tipNativeW,tipNativeH);
   const compressWidth=tipNativeW<tipNativeH;
   const dabW=Math.max(1,tipNativeW*tipScale*(compressWidth?tipRoundness:1));
   const dabH=Math.max(1,tipNativeH*tipScale*(compressWidth?1:tipRoundness));
@@ -546,6 +545,10 @@ function _buildAAStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   return stamp;
 }
 let _activeDabRotation=0;
+function _viewAdjustedTipRotation(){
+  const reflected=(!!flipX)!=(!!flipY);
+  return reflected?-_activeDabRotation:_activeDabRotation;
+}
 // Per-dab roundness override for the current dab being drawn (Roundness
 // Jitter). null means "use the static brushTipRoundness slider value".
 let _activeDabRoundness=null;
@@ -556,7 +559,8 @@ function _drawUnifiedTipStamp(x,y,r,rgb,alpha,composite){
   dc.globalCompositeOperation=composite==='erase'?'destination-out':'source-over';
   dc.imageSmoothingEnabled=true;
   dc.translate(x,y);
-  if(_activeDabRotation) dc.rotate(_activeDabRotation);
+  const adjustedRotation=_viewAdjustedTipRotation();
+  if(adjustedRotation) dc.rotate(adjustedRotation);
   if(window.brushTipFlipX||window.brushTipFlipY) dc.scale(window.brushTipFlipX?-1:1,window.brushTipFlipY?-1:1);
   dc.drawImage(stamp.canvas,-stamp.w/2,-stamp.h/2);
   dc.restore();
@@ -824,9 +828,10 @@ function _dabAliased(x,y,r,rgb,alpha,composite){
   dc.save();
   dc.imageSmoothingEnabled=false;
   dc.globalCompositeOperation=composite==='erase'?'destination-out':'source-over';
-  if(window.brushTipCanvas&&(_activeDabRotation||window.brushTipFlipX||window.brushTipFlipY)){
+  const adjustedRotation=window.brushTipCanvas?_viewAdjustedTipRotation():0;
+  if(window.brushTipCanvas&&(adjustedRotation||window.brushTipFlipX||window.brushTipFlipY)){
     dc.translate(x,y);
-    if(_activeDabRotation) dc.rotate(_activeDabRotation);
+    if(adjustedRotation) dc.rotate(adjustedRotation);
     if(window.brushTipFlipX||window.brushTipFlipY) dc.scale(window.brushTipFlipX?-1:1,window.brushTipFlipY?-1:1);
     dc.drawImage(stamp.canvas,-stamp.w/2,-stamp.h/2);
   } else dc.drawImage(stamp.canvas,x0,y0);
@@ -955,8 +960,7 @@ function _drawAutoHardRoundSegment(d){
   let dirtyRadiusX=d.r,dirtyRadiusY=d.r;
   if(window.brushTipCanvas){
     const tipW=window.brushTipCanvas.width||1,tipH=window.brushTipCanvas.height||1;
-    const referenceDiameter=Number(window.brushTipReferenceDiameter);
-    const reference=Number.isFinite(referenceDiameter)&&referenceDiameter>0?referenceDiameter:Math.max(tipW,tipH);
+    const reference=Math.max(tipW,tipH);
     const roundness=Math.max(window.brushTipMinimumRoundness||0,Math.min(1,_activeDabRoundness==null?(window.brushTipRoundness==null?1:window.brushTipRoundness):_activeDabRoundness));
     const compressWidth=tipW<tipH;
     const width=tipW*((d.r*2)/reference)*(compressWidth?roundness:1);
@@ -1138,13 +1142,13 @@ function _stampDab(x,y,e){
     // what turns a single repeated tip stencil (e.g. one grass blade) into a
     // naturally varied cluster instead of a uniform stripe of clones.
     let dabR=r;
-    const sizeJit=window.brushTipSizeJitter||0;
+    const sizeJit=window.brushTipCanvas?(window.brushTipSizeJitter||0):0;
     if(sizeJit>0) dabR=Math.max(0.05,r*(1-Math.random()*sizeJit));
     let dabRotation=rotation;
-    const angleJit=window.brushTipAngleJitter||0;
+    const angleJit=window.brushTipCanvas?(window.brushTipAngleJitter||0):0;
     if(angleJit>0) dabRotation+=(Math.random()*2-1)*Math.PI*angleJit;
     let dabRoundness=null;
-    const roundJit=window.brushTipRoundnessJitter||0;
+    const roundJit=window.brushTipCanvas?(window.brushTipRoundnessJitter||0):0;
     if(roundJit>0){
       const baseR=window.brushTipRoundness==null?1:window.brushTipRoundness;
       const minR=Math.max(window.brushTipMinimumRoundness||0,baseR-roundJit*(baseR-(window.brushTipMinimumRoundness||0)));

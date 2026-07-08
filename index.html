@@ -114,6 +114,7 @@
       <div class="dd-sep"></div>
       <div class="dd-item" id="dd-reset-layout">Reset Layout</div>
       <div class="dd-item" id="dd-center-canvas">Center Canvas</div>
+      <div class="dd-item" id="dd-reset-rotation">Reset Rotation<span class="dd-shortcut"></span></div>
     </div>
   </div>
 
@@ -504,9 +505,21 @@
   <div class="ctx-sep"></div>
   <div class="ctx-item" id="bg-ctx-copy">⎘ Copy Folder</div>
   <div class="ctx-item" id="bg-ctx-paste">⎗ Paste Folder</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item danger" id="bg-ctx-delete">Delete Group</div>
 </div>
 
 <!-- ── CANVAS SETTINGS MODAL ──────────────────────────────── -->
+<div class="modal-overlay" id="modal-delete-brush-group">
+  <div class="modal" style="min-width:320px;max-width:420px;">
+    <h2>Delete Group?</h2>
+    <p>Delete this group and all brushes inside it?</p>
+    <div class="modal-actions">
+      <button class="modal-btn" id="delete-brush-group-cancel">Cancel</button>
+      <button class="modal-btn danger" id="delete-brush-group-confirm">Delete Group</button>
+    </div>
+  </div>
+</div>
 <div class="modal-overlay" id="modal-canvas">
   <div class="modal">
     <h2>Canvas Settings</h2>

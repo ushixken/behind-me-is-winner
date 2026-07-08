@@ -305,7 +305,8 @@ function cancelRebind(){
 // Keep the static menu-bar shortcut labels (Edit menu, etc.) in sync
 const KEYBIND_MENU_LABELS={
   undo:'dd-undo', redo:'dd-redo', cutFrame:'dd-cut', copyFrame:'dd-copy',
-  pasteFrame:'dd-paste', pasteImage:'dd-paste-image', clearFrame:'dd-clear'
+  pasteFrame:'dd-paste', pasteImage:'dd-paste-image', clearFrame:'dd-clear',
+  rotateReset:'dd-reset-rotation'
 };
 function syncKeybindMenuLabels(){
   for(const action in KEYBIND_MENU_LABELS){

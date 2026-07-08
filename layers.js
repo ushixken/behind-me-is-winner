@@ -489,6 +489,7 @@ document.getElementById('dd-reset-layout').onclick=()=>{
   updateWindowChecks();fitCanvasToView();closeAllDropdowns();
 };
 document.getElementById('dd-center-canvas').onclick=()=>{centerCanvas();closeAllDropdowns();};
+document.getElementById('dd-reset-rotation').onclick=()=>{resetRotation();closeAllDropdowns();};
 
 // Settings menu
 document.getElementById('dd-canvas-settings').onclick=()=>{openCanvasModal();closeAllDropdowns();};

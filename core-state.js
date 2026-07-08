@@ -173,6 +173,14 @@ function getNavPivot(){
   return {cx:left+clearW/2, cy:top+clearH/2, gcx:r.left+left+clearW/2, gcy:r.top+top+clearH/2};
 }
 
+function _toUnflippedNavPoint(x,y){
+  const pivot=getNavPivot();
+  return {
+    x:pivot.cx+(x-pivot.cx)*(flipX?-1:1),
+    y:pivot.cy+(y-pivot.cy)*(flipY?-1:1)
+  };
+}
+
 /** Compute a zoom level that fits the whole canvas inside canvas-area (with padding), then center it.
  * Used for initial layout and "Reset Layout" so large canvases (e.g. 1920×1080) don't start zoomed
  * in past the visible viewport. */
@@ -305,6 +313,7 @@ function resetRotation(){
  * cx,cy are relative to canvasArea element top-left.
  */
 function doZoom(delta,cx,cy){
+  ({x:cx,y:cy}=_toUnflippedNavPoint(cx,cy));
   const oldZoom=zoom;
   zoom=Math.max(zoomMin,Math.min(zoomMax,zoom*(1+delta*zoomSpeed)));
   // Adjust pan so that the canvas-space point under cursor stays fixed:
@@ -323,11 +332,13 @@ canvasArea.addEventListener('wheel',e=>{
   // Trackpad pinch-to-zoom sets ctrlKey=true; plain two-finger scroll does not
   if(e.ctrlKey){
     // Pinch-to-zoom: use deltaY magnitude for smooth zoom
+    const navPoint=_toUnflippedNavPoint(cx,cy);
+    const navX=navPoint.x,navY=navPoint.y;
     const factor=1-e.deltaY*0.01;
     const oldZoom=zoom;
     zoom=Math.max(zoomMin,Math.min(zoomMax,zoom*factor));
-    panX=cx-(cx-panX)*(zoom/oldZoom);
-    panY=cy-(cy-panY)*(zoom/oldZoom);
+    panX=navX-(navX-panX)*(zoom/oldZoom);
+    panY=navY-(navY-panY)*(zoom/oldZoom);
     applyTransform();showZoom();
   } else {
     // Two-finger scroll pan OR mouse wheel zoom
@@ -442,7 +453,8 @@ function _spaceDragStartXY(clientX,clientY,isCtrl){
     // canvas-area coordinates), not the canvas-area center — this matches
     // how scroll-wheel zoom already anchors to the cursor position.
     const r=canvasArea.getBoundingClientRect();
-    _zoomDragCX=clientX-r.left; _zoomDragCY=clientY-r.top;
+    const navPoint=_toUnflippedNavPoint(clientX-r.left,clientY-r.top);
+    _zoomDragCX=navPoint.x;_zoomDragCY=navPoint.y;
     canvasArea.style.cursor='zoom-in';
   } else if(shiftHeld){
     const p=getNavPivot();
@@ -476,7 +488,8 @@ function _spaceDragMove(clientX,clientY){
     // LOCAL pivot, since that's the coordinate space panX/panY live in.
     const a0=Math.atan2(_rotateDragSY-_rotateDragGCY,_rotateDragSX-_rotateDragGCX);
     const a1=Math.atan2(clientY-_rotateDragGCY,clientX-_rotateDragGCX);
-    const deltaDeg=(a1-a0)*180/Math.PI;
+    const reflectionDirection=(flipX!==flipY)?-1:1;
+    const deltaDeg=(a1-a0)*180/Math.PI*reflectionDirection;
     rotateCanvasTo(_rotateDragStartRot+deltaDeg,_rotateDragCX,_rotateDragCY);
   } else if(panning){
     // panX/panY live inside the flip mirror (applied outside them in
