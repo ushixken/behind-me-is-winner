@@ -35,6 +35,16 @@
   const taperMode=document.getElementById('ts-taper-mode');
   if(taperMode) taperMode.addEventListener('input',syncTaperMode);
   syncTaperMode();
+  bindRange('ts-angle','ts-angle-val','\u00B0',v=>{window._tsBrushAngle=v;if(typeof window._syncTipUI==='function')window._syncTipUI();});
+  const rotationModeEl=document.getElementById('ts-rotation-mode');
+  const angleEl=document.getElementById('ts-angle');
+  function syncRotation(){
+    window._tsRotationMode=rotationModeEl?rotationModeEl.value:'fixed-rotation';
+    window._tsBrushAngle=angleEl?+angleEl.value:0;
+    if(angleEl) angleEl.disabled=window._tsRotationMode!=='fixed-rotation';
+  }
+  if(rotationModeEl){rotationModeEl.addEventListener('input',syncRotation);rotationModeEl.addEventListener('change',syncRotation);}
+  syncRotation();
   bindRange('ts-scatter-amount','ts-scatter-amount-val','%',v=>{window._tsScatterAmount=v/100;});
   bindRange('ts-scatter-count','ts-scatter-count-val','',v=>{window._tsScatterCount=Math.min(50,Math.max(1,Math.round(v)));});
   const scatterEnabledEl=document.getElementById('ts-scatter-enabled');
@@ -772,7 +782,16 @@
       ctx2.fillStyle='#ffffff';
       ctx2.fillRect(0,0,64,64);
       ctx2.globalCompositeOperation='destination-in';
-      ctx2.drawImage(window.brushTipCanvas,0,0,64,64);
+      const tipW=window.brushTipCanvas.width||1,tipH=window.brushTipCanvas.height||1;
+      const rotation=((Number(window._tsBrushAngle)||0)*Math.PI)/180;
+      const roundness=Math.max(window.brushTipMinimumRoundness||0,window.brushTipRoundness==null?1:window.brushTipRoundness);
+      const shapedH=tipH*roundness;
+      const rotatedW=Math.abs(tipW*Math.cos(rotation))+Math.abs(shapedH*Math.sin(rotation));
+      const rotatedH=Math.abs(tipW*Math.sin(rotation))+Math.abs(shapedH*Math.cos(rotation));
+      const scale=Math.min(56/Math.max(1,rotatedW),56/Math.max(1,rotatedH));
+      ctx2.translate(32,32);
+      if(rotation) ctx2.rotate(rotation);
+      ctx2.drawImage(window.brushTipCanvas,-tipW*scale/2,-shapedH*scale/2,tipW*scale,shapedH*scale);
       ctx2.restore();
     }
 
@@ -956,7 +975,7 @@
 
 // Preset get/apply
 function getToolPreset(){
-  const ids=['ts-size','ts-opacity','ts-flow','ts-density','ts-hardness','ts-spacing','ts-spacing-mode','ts-scatter-enabled','ts-scatter-amount','ts-scatter-count','ts-airbrush','ts-airbrush-rate',
+  const ids=['ts-size','ts-opacity','ts-flow','ts-density','ts-hardness','ts-spacing','ts-spacing-mode','ts-rotation-mode','ts-angle','ts-scatter-enabled','ts-scatter-amount','ts-scatter-count','ts-airbrush','ts-airbrush-rate',
     'ts-min-size','ts-taper-mode','ts-start-taper','ts-end-taper','ts-size-control','ts-size-pressure-curve','ts-flow-control','ts-flow-pressure-curve','ts-opacity-control','ts-opacity-pressure-curve','ts-min-flow',
     'ts-texture-scale','ts-texture-depth'];
   const out={};
@@ -974,6 +993,9 @@ function getToolPreset(){
     try{ out['ts-tip-dataurl']=window.brushTipCanvas.toDataURL('image/png'); }catch(e){}
     out['ts-tip-mode']=(window.brushTipMode||'multiply');
     out['ts-tip-soft-alpha']=!!(window.brushTipSoftAlpha!==false);
+    out['ts-tip-roundness']=Math.round((window.brushTipRoundness==null?1:window.brushTipRoundness)*100);
+    out['ts-tip-min-roundness']=Math.round((window.brushTipMinimumRoundness||0)*100);
+    out['ts-tip-roundness-dynamics']=!!window.brushTipRoundnessDynamics;
   }
   if(window.brushTextureCanvas){
     try{ out['ts-texture-dataurl']=window.brushTextureCanvas.toDataURL('image/png'); }catch(e){}
@@ -1001,7 +1023,7 @@ function applyToolPreset(json){
   Object.entries(json).forEach(([id,val])=>{
     // Skip virtual/non-DOM keys handled separately below.
     if(id==='ts-tip-dataurl'||id==='ts-texture-dataurl'||
-       id==='ts-tip-mode'||id==='ts-tip-soft-alpha'||id==='ts-texture-depth-custom'||id==='ts-pressure-curves') return;
+       id==='ts-tip-mode'||id==='ts-tip-soft-alpha'||id==='ts-tip-roundness'||id==='ts-tip-min-roundness'||id==='ts-tip-roundness-dynamics'||id==='ts-texture-depth-custom'||id==='ts-pressure-curves') return;
     const el=document.getElementById(id);
     if(!el) return;
     if(el.type==='checkbox') el.checked=!!val;
@@ -1013,6 +1035,10 @@ function applyToolPreset(json){
   if(typeof window._refreshPressureCurvePreviews==='function') window._refreshPressureCurvePreviews();
 
   // ── Restore tip image ──────────────────────────────────────────────────
+  window.brushTipRoundness=Math.max(0.01,Math.min(1,(json['ts-tip-roundness']??100)/100));
+  window.brushTipMinimumRoundness=Math.max(0,Math.min(1,(json['ts-tip-min-roundness']??0)/100));
+  window.brushTipRoundnessDynamics=!!json['ts-tip-roundness-dynamics'];
+
   if(json['ts-tip-dataurl']){
     _dataURLToCanvas(json['ts-tip-dataurl']).then(c=>{
       if(typeof window.setBrushTip==='function') window.setBrushTip(c);
@@ -1068,6 +1094,8 @@ function applyToolPreset(json){
     'ts-spacing':1,
     'ts-spacing-mode':'fixed',
     'ts-roundness':100,
+    'ts-rotation-mode':'fixed-rotation',
+    'ts-angle':0,
     'ts-scatter-enabled':false,
     'ts-scatter-amount':0,
     'ts-scatter-count':1,
@@ -1321,15 +1349,21 @@ function applyToolPreset(json){
     function paint(img){
       ctx2.clearRect(0,0,W,H);
       const pad=6;
-      const maxW=W-pad*2, maxH=H-pad*2;
-      const scale=Math.min(maxW/img.width, maxH/img.height, 1);
-      const dw=Math.max(1,img.width*scale), dh=Math.max(1,img.height*scale);
-      const dx=(W-dw)/2, dy=(H-dh)/2;
+      const maxW=W-pad*2,maxH=H-pad*2;
+      const rotation=(((Number(s&&s['ts-angle'])||0)*Math.PI)/180);
+      const roundness=Math.max(Number(s&&s['ts-tip-min-roundness'])||0,Number(s&&s['ts-tip-roundness'])||100)/100;
+      const shapedH=img.height*roundness;
+      const rotatedW=Math.abs(img.width*Math.cos(rotation))+Math.abs(shapedH*Math.sin(rotation));
+      const rotatedH=Math.abs(img.width*Math.sin(rotation))+Math.abs(shapedH*Math.cos(rotation));
+      const scale=Math.min(maxW/Math.max(1,rotatedW),maxH/Math.max(1,rotatedH),1);
+      const dw=Math.max(1,img.width*scale),dh=Math.max(1,shapedH*scale);
       ctx2.save();
       ctx2.fillStyle = _activeTab==='eraser' ? 'rgba(226,75,74,0.95)' : 'rgba(232,232,240,0.95)';
-      ctx2.fillRect(dx,dy,dw,dh);
+      ctx2.fillRect(0,0,W,H);
       ctx2.globalCompositeOperation='destination-in';
-      ctx2.drawImage(img,dx,dy,dw,dh);
+      ctx2.translate(W/2,H/2);
+      if(rotation) ctx2.rotate(rotation);
+      ctx2.drawImage(img,-dw/2,-dh/2,dw,dh);
       ctx2.restore();
     }
     const cached=_tipThumbCache[p.id];
@@ -1787,9 +1821,14 @@ function applyToolPreset(json){
   // ── Apply a preset's settings to the tool settings sliders ───
   function applyPresetSettings(p){
     const s = p.settings;
+    if(!('ts-rotation-mode' in s)||s['ts-rotation-mode']==='fixed') s['ts-rotation-mode']='fixed-rotation';
+    if(!('ts-angle' in s)) s['ts-angle']=0;
     if(!('ts-scatter-enabled' in s)) s['ts-scatter-enabled']=false;
     if(!('ts-scatter-amount' in s)) s['ts-scatter-amount']=0;
     if(!('ts-scatter-count' in s)) s['ts-scatter-count']=1;
+    window.brushTipRoundness=Math.max(0.01,Math.min(1,(s['ts-tip-roundness']??100)/100));
+    window.brushTipMinimumRoundness=Math.max(0,Math.min(1,(s['ts-tip-min-roundness']??0)/100));
+    window.brushTipRoundnessDynamics=!!s['ts-tip-roundness-dynamics'];
     window._tsCustomPressureCurves=JSON.parse(JSON.stringify(s['ts-pressure-curves']||{}));
     if(typeof window._refreshPressureCurvePreviews==='function') window._refreshPressureCurvePreviews();
     const spacingMode=document.getElementById('ts-spacing-mode');
@@ -2034,7 +2073,7 @@ function applyToolPreset(json){
     const preset = {
       id, name, custom:true,
       preview:{ shape: roundness<60?'ellipse':'circle', hardness: hardness/100, aliased:!brushAA },
-      settings:{ 'ts-size':size, 'ts-hardness':hardness, 'ts-opacity':opacity, 'ts-flow':flow, 'ts-density':density, 'ts-spacing':spacing, 'ts-spacing-mode':document.getElementById('ts-spacing-mode')?.value||'fixed', 'ts-scatter-enabled':!!document.getElementById('ts-scatter-enabled')?.checked, 'ts-scatter-amount':+(document.getElementById('ts-scatter-amount')?.value||0), 'ts-scatter-count':+(document.getElementById('ts-scatter-count')?.value||1), 'ts-roundness':roundness, 'ts-aa':!!brushAA }
+      settings:{ 'ts-size':size, 'ts-hardness':hardness, 'ts-opacity':opacity, 'ts-flow':flow, 'ts-density':density, 'ts-spacing':spacing, 'ts-spacing-mode':document.getElementById('ts-spacing-mode')?.value||'fixed', 'ts-rotation-mode':document.getElementById('ts-rotation-mode')?.value||'fixed-rotation', 'ts-angle':+(document.getElementById('ts-angle')?.value||0), 'ts-scatter-enabled':!!document.getElementById('ts-scatter-enabled')?.checked, 'ts-scatter-amount':+(document.getElementById('ts-scatter-amount')?.value||0), 'ts-scatter-count':+(document.getElementById('ts-scatter-count')?.value||1), 'ts-roundness':roundness, 'ts-aa':!!brushAA }
     };
     _customPresets.push(preset);
     _seedPresetSettings(preset); // give it its own settings slot immediately
@@ -2074,7 +2113,7 @@ function applyToolPreset(json){
             // Same mapping layer used by the picker's live-apply path, so a
             // saved preset always reflects the exact same parameters that
             // would have been applied had this tip been picked directly.
-            const mapped=_mapABRValuesToSettings(b.values);
+            const mapped=_mapABRValuesToSettings(b.values,b.features);
             const preset={
               id, name:b.name||f.name.replace(/\.abr$/i,''), custom:true,
               preview:{ shape:'image', hardness:1, aliased:false },
@@ -2082,6 +2121,8 @@ function applyToolPreset(json){
                 'ts-size':clampedSize,
                 'ts-spacing':Math.min(200,Math.max(1,b.spacing||25)),
                 'ts-spacing-mode':'fixed',
+                'ts-rotation-mode':'fixed-rotation',
+                'ts-angle':0,
                 'ts-scatter-enabled':false,
                 'ts-scatter-amount':0,
                 'ts-scatter-count':1,
@@ -2090,7 +2131,14 @@ function applyToolPreset(json){
                 'ts-tip-soft-alpha':true,
                 ...mapped
               },
-              abrMeta:{ features:b.features||{}, values:b.values||{}, unsupported:_abrUnsupportedList(b.features) }
+              abrMeta:{
+                sourceFile:f.name,
+                importedName:b.name,
+                features:Object.assign({},b.features||{}),
+                values:Object.assign({},b.values||{}),
+                detectedSettings:_abrDetectedSettings(b,mapped),
+                unsupported:_abrUnsupportedList(b.features)
+              }
             };
             _customPresets.push(preset);
             _seedPresetSettings(preset);
@@ -2203,14 +2251,15 @@ const _ABR_FEATURE_MAP = {
   opacity:     { label:'Opacity',               needles:['Opct'],                          control:'ts-opacity',     applied:true,  uiStatus:'implemented' },
   flipX:       { label:'Flip X',                needles:['Flip X','flipX'],                control:'ts-flip-x',      applied:false, uiStatus:'coming_soon' },
   flipY:       { label:'Flip Y',                needles:['Flip Y','flipY'],                control:'ts-flip-y',      applied:false, uiStatus:'coming_soon' },
-  flow:        { label:'Flow',                  needles:['Flow'],                          control:'ts-flow',        applied:false, uiStatus:'implemented' },
-  angle:       { label:'Angle',                 needles:['Angl'],                          control:'ts-angle',       applied:false, uiStatus:'coming_soon' },
+  flow:        { label:'Flow',                  needles:['Flow'],                          control:'ts-flow',        applied:true,  uiStatus:'implemented' },
+  angle:       { label:'Angle',                 needles:['Angl'],                          control:'ts-angle',       applied:true,  uiStatus:'implemented' },
+  angleDynamics:{label:'Angle Dynamics', needles:['angleDynamics'], control:'ts-rotation-mode', applied:false, uiStatus:'implemented' },
   roundness:   { label:'Roundness',             needles:['Rndn'],                          control:'ts-roundness',   applied:false, uiStatus:'coming_soon' },
   scatter:     { label:'Scatter',               needles:['Scattering'],                    control:'ts-scatter',     applied:false, uiStatus:'coming_soon' },
   scatterBoth: { label:'Scatter — Both Axes',   needles:['bothAxes'],                      control:'ts-scatter-both-axes', applied:false, uiStatus:'coming_soon' },
   count:       { label:'Count (multi-stamp)',   needles:['Count'],                         control:'ts-count',       applied:false, uiStatus:'coming_soon' },
   texture:     { label:'Texture',               needles:['Texture'],                       control:'ts-texture',     applied:false, uiStatus:'coming_soon' },
-  sizeJitter:  { label:'Size Jitter (Shape Dynamics)', needles:['Shape Dynamics','sizeJitter'], control:'ts-size-jitter', applied:false, uiStatus:'coming_soon' },
+  sizeJitter:  { label:'Size Jitter (Shape Dynamics)', needles:['Shape Dynamics','sizeJitter','useTipDynamics','szVr'], control:'ts-size-jitter', applied:false, uiStatus:'coming_soon' },
   angleJitter: { label:'Angle Jitter',           needles:['angleJitter'],                   control:'ts-angle-jitter', applied:false, uiStatus:'coming_soon' },
   roundJitter: { label:'Roundness Jitter',       needles:['roundnessJitter'],               control:'ts-round-jitter', applied:false, uiStatus:'coming_soon' },
   colorDynamics:{label:'Color Dynamics',         needles:['Color Dynamics'],                control:'ts-hue-jitter',  applied:false, uiStatus:'coming_soon' },
@@ -2278,6 +2327,47 @@ function _extractABRDescriptorValues(buffer) {
     for (let i=0;i<n-12;i++) { if (keyAt(i,key)) { const v=valueAfterKey(i+4); if (v!=null) return v; } }
     return null;
   }
+  function findSequence(sequence) {
+    const ascii=Array.from(sequence,ch=>ch.charCodeAt(0));
+    const utf16=[];
+    for(const code of ascii) utf16.push(0,code);
+    for(const pattern of [ascii,utf16]){
+      outer:for(let i=0;i<=n-pattern.length;i++){
+        for(let j=0;j<pattern.length;j++) if(bytes[i+j]!==pattern[j]) continue outer;
+        return i;
+      }
+    }
+    return -1;
+  }
+  function findLongAfter(marker,key) {
+    const start=findSequence(marker);
+    if(start<0) return null;
+    const end=Math.min(n-12,start+8192);
+    for(let i=start;i<=end;i++){
+      if(!keyAt(i,key)) continue;
+      if(keyAt(i+4,'long')&&i+12<=n) return dv.getInt32(i+8,false);
+    }
+    return null;
+  }
+  function findBoolean(marker) {
+    const start=findSequence(marker);
+    if(start<0) return null;
+    const end=Math.min(n-5,start+128);
+    for(let i=start;i<=end;i++){
+      if(keyAt(i,'bool')&&i+5<=n) return bytes[i+4]!==0;
+    }
+    return null;
+  }
+  function findNumber(marker) {
+    const start=findSequence(marker);
+    if(start<0) return null;
+    const end=Math.min(n-16,start+256);
+    for(let i=start;i<=end;i++){
+      const value=valueAfterKey(i);
+      if(value!=null) return value;
+    }
+    return null;
+  }
   // The brush preset's display name ("soft strokes", etc.) is stored as a
   // descriptor key too, but unlike Dmtr/Spcn/Angl/Rndn (fixed 4-char OSType
   // keys) the `Nm` key is a variable-length ASCII key: a 4-byte length
@@ -2288,31 +2378,48 @@ function _extractABRDescriptorValues(buffer) {
   // the sampled tip's own auto-generated name) — so returning on first
   // match is exactly what's needed here, matching findFirst() above.
   function findName() {
-    for (let i=0;i<n-14;i++) {
-      if (dv.getUint32(i,false)!==2) continue;           // keyLength === 2
-      if (bytes[i+4]!==0x4e || bytes[i+5]!==0x6d) continue; // 'N','m'
-      if (!keyAt(i+6,'TEXT')) continue;
-      const strLenOff=i+10;
-      if (strLenOff+4>n) continue;
-      const strLen=dv.getUint32(strLenOff,false);
-      const charsOff=strLenOff+4;
-      if (strLen<=0 || strLen>200 || charsOff+strLen*2>n) continue;
+    function readText(typeOff){
+      if(!keyAt(typeOff,'TEXT')||typeOff+8>n) return null;
+      const strLen=dv.getUint32(typeOff+4,false);
+      const charsOff=typeOff+8;
+      if(strLen<=0||strLen>500||charsOff+strLen*2>n) return null;
       let str='';
-      for (let c=0;c<strLen;c++){
+      for(let c=0;c<strLen;c++){
         const code=dv.getUint16(charsOff+c*2,false);
-        if (code!==0) str+=String.fromCharCode(code);
+        if(code!==0) str+=String.fromCharCode(code);
       }
       str=str.trim();
-      if (str) return str;
+      return str||null;
+    }
+    for(let i=0;i<n-14;i++){
+      if(dv.getUint32(i,false)===2&&bytes[i+4]===0x4e&&bytes[i+5]===0x6d){
+        const name=readText(i+6);
+        if(name) return name;
+      }
+      if(bytes[i]===0x4e&&bytes[i+1]===0x6d){
+        for(let typeOff=i+2;typeOff<=Math.min(i+12,n-8);typeOff++){
+          const name=readText(typeOff);
+          if(name) return name;
+        }
+      }
     }
     return null;
   }
   return {
     name:      findName(),
+    spacing:   findFirst('Spcn'),
     opacity:   findFirst('Opct'),
+    flow:      findFirst('Flow'),
     hardness:  findFirst('Hrdn'),
     angle:     findFirst('Angl'),
-    roundness: findFirst('Rndn')
+    roundness: findFirst('Rndn'),
+    angleDynamicsType: findLongAfter('angleDynamics','bVTy'),
+    useBrushSize: findBoolean('useBrushSize'),
+    useTipDynamics: findBoolean('useTipDynamics'),
+    sizeVariation: findNumber('szVr'),
+    minimumDiameter: findNumber('minimumDiameter'),
+    minimumRoundness: findNumber('minimumRoundness'),
+    roundnessDynamics: findBoolean('useRoundnessDynamics')
   };
 }
 
@@ -2329,9 +2436,19 @@ function _extractABRDescriptorValues(buffer) {
 // this + _applyABRSettingsToUI so there is exactly one place that knows
 // how an ABR value becomes an internal setting.
 // ════════════════════════════════════════════════════════════════
-function _mapABRValuesToSettings(values) {
+function _mapABRValuesToSettings(values, features) {
   const v = values || {};
+  const f = features || {};
   const out = {};
+  const hasSizeDynamics=v.useTipDynamics===true&&Number(v.sizeVariation)>0;
+  if(v.useBrushSize===true||hasSizeDynamics) out['ts-size-control']='pressure';
+  else if(v.useBrushSize===false||v.useTipDynamics===false) out['ts-size-control']='off';
+  if(v.minimumDiameter!=null) out['ts-min-size']=Math.max(0,Math.min(100,Math.round(Number(v.minimumDiameter))));
+  if(v.roundness!=null) out['ts-tip-roundness']=Math.max(1,Math.min(100,Number(v.roundness)));
+  if(v.minimumRoundness!=null) out['ts-tip-min-roundness']=Math.max(0,Math.min(100,Number(v.minimumRoundness)));
+  if(typeof v.roundnessDynamics==='boolean') out['ts-tip-roundness-dynamics']=v.roundnessDynamics;
+  if(v.angleDynamicsType===6) out['ts-rotation-mode']='stroke-direction';
+  else out['ts-rotation-mode']='fixed-rotation';
   // Hardness intentionally NOT mapped: this parser only ever extracts
   // sampled (raster) tips, and Photoshop's own descriptor format only
   // stores Hrdn on procedural "computedBrush" presets — it's explicitly
@@ -2340,6 +2457,8 @@ function _mapABRValuesToSettings(values) {
   // and showABRImportResults, which surfaces this explicitly instead of
   // silently overwriting the user's Hardness with an irrelevant value.
   if (v.opacity != null) out['ts-opacity'] = Math.max(1, Math.min(100, Math.round(v.opacity)));
+  if (v.flow != null) out['ts-flow'] = Math.max(1, Math.min(100, Math.round(v.flow)));
+  if (v.angle != null) out['ts-angle'] = ((-Math.round(v.angle) % 360) + 360) % 360;
   return out;
 }
 
@@ -2363,6 +2482,9 @@ function _applyABRSettingsToUI(size, spacing, settings) {
   }
 
   for (const ctrlId in (settings || {})) {
+    if(ctrlId==='ts-tip-roundness'){window.brushTipRoundness=Math.max(0.01,Math.min(1,+settings[ctrlId]/100));continue;}
+    if(ctrlId==='ts-tip-min-roundness'){window.brushTipMinimumRoundness=Math.max(0,Math.min(1,+settings[ctrlId]/100));continue;}
+    if(ctrlId==='ts-tip-roundness-dynamics'){window.brushTipRoundnessDynamics=!!settings[ctrlId];continue;}
     const el = document.getElementById(ctrlId);
     if (!el) continue;
     el.value = settings[ctrlId];
@@ -2378,6 +2500,34 @@ function _applyABRSettingsToUI(size, spacing, settings) {
 // List of detected-but-unsupported ABR features, kept separately (rather
 // than discarded) so a brush's abrMeta can be inspected later if support
 // for one of these is added — see _ABR_FEATURE_MAP for the full catalog.
+function _abrDetectedSettings(brush, mappedSettings) {
+  const features=brush.features||{};
+  const values=brush.values||{};
+  return {
+    size:brush.size??null,
+    spacing:brush.spacing??null,
+    opacity:values.opacity??null,
+    useBrushSize:typeof values.useBrushSize==='boolean'?values.useBrushSize:null,
+    useTipDynamics:typeof values.useTipDynamics==='boolean'?values.useTipDynamics:null,
+    sizeVariation:values.sizeVariation??null,
+    minimumDiameter:values.minimumDiameter??null,
+    flow:values.flow??null,
+    angle:values.angle??null,
+    roundness:values.roundness??null,
+    minimumRoundness:values.minimumRoundness??null,
+    roundnessDynamics:typeof values.roundnessDynamics==='boolean'?values.roundnessDynamics:null,
+    scatter:!!features.scatter,
+    scatterBothAxes:!!features.scatterBoth,
+    scatterCount:!!features.count,
+    flipX:!!features.flipX,
+    flipY:!!features.flipY,
+    texture:!!features.texture,
+    angleDynamics:!!features.angleDynamics,
+    angleDynamicsType:values.angleDynamicsType??null,
+    mappedSettings:Object.assign({},mappedSettings||{})
+  };
+}
+
 function _abrUnsupportedList(features) {
   const f = features || {};
   const list = [];
@@ -2511,15 +2661,22 @@ function parseABR(buffer) {
   //    in Photoshop's inverted brush convention) to a canvas whose alpha mask
   //    follows our convention: 255=full-paint (black in PS), 0=transparent.
   function grayscaleToTipCanvas(pixels, w, h) {
-    const c = document.createElement('canvas'); c.width = w; c.height = h;
-    const ctx2 = c.getContext('2d');
-    const id = ctx2.createImageData(w, h); const d = id.data;
-    for (let i = 0, p = 0; i < pixels.length; i++, p += 4) {
-      const a = 255 - pixels[i];
-      d[p] = d[p+1] = d[p+2] = 0;
-      d[p+3] = a;
+    let minX=w,minY=h,maxX=-1,maxY=-1;
+    for(let y=0;y<h;y++) for(let x=0;x<w;x++){
+      if(255-pixels[y*w+x]>0){
+        if(x<minX)minX=x;if(x>maxX)maxX=x;if(y<minY)minY=y;if(y>maxY)maxY=y;
+      }
     }
-    ctx2.putImageData(id, 0, 0);
+    if(maxX<minX||maxY<minY){minX=0;minY=0;maxX=w-1;maxY=h-1;}
+    const cropW=maxX-minX+1,cropH=maxY-minY+1;
+    const c=document.createElement('canvas');c.width=cropW;c.height=cropH;
+    const ctx2=c.getContext('2d');
+    const id=ctx2.createImageData(cropW,cropH),d=id.data;
+    for(let y=0,p=0;y<cropH;y++) for(let x=0;x<cropW;x++,p+=4){
+      const a=255-pixels[(minY+y)*w+minX+x];
+      d[p]=d[p+1]=d[p+2]=0;d[p+3]=a;
+    }
+    ctx2.putImageData(id,0,0);
     return c;
   }
 
@@ -2686,12 +2843,14 @@ function parseABR(buffer) {
   // single-tip file this is unambiguous; for multi-tip files it's the
   // shared preset name Photoshop groups all these tips under, so append
   // an index to keep tiles distinguishable.
-  if (values.name) {
-    brushes.forEach((b, i) => {
-      b.name = brushes.length > 1 ? (values.name + ' ' + (i + 1)) : values.name;
-    });
-  }
-  brushes.forEach(b => { b.features = features; b.values = values; });
+  brushes.forEach((b, i) => {
+    const parsedName=(b.name||'').trim();
+    if(values.name) b.name=brushes.length>1?(values.name+' '+String(i+1).padStart(2,'0')):values.name;
+    if(values.spacing!=null) b.spacing=Math.max(1,Math.min(200,Math.round(values.spacing)));
+    else if(!parsedName||/^Brush \d+$/i.test(parsedName)) b.name='ABR Brush '+String(i+1).padStart(2,'0');
+    b.features=features;
+    b.values=values;
+  });
 
   return brushes;
 }
@@ -2890,7 +3049,16 @@ function showABRPicker(brushes, filename, onImport) {
     cx2.fillStyle='#ffffff';
     cx2.fillRect(0,0,64,64);
     cx2.globalCompositeOperation='destination-in';
-    cx2.drawImage(b.canvas,0,0,64,64);
+    const pickerAngle=b.values&&b.values.angle!=null?(((-b.values.angle%360)+360)%360)*Math.PI/180:0;
+    const tipW=b.canvas.width||1,tipH=b.canvas.height||1;
+    const pickerRoundness=Math.max(0.01,Math.min(1,Number(b.values&&b.values.roundness)||100)/100);
+    const shapedH=tipH*pickerRoundness;
+    const rotatedW=Math.abs(tipW*Math.cos(pickerAngle))+Math.abs(shapedH*Math.sin(pickerAngle));
+    const rotatedH=Math.abs(tipW*Math.sin(pickerAngle))+Math.abs(shapedH*Math.cos(pickerAngle));
+    const tipScale=Math.min(58/Math.max(1,rotatedW),58/Math.max(1,rotatedH));
+    cx2.translate(32,32);
+    if(pickerAngle) cx2.rotate(pickerAngle);
+    cx2.drawImage(b.canvas,-tipW*tipScale/2,-shapedH*tipScale/2,tipW*tipScale,shapedH*tipScale);
     cx2.restore();
 
     // Label
@@ -2931,7 +3099,7 @@ function showABRPicker(brushes, filename, onImport) {
       // internal mapping layer, then apply size/spacing/mapped settings to
       // the live UI in one pass. Never overwrites with a guess — only with
       // a value this app actually found in the file.
-      const mapped=_mapABRValuesToSettings(b.values);
+      const mapped=_mapABRValuesToSettings(b.values,b.features);
       const clampedSize=_applyABRSettingsToUI(b.size, b.spacing, mapped);
       // Sync brush tip UI panel
       const fn=document.getElementById('ts-tip-filename');

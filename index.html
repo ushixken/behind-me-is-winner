@@ -606,6 +606,9 @@
             <div class="ts-ps-nav-item" data-panel="dynamics">
               <span>Dynamics</span>
             </div>
+            <div class="ts-ps-nav-item" data-panel="rotation">
+              <span>Rotation</span>
+            </div>
             <div class="ts-ps-nav-item" data-panel="scatter">
               <span>Scatter</span>
             </div>
@@ -801,6 +804,26 @@
                   <span class="ts-label">Pressure Curve</span>
                   <select class="ts-select" id="ts-opacity-pressure-curve"><option value="linear" selected>Linear</option><option value="soft">Soft</option><option value="hard">Hard</option><option value="s">S-curve</option><option value="custom">Custom</option></select>
                   <canvas class="ts-pressure-preview" data-pressure-setting="opacity" width="92" height="38" title="Click to edit pressure curve"></canvas>
+                </div>
+              </div>
+            </div>
+
+            <!-- ROTATION -->
+            <div class="ts-ps-panel" data-panel="rotation">
+              <div class="ts-section-body">
+                <div class="ts-row">
+                  <span class="ts-label">Rotation Mode</span>
+                  <select class="ts-select" id="ts-rotation-mode">
+                    <option value="fixed-rotation" selected>Fixed Rotation</option>
+                    <option value="stroke-direction">Stroke Direction</option>
+                    <option value="random" disabled>Random (Coming Soon)</option>
+                    <option value="pen-tilt" disabled>Pen Tilt (Coming Soon)</option>
+                  </select>
+                </div>
+                <div class="ts-row" id="ts-angle-row">
+                  <span class="ts-label">Angle</span>
+                  <input type="range" class="ts-range" id="ts-angle" min="0" max="360" step="1" value="0"/>
+                  <span class="ts-val ts-value-edit" data-value-target="ts-angle" tabindex="0" id="ts-angle-val">0�</span>
                 </div>
               </div>
             </div>

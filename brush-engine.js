@@ -58,6 +58,9 @@ window.brushTipSoftAlpha = true;
 // 'multiply' applies the tip as an alpha-mask on top of the normal dab.
 // 'replace'  uses the tip as the sole shape with no circle falloff at all.
 window.brushTipMode = 'multiply';
+window.brushTipRoundness = 1;
+window.brushTipMinimumRoundness = 0;
+window.brushTipRoundnessDynamics = false;
 
 // Ã¢â€â‚¬Ã¢â€â‚¬ Brush Texture Image Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 // When non-null, this canvas is tiled as a repeating texture over each dab
@@ -372,10 +375,11 @@ function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   const tipV=tipC?(window.brushTipVersion||0):-1;
   const softAlpha=!!window.brushTipSoftAlpha;
   const tipMode=window.brushTipMode||'multiply';
+  const tipRoundness=Math.max(window.brushTipMinimumRoundness||0,Math.min(1,window.brushTipRoundness==null?1:window.brushTipRoundness));
   const r=_quant(rRaw,_Q_R), alpha=_quant(alphaRaw,_Q_ALPHA);
   const hardness=Math.round(Math.max(0,Math.min(0.99,hardnessRaw))*100)/100;
   const key=r.toFixed(2)+'|'+rgb.join(',')+'|'+alpha.toFixed(2)+'|'+composite+'|'+
-            hardness.toFixed(2)+'|t'+tipV+'|'+(softAlpha?'s':'h')+'|'+tipMode;
+            hardness.toFixed(2)+'|t'+tipV+'|'+(softAlpha?'s':'h')+'|'+tipMode+'|rd'+tipRoundness.toFixed(3);
   const hit=_tipDabCache.get(key);
   if(hit) return hit;
 
@@ -391,7 +395,7 @@ function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   const tipNativeW=tipC?(tipC.width||tipC.naturalWidth||1):1;
   const tipNativeH=tipC?(tipC.height||tipC.naturalHeight||1):1;
   const tipScale=(2*rr)/Math.max(tipNativeW,tipNativeH);
-  const dabW=Math.max(1,tipNativeW*tipScale), dabH=Math.max(1,tipNativeH*tipScale);
+  const dabW=Math.max(1,tipNativeW*tipScale), dabH=Math.max(1,tipNativeH*tipScale*tipRoundness);
 
   const pad=2;
   const w=Math.ceil(dabW)+pad*2+1, h=Math.ceil(dabH)+pad*2+1;
@@ -527,13 +531,16 @@ function _buildAAStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   _aaDabCache.set(key,stamp);
   return stamp;
 }
+let _activeDabRotation=0;
 function _drawUnifiedTipStamp(x,y,r,rgb,alpha,composite){
   const dc=(_inStroke && composite!=='erase')?_strokeCtx:ctx;
   const stamp=_buildTipStamp(r,rgb,alpha,composite,brushHardness);
   dc.save();
   dc.globalCompositeOperation=composite==='erase'?'destination-out':'source-over';
   dc.imageSmoothingEnabled=true;
-  dc.drawImage(stamp.canvas,x-stamp.w/2,y-stamp.h/2);
+  dc.translate(x,y);
+  if(_activeDabRotation) dc.rotate(_activeDabRotation);
+  dc.drawImage(stamp.canvas,-stamp.w/2,-stamp.h/2);
   dc.restore();
 }
 function _dabAAGpu(x,y,r,rgb,alpha,composite){
@@ -787,7 +794,7 @@ function _getAliasedStamp(rRaw,rgb,alphaRaw,composite){
 }
 function _dabAliased(x,y,r,rgb,alpha,composite){
   const dc = (_inStroke && composite !== 'erase') ? _strokeCtx : ctx;
-  const stamp=_getAliasedStamp(r,rgb,alpha,composite);
+  const stamp=window.brushTipCanvas?_buildTipStamp(r,rgb,alpha,composite,brushHardness):_getAliasedStamp(r,rgb,alpha,composite);
   // drawImage() defaults to imageSmoothingEnabled=true, so even a
   // perfectly hard-edged, fully-on/off-alpha stamp gets bilinearly resampled
   // (blurred) on the way into the destination canvas. Turning smoothing OFF
@@ -799,7 +806,11 @@ function _dabAliased(x,y,r,rgb,alpha,composite){
   dc.save();
   dc.imageSmoothingEnabled=false;
   dc.globalCompositeOperation=composite==='erase'?'destination-out':'source-over';
-  dc.drawImage(stamp.canvas,x0,y0);
+  if(window.brushTipCanvas&&_activeDabRotation){
+    dc.translate(x,y);
+    dc.rotate(_activeDabRotation);
+    dc.drawImage(stamp.canvas,-stamp.w/2,-stamp.h/2);
+  } else dc.drawImage(stamp.canvas,x0,y0);
   dc.restore();
 }
 
@@ -916,10 +927,12 @@ function _drawAutoHardRoundSegment(d){
   dc.restore();
   return true;
 }function _drawDabNow(d){
+  _activeDabRotation=window.brushTipCanvas?(d.rotation||0):0;
   if(!_drawAutoHardRoundSegment(d)){
     if(brushAA) _dabAA(d.x,d.y,d.r,d.rgb,d.alpha,d.composite);
     else _dabAliased(d.x,d.y,d.r,d.rgb,d.alpha,d.composite);
   }
+  _activeDabRotation=0;
   // Apply the texture overlay on the same target context the dab went to.
   // Eraser dabs target ctx directly (not the stroke scratch), so we need
   // to match that routing here as well.
@@ -1047,11 +1060,27 @@ function _smoothPoint(x,y,t){
   return{x:_smoothX,y:_smoothY};
 }
 
+let _rotationPrevX=0,_rotationPrevY=0,_rotationPrevValid=false,_rotationDirection=0;
+function _resolveDabRotation(x,y){
+  const fixed=(Number(window._tsBrushAngle)||0)*Math.PI/180;
+  if(window._tsRotationMode==='stroke-direction'){
+    if(_rotationPrevValid){
+      const dx=x-_rotationPrevX,dy=y-_rotationPrevY;
+      if(dx||dy) _rotationDirection=Math.atan2(dy,dx);
+    } else _rotationDirection=fixed;
+    _rotationPrevX=x;_rotationPrevY=y;_rotationPrevValid=true;
+    return _rotationDirection;
+  }
+  _rotationPrevX=x;_rotationPrevY=y;_rotationPrevValid=true;
+  return fixed;
+}
+
 function _stampDab(x,y,e){
   const {r,alpha}=_getEffectiveBrushParams(e);
   const isErase=tool==='eraser';
   const rgb=isErase?[0,0,0]:_hexToRGB(color);
   const composite=isErase?'erase':'paint';
+  const rotation=_resolveDabRotation(x,y);
   const scatterEnabled=!!window._tsScatterEnabled;
   const count=scatterEnabled?Math.min(50,Math.max(1,Math.round(window._tsScatterCount||1))):1;
   const scatterRotation=Math.random()*Math.PI*2;
@@ -1066,7 +1095,7 @@ function _stampDab(x,y,e){
       dabX+=Math.cos(angle)*distance;
       dabY+=Math.sin(angle)*distance;
     }
-    _queueDab({x:dabX,y:dabY,r,alpha,rgb,composite});
+    _queueDab({x:dabX,y:dabY,r,alpha,rgb,composite,rotation});
   }
 }
 
@@ -1863,6 +1892,7 @@ activeC.addEventListener('pointerdown',e=>{
   _lastMoveTime = 0;
   _strokeSegCarryOver = 0; // reset inter-segment dab carry-over
   const p=getPos(e);
+  _rotationPrevValid=false;
   _resetSmoothing(p.x,p.y,e.timeStamp||performance.now());
   _updateVelocity(p.x, p.y, e.timeStamp);
   if(tool==='fill'){pushUndo();ensureKey();floodFill(p.x,p.y,color);saveActiveToKey();recomposite(curLayer,curFrame);return;}
