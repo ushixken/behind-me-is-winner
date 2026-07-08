@@ -1,4 +1,4 @@
-// ═══ TOOL SETTINGS PANEL — wiring ═══════════════════════════
+//  TOOL SETTINGS PANEL  wiring
 (function(){
   // Helper: range + display
   function bindRange(id,dispId,suffix,onchange){
@@ -45,6 +45,18 @@
   }
   if(rotationModeEl){rotationModeEl.addEventListener('input',syncRotation);rotationModeEl.addEventListener('change',syncRotation);}
   syncRotation();
+  const tipRoundnessEl=document.getElementById('ts-tip-roundness');
+  const tipFlipXEl=document.getElementById('ts-tip-flip-x');
+  const tipFlipYEl=document.getElementById('ts-tip-flip-y');
+  function syncTipShape(){
+    const roundness=tipRoundnessEl?+tipRoundnessEl.value/100:1;
+    if(typeof window._setBrushTipShape==='function') window._setBrushTipShape(roundness,tipFlipXEl?.checked,tipFlipYEl?.checked);
+    if(typeof window._syncTipUI==='function') window._syncTipUI();
+  }
+  bindRange('ts-tip-roundness','ts-tip-roundness-val','%',syncTipShape);
+  if(tipFlipXEl) tipFlipXEl.addEventListener('input',syncTipShape);
+  if(tipFlipYEl) tipFlipYEl.addEventListener('input',syncTipShape);
+  syncTipShape();
   bindRange('ts-scatter-amount','ts-scatter-amount-val','%',v=>{window._tsScatterAmount=v/100;});
   bindRange('ts-scatter-count','ts-scatter-count-val','',v=>{window._tsScatterCount=Math.min(50,Math.max(1,Math.round(v)));});
   const scatterEnabledEl=document.getElementById('ts-scatter-enabled');
@@ -77,7 +89,7 @@
   bindRange('ts-texture-scale','ts-texture-scale-val','%');
   bindRange('ts-texture-depth','ts-texture-depth-val','');
 
-  // ── AA off = pixelated pencil mode ──────────────────────────────────
+  //  AA off = pixelated pencil mode
   // Anti-aliasing off is meant to give a hard, pixel-perfect stamp — so it
   // shouldn't also be softened by a partial hardness value or have its
   // opacity wobbling with pen pressure. Turning AA off snapshots whatever
@@ -120,7 +132,7 @@
   };
 
   // ── Airbrush mode — Tool Settings checkbox (activate/deactivate from
-  // Tool Settings only; no separate toolbar button) ──────────────────
+  // Tool Settings only; no separate toolbar button)
   window._tsAirbrushRate = window._tsAirbrushRate!==undefined ? window._tsAirbrushRate : 0.55;
   function _setAirbrush(on){
     window._brushAirbrush=!!on;
@@ -134,7 +146,7 @@
     tsAirbrush.onchange=()=>{ _setAirbrush(tsAirbrush.checked); };
   }
 
-  // ── PS-style sidebar navigation ─────────────────────────────
+  //  PS-style sidebar navigation
   // Clicking a nav item switches the active panel on the right.
   // Clicking the checkbox inside a nav item toggles the effect
   // without changing which panel is shown.
@@ -176,8 +188,8 @@
     window._tsPsActivateDefault=()=>activatePanel(lastPanel);
   })();
 
-  // ── Checkbox-gated panels (Tip Image / Dynamics / Texture / Pressure) ──
-  // Unchecked should mean the panel is truly off, not just grayed out —
+  //  Checkbox-gated panels (Tip Image / Dynamics / Texture / Pressure)
+  // Unchecked should mean the panel is truly off, not just grayed out
   // any "Control" dropdown inside (e.g. Size/Opacity pressure control in
   // Dynamics) is forced to its "Off" option so nothing keeps applying
   // behind the gray-out, and the prior selection is restored when the box
@@ -220,7 +232,7 @@
     });
   })();
 
-  // ── Per-setting Simple-tab visibility ("eye" toggles) ───────────────
+  //  Per-setting Simple-tab visibility ("eye" toggles)
   // Each eyeable field in Advanced mode gets an eye button; clicking it
   // shows/hides that individual setting in the Simple tab, like toggling
   // a layer's visibility. Choice persists across sessions.
@@ -263,7 +275,7 @@
     });
   })();
 
-  // ── Whole-section Simple-tab visibility + drag-to-reorder ──────────────
+  //  Whole-section Simple-tab visibility + drag-to-reorder
   // Eye button (inside the section heading in Advanced mode) toggles whether
   // that section appears in Simple tab. Drag handle reorders sections in
   // Simple tab — same pointer-event pattern as the timeline label drag.
@@ -463,7 +475,7 @@
       document.getElementById('tool-settings-modal-overlay').classList.remove('visible');
   });
 
-  // ── Simple / Advanced settings mode ─────────────────────────
+  //  Simple / Advanced settings mode
   // Simple shows only Size, Flow, Hardness & Anti-alias (the rows/sections
   // NOT marked .ts-advanced-only). Advanced shows everything, same as before
   // this feature existed. Choice is remembered across sessions.
@@ -751,12 +763,12 @@
   document.getElementById('ts-hardness-val').textContent=document.getElementById('ts-hardness').value;
   document.getElementById('ts-spacing-val').textContent=document.getElementById('ts-spacing').value+'%';
 
-  // ════════════════════════════════════════════════════════════════
+  //
   // BRUSH TIP IMAGE — UI wiring
-  // ════════════════════════════════════════════════════════════════
+  //
   (function(){
 
-    // ── Draw the 64×64 tip preview showing how the alpha mask looks ────
+    //  Draw the 6464 tip preview showing how the alpha mask looks
     function _drawTipPreview(){
       const c=document.getElementById('ts-tip-preview');
       if(!c) return;
@@ -785,17 +797,19 @@
       const tipW=window.brushTipCanvas.width||1,tipH=window.brushTipCanvas.height||1;
       const rotation=((Number(window._tsBrushAngle)||0)*Math.PI)/180;
       const roundness=Math.max(window.brushTipMinimumRoundness||0,window.brushTipRoundness==null?1:window.brushTipRoundness);
-      const shapedH=tipH*roundness;
-      const rotatedW=Math.abs(tipW*Math.cos(rotation))+Math.abs(shapedH*Math.sin(rotation));
-      const rotatedH=Math.abs(tipW*Math.sin(rotation))+Math.abs(shapedH*Math.cos(rotation));
+      const compressWidth=tipW<tipH;
+      const shapedW=tipW*(compressWidth?roundness:1),shapedH=tipH*(compressWidth?1:roundness);
+      const rotatedW=Math.abs(shapedW*Math.cos(rotation))+Math.abs(shapedH*Math.sin(rotation));
+      const rotatedH=Math.abs(shapedW*Math.sin(rotation))+Math.abs(shapedH*Math.cos(rotation));
       const scale=Math.min(56/Math.max(1,rotatedW),56/Math.max(1,rotatedH));
       ctx2.translate(32,32);
       if(rotation) ctx2.rotate(rotation);
-      ctx2.drawImage(window.brushTipCanvas,-tipW*scale/2,-shapedH*scale/2,tipW*scale,shapedH*scale);
+      if(window.brushTipFlipX||window.brushTipFlipY) ctx2.scale(window.brushTipFlipX?-1:1,window.brushTipFlipY?-1:1);
+      ctx2.drawImage(window.brushTipCanvas,-shapedW*scale/2,-shapedH*scale/2,shapedW*scale,shapedH*scale);
       ctx2.restore();
     }
 
-    // ── Sync all tip-related UI visibility to current state ────────────
+    //  Sync all tip-related UI visibility to current state
     window._syncTipUI=function(){
       const hasTip=!!window.brushTipCanvas;
       const loadBtn=document.getElementById('ts-tip-load-btn');
@@ -817,7 +831,7 @@
       _drawTipPreview();
     };
 
-    // ── Load an image file into a canvas and set as brush tip ──────────
+    //  Load an image file into a canvas and set as brush tip
     function _loadTipFromFile(file){
       if(!file||!file.type.startsWith('image/')) return;
       const url=URL.createObjectURL(file);
@@ -883,12 +897,12 @@
 
   })();
 
-  // ════════════════════════════════════════════════════════════════
+  //
   // BRUSH TEXTURE IMAGE — UI wiring
-  // ════════════════════════════════════════════════════════════════
+  //
   (function(){
 
-    // ── Draw the 64×64 texture preview ────────────────────────────────
+    //  Draw the 6464 texture preview
     function _drawTexturePreview(){
       const c=document.getElementById('ts-texture-preview');
       if(!c) return;
@@ -898,7 +912,7 @@
       ctx2.drawImage(window.brushTextureCanvas,0,0,64,64);
     }
 
-    // ── Sync texture UI visibility ─────────────────────────────────────
+    //  Sync texture UI visibility
     window._syncTextureUI=function(){
       const hasTex=!!window.brushTextureCanvas;
       const clearBtn=document.getElementById('ts-texture-clear-btn');
@@ -918,7 +932,7 @@
       _drawTexturePreview();
     };
 
-    // ── Load an image file into a canvas and set as brush texture ──────
+    //  Load an image file into a canvas and set as brush texture
     function _loadTextureFromFile(file){
       if(!file||!file.type.startsWith('image/')) return;
       const url=URL.createObjectURL(file);
@@ -975,7 +989,7 @@
 
 // Preset get/apply
 function getToolPreset(){
-  const ids=['ts-size','ts-opacity','ts-flow','ts-density','ts-hardness','ts-spacing','ts-spacing-mode','ts-rotation-mode','ts-angle','ts-scatter-enabled','ts-scatter-amount','ts-scatter-count','ts-airbrush','ts-airbrush-rate',
+  const ids=['ts-size','ts-opacity','ts-flow','ts-density','ts-hardness','ts-spacing','ts-spacing-mode','ts-rotation-mode','ts-angle','ts-tip-roundness','ts-tip-flip-x','ts-tip-flip-y','ts-scatter-enabled','ts-scatter-amount','ts-scatter-count','ts-airbrush','ts-airbrush-rate',
     'ts-min-size','ts-taper-mode','ts-start-taper','ts-end-taper','ts-size-control','ts-size-pressure-curve','ts-flow-control','ts-flow-pressure-curve','ts-opacity-control','ts-opacity-pressure-curve','ts-min-flow',
     'ts-texture-scale','ts-texture-depth'];
   const out={};
@@ -986,16 +1000,19 @@ function getToolPreset(){
   out['ts-aa']=document.getElementById('ts-aa').checked;
   out['ts-pressure-curves']=JSON.parse(JSON.stringify(window._tsCustomPressureCurves||{}));
 
-  // ── Brush tip & texture image data (stored as data URLs for JSON export) ──
+  //  Brush tip & texture image data (stored as data URLs for JSON export)
   // These are only written when an image is actually loaded; absent keys mean
   // "no custom tip/texture" so legacy presets silently skip this code path.
   if(window.brushTipCanvas){
     try{ out['ts-tip-dataurl']=window.brushTipCanvas.toDataURL('image/png'); }catch(e){}
     out['ts-tip-mode']=(window.brushTipMode||'multiply');
     out['ts-tip-soft-alpha']=!!(window.brushTipSoftAlpha!==false);
+    if(Number.isFinite(Number(window.brushTipReferenceDiameter))&&Number(window.brushTipReferenceDiameter)>0) out['ts-tip-reference-diameter']=Number(window.brushTipReferenceDiameter);
     out['ts-tip-roundness']=Math.round((window.brushTipRoundness==null?1:window.brushTipRoundness)*100);
     out['ts-tip-min-roundness']=Math.round((window.brushTipMinimumRoundness||0)*100);
     out['ts-tip-roundness-dynamics']=!!window.brushTipRoundnessDynamics;
+    out['ts-tip-flip-x']=!!window.brushTipFlipX;
+    out['ts-tip-flip-y']=!!window.brushTipFlipY;
   }
   if(window.brushTextureCanvas){
     try{ out['ts-texture-dataurl']=window.brushTextureCanvas.toDataURL('image/png'); }catch(e){}
@@ -1023,7 +1040,7 @@ function applyToolPreset(json){
   Object.entries(json).forEach(([id,val])=>{
     // Skip virtual/non-DOM keys handled separately below.
     if(id==='ts-tip-dataurl'||id==='ts-texture-dataurl'||
-       id==='ts-tip-mode'||id==='ts-tip-soft-alpha'||id==='ts-tip-roundness'||id==='ts-tip-min-roundness'||id==='ts-tip-roundness-dynamics'||id==='ts-texture-depth-custom'||id==='ts-pressure-curves') return;
+       id==='ts-tip-mode'||id==='ts-tip-soft-alpha'||id==='ts-tip-reference-diameter'||id==='ts-tip-min-roundness'||id==='ts-tip-roundness-dynamics'||id==='ts-texture-depth-custom'||id==='ts-pressure-curves') return;
     const el=document.getElementById(id);
     if(!el) return;
     if(el.type==='checkbox') el.checked=!!val;
@@ -1034,14 +1051,16 @@ function applyToolPreset(json){
   window._tsCustomPressureCurves=JSON.parse(JSON.stringify(json['ts-pressure-curves']||{}));
   if(typeof window._refreshPressureCurvePreviews==='function') window._refreshPressureCurvePreviews();
 
-  // ── Restore tip image ──────────────────────────────────────────────────
+  //  Restore tip image
   window.brushTipRoundness=Math.max(0.01,Math.min(1,(json['ts-tip-roundness']??100)/100));
   window.brushTipMinimumRoundness=Math.max(0,Math.min(1,(json['ts-tip-min-roundness']??0)/100));
   window.brushTipRoundnessDynamics=!!json['ts-tip-roundness-dynamics'];
+  window.brushTipFlipX=!!json['ts-tip-flip-x'];
+  window.brushTipFlipY=!!json['ts-tip-flip-y'];
 
   if(json['ts-tip-dataurl']){
     _dataURLToCanvas(json['ts-tip-dataurl']).then(c=>{
-      if(typeof window.setBrushTip==='function') window.setBrushTip(c);
+      if(typeof window.setBrushTip==='function') window.setBrushTip(c,json['ts-tip-reference-diameter']);
       if(json['ts-tip-mode']) window.brushTipMode=json['ts-tip-mode'];
       if(json['ts-tip-soft-alpha']!==undefined) window.brushTipSoftAlpha=!!json['ts-tip-soft-alpha'];
       if(typeof _syncTipUI==='function') _syncTipUI();
@@ -1053,7 +1072,7 @@ function applyToolPreset(json){
     if(typeof _syncTipUI==='function') _syncTipUI();
   }
 
-  // ── Restore texture image ──────────────────────────────────────────────
+  //  Restore texture image
   if(json['ts-texture-dataurl']){
     _dataURLToCanvas(json['ts-texture-dataurl']).then(c=>{
       if(typeof window.setBrushTexture==='function') window.setBrushTexture(c);
@@ -1067,11 +1086,11 @@ function applyToolPreset(json){
   }
 }
 
-// ════════════════════════════════════════════════════════════════
+//
 // BRUSH PRESET SYSTEM (Photoshop-style)
-// ════════════════════════════════════════════════════════════════
+//
 (function(){
-  // ── Built-in brush shape presets ───────────────────────────────
+  //  Built-in brush shape presets
   // NOTE: there is no separate "eraser preset" list anymore. The eraser is
   // just the brush engine compositing with destination-out (see the brush
   // engine comment a few hundred lines up: "the eraser always uses the same
@@ -1094,6 +1113,9 @@ function applyToolPreset(json){
     'ts-spacing':1,
     'ts-spacing-mode':'fixed',
     'ts-roundness':100,
+    'ts-tip-roundness':100,
+    'ts-tip-flip-x':false,
+    'ts-tip-flip-y':false,
     'ts-rotation-mode':'fixed-rotation',
     'ts-angle':0,
     'ts-scatter-enabled':false,
@@ -1171,8 +1193,8 @@ function applyToolPreset(json){
   ];  // User-created presets (saved via the ➕ button). Restored from storage.
   let _customPresets = [];
 
-  // ── Groups (folders) ───────────────────────────────────────────
-  // A single ordered list now (no more separate brush/eraser group sets —
+  //  Groups (folders)
+  // A single ordered list now (no more separate brush/eraser group sets
   // both tools browse the same folders). The first/default folder holds all
   // the built-in shapes and is called "General Brushes" since it's the
   // default set everything ships with. Users can drag it (and any custom
@@ -1183,7 +1205,7 @@ function applyToolPreset(json){
       ids:['hard-round','soft-round','soft-airbrush'] }
   ];
 
-  // ── Per-preset settings store ───────────────────────────────────
+  //  Per-preset settings store
   // Each preset stores its own independent settings snapshot.
   // Keys are preset IDs; values mirror the full getToolPreset() shape.
   // Built-ins are seeded from their BRUSH_PRESETS[].settings; user tweaks
@@ -1212,11 +1234,13 @@ function applyToolPreset(json){
         try{settings['ts-tip-dataurl']=window.brushTipCanvas.toDataURL('image/png');}catch(e){}
         settings['ts-tip-mode']=window.brushTipMode||'multiply';
         settings['ts-tip-soft-alpha']=!!window.brushTipSoftAlpha;
-      } else {delete settings['ts-tip-dataurl'];delete settings['ts-tip-mode'];delete settings['ts-tip-soft-alpha'];}
+        if(Number.isFinite(Number(window.brushTipReferenceDiameter))&&Number(window.brushTipReferenceDiameter)>0) settings['ts-tip-reference-diameter']=Number(window.brushTipReferenceDiameter);
+        else delete settings['ts-tip-reference-diameter'];
+      } else {delete settings['ts-tip-dataurl'];delete settings['ts-tip-mode'];delete settings['ts-tip-soft-alpha'];delete settings['ts-tip-reference-diameter'];}
     }
   }
 
-  // ── Per-tool memory ─────────────────────────────────────────────
+  //  Per-tool memory
   // Brush and Eraser each keep their OWN preset + slider values. Switching
   // tools snapshots the outgoing tool's live settings and restores the
   // incoming tool's saved settings — so "brush=preset1, eraser=preset2" each
@@ -1235,7 +1259,7 @@ function applyToolPreset(json){
   // during dragover is unreliable cross-browser, so we just track it here)
   let _drag = null; // {type:'group',id} | {type:'item',id,fromGroup}
 
-  // ── Persistence ──────────────────────────────────────────────
+  //  Persistence
   const STORE_KEY='animatorBrushPresetsV2';
   function persist(){
     try{
@@ -1293,7 +1317,7 @@ function applyToolPreset(json){
   function allPresets(){ return BRUSH_PRESETS.concat(_customPresets); }
   function findPreset(id){ return allPresets().find(p=>p.id===id); }
 
-  // ── Draw preview canvas ───────────────────────────────────────
+  //  Draw preview canvas
   function drawPreview(canvas, cfg){
     const W=48,H=48;
     canvas.width=W; canvas.height=H;
@@ -1352,17 +1376,19 @@ function applyToolPreset(json){
       const maxW=W-pad*2,maxH=H-pad*2;
       const rotation=(((Number(s&&s['ts-angle'])||0)*Math.PI)/180);
       const roundness=Math.max(Number(s&&s['ts-tip-min-roundness'])||0,Number(s&&s['ts-tip-roundness'])||100)/100;
-      const shapedH=img.height*roundness;
-      const rotatedW=Math.abs(img.width*Math.cos(rotation))+Math.abs(shapedH*Math.sin(rotation));
-      const rotatedH=Math.abs(img.width*Math.sin(rotation))+Math.abs(shapedH*Math.cos(rotation));
+      const compressWidth=img.width<img.height;
+      const shapedW=img.width*(compressWidth?roundness:1),shapedH=img.height*(compressWidth?1:roundness);
+      const rotatedW=Math.abs(shapedW*Math.cos(rotation))+Math.abs(shapedH*Math.sin(rotation));
+      const rotatedH=Math.abs(shapedW*Math.sin(rotation))+Math.abs(shapedH*Math.cos(rotation));
       const scale=Math.min(maxW/Math.max(1,rotatedW),maxH/Math.max(1,rotatedH),1);
-      const dw=Math.max(1,img.width*scale),dh=Math.max(1,shapedH*scale);
+      const dw=Math.max(1,shapedW*scale),dh=Math.max(1,shapedH*scale);
       ctx2.save();
       ctx2.fillStyle = _activeTab==='eraser' ? 'rgba(226,75,74,0.95)' : 'rgba(232,232,240,0.95)';
       ctx2.fillRect(0,0,W,H);
       ctx2.globalCompositeOperation='destination-in';
       ctx2.translate(W/2,H/2);
       if(rotation) ctx2.rotate(rotation);
+      if(s&&((s['ts-tip-flip-x'])||(s['ts-tip-flip-y']))) ctx2.scale(s['ts-tip-flip-x']?-1:1,s['ts-tip-flip-y']?-1:1);
       ctx2.drawImage(img,-dw/2,-dh/2,dw,dh);
       ctx2.restore();
     }
@@ -1377,7 +1403,7 @@ function applyToolPreset(json){
     }
   }
 
-  // ── Brush Preset right-click context menu ─────────────────────
+  //  Brush Preset right-click context menu
   let _bpCtxTargetId = null;
   let _bpCopiedPreset = null;
 
@@ -1498,7 +1524,7 @@ function applyToolPreset(json){
     };
   }
 
-  // ── Brush Group right-click + double-click context menu ────────
+  //  Brush Group right-click + double-click context menu
   let _bgCtxTargetId = null;
   let _bpCopiedGroup = null; // { label, icon, presetIds (deep copies of custom presets + refs to builtins) }
 
@@ -1604,7 +1630,7 @@ function applyToolPreset(json){
     };
   }
 
-  // ── Create a single bp-item element (draggable + reorderable) ──
+  //  Create a single bp-item element (draggable + reorderable)
   function makeBpItem(p, groupId){
     const item = document.createElement('div');
     item.className='bp-item'+(p.id===_activePresetId?' active':'');
@@ -1655,7 +1681,7 @@ function applyToolPreset(json){
     return item;
   }
 
-  // ── Move a preset id from one group to another (or reorder within) ──
+  //  Move a preset id from one group to another (or reorder within)
   function moveItem(presetId, fromGroupId, toGroupId, targetId, before){
     const fromGrp = _groups.find(g=>g.id===fromGroupId);
     const toGrp = _groups.find(g=>g.id===toGroupId);
@@ -1673,7 +1699,7 @@ function applyToolPreset(json){
 
   function _bpSearchVal(){ const el=document.getElementById('bp-search'); return el?el.value:''; }
 
-  // ── Build the grid (groups + items, draggable/reorderable, scrollable) ──
+  //  Build the grid (groups + items, draggable/reorderable, scrollable)
   function buildGrid(searchQuery){
     const grid = document.getElementById('brush-preset-grid');
     const noResults = document.getElementById('bp-no-results');
@@ -1805,7 +1831,7 @@ function applyToolPreset(json){
     });
   }
 
-  // ── Reorder folders ─────────────────────────────────────────────
+  //  Reorder folders
   function moveGroup(draggedId, targetId, before){
     const fi=_groups.findIndex(g=>g.id===draggedId);
     if(fi===-1) return;
@@ -1818,17 +1844,22 @@ function applyToolPreset(json){
     buildGrid(_bpSearchVal());
   }
 
-  // ── Apply a preset's settings to the tool settings sliders ───
+  //  Apply a preset's settings to the tool settings sliders
   function applyPresetSettings(p){
     const s = p.settings;
     if(!('ts-rotation-mode' in s)||s['ts-rotation-mode']==='fixed') s['ts-rotation-mode']='fixed-rotation';
     if(!('ts-angle' in s)) s['ts-angle']=0;
+    if(!('ts-tip-roundness' in s)) s['ts-tip-roundness']=100;
+    if(!('ts-tip-flip-x' in s)) s['ts-tip-flip-x']=false;
+    if(!('ts-tip-flip-y' in s)) s['ts-tip-flip-y']=false;
     if(!('ts-scatter-enabled' in s)) s['ts-scatter-enabled']=false;
     if(!('ts-scatter-amount' in s)) s['ts-scatter-amount']=0;
     if(!('ts-scatter-count' in s)) s['ts-scatter-count']=1;
     window.brushTipRoundness=Math.max(0.01,Math.min(1,(s['ts-tip-roundness']??100)/100));
     window.brushTipMinimumRoundness=Math.max(0,Math.min(1,(s['ts-tip-min-roundness']??0)/100));
     window.brushTipRoundnessDynamics=!!s['ts-tip-roundness-dynamics'];
+    window.brushTipFlipX=!!s['ts-tip-flip-x'];
+    window.brushTipFlipY=!!s['ts-tip-flip-y'];
     window._tsCustomPressureCurves=JSON.parse(JSON.stringify(s['ts-pressure-curves']||{}));
     if(typeof window._refreshPressureCurvePreviews==='function') window._refreshPressureCurvePreviews();
     const spacingMode=document.getElementById('ts-spacing-mode');
@@ -1893,7 +1924,7 @@ function applyToolPreset(json){
     if(s['ts-tip-dataurl']){
       if(typeof _dataURLToCanvas==='function'){
         _dataURLToCanvas(s['ts-tip-dataurl']).then(c=>{
-          if(typeof window.setBrushTip==='function') window.setBrushTip(c);
+          if(typeof window.setBrushTip==='function') window.setBrushTip(c,s['ts-tip-reference-diameter']);
           if(s['ts-tip-mode']) window.brushTipMode=s['ts-tip-mode'];
           if(s['ts-tip-soft-alpha']!==undefined) window.brushTipSoftAlpha=!!s['ts-tip-soft-alpha'];
           if(typeof window._syncTipUI==='function') window._syncTipUI();
@@ -1920,7 +1951,7 @@ function applyToolPreset(json){
     }
   }
 
-  // ── Snapshot / restore per-tool live settings ──────────────────
+  //  Snapshot / restore per-tool live settings
   // This is what actually makes Brush and Eraser remember separate presets
   // AND separate manual tweaks (size/hardness/flow/spacing/roundness/AA),
   // since the underlying brushHardness/brushOpacity/brushAA/etc globals are
@@ -1975,7 +2006,7 @@ function applyToolPreset(json){
     }finally{_applyingPresetSettings=false;}
   }
 
-  // ── Select a preset (always for the currently active tab/tool) ─
+  //  Select a preset (always for the currently active tab/tool)
   function selectPreset(id){
     const p = findPreset(id);
     if(!p) return;
@@ -2006,7 +2037,7 @@ function applyToolPreset(json){
     refreshGrid();
   }
 
-  // ── Refresh grid active states ────────────────────────────────
+  //  Refresh grid active states
   function refreshGrid(){
     document.querySelectorAll('.bp-item').forEach(el=>{
       el.classList.toggle('active', el.dataset.presetId===_activePresetId);
@@ -2014,7 +2045,7 @@ function applyToolPreset(json){
   }
 
   // ── Switch preset panel tab (brush|eraser) — both show the SAME
-  //    folders/presets; only the highlighted preset + size bar differ ──
+  //    folders/presets; only the highlighted preset + size bar differ
   function switchTab(toolType){
     _activeTab = toolType;
     document.querySelectorAll('.bp-tool-tab').forEach(t=>{
@@ -2026,7 +2057,7 @@ function applyToolPreset(json){
     buildGrid();
   }
 
-  // ── Hook tab buttons ──────────────────────────────────────────
+  //  Hook tab buttons
   document.querySelectorAll('.bp-tool-tab').forEach(btn=>{
     btn.onclick=()=>{
       const t=btn.dataset.bpTool;
@@ -2035,7 +2066,7 @@ function applyToolPreset(json){
     };
   });
 
-  // ── Patch setTool: snapshot the outgoing tool, restore the incoming one ──
+  //  Patch setTool: snapshot the outgoing tool, restore the incoming one
   const _origSetTool = setTool;
   window.setTool = function(t, lbl){
     const prevTool = tool;
@@ -2048,7 +2079,7 @@ function applyToolPreset(json){
     }
   };
 
-  // ── Add Group / Add Brush ───────────────────────────────────────
+  //  Add Group / Add Brush
   const addGroupBtn=document.getElementById('bp-add-group');
   if(addGroupBtn) addGroupBtn.onclick=()=>{
     const name=(prompt('Name for the new brush folder:','New Group')||'').trim();
@@ -2073,7 +2104,7 @@ function applyToolPreset(json){
     const preset = {
       id, name, custom:true,
       preview:{ shape: roundness<60?'ellipse':'circle', hardness: hardness/100, aliased:!brushAA },
-      settings:{ 'ts-size':size, 'ts-hardness':hardness, 'ts-opacity':opacity, 'ts-flow':flow, 'ts-density':density, 'ts-spacing':spacing, 'ts-spacing-mode':document.getElementById('ts-spacing-mode')?.value||'fixed', 'ts-rotation-mode':document.getElementById('ts-rotation-mode')?.value||'fixed-rotation', 'ts-angle':+(document.getElementById('ts-angle')?.value||0), 'ts-scatter-enabled':!!document.getElementById('ts-scatter-enabled')?.checked, 'ts-scatter-amount':+(document.getElementById('ts-scatter-amount')?.value||0), 'ts-scatter-count':+(document.getElementById('ts-scatter-count')?.value||1), 'ts-roundness':roundness, 'ts-aa':!!brushAA }
+      settings:{ 'ts-size':size, 'ts-hardness':hardness, 'ts-opacity':opacity, 'ts-flow':flow, 'ts-density':density, 'ts-spacing':spacing, 'ts-spacing-mode':document.getElementById('ts-spacing-mode')?.value||'fixed', 'ts-rotation-mode':document.getElementById('ts-rotation-mode')?.value||'fixed-rotation', 'ts-angle':+(document.getElementById('ts-angle')?.value||0), 'ts-tip-roundness':+(document.getElementById('ts-tip-roundness')?.value||100), 'ts-tip-flip-x':!!document.getElementById('ts-tip-flip-x')?.checked, 'ts-tip-flip-y':!!document.getElementById('ts-tip-flip-y')?.checked, 'ts-scatter-enabled':!!document.getElementById('ts-scatter-enabled')?.checked, 'ts-scatter-amount':+(document.getElementById('ts-scatter-amount')?.value||0), 'ts-scatter-count':+(document.getElementById('ts-scatter-count')?.value||1), 'ts-roundness':roundness, 'ts-aa':!!brushAA }
     };
     _customPresets.push(preset);
     _seedPresetSettings(preset); // give it its own settings slot immediately
@@ -2084,7 +2115,7 @@ function applyToolPreset(json){
     selectPreset(id);
   };
 
-  // ── Import Brush (from .abr) ────────────────────────────────────
+  //  Import Brush (from .abr)
   // Mirrors the "+ Layer" pattern: the button opens a file picker and,
   // once a tip is chosen from the ABR picker modal, a brand-new preset
   // tile is appended to the grid (in the same folder the "+" brush
@@ -2127,6 +2158,7 @@ function applyToolPreset(json){
                 'ts-scatter-amount':0,
                 'ts-scatter-count':1,
                 'ts-tip-dataurl':b.canvas.toDataURL('image/png'),
+                'ts-tip-reference-diameter':b.referenceDiameter||null,
                 'ts-tip-mode':'replace',
                 'ts-tip-soft-alpha':true,
                 ...mapped
@@ -2157,11 +2189,11 @@ function applyToolPreset(json){
     fi.click();
   };
 
-  // ── Initial state ─────────────────────────────────────────────
+  //  Initial state
   buildGrid();
   selectPreset(_toolState.brush.presetId);
 
-  // ── Search input ──────────────────────────────────────────────
+  //  Search input
   const bpSearch = document.getElementById('bp-search');
   if(bpSearch){
     bpSearch.addEventListener('input',()=>{
@@ -2169,7 +2201,7 @@ function applyToolPreset(json){
     });
   }
 
-  // ── Size bar (panel) ────────────────────────────────────────────
+  //  Size bar (panel)
   const bpSz = document.getElementById('bp-sz');
   const bpSzVal = document.getElementById('bp-sz-val');
   if(bpSz){
@@ -2185,7 +2217,7 @@ function applyToolPreset(json){
   // expose for external use
   window._brushPresets = {selectPreset, refreshGrid, switchTab, BRUSH_PRESETS, get groups(){return _groups;}, get customPresets(){return _customPresets;}};
 
-  // ── Prevent trackpad/wheel scroll from bubbling up to the canvas ──
+  //  Prevent trackpad/wheel scroll from bubbling up to the canvas
   const bpPanelBody = document.querySelector('#brush-presets-panel .fp-body');
   if(bpPanelBody){
     bpPanelBody.addEventListener('wheel', e=>{ e.stopPropagation(); }, {passive:true});
@@ -2220,7 +2252,7 @@ function applyToolPreset(json){
 })();
 document.getElementById('onion-chk').onchange=updateOnion;
 
-// ════════════════════════════════════════════════════════════════
+//
 // ABR FEATURE DETECTION — best-effort compatibility scan
 // Full Photoshop brush descriptors (scattering, dual brush, texture,
 // dynamics, transfer, smoothing, etc.) are deeply-nested variable-length
@@ -2243,21 +2275,21 @@ document.getElementById('onion-chk').onchange=updateOnion;
 //     'coming_soon' -> control exists in the UI but is disabled (see the
 //                      ts-soon-badge / _tsNotImplemented list above)
 //     'none'        -> no equivalent control at all
-// ════════════════════════════════════════════════════════════════
+//
 const _ABR_FEATURE_MAP = {
   size:        { label:'Size (Diameter)',      needles:['Dmtr'],                          control:'ts-size',        applied:true,  uiStatus:'implemented' },
   spacing:     { label:'Spacing',               needles:['Spcn'],                          control:'ts-spacing',     applied:true,  uiStatus:'implemented' },
   hardness:    { label:'Hardness',              needles:['Hrdn'],                          control:'ts-hardness',    applied:false, uiStatus:'implemented', sampledInapplicable:true },
   opacity:     { label:'Opacity',               needles:['Opct'],                          control:'ts-opacity',     applied:true,  uiStatus:'implemented' },
-  flipX:       { label:'Flip X',                needles:['Flip X','flipX'],                control:'ts-flip-x',      applied:false, uiStatus:'coming_soon' },
-  flipY:       { label:'Flip Y',                needles:['Flip Y','flipY'],                control:'ts-flip-y',      applied:false, uiStatus:'coming_soon' },
+  flipX:       { label:'Flip X',                needles:['Flip X','flipX'],                control:'ts-tip-flip-x',  applied:true,  uiStatus:'implemented' },
+  flipY:       { label:'Flip Y',                needles:['Flip Y','flipY'],                control:'ts-tip-flip-y',  applied:true,  uiStatus:'implemented' },
   flow:        { label:'Flow',                  needles:['Flow'],                          control:'ts-flow',        applied:true,  uiStatus:'implemented' },
   angle:       { label:'Angle',                 needles:['Angl'],                          control:'ts-angle',       applied:true,  uiStatus:'implemented' },
   angleDynamics:{label:'Angle Dynamics', needles:['angleDynamics'], control:'ts-rotation-mode', applied:false, uiStatus:'implemented' },
   roundness:   { label:'Roundness',             needles:['Rndn'],                          control:'ts-roundness',   applied:false, uiStatus:'coming_soon' },
-  scatter:     { label:'Scatter',               needles:['Scattering'],                    control:'ts-scatter',     applied:false, uiStatus:'coming_soon' },
+  scatter:     { label:'Scatter',               needles:['useScatter'],                    control:'ts-scatter-enabled', applied:true, uiStatus:'implemented' },
   scatterBoth: { label:'Scatter — Both Axes',   needles:['bothAxes'],                      control:'ts-scatter-both-axes', applied:false, uiStatus:'coming_soon' },
-  count:       { label:'Count (multi-stamp)',   needles:['Count'],                         control:'ts-count',       applied:false, uiStatus:'coming_soon' },
+  count:       { label:'Count (multi-stamp)',   needles:['Cnt'],                           control:'ts-scatter-count', applied:true, uiStatus:'implemented' },
   texture:     { label:'Texture',               needles:['Texture'],                       control:'ts-texture',     applied:false, uiStatus:'coming_soon' },
   sizeJitter:  { label:'Size Jitter (Shape Dynamics)', needles:['Shape Dynamics','sizeJitter','useTipDynamics','szVr'], control:'ts-size-jitter', applied:false, uiStatus:'coming_soon' },
   angleJitter: { label:'Angle Jitter',           needles:['angleJitter'],                   control:'ts-angle-jitter', applied:false, uiStatus:'coming_soon' },
@@ -2368,6 +2400,17 @@ function _extractABRDescriptorValues(buffer) {
     }
     return null;
   }
+  function findNumberAfter(marker,key) {
+    const start=findSequence(marker);
+    if(start<0) return null;
+    const end=Math.min(n-16,start+1024);
+    for(let i=start;i<=end;i++){
+      if(!keyAt(i,key)) continue;
+      const value=valueAfterKey(i+4);
+      if(value!=null) return value;
+    }
+    return null;
+  }
   // The brush preset's display name ("soft strokes", etc.) is stored as a
   // descriptor key too, but unlike Dmtr/Spcn/Angl/Rndn (fixed 4-char OSType
   // keys) the `Nm` key is a variable-length ASCII key: a 4-byte length
@@ -2407,6 +2450,7 @@ function _extractABRDescriptorValues(buffer) {
   }
   return {
     name:      findName(),
+    diameter:  findFirst('Dmtr'),
     spacing:   findFirst('Spcn'),
     opacity:   findFirst('Opct'),
     flow:      findFirst('Flow'),
@@ -2419,11 +2463,17 @@ function _extractABRDescriptorValues(buffer) {
     sizeVariation: findNumber('szVr'),
     minimumDiameter: findNumber('minimumDiameter'),
     minimumRoundness: findNumber('minimumRoundness'),
-    roundnessDynamics: findBoolean('useRoundnessDynamics')
+    roundnessDynamics: findBoolean('useRoundnessDynamics'),
+    useScatter: findBoolean('useScatter'),
+    scatterAmount: findNumberAfter('useScatter','Spcn'),
+    scatterCount: findNumber('Cnt'),
+    scatterBothAxes: findBoolean('bothAxes'),
+    flipX: findBoolean('flipX'),
+    flipY: findBoolean('flipY')
   };
 }
 
-// ════════════════════════════════════════════════════════════════
+//
 // ABR → INTERNAL PARAMETER MAPPING LAYER
 // Single source of truth converting extracted ABR descriptor values
 // (see _extractABRDescriptorValues) into this app's internal brush-engine
@@ -2435,7 +2485,7 @@ function _extractABRDescriptorValues(buffer) {
 // picker tile click and the "Import Brush" preset flow) route through
 // this + _applyABRSettingsToUI so there is exactly one place that knows
 // how an ABR value becomes an internal setting.
-// ════════════════════════════════════════════════════════════════
+//
 function _mapABRValuesToSettings(values, features) {
   const v = values || {};
   const f = features || {};
@@ -2447,6 +2497,11 @@ function _mapABRValuesToSettings(values, features) {
   if(v.roundness!=null) out['ts-tip-roundness']=Math.max(1,Math.min(100,Number(v.roundness)));
   if(v.minimumRoundness!=null) out['ts-tip-min-roundness']=Math.max(0,Math.min(100,Number(v.minimumRoundness)));
   if(typeof v.roundnessDynamics==='boolean') out['ts-tip-roundness-dynamics']=v.roundnessDynamics;
+  if(typeof v.flipX==='boolean') out['ts-tip-flip-x']=v.flipX;
+  if(typeof v.flipY==='boolean') out['ts-tip-flip-y']=v.flipY;
+  if(typeof v.useScatter==='boolean') out['ts-scatter-enabled']=v.useScatter;
+  if(v.scatterAmount!=null) out['ts-scatter-amount']=Math.max(0,Math.min(100,Number(v.scatterAmount)));
+  if(v.scatterCount!=null) out['ts-scatter-count']=Math.max(1,Math.min(50,Math.round(Number(v.scatterCount))));
   if(v.angleDynamicsType===6) out['ts-rotation-mode']='stroke-direction';
   else out['ts-rotation-mode']='fixed-rotation';
   // Hardness intentionally NOT mapped: this parser only ever extracts
@@ -2482,12 +2537,12 @@ function _applyABRSettingsToUI(size, spacing, settings) {
   }
 
   for (const ctrlId in (settings || {})) {
-    if(ctrlId==='ts-tip-roundness'){window.brushTipRoundness=Math.max(0.01,Math.min(1,+settings[ctrlId]/100));continue;}
     if(ctrlId==='ts-tip-min-roundness'){window.brushTipMinimumRoundness=Math.max(0,Math.min(1,+settings[ctrlId]/100));continue;}
     if(ctrlId==='ts-tip-roundness-dynamics'){window.brushTipRoundnessDynamics=!!settings[ctrlId];continue;}
     const el = document.getElementById(ctrlId);
     if (!el) continue;
-    el.value = settings[ctrlId];
+    if(el.type==='checkbox') el.checked=!!settings[ctrlId];
+    else el.value=settings[ctrlId];
     el.dispatchEvent(new Event('input'));
   }
 
@@ -2505,6 +2560,7 @@ function _abrDetectedSettings(brush, mappedSettings) {
   const values=brush.values||{};
   return {
     size:brush.size??null,
+    diameter:values.diameter??null,
     spacing:brush.spacing??null,
     opacity:values.opacity??null,
     useBrushSize:typeof values.useBrushSize==='boolean'?values.useBrushSize:null,
@@ -2516,11 +2572,12 @@ function _abrDetectedSettings(brush, mappedSettings) {
     roundness:values.roundness??null,
     minimumRoundness:values.minimumRoundness??null,
     roundnessDynamics:typeof values.roundnessDynamics==='boolean'?values.roundnessDynamics:null,
-    scatter:!!features.scatter,
-    scatterBothAxes:!!features.scatterBoth,
-    scatterCount:!!features.count,
-    flipX:!!features.flipX,
-    flipY:!!features.flipY,
+    scatter:typeof values.useScatter==='boolean'?values.useScatter:!!features.scatter,
+    scatterAmount:values.scatterAmount??null,
+    scatterBothAxes:typeof values.scatterBothAxes==='boolean'?values.scatterBothAxes:!!features.scatterBoth,
+    scatterCount:values.scatterCount??null,
+    flipX:typeof values.flipX==='boolean'?values.flipX:!!features.flipX,
+    flipY:typeof values.flipY==='boolean'?values.flipY:!!features.flipY,
     texture:!!features.texture,
     angleDynamics:!!features.angleDynamics,
     angleDynamicsType:values.angleDynamicsType??null,
@@ -2556,7 +2613,7 @@ function _abrUnsupportedList(features) {
 // land directly on the bounds fields — 47 bytes for the older v6.1
 // layout, 301 bytes for v6.2/CS6+ — falling back to a short local
 // scan if neither fixed offset lines up. That approach is used here.
-// ════════════════════════════════════════════════════════════════
+//
 
 /**
  * Parse an ArrayBuffer containing an ABR file.
@@ -2663,7 +2720,7 @@ function parseABR(buffer) {
   function grayscaleToTipCanvas(pixels, w, h) {
     let minX=w,minY=h,maxX=-1,maxY=-1;
     for(let y=0;y<h;y++) for(let x=0;x<w;x++){
-      if(255-pixels[y*w+x]>0){
+      if(pixels[y*w+x]>0){
         if(x<minX)minX=x;if(x>maxX)maxX=x;if(y<minY)minY=y;if(y>maxY)maxY=y;
       }
     }
@@ -2673,7 +2730,7 @@ function parseABR(buffer) {
     const ctx2=c.getContext('2d');
     const id=ctx2.createImageData(cropW,cropH),d=id.data;
     for(let y=0,p=0;y<cropH;y++) for(let x=0;x<cropW;x++,p+=4){
-      const a=255-pixels[(minY+y)*w+minX+x];
+      const a=pixels[(minY+y)*w+minX+x];
       d[p]=d[p+1]=d[p+2]=0;d[p+3]=a;
     }
     ctx2.putImageData(id,0,0);
@@ -2701,9 +2758,9 @@ function parseABR(buffer) {
   const countOrSub = readUint16();
   const brushes = [];
 
-  // ──────────────────────────────────────────────────────────────
+  //
   //  ABR v1 / v2  (Photoshop ≤ CS)
-  // ──────────────────────────────────────────────────────────────
+  //
   if (version === 1 || version === 2) {
     for (let i = 0; i < countOrSub && remaining() > 0; i++) {
       try {
@@ -2738,9 +2795,9 @@ function parseABR(buffer) {
       } catch (e) { break; }
     }
 
-  // ──────────────────────────────────────────────────────────────
+  //
   //  ABR v6 (CS2+) / v10 (CS6+) — descriptor-wrapped sampled tips
-  // ──────────────────────────────────────────────────────────────
+  //
   } else if (version === 6 || version === 10) {
 
     function reachSection(key) {
@@ -2846,6 +2903,7 @@ function parseABR(buffer) {
   brushes.forEach((b, i) => {
     const parsedName=(b.name||'').trim();
     if(values.name) b.name=brushes.length>1?(values.name+' '+String(i+1).padStart(2,'0')):values.name;
+    if(values.diameter!=null&&Number(values.diameter)>0){b.referenceDiameter=Number(values.diameter);b.size=Number(values.diameter);}
     if(values.spacing!=null) b.spacing=Math.max(1,Math.min(200,Math.round(values.spacing)));
     else if(!parsedName||/^Brush \d+$/i.test(parsedName)) b.name='ABR Brush '+String(i+1).padStart(2,'0');
     b.features=features;
@@ -2856,25 +2914,25 @@ function parseABR(buffer) {
 }
 
 
-// ════════════════════════════════════════════════════════════════
+// ABR IMPORT RESULTS
 // ABR IMPORT COMPATIBILITY MODAL
 // Shown right after a successful parse, before the tip picker. For every
 // Photoshop brush setting we know how to look for, this reports one of:
-//   ✔ Imported Successfully — a real value was found in the file AND this
+//   Imported Successfully - a readable value was found and can be applied.
 //     app has a live control for it, so it's applied automatically.
-//   ◐ Partially Supported   — either (a) this app has the control but it's
+//   Partially Supported - detected but not fully wired or readable.
 //     not wired up yet ("Coming Soon" in Tool Settings), or (b) this app
 //     fully supports the control but the ABR file doesn't carry a value
 //     for it (e.g. Flow), so nothing was found to import.
-//   ✕ Not Supported Yet     — the file uses a Photoshop feature this app
+//   Not Supported Yet - no equivalent control exists in this app.
 //     has no equivalent control for at all (e.g. Dual Brush).
-// Never blocks import — `onContinue` always fires when dismissed.
+// Never blocks import; onContinue always fires when dismissed.
 //
 // NOTE: this uses the shared `.modal-overlay` / `.modal` classes (see
-// style.css) — the inner box MUST be `.modal`, not a one-off class, or it
+// style.css). The inner box must use .modal so it receives the shared styling.
 // renders with no background/padding/border like the rest of the app's
 // modals.
-// ════════════════════════════════════════════════════════════════
+
 function showABRImportResults(brushes, filename, onContinue) {
   const features = brushes.features || {};
   const values    = brushes.values   || {};
@@ -2895,17 +2953,17 @@ function showABRImportResults(brushes, filename, onContinue) {
       // We know how to apply this one IF the file actually has a value.
       const v = values[key];
       if (v!=null) {
-        const unit = (key==='angle') ? '°' : (key==='opacity'||key==='hardness'||key==='roundness') ? '%' : '';
+        const unit = (key==='angle') ? ' deg' : (key==='opacity'||key==='hardness'||key==='roundness') ? '%' : '';
         imported.push(f.label+' ('+Math.round(v)+unit+')');
       } else if (features[key]) {
-        partial.push(f.label+' — detected but no readable value, left at current setting');
+        partial.push(f.label+' - detected but no readable value, left at current setting');
       }
       continue;
     }
 
     // Has a live control in this app, but isn't auto-applied for a reason
     // specific to this parser (e.g. Hardness only means something on
-    // Photoshop's procedural round brushes — every tip this app imports is
+    // Photoshop's procedural round brushes; every imported tip here is
     // a sampled/image tip, so applying it would overwrite the user's
     // Hardness with a value that was never meaningful here). Report this
     // distinctly from "coming soon" or "no equivalent" so it's clear the
@@ -2913,28 +2971,28 @@ function showABRImportResults(brushes, filename, onContinue) {
     if (f.sampledInapplicable) {
       const v = values[key];
       const found = v!=null || features[key];
-      if (found) partial.push(f.label+' — only applies to Photoshop\u2019s procedural round brushes, not image-based tips (left at current setting)');
+      if (found) partial.push(f.label+" - only applies to Photoshop's procedural round brushes, not image-based tips (left at current setting)");
       continue;
     }
 
     // Not something we apply automatically. If the file appears to use it,
     // say so explicitly; otherwise still list it under "Not Supported Yet"
     // (rather than staying silent) so people can see the full set of
-    // Photoshop features this app has no equivalent for at all — matching
+    // Photoshop features this app has no equivalent for, matching
     // the "keep unsupported settings listed separately for future support"
     // requirement regardless of what any one file happens to contain.
     if (f.uiStatus==='coming_soon') {
-      if (features[key]) partial.push(f.label+' — detected, but this control isn\u2019t wired up yet');
+      if (features[key]) partial.push(f.label+" - detected, but this control isn't wired up yet");
       continue;
     }
-    unsupported.push(features[key] ? (f.label+' — detected, no equivalent in this app') : (f.label+' — no equivalent in this app'));
+    unsupported.push(features[key] ? (f.label+' - detected, no equivalent in this app') : (f.label+' - no equivalent in this app'));
   }
 
   // Flow/Density are fully implemented in this app but Photoshop doesn't
   // store per-brush values for them in .abr files, so they never have
-  // anything to import — always surface that plainly rather than silently
+  // anything to import; always surface that plainly rather than silently
   // leaving them out of the report.
-  partial.push('Density — not stored in ABR files, left at current setting');
+  partial.push('Density - not stored in ABR files, left at current setting');
 
   let overlay = document.getElementById('modal-abr-results');
   if (!overlay) {
@@ -2953,7 +3011,7 @@ function showABRImportResults(brushes, filename, onContinue) {
     document.body.appendChild(overlay);
   }
   overlay.querySelector('#modal-abr-results-sub').textContent =
-    filename + ' — ' + brushes.length + ' brush tip' + (brushes.length===1?'':'s') + ' found';
+    filename + ' - ' + brushes.length + ' brush tip' + (brushes.length===1?'':'s') + ' found';
 
   function section(title, items, color) {
     if (!items.length) return '';
@@ -2966,10 +3024,10 @@ function showABRImportResults(brushes, filename, onContinue) {
 
   const body = overlay.querySelector('#modal-abr-results-body');
   body.innerHTML =
-    section('✔ Imported Successfully', imported, '#4caf7d') +
-    section('◐ Partially Supported', partial, '#e0a03c') +
-    section('✕ Not Supported Yet', unsupported, '#c85a5a') +
-    '<div style="font-size:9px;color:var(--text2);line-height:1.4;">Unsupported or partial settings are skipped gracefully — the brush tip and every setting above it still import normally. Values shown are read from the file and applied when you pick a tip in the next step.</div>';
+    section('Imported Successfully', imported, '#4caf7d') +
+    section('Partially Supported', partial, '#e0a03c') +
+    section('Not Supported Yet', unsupported, '#c85a5a') +
+    '<div style="font-size:9px;color:var(--text2);line-height:1.4;">Unsupported or partial settings are skipped gracefully - the brush tip and every setting above it still import normally. Values shown are read from the file and applied when you pick a tip in the next step.</div>';
 
   const okBtn = overlay.querySelector('#modal-abr-results-ok');
   okBtn.onclick = () => {
@@ -2982,7 +3040,7 @@ function showABRImportResults(brushes, filename, onContinue) {
 
 // grid. Clicking a tile applies it as the current brush tip via
 // the same setBrushTip() path used by the manual PNG upload.
-// ════════════════════════════════════════════════════════════════
+//
 
 function showABRPicker(brushes, filename, onImport) {
   // Re-use an existing modal element if possible; otherwise create one.
@@ -3052,13 +3110,15 @@ function showABRPicker(brushes, filename, onImport) {
     const pickerAngle=b.values&&b.values.angle!=null?(((-b.values.angle%360)+360)%360)*Math.PI/180:0;
     const tipW=b.canvas.width||1,tipH=b.canvas.height||1;
     const pickerRoundness=Math.max(0.01,Math.min(1,Number(b.values&&b.values.roundness)||100)/100);
-    const shapedH=tipH*pickerRoundness;
-    const rotatedW=Math.abs(tipW*Math.cos(pickerAngle))+Math.abs(shapedH*Math.sin(pickerAngle));
-    const rotatedH=Math.abs(tipW*Math.sin(pickerAngle))+Math.abs(shapedH*Math.cos(pickerAngle));
+    const compressWidth=tipW<tipH;
+    const shapedW=tipW*(compressWidth?pickerRoundness:1),shapedH=tipH*(compressWidth?1:pickerRoundness);
+    const rotatedW=Math.abs(shapedW*Math.cos(pickerAngle))+Math.abs(shapedH*Math.sin(pickerAngle));
+    const rotatedH=Math.abs(shapedW*Math.sin(pickerAngle))+Math.abs(shapedH*Math.cos(pickerAngle));
     const tipScale=Math.min(58/Math.max(1,rotatedW),58/Math.max(1,rotatedH));
     cx2.translate(32,32);
     if(pickerAngle) cx2.rotate(pickerAngle);
-    cx2.drawImage(b.canvas,-tipW*tipScale/2,-shapedH*tipScale/2,tipW*tipScale,shapedH*tipScale);
+    if(b.values&&(b.values.flipX||b.values.flipY)) cx2.scale(b.values.flipX?-1:1,b.values.flipY?-1:1);
+    cx2.drawImage(b.canvas,-shapedW*tipScale/2,-shapedH*tipScale/2,shapedW*tipScale,shapedH*tipScale);
     cx2.restore();
 
     // Label
@@ -3094,8 +3154,8 @@ function showABRPicker(brushes, filename, onImport) {
 
     tile.addEventListener('click',()=>{
       // Apply tip to engine
-      if(typeof window.setBrushTip==='function') window.setBrushTip(b.canvas);
-      // Route every other extracted parameter through the single ABR →
+      if(typeof window.setBrushTip==='function') window.setBrushTip(b.canvas,b.referenceDiameter);
+      // Route every other extracted parameter through the single ABR
       // internal mapping layer, then apply size/spacing/mapped settings to
       // the live UI in one pass. Never overwrites with a guess — only with
       // a value this app actually found in the file.

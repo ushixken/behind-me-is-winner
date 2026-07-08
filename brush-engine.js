@@ -1,7 +1,7 @@
-// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
+//
 // DRAWING Ã¢â‚¬â€ getPos uses activeC's own getBoundingClientRect()
 // which accounts for the CSS transform, giving pixel-perfect coords
-// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
+//
 function getPos(e){
   // getBoundingClientRect() on activeC only gives the axis-aligned bounding
   // box of the rotated element, NOT its true rotated geometry Ã¢â‚¬â€ using it
@@ -42,7 +42,7 @@ function getBrushSize(){return toolSizes[tool]||6;}
 // non-module <script> tags on the page, same as brushOpacity/brushHardness.
 let brushDensity = 1;
 
-// Ã¢â€â‚¬Ã¢â€â‚¬ Brush Tip Image (ABR / custom upload) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+//  Brush Tip Image (ABR / custom upload)
 // When non-null, this canvas holds a grayscale alpha mask that replaces the
 // default circle/gradient dab shape.  The tip image is stored at its native
 // resolution and scaled to the effective brush diameter on every dab.
@@ -51,6 +51,7 @@ let brushDensity = 1;
 // manual cache.clear() call at the use site.
 window.brushTipCanvas   = null;   // HTMLCanvasElement | null
 window.brushTipVersion  = 0;      // integer, incremented on each tip change
+window.brushTipReferenceDiameter = null;
 // When true the tip mask is multiplied by the standard radial hardness
 // falloff Ã¢â‚¬â€ giving a soft feathered edge even on an imported ABR tip.
 // When false the tip image alpha is used verbatim (hard-edged custom shape).
@@ -61,8 +62,10 @@ window.brushTipMode = 'multiply';
 window.brushTipRoundness = 1;
 window.brushTipMinimumRoundness = 0;
 window.brushTipRoundnessDynamics = false;
+window.brushTipFlipX = false;
+window.brushTipFlipY = false;
 
-// Ã¢â€â‚¬Ã¢â€â‚¬ Brush Texture Image Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+//  Brush Texture Image
 // When non-null, this canvas is tiled as a repeating texture over each dab
 // with globalCompositeOperation='multiply' at depth-controlled opacity.
 // Completely independent from the tip shape above.
@@ -80,7 +83,7 @@ window.brushTextureDepth   = 0.5;
 // final transparency as a layer-level composite Ã¢â‚¬â€ not individual dabs.
 let brushFlow = 1;
 
-// Ã¢â€â‚¬Ã¢â€â‚¬ Dynamic Opacity tracking (Dynamics tab Ã¢â€“Â¸ "Opacity" control) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+//  Dynamic Opacity tracking (Dynamics tab  "Opacity" control)
 // This dropdown used to be labeled "Opacity / Flow" but its influence was
 // actually only ever applied to per-dab Flow alpha below Ã¢â‚¬â€ the real
 // stroke-level Opacity (brushOpacity, applied once in _commitStrokeCanvas)
@@ -95,7 +98,7 @@ let brushFlow = 1;
 // time Ã¢â‚¬â€ the opacity would only "snap" down to some fixed low value after
 // lifting the pen, instead of tracking pressure as it happened.
 //
-// Fixed here by applying the pressure influence PER DAB, in real time Ã¢â‚¬â€
+// Fixed here by applying the pressure influence PER DAB, in real time
 // exactly like Size dynamics already does Ã¢â‚¬â€ instead of deferring it to
 // stroke-end. Each dab's alpha is scaled by its own instantaneous pressure
 // reading, so light pressure paints light immediately and heavy pressure
@@ -104,7 +107,7 @@ let brushFlow = 1;
 // constant stroke-level cap applied once at commit (see
 // _commitStrokeCanvas), unaffected by this per-dab control.
 
-// Ã¢â€â‚¬Ã¢â€â‚¬ Stroke temp canvas Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+//  Stroke temp canvas
 // Opacity (brushOpacity) works at the stroke level: all dabs within a single
 // stroke accumulate on a scratch canvas; when the stroke ends the scratch is
 // composited onto activeC with globalAlpha = brushOpacity. This means:
@@ -157,7 +160,7 @@ function _commitStrokeCanvas(){
   _strokeCtx.clearRect(0, 0, _strokeCanvas.width, _strokeCanvas.height);
 }
 
-// Ã¢â€â‚¬Ã¢â€â‚¬ Live stroke preview Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+//  Live stroke preview
 // While a stroke is in progress, dabs land on the offscreen _strokeCanvas
 // (not activeC) so stroke-level Opacity/Flow can be composited correctly
 // once at stroke-end (see _commitStrokeCanvas above). But recomposite()
@@ -194,7 +197,7 @@ function _getLiveStrokePreview(){
   return _strokePreviewCanvas;
 }
 window._getLiveStrokePreview = _getLiveStrokePreview;
-// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
+//
 // TVPAINT / CLIP STUDIO STYLE BRUSH ENGINE
 //
 // Two antialiasing modes, matching how professional animation apps work:
@@ -213,14 +216,14 @@ window._getLiveStrokePreview = _getLiveStrokePreview;
 //    Ideal for cel-animation clean line work.
 //
 // The eraser always uses the same mode as the current brush.
-// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
+//
 
 function _hexToRGB(hex){
   const h=hex.replace('#','');
   return[parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)];
 }
 
-// Ã¢â€â‚¬Ã¢â€â‚¬ Cache key quantization Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+//  Cache key quantization
 // Pressure/velocity/fade/taper dynamics nudge r and alpha by tiny fractions
 // on basically every dab, so keying the stamp cache on their EXACT values
 // (old code: r.toFixed(2), raw alpha) made the cache miss almost every
@@ -235,7 +238,7 @@ const _Q_R = 0.25;      // px
 const _Q_ALPHA = 0.02;  // ~2% alpha steps
 function _quant(v,step){return Math.round(v/step)*step;}
 
-// Ã¢â€â‚¬Ã¢â€â‚¬ Edge width: Photoshop/Photopea-style constant-ish antialiasing Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+//  Edge width: Photoshop/Photopea-style constant-ish antialiasing
 // The old falloff used `outerSpan = 1-hardness` as a FRACTION OF THE RADIUS,
 // so the soft edge band was literally (1-hardness)*r pixels wide Ã¢â‚¬â€ fine on a
 // small brush, but on a large one (say r=150 at hardness=0.5) that's a 75px
@@ -254,7 +257,7 @@ function _edgeWidthPx(r, hardness){
   // behavior: rim width is proportional to (1-hardness)*r, clamped to a
   // flat 3px max at any size. Left untouched on purpose.
   // Airbrush-only exception: the Airbrush preset (hardness=0, size 60) is
-  // meant to be a true soft spray-cone dot Ã¢â‚¬â€ like Clip Studio's airbrush Ã¢â‚¬â€
+  // meant to be a true soft spray-cone dot  like Clip Studio's airbrush
   // where the feather spans the ENTIRE radius, not just a thin 3px rim
   // around a flat opaque core. That's what made it look like a hard-edged
   // blob instead of a smooth gaussian spray. Scoped strictly to
@@ -324,9 +327,9 @@ function _roundBrushFalloff(t,inner,hardness){
 //      already proven fine by the aliased path below); the on-screen
 //      *position* stays fully sub-pixel accurate every single dab. This is
 //      the current CPU-mode implementation.
-// Ã¢â€â‚¬Ã¢â€â‚¬ Airbrush-only falloff: true gaussian, no flat opaque core Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+//  Airbrush-only falloff: true gaussian, no flat opaque core
 // Every other brush (hard/soft round, pencil, eraser) intentionally uses a
-// flat inner core + linear ramp (see _effectiveInnerFrac/_edgeWidthPx) Ã¢â‚¬â€
+// flat inner core + linear ramp (see _effectiveInnerFrac/_edgeWidthPx)
 // that's what gives a "round brush" its defined, paintable body. A real
 // airbrush/spray-can tip has NO flat core at all: peak density sits at the
 // exact center and fades continuously the whole way to the edge, which is
@@ -361,7 +364,7 @@ function _airbrushFalloff(t){
 const _aaDabCache=new Map(); // key -> {canvas,w,h}
 const _AA_DAB_CACHE_MAX=64;
 
-// Ã¢â€â‚¬Ã¢â€â‚¬ Tip-shaped dab cache Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+//  Tip-shaped dab cache
 // Mirrors _aaDabCache but for dabs whose shape comes from brushTipCanvas.
 // Keyed on (r, rgb, alpha, composite, hardness, tipVersion, softAlpha, mode)
 // so any tip change (new import, clear) busts every entry automatically.
@@ -394,8 +397,11 @@ function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   // the true silhouette at every brush size.
   const tipNativeW=tipC?(tipC.width||tipC.naturalWidth||1):1;
   const tipNativeH=tipC?(tipC.height||tipC.naturalHeight||1):1;
-  const tipScale=(2*rr)/Math.max(tipNativeW,tipNativeH);
-  const dabW=Math.max(1,tipNativeW*tipScale), dabH=Math.max(1,tipNativeH*tipScale*tipRoundness);
+  const referenceDiameter=Number(window.brushTipReferenceDiameter);
+  const tipScale=(2*rr)/(Number.isFinite(referenceDiameter)&&referenceDiameter>0?referenceDiameter:Math.max(tipNativeW,tipNativeH));
+  const compressWidth=tipNativeW<tipNativeH;
+  const dabW=Math.max(1,tipNativeW*tipScale*(compressWidth?tipRoundness:1));
+  const dabH=Math.max(1,tipNativeH*tipScale*(compressWidth?1:tipRoundness));
 
   const pad=2;
   const w=Math.ceil(dabW)+pad*2+1, h=Math.ceil(dabH)+pad*2+1;
@@ -414,7 +420,7 @@ function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
 
   // Step 2: Mask with the tip image (destination-in keeps only pixels where
   // the tip has alpha > 0, and scales that alpha proportionally). Drawn at
-  // its aspect-correct size (dabWÃƒâ€”dabH), centered in the padded canvas Ã¢â‚¬â€
+  // its aspect-correct size (dabWdabH), centered in the padded canvas
   // not stretched to fill the whole wÃƒâ€”h square.
   if(tipC){
     tc.globalCompositeOperation='destination-in';
@@ -424,27 +430,14 @@ function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
     tc.globalCompositeOperation='source-over';
   }
 
-  // Step 3: Per-pixel Ã¢â‚¬â€ apply the radial hardness falloff on top of the tip
-  // mask (soft-alpha mode) or just scale by the requested alpha (hard mode),
-  // and clamp to the actual dab alpha.
+  // Step 3: Preserve the imported image-tip alpha without a procedural circular mask.
   const id=tc.getImageData(0,0,w,h); const d=id.data;
-  const inner=_effectiveInnerFrac(rr,hardness);
-  const outerSpan=Math.max(0.0001,1-inner);
   for(let py=0;py<h;py++){
     for(let px=0;px<w;px++){
       const p=(py*w+px)*4;
       if(d[p+3]===0) continue;
       const tipAlphaFrac=d[p+3]/255; // alpha the tip image provided
-      const dx=(px+0.5)-cx, dy=(py+0.5)-cy;
-      const t=Math.sqrt(dx*dx+dy*dy)/rr;
-      let falloff;
-      if(!tipC || (softAlpha && tipMode!=='replace')){
-        falloff=_roundBrushFalloff(t,inner,hardness);
-      } else {
-        // Hard / replace mode: no radial blend Ã¢â‚¬â€ use tip alpha verbatim.
-        falloff=t>=1?0:1;
-      }
-      const finalAlpha=alpha*tipAlphaFrac*falloff;
+      const finalAlpha=alpha*tipAlphaFrac;
       d[p]=cr; d[p+1]=cg; d[p+2]=cb;
       d[p+3]=Math.round(Math.min(1,finalAlpha)*255);
     }
@@ -540,6 +533,7 @@ function _drawUnifiedTipStamp(x,y,r,rgb,alpha,composite){
   dc.imageSmoothingEnabled=true;
   dc.translate(x,y);
   if(_activeDabRotation) dc.rotate(_activeDabRotation);
+  if(window.brushTipFlipX||window.brushTipFlipY) dc.scale(window.brushTipFlipX?-1:1,window.brushTipFlipY?-1:1);
   dc.drawImage(stamp.canvas,-stamp.w/2,-stamp.h/2);
   dc.restore();
 }
@@ -610,7 +604,7 @@ function _dabAAGpu(x,y,r,rgb,alpha,composite){
 //      looked softer/blurrier than GPU strokes at the same hardness.
 // Fix: compute the exact same analytic falloff the GPU radial gradient
 // uses (flat core out to `inner`, linear ramp to 0 at the true,
-// unquantized radius `r`), sampled at the dab's true fractional center Ã¢â‚¬â€
+// unquantized radius `r`), sampled at the dab's true fractional center
 // then composite it by hand (standard source-over / destination-out alpha
 // math) directly into the canvas's pixel buffer instead of drawing a
 // pre-baked bitmap. This is intentionally heavier than the old cached
@@ -806,15 +800,16 @@ function _dabAliased(x,y,r,rgb,alpha,composite){
   dc.save();
   dc.imageSmoothingEnabled=false;
   dc.globalCompositeOperation=composite==='erase'?'destination-out':'source-over';
-  if(window.brushTipCanvas&&_activeDabRotation){
+  if(window.brushTipCanvas&&(_activeDabRotation||window.brushTipFlipX||window.brushTipFlipY)){
     dc.translate(x,y);
-    dc.rotate(_activeDabRotation);
+    if(_activeDabRotation) dc.rotate(_activeDabRotation);
+    if(window.brushTipFlipX||window.brushTipFlipY) dc.scale(window.brushTipFlipX?-1:1,window.brushTipFlipY?-1:1);
     dc.drawImage(stamp.canvas,-stamp.w/2,-stamp.h/2);
   } else dc.drawImage(stamp.canvas,x0,y0);
   dc.restore();
 }
 
-// Ã¢â€â‚¬Ã¢â€â‚¬ Tail taper (the other half of the "flick" feel) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+//  Tail taper (the other half of the "flick" feel)
 // The head taper above can be applied the instant a dab is computed, because
 // we already know how far into the stroke we are. The TAIL can't work that
 // way Ã¢â‚¬â€ we don't know a stroke is ending until pointerup actually fires, by
@@ -828,13 +823,13 @@ function _dabAliased(x,y,r,rgb,alpha,composite){
 // length scale with brush size automatically: dab spacing is ~12% of the
 // current diameter, so a bigger brush naturally gets a longer-looking flick
 // tail and a smaller brush a shorter one Ã¢â‚¬â€ exactly like the head taper.
-// Ã¢â€â‚¬Ã¢â€â‚¬ Dirty-rect tracking for recomposite() Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+//  Dirty-rect tracking for recomposite()
 // Every dab that actually lands on a canvas (immediate, tail-buffered, or
 // airbrush-timer) passes through _drawDabNow, so this is the one place
 // that can accurately accumulate "what actually changed since the last
 // recomposite" without duplicating logic at every call site. The rect
 // accumulates across all dabs drawn within a single animation frame, gets
-// handed to recomposite() by _scheduleRecomposite below, then resets Ã¢â‚¬â€
+// handed to recomposite() by _scheduleRecomposite below, then resets
 // so each frame's recomposite only has to touch the region that changed
 // THIS frame, not the whole stroke's bounding box.
 let _frameDirty = null; // {minX,minY,maxX,maxY} in canvas pixel space, or null
@@ -871,7 +866,7 @@ function _consumeDirtyRect(){
   return {x,y,w,h};
 }
 
-// Ã¢â€â‚¬Ã¢â€â‚¬ Per-dab texture overlay Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+//  Per-dab texture overlay
 // Tiles brushTextureCanvas over the freshly-painted dab area using
 // 'multiply' blending at brushTextureDepth opacity.  The arc clip ensures
 // texture is only applied within the circular dab footprint, not to
@@ -987,7 +982,7 @@ function _flushStrokeTail(){
   _strokeReplayDabs.length=0;
   _strokeReplayBase=null;
 }
-// Ã¢â€â‚¬Ã¢â€â‚¬ Input smoothing (TVPaint calls this "Line Smoothing") Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+//  Input smoothing (TVPaint calls this "Line Smoothing")
 // Raw pointer input Ã¢â‚¬â€ especially high-frequency pointerrawupdate samples on
 // pen tablets, but mouse jitter too Ã¢â‚¬â€ is never perfectly straight; stamping
 // dabs directly along the RAW points (as before) draws every tiny wobble in
@@ -1100,7 +1095,7 @@ function _stampDab(x,y,e){
 }
 
 // Ã¢â€â‚¬Ã¢â€â‚¬ Airbrush continuous spray (Photoshop "Airbrush" toggle / Clip Studio
-// Airbrush sub tool feel) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+// Airbrush sub tool feel)
 // Every other brush here only stamps in response to pointer movement
 // (_strokeSegment walks dabs along the path you actually drew). A real
 // airbrush also keeps depositing paint for as long as the pen is held
@@ -1141,7 +1136,7 @@ function _stopAirbrushSpray(){
 window._stopAirbrushSpray=_stopAirbrushSpray;
 
 // Stamp dabs along a line segment from (ax,ay)Ã¢â€ â€™(bx,by). Step = ~12% of the
-// CURRENT effective diameter (matches TVPaint's default stepval=12.5%) Ã¢â‚¬â€
+// CURRENT effective diameter (matches TVPaint's default stepval=12.5%)
 // not the brush's fixed max size. Walking adaptively like this is essential
 // for smooth pressure tapers: if spacing were based on max size, a thin
 // (low-pressure) stretch of the stroke would have its dabs spaced as if it
@@ -1150,7 +1145,7 @@ window._stopAirbrushSpray=_stopAirbrushSpray;
 // Pressure is interpolated linearly from startPressure to endPressure along
 // the segment Ã¢â‚¬â€ this prevents sudden size jumps at event boundaries when
 // the tablet reports large pressure changes between coalesced events.
-// Ã¢â€â‚¬Ã¢â€â‚¬ Stroke-start taper (TVPaint-style natural pen tip) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+//  Stroke-start taper (TVPaint-style natural pen tip)
 // TVPaint's pen eases in from a point at the start of every stroke Ã¢â‚¬â€ this
 // happens even with a mouse (constant pressure=1.0 the whole time), so it
 // can't be pressure-driven; it has to be driven by distance traveled since
@@ -1266,7 +1261,7 @@ function _strokeSegment(ax,ay,bx,by,e,startPressure,endPressure){
   currentPressure = ep;
 }
 
-// Ã¢â€â‚¬Ã¢â€â‚¬ Quadratic-curve stamping (fixes angular/wavy fast strokes) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+//  Quadratic-curve stamping (fixes angular/wavy fast strokes)
 // _strokeSegment (above) stamps a STRAIGHT LINE between two consecutive raw
 // samples. At normal speed samples are dense enough that this is invisible,
 // but on a fast flick Ã¢â‚¬â€ even at pointerrawupdate's ~1000Hz ceiling Ã¢â‚¬â€ the
@@ -1341,7 +1336,7 @@ function _stampQuadCurve(x0,y0,cx,cy,x1,y1,e,startPressure,endPressure){
     // below) showed correct gaps. We can't divide by this near-zero `len`
     // safely (that's why the early-out exists at all), so instead of
     // stamping, bank this sliver of distance into the shared carry-over
-    // and only stamp once enough slivers add up to a real spacing step Ã¢â‚¬â€
+    // and only stamp once enough slivers add up to a real spacing step
     // same rule the main loop below enforces.
     _strokeSegCarryOver += len;
     const spacing=_effectiveSpacingFrac();
@@ -1491,7 +1486,7 @@ document.addEventListener('visibilitychange',()=>{
 });
 window.addEventListener('blur',_endStroke);
 
-// Ã¢â€â‚¬Ã¢â€â‚¬ Pressure tracking Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+//  Pressure tracking
 // Pressure state: updated per pointer event
 let currentPressure = 1.0; // 0Ã¢â‚¬â€œ1 from pen digitizer; always 1.0 for mouse
 let _lastKnownPressure = 1.0; // last non-zero pressure reading (preserves pressure through coalesced gaps)
@@ -1625,7 +1620,7 @@ function _bezierPointAt(pts,t){
 }
 // Given input pressure x (0..1), find the curve's plot-space y at that x.
 // Control-point x-coordinates are monotonic increasing, so a short binary
-// search on the bezier parameter t reliably converges (curves are static Ã¢â‚¬â€
+// search on the bezier parameter t reliably converges (curves are static
 // cheap enough to solve per-call, no need to cache).
 function _evalPressureCurveY(curveKey, x){
   const pts = PRESSURE_CURVES[curveKey] || PRESSURE_CURVES.linear;
@@ -1832,15 +1827,23 @@ function _computeSpacingRadius(e, interpolatedPressure){
 // Resets to 0 at stroke start/end.
 let _strokeSegCarryOver = 0;
 
-// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+//
 
 
-// Ã¢â€â‚¬Ã¢â€â‚¬ Brush Tip / Texture public API Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+//  Brush Tip / Texture public API
 // These are the only entry points that should mutate the tip/texture state.
 // They bump the version counter (invalidating caches) and clear the relevant
 // stamp caches so the very next dab rebuilds with the new data.
-window.setBrushTip=function(canvas){
+window._setBrushTipShape=function(roundness,flipX,flipY){
+  window.brushTipRoundness=Math.max(0.01,Math.min(1,Number(roundness)||1));
+  window.brushTipFlipX=!!flipX;
+  window.brushTipFlipY=!!flipY;
+  _tipDabCache.clear();
+  _stampCache.clear();
+};
+window.setBrushTip=function(canvas,referenceDiameter){
   window.brushTipCanvas=canvas||null;
+  window.brushTipReferenceDiameter=canvas&&Number.isFinite(Number(referenceDiameter))&&Number(referenceDiameter)>0?Number(referenceDiameter):null;
   window.brushTipVersion=(window.brushTipVersion||0)+1;
   _tipDabCache.clear();
   _aaDabCache.clear();
@@ -1857,7 +1860,7 @@ window.clearBrushTexture=function(){
   window.setBrushTexture(null);
 };
 
-// Ã¢â€â‚¬Ã¢â€â‚¬ Pointer latency fix: touch-action Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+//  Pointer latency fix: touch-action
 // Neither activeC nor canvasArea ever had CSS touch-action set, so every
 // pen/touch pointerdown/move had to pass through the browser's built-in
 // gesture-recognition delay (deciding "is this a scroll/pinch?") before

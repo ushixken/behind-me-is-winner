@@ -9,9 +9,9 @@
 <link rel="stylesheet" href="style.css"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script>
-// ════════════════════════════════════════════════════════════════
+//
 // PEN TABLET COMPATIBILITY — pointer-to-mouse relay
-// ════════════════════════════════════════════════════════════════
+//
 // Many drag handlers in the app use document.addEventListener('mousemove')
 // which works fine for a mouse but breaks for pen tablets: when the stylus
 // moves outside the source element the browser may stop firing mousemove.
@@ -730,6 +730,16 @@
                     </button>
                     <span id="ts-tip-filename" style="font-size:9px;color:var(--text2);word-break:break-all;display:none;"></span>
                   </div>
+                </div>
+                <div class="ts-divider"></div>
+                <div class="ts-row">
+                  <span class="ts-label">Roundness</span>
+                  <input type="range" class="ts-range" id="ts-tip-roundness" min="1" max="100" value="100"/>
+                  <span class="ts-val ts-value-edit" data-value-target="ts-tip-roundness" tabindex="0" id="ts-tip-roundness-val">100%</span>
+                </div>
+                <div class="ts-row">
+                  <label class="ts-label-sm" style="flex:1;display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" class="ts-check" id="ts-tip-flip-x"/> Flip X</label>
+                  <label class="ts-label-sm" style="flex:1;display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" class="ts-check" id="ts-tip-flip-y"/> Flip Y</label>
                 </div>
                 <div class="ts-row" id="ts-tip-mode-row" style="display:none;">
                   <span class="ts-label">Tip Mode</span>
