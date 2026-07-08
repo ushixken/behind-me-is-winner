@@ -136,34 +136,88 @@ document.getElementById('ruler-ctx-reset').onclick=()=>{rangeStart=0;rangeEnd=TO
 // KEYFRAME DRAG
 // ════════════════════════════════════════════════════════════════
 let dragKF=null;
+let kfSelectionAnchor=null;
+
+function clearKeyframeSelection(){
+  if(!selectedKFs.size&&!kfSelectionAnchor)return;
+  selectedKFs.clear();
+  kfSelectionAnchor=null;
+  document.querySelectorAll('.kf-block.selected').forEach(block=>block.classList.remove('selected'));
+}
+
+document.addEventListener('pointerdown',event=>{
+  if(!event.target.closest('.kf-block'))clearKeyframeSelection();
+});
+
+function selectKeyframeRange(anchor,target){
+  const layerOrder=timelineLayerIndices();
+  const anchorRow=layerOrder.indexOf(anchor.layerIndex);
+  const targetRow=layerOrder.indexOf(target.layerIndex);
+  if(anchorRow<0||targetRow<0)return;
+  const firstRow=Math.min(anchorRow,targetRow),lastRow=Math.max(anchorRow,targetRow);
+  const firstFrame=Math.min(anchor.frameIndex,target.frameIndex),lastFrame=Math.max(anchor.frameIndex,target.frameIndex);
+  selectedKFs.clear();
+  layerOrder.slice(firstRow,lastRow+1).forEach(layerIndex=>{
+    Object.keys(layers[layerIndex].frames).map(Number)
+      .filter(frameIndex=>frameIndex>=firstFrame&&frameIndex<=lastFrame)
+      .forEach(frameIndex=>selectedKFs.add(`${layerIndex}:${frameIndex}`));
+  });
+}
+function _snapshotFrameMaps(layerIndices){
+  const snapshot={};
+  layerIndices.forEach(layerIndex=>{snapshot[layerIndex]=Object.assign({},layers[layerIndex].frames);});
+  return snapshot;
+}
+function _restoreFrameMaps(snapshot){
+  Object.keys(snapshot).forEach(layerIndex=>{layers[+layerIndex].frames=Object.assign({},snapshot[layerIndex]);});
+}
 function startKFDrag(li,fi,e){
-  e.preventDefault();e.stopPropagation();dragKF={li,fi};
-  document.addEventListener('pointermove',onKFDragMove);document.addEventListener('pointerup',onKFDragUp);
+  e.preventDefault();e.stopPropagation();
+  const draggedKey=`${li}:${fi}`;
+  const keys=selectedKFs.has(draggedKey)?Array.from(selectedKFs):[draggedKey];
+  const items=keys.map(key=>{
+    const [layerIndex,frameIndex]=key.split(':').map(Number);
+    return {layerIndex,frameIndex,data:layers[layerIndex]&&layers[layerIndex].frames[frameIndex]};
+  }).filter(item=>item.data);
+  const layerIndices=Array.from(new Set(items.map(item=>item.layerIndex)));
+  const selectedOrigins=new Set(items.map(item=>`${item.layerIndex}:${item.frameIndex}`));
+  const occupied=new Set();
+  layerIndices.forEach(layerIndex=>Object.keys(layers[layerIndex].frames).forEach(frame=>{
+    const key=`${layerIndex}:${+frame}`;
+    if(!selectedOrigins.has(key)) occupied.add(key);
+  }));
+  dragKF={li,originFi:fi,items,layerIndices,occupied,appliedDelta:0,before:_snapshotFrameMaps(layerIndices)};
+  document.addEventListener('pointermove',onKFDragMove);
+  document.addEventListener('pointerup',onKFDragUp);
 }
 function onKFDragMove(e){
-  if(!dragKF) return;
-  const tf=frameFromX(e.clientX);if(tf===dragKF.fi) return;
-  const key=`${dragKF.li}:${dragKF.fi}`;
-  if(selectedKFs.has(key)&&selectedKFs.size>1){
-    const delta=tf-dragKF.fi;
-    const moves=[];
-    selectedKFs.forEach(k=>{const[l,f]=k.split(':').map(Number);const nf=f+delta;if(nf>=0&&nf<TOTAL)moves.push({l,f,nf,data:layers[l].frames[f]});});
-    moves.forEach(m=>{if(m.data)delete layers[m.l].frames[m.f];});
-    moves.forEach(m=>{if(m.data)layers[m.l].frames[m.nf]=m.data;});
-    selectedKFs.clear();moves.forEach(m=>{if(m.data)selectedKFs.add(`${m.l}:${m.nf}`);});
-    dragKF.fi=tf;
-  } else {
-    const d=layers[dragKF.li].frames[dragKF.fi];if(!d) return;
-    delete layers[dragKF.li].frames[dragKF.fi];layers[dragKF.li].frames[tf]=d;dragKF.fi=tf;
-  }
-  if(dragKF.li===curLayer){curFrame=dragKF.fi;loadFrame(curLayer,curFrame);}
+  if(!dragKF||!dragKF.items.length) return;
+  const targetFrame=frameFromX(e.clientX);
+  const minimumFrame=Math.min(...dragKF.items.map(item=>item.frameIndex));
+  const maximumFrame=Math.max(...dragKF.items.map(item=>item.frameIndex));
+  const delta=Math.max(-minimumFrame,Math.min((TOTAL-1)-maximumFrame,targetFrame-dragKF.originFi));
+  if(delta===dragKF.appliedDelta) return;
+  const destinations=dragKF.items.map(item=>({item,target:item.frameIndex+delta}));
+  if(destinations.some(move=>dragKF.occupied.has(`${move.item.layerIndex}:${move.target}`))) return;
+  dragKF.items.forEach(item=>delete layers[item.layerIndex].frames[item.frameIndex+dragKF.appliedDelta]);
+  destinations.forEach(move=>{layers[move.item.layerIndex].frames[move.target]=move.item.data;});
+  dragKF.appliedDelta=delta;
+  selectedKFs.clear();
+  destinations.forEach(move=>selectedKFs.add(`${move.item.layerIndex}:${move.target}`));
+  if(dragKF.li===curLayer){curFrame=dragKF.originFi+delta;loadFrame(curLayer,curFrame);}
   renderTimeline();
 }
-function onKFDragUp(){document.removeEventListener('pointermove',onKFDragMove);document.removeEventListener('pointerup',onKFDragUp);dragKF=null;renderTimeline();}
-
-// ════════════════════════════════════════════════════════════════
-// TIMELINE RENDER
-// ════════════════════════════════════════════════════════════════
+function onKFDragUp(){
+  document.removeEventListener('pointermove',onKFDragMove);
+  document.removeEventListener('pointerup',onKFDragUp);
+  if(dragKF&&dragKF.appliedDelta!==0){
+    undoStack.push({type:'timeline-frames',before:dragKF.before,after:_snapshotFrameMaps(dragKF.layerIndices)});
+    if(undoStack.length>40) undoStack.shift();
+    redoStack=[];
+  }
+  dragKF=null;
+  renderTimeline();
+}
 function renderTimeline(){renderRuler();renderRows();renderLabelCol();updatePlayhead();updateStatus();updateRangeOverlay();}
 
 function renderRuler(){
@@ -371,7 +425,8 @@ function renderRows(){
       cell.dataset.layerIdx=i;
       cell.addEventListener('pointerdown',ev=>{
         ev.stopPropagation();
-        if(ev.shiftKey){const lo=Math.min(curFrame,f),hi=Math.max(curFrame,f);for(let ff=lo;ff<=hi;ff++)selectedFrames.add(ff);if(i!==curLayer)switchLayer(i);curFrame=f;loadFrame(curLayer,curFrame);renderTimeline();}
+        if(!ev.shiftKey)clearKeyframeSelection();
+        if(ev.shiftKey){const anchor=kfSelectionAnchor||{layerIndex:curLayer,frameIndex:curFrame};selectKeyframeRange(anchor,{layerIndex:i,frameIndex:f});if(i!==curLayer)switchLayer(i);curFrame=f;loadFrame(curLayer,curFrame);renderTimeline();}
         else if(ev.ctrlKey||ev.metaKey){if(selectedFrames.has(f))selectedFrames.delete(f);else selectedFrames.add(f);if(i!==curLayer)switchLayer(i);curFrame=f;loadFrame(curLayer,curFrame);renderTimeline();}
         else{selectedFrames.clear();selectedFrames.add(f);tlSelDrag={startF:f};if(i!==curLayer)switchLayer(i);goToFrame(f);}
       });
@@ -396,8 +451,15 @@ function renderRows(){
       block.title=l.name+' F'+(f+1);
       block.addEventListener('pointerdown',ev=>{
         ev.stopPropagation();
-        if(ev.ctrlKey||ev.metaKey){if(selectedKFs.has(kk))selectedKFs.delete(kk);else selectedKFs.add(kk);}
-        else if(!selectedKFs.has(kk)){selectedKFs.clear();selectedKFs.add(kk);}
+        if(ev.shiftKey&&kfSelectionAnchor){
+          selectKeyframeRange(kfSelectionAnchor,{layerIndex:i,frameIndex:f});
+        }else if(ev.ctrlKey||ev.metaKey){
+          if(selectedKFs.has(kk))selectedKFs.delete(kk);else selectedKFs.add(kk);
+          kfSelectionAnchor={layerIndex:i,frameIndex:f};
+        }else{
+          if(!selectedKFs.has(kk)){selectedKFs.clear();selectedKFs.add(kk);}
+          kfSelectionAnchor={layerIndex:i,frameIndex:f};
+        }
         startKFDrag(i,f,ev);
         if(i!==curLayer)switchLayer(i);curFrame=f;selectedFrames.clear();selectedFrames.add(f);loadFrame(curLayer,curFrame);renderTimeline();
       });

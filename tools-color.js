@@ -12,12 +12,28 @@ function updateOnion(){
 // UNDO / REDO
 // ════════════════════════════════════════════════════════════════
 function pushUndo(){const s=mkLayerCanvas();s.getContext('2d').drawImage(activeC,0,0);undoStack.push({snap:s,frame:curFrame,layer:curLayer});if(undoStack.length>40)undoStack.shift();redoStack=[];}
-function undo(){if(!undoStack.length)return;const t=undoStack[undoStack.length-1];const c=mkLayerCanvas();c.getContext('2d').drawImage(activeC,0,0);redoStack.push({snap:c,frame:curFrame,layer:curLayer});undoStack.pop();ctx.clearRect(0,0,CW,CH);ctx.drawImage(t.snap,0,0);saveActiveToKey();recomposite(curLayer,curFrame);renderTimeline();}
-function redo(){if(!redoStack.length)return;const t=redoStack.pop();const c=mkLayerCanvas();c.getContext('2d').drawImage(activeC,0,0);undoStack.push({snap:c,frame:curFrame,layer:curLayer});ctx.clearRect(0,0,CW,CH);ctx.drawImage(t.snap,0,0);saveActiveToKey();recomposite(curLayer,curFrame);renderTimeline();}
-
-// ════════════════════════════════════════════════════════════════
-// TOOL PANEL
-// ════════════════════════════════════════════════════════════════
+function undo(){
+  if(!undoStack.length)return;
+  const action=undoStack.pop();
+  if(action.type==='timeline-frames'){
+    _restoreFrameMaps(action.before);redoStack.push(action);selectedKFs.clear();
+    loadFrame(curLayer,curFrame);recomposite(curLayer,curFrame);renderTimeline();return;
+  }
+  const canvas=mkLayerCanvas();canvas.getContext('2d').drawImage(activeC,0,0);
+  redoStack.push({snap:canvas,frame:curFrame,layer:curLayer});
+  ctx.clearRect(0,0,CW,CH);ctx.drawImage(action.snap,0,0);saveActiveToKey();recomposite(curLayer,curFrame);renderTimeline();
+}
+function redo(){
+  if(!redoStack.length)return;
+  const action=redoStack.pop();
+  if(action.type==='timeline-frames'){
+    _restoreFrameMaps(action.after);undoStack.push(action);selectedKFs.clear();
+    loadFrame(curLayer,curFrame);recomposite(curLayer,curFrame);renderTimeline();return;
+  }
+  const canvas=mkLayerCanvas();canvas.getContext('2d').drawImage(activeC,0,0);
+  undoStack.push({snap:canvas,frame:curFrame,layer:curLayer});
+  ctx.clearRect(0,0,CW,CH);ctx.drawImage(action.snap,0,0);saveActiveToKey();recomposite(curLayer,curFrame);renderTimeline();
+}
 const szSlider=document.getElementById('ts-size');
 const szValEl=document.getElementById('ts-size-val');
 // Swap the Brush Presets docker's contents between the Brush Presets body
