@@ -857,13 +857,13 @@ function _dabAliased(x,y,r,rgb,alpha,composite){
 // so each frame's recomposite only has to touch the region that changed
 // THIS frame, not the whole stroke's bounding box.
 let _frameDirty = null; // {minX,minY,maxX,maxY} in canvas pixel space, or null
-function _growDirtyRect(x,y,r){
+function _growDirtyRect(x,y,radiusX,radiusY=radiusX){
   // Pad beyond the raw dab radius: AA feather can extend slightly past r,
   // and CPU-mode stamps add a couple more px of margin (see _buildAAStamp's
   // own `pad`). A little extra headroom here is cheap insurance against
   // clipping off the soft edge of a dab.
-  const pad = r + 4;
-  const minX=x-pad, minY=y-pad, maxX=x+pad, maxY=y+pad;
+  const padX=radiusX+4,padY=radiusY+4;
+  const minX=x-padX,minY=y-padY,maxX=x+padX,maxY=y+padY;
   if(!_frameDirty){
     _frameDirty = {minX,minY,maxX,maxY};
   } else {
@@ -952,6 +952,19 @@ function _drawAutoHardRoundSegment(d){
     if(brushAA) _dabAA(d.x,d.y,d.r,d.rgb,d.alpha,d.composite);
     else _dabAliased(d.x,d.y,d.r,d.rgb,d.alpha,d.composite);
   }
+  let dirtyRadiusX=d.r,dirtyRadiusY=d.r;
+  if(window.brushTipCanvas){
+    const tipW=window.brushTipCanvas.width||1,tipH=window.brushTipCanvas.height||1;
+    const referenceDiameter=Number(window.brushTipReferenceDiameter);
+    const reference=Number.isFinite(referenceDiameter)&&referenceDiameter>0?referenceDiameter:Math.max(tipW,tipH);
+    const roundness=Math.max(window.brushTipMinimumRoundness||0,Math.min(1,_activeDabRoundness==null?(window.brushTipRoundness==null?1:window.brushTipRoundness):_activeDabRoundness));
+    const compressWidth=tipW<tipH;
+    const width=tipW*((d.r*2)/reference)*(compressWidth?roundness:1);
+    const height=tipH*((d.r*2)/reference)*(compressWidth?1:roundness);
+    const cosine=Math.abs(Math.cos(_activeDabRotation)),sine=Math.abs(Math.sin(_activeDabRotation));
+    dirtyRadiusX=(width*cosine+height*sine)/2;
+    dirtyRadiusY=(width*sine+height*cosine)/2;
+  }
   _activeDabRotation=0;
   _activeDabRoundness=null;
   // Apply the texture overlay on the same target context the dab went to.
@@ -961,7 +974,7 @@ function _drawAutoHardRoundSegment(d){
     const dc=_inStroke?_strokeCtx:ctx;
     _applyTextureToDab(dc,d.x,d.y,d.r,d.alpha);
   }
-  _growDirtyRect(d.x,d.y,d.r);
+  _growDirtyRect(d.x,d.y,dirtyRadiusX,dirtyRadiusY);
 }
 function _taperDistance(amount){return 320*amount;}
 function _queueDab(d){

@@ -1173,7 +1173,7 @@ function applyToolPreset(json){
         'ts-spacing-mode':'auto',
         'ts-min-size':0,
         'ts-min-flow':0,
-        'ts-taper-mode':'pressure',
+        'ts-taper-mode':'percentage',
         'ts-start-taper':0,
         'ts-end-taper':10,
       })
@@ -1261,7 +1261,7 @@ function applyToolPreset(json){
   // stick, and manual tweaks to either are remembered too.
   let _toolState = {
     brush:  {presetId:'hard-round', size:6, hardness:100,  opacity:100, flow:100, density:100, spacing:1, roundness:100, aa:true, airbrush:false},
-    eraser: {presetId:'hard-round', size:20, hardness:55, opacity:100, flow:100, density:100, spacing:12, roundness:100, aa:true, airbrush:false},
+    eraser: {presetId:'hard-round', size:20, hardness:100, opacity:100, flow:100, density:100, spacing:1, roundness:100, aa:true, airbrush:false},
   };
   let _toolPresetSizes={brush:{'hard-round':6},eraser:{'hard-round':20}};
   // Which tab is shown in the preset panel (brush|eraser) — follows setTool()
@@ -3199,23 +3199,21 @@ function showABRPicker(brushes, filename, onImport) {
     });
 
     tile.addEventListener('click',()=>{
-      // Apply tip to engine
+      overlay.classList.remove('visible');
+      // Preset-panel imports create and select their isolated preset before
+      // touching live state. Otherwise the outgoing preset captures ABR data.
+      if(typeof onImport==='function'){
+        onImport(b);
+        showInfo('Imported "'+b.name+'" from '+filename+'.','ABR Import');
+        return;
+      }
+
+      // Tool Settings imports do not create presets, so retain live apply.
       if(typeof window.setBrushTip==='function') window.setBrushTip(b.canvas,b.referenceDiameter);
-      // Route every other extracted parameter through the single ABR
-      // internal mapping layer, then apply size/spacing/mapped settings to
-      // the live UI in one pass. Never overwrites with a guess — only with
-      // a value this app actually found in the file.
       const mapped=_mapABRValuesToSettings(b.values,b.features);
-      const clampedSize=_applyABRSettingsToUI(b.size, b.spacing, mapped);
-      // Sync brush tip UI panel
+      const clampedSize=_applyABRSettingsToUI(b.size,b.spacing,mapped);
       const fn=document.getElementById('ts-tip-filename');
       if(fn){fn.textContent=b.name;fn.style.display='';}
-      overlay.classList.remove('visible');
-      // When invoked from the "Import Brush" panel button, onImport saves
-      // this tip as a brand-new persistent preset tile. When invoked from
-      // the Tool Settings import (legacy path), onImport is omitted and
-      // only the live tool tip is affected, as before.
-      if(typeof onImport==='function') onImport(b);
       showInfo('Loaded "'+b.name+'" ('+clampedSize+'px) from '+filename+'.','ABR Import');
     });
   });
