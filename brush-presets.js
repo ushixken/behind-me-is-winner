@@ -57,8 +57,16 @@
   if(tipFlipXEl) tipFlipXEl.addEventListener('input',syncTipShape);
   if(tipFlipYEl) tipFlipYEl.addEventListener('input',syncTipShape);
   syncTipShape();
+  // Shape Dynamics jitter: Size/Angle/Roundness Jitter + Minimum Roundness.
+  // These are resolved fresh per-dab inside _stampDab (brush-engine.js), so
+  // they just need to publish the current slider value as a 0..1 fraction.
+  bindRange('ts-size-jitter','ts-size-jitter-val','%',v=>{window.brushTipSizeJitter=v/100;});
+  bindRange('ts-angle-jitter','ts-angle-jitter-val','%',v=>{window.brushTipAngleJitter=v/100;});
+  bindRange('ts-round-jitter','ts-round-jitter-val','%',v=>{window.brushTipRoundnessJitter=v/100;_stampCache.clear();});
+  bindRange('ts-tip-min-roundness','ts-tip-min-roundness-val','%',v=>{window.brushTipMinimumRoundness=v/100;_tipDabCache.clear();_stampCache.clear();});
   bindRange('ts-scatter-amount','ts-scatter-amount-val','%',v=>{window._tsScatterAmount=v/100;});
   bindRange('ts-scatter-count','ts-scatter-count-val','',v=>{window._tsScatterCount=Math.min(50,Math.max(1,Math.round(v)));});
+  if(window._tsScatterBothAxes==null) window._tsScatterBothAxes=true;
   const scatterEnabledEl=document.getElementById('ts-scatter-enabled');
   const scatterAmountEl=document.getElementById('ts-scatter-amount');
   const scatterCountEl=document.getElementById('ts-scatter-count');
@@ -989,8 +997,8 @@
 
 // Preset get/apply
 function getToolPreset(){
-  const ids=['ts-size','ts-opacity','ts-flow','ts-density','ts-hardness','ts-spacing','ts-spacing-mode','ts-rotation-mode','ts-angle','ts-tip-roundness','ts-tip-flip-x','ts-tip-flip-y','ts-scatter-enabled','ts-scatter-amount','ts-scatter-count','ts-airbrush','ts-airbrush-rate',
-    'ts-min-size','ts-taper-mode','ts-start-taper','ts-end-taper','ts-size-control','ts-size-pressure-curve','ts-flow-control','ts-flow-pressure-curve','ts-opacity-control','ts-opacity-pressure-curve','ts-min-flow',
+  const ids=['ts-size','ts-opacity','ts-flow','ts-density','ts-hardness','ts-spacing','ts-spacing-mode','ts-rotation-mode','ts-angle','ts-angle-jitter','ts-tip-roundness','ts-round-jitter','ts-tip-min-roundness','ts-tip-flip-x','ts-tip-flip-y','ts-scatter-enabled','ts-scatter-amount','ts-scatter-count','ts-airbrush','ts-airbrush-rate',
+    'ts-min-size','ts-size-jitter','ts-taper-mode','ts-start-taper','ts-end-taper','ts-size-control','ts-size-pressure-curve','ts-flow-control','ts-flow-pressure-curve','ts-opacity-control','ts-opacity-pressure-curve','ts-min-flow',
     'ts-texture-scale','ts-texture-depth'];
   const out={};
   ids.forEach(id=>{
@@ -1007,6 +1015,7 @@ function getToolPreset(){
     try{ out['ts-tip-dataurl']=window.brushTipCanvas.toDataURL('image/png'); }catch(e){}
     out['ts-tip-mode']=(window.brushTipMode||'multiply');
     out['ts-tip-soft-alpha']=!!(window.brushTipSoftAlpha!==false);
+    out['ts-scatter-both-axes']=window._tsScatterBothAxes!==false;
     if(Number.isFinite(Number(window.brushTipReferenceDiameter))&&Number(window.brushTipReferenceDiameter)>0) out['ts-tip-reference-diameter']=Number(window.brushTipReferenceDiameter);
     out['ts-tip-roundness']=Math.round((window.brushTipRoundness==null?1:window.brushTipRoundness)*100);
     out['ts-tip-min-roundness']=Math.round((window.brushTipMinimumRoundness||0)*100);
@@ -1040,7 +1049,7 @@ function applyToolPreset(json){
   Object.entries(json).forEach(([id,val])=>{
     // Skip virtual/non-DOM keys handled separately below.
     if(id==='ts-tip-dataurl'||id==='ts-texture-dataurl'||
-       id==='ts-tip-mode'||id==='ts-tip-soft-alpha'||id==='ts-tip-reference-diameter'||id==='ts-tip-min-roundness'||id==='ts-tip-roundness-dynamics'||id==='ts-texture-depth-custom'||id==='ts-pressure-curves') return;
+       id==='ts-tip-mode'||id==='ts-tip-soft-alpha'||id==='ts-tip-reference-diameter'||id==='ts-tip-roundness-dynamics'||id==='ts-texture-depth-custom'||id==='ts-pressure-curves') return;
     const el=document.getElementById(id);
     if(!el) return;
     if(el.type==='checkbox') el.checked=!!val;
@@ -1052,14 +1061,18 @@ function applyToolPreset(json){
   if(typeof window._refreshPressureCurvePreviews==='function') window._refreshPressureCurvePreviews();
 
   //  Restore tip image
+  window._tsScatterBothAxes=json['ts-scatter-both-axes']!==false;
   window.brushTipRoundness=Math.max(0.01,Math.min(1,(json['ts-tip-roundness']??100)/100));
   window.brushTipMinimumRoundness=Math.max(0,Math.min(1,(json['ts-tip-min-roundness']??0)/100));
   window.brushTipRoundnessDynamics=!!json['ts-tip-roundness-dynamics'];
   window.brushTipFlipX=!!json['ts-tip-flip-x'];
   window.brushTipFlipY=!!json['ts-tip-flip-y'];
 
+  const tipLoadGeneration=(window._brushTipLoadGeneration||0)+1;
+  window._brushTipLoadGeneration=tipLoadGeneration;
   if(json['ts-tip-dataurl']){
     _dataURLToCanvas(json['ts-tip-dataurl']).then(c=>{
+      if(window._brushTipLoadGeneration!==tipLoadGeneration) return;
       if(typeof window.setBrushTip==='function') window.setBrushTip(c,json['ts-tip-reference-diameter']);
       if(json['ts-tip-mode']) window.brushTipMode=json['ts-tip-mode'];
       if(json['ts-tip-soft-alpha']!==undefined) window.brushTipSoftAlpha=!!json['ts-tip-soft-alpha'];
@@ -1234,6 +1247,7 @@ function applyToolPreset(json){
         try{settings['ts-tip-dataurl']=window.brushTipCanvas.toDataURL('image/png');}catch(e){}
         settings['ts-tip-mode']=window.brushTipMode||'multiply';
         settings['ts-tip-soft-alpha']=!!window.brushTipSoftAlpha;
+        settings['ts-scatter-both-axes']=window._tsScatterBothAxes!==false;
         if(Number.isFinite(Number(window.brushTipReferenceDiameter))&&Number(window.brushTipReferenceDiameter)>0) settings['ts-tip-reference-diameter']=Number(window.brushTipReferenceDiameter);
         else delete settings['ts-tip-reference-diameter'];
       } else {delete settings['ts-tip-dataurl'];delete settings['ts-tip-mode'];delete settings['ts-tip-soft-alpha'];delete settings['ts-tip-reference-diameter'];}
@@ -1855,6 +1869,7 @@ function applyToolPreset(json){
     if(!('ts-scatter-enabled' in s)) s['ts-scatter-enabled']=false;
     if(!('ts-scatter-amount' in s)) s['ts-scatter-amount']=0;
     if(!('ts-scatter-count' in s)) s['ts-scatter-count']=1;
+    window._tsScatterBothAxes=s['ts-scatter-both-axes']!==false;
     window.brushTipRoundness=Math.max(0.01,Math.min(1,(s['ts-tip-roundness']??100)/100));
     window.brushTipMinimumRoundness=Math.max(0,Math.min(1,(s['ts-tip-min-roundness']??0)/100));
     window.brushTipRoundnessDynamics=!!s['ts-tip-roundness-dynamics'];
@@ -1921,9 +1936,12 @@ function applyToolPreset(json){
 
     // Tip image: restore from preset data URL if present; clear if absent.
     // This matches what applyToolPreset does for JSON imports.
+    const tipLoadGeneration=(window._brushTipLoadGeneration||0)+1;
+    window._brushTipLoadGeneration=tipLoadGeneration;
     if(s['ts-tip-dataurl']){
       if(typeof _dataURLToCanvas==='function'){
         _dataURLToCanvas(s['ts-tip-dataurl']).then(c=>{
+          if(window._brushTipLoadGeneration!==tipLoadGeneration) return;
           if(typeof window.setBrushTip==='function') window.setBrushTip(c,s['ts-tip-reference-diameter']);
           if(s['ts-tip-mode']) window.brushTipMode=s['ts-tip-mode'];
           if(s['ts-tip-soft-alpha']!==undefined) window.brushTipSoftAlpha=!!s['ts-tip-soft-alpha'];
@@ -2286,14 +2304,17 @@ const _ABR_FEATURE_MAP = {
   flow:        { label:'Flow',                  needles:['Flow'],                          control:'ts-flow',        applied:true,  uiStatus:'implemented' },
   angle:       { label:'Angle',                 needles:['Angl'],                          control:'ts-angle',       applied:true,  uiStatus:'implemented' },
   angleDynamics:{label:'Angle Dynamics', needles:['angleDynamics'], control:'ts-rotation-mode', applied:false, uiStatus:'implemented' },
-  roundness:   { label:'Roundness',             needles:['Rndn'],                          control:'ts-roundness',   applied:false, uiStatus:'coming_soon' },
-  scatter:     { label:'Scatter',               needles:['useScatter'],                    control:'ts-scatter-enabled', applied:true, uiStatus:'implemented' },
-  scatterBoth: { label:'Scatter — Both Axes',   needles:['bothAxes'],                      control:'ts-scatter-both-axes', applied:false, uiStatus:'coming_soon' },
-  count:       { label:'Count (multi-stamp)',   needles:['Cnt'],                           control:'ts-scatter-count', applied:true, uiStatus:'implemented' },
+  roundness:   { label:'Roundness',             needles:['Rndn'],                          control:'ts-tip-roundness', applied:true, uiStatus:'implemented' },
+  scatter:     { label:'Scatter',               needles:['useScatter'],                    control:'ts-scatter-enabled', applied:true, uiStatus:'implemented', valueKey:'useScatter' },
+  scatterAmount:{label:'Scatter Amount',         needles:['useScatter','Spcn'],             control:'ts-scatter-amount', applied:true, uiStatus:'implemented', valueKey:'scatterAmount' },
+  scatterBoth: { label:'Scatter - Both Axes',   needles:['bothAxes'],                      control:null, applied:false, uiStatus:'none', metadataOnly:true, valueKey:'scatterBothAxes' },
+  count:       { label:'Scatter Count',         needles:['Cnt'],                           control:'ts-scatter-count', applied:true, uiStatus:'implemented', valueKey:'scatterCount' },
+  countJitter: { label:'Scatter Count Jitter',  needles:['countDynamics'],                 control:null, applied:false, uiStatus:'none', metadataOnly:true, valueKey:'countJitter' },
+  scatterDynamics:{label:'Scatter Dynamics',    needles:['scatterDynamics'],               control:null, applied:false, uiStatus:'none', metadataOnly:true, valueKey:'scatterDynamics' },
   texture:     { label:'Texture',               needles:['Texture'],                       control:'ts-texture',     applied:false, uiStatus:'coming_soon' },
-  sizeJitter:  { label:'Size Jitter (Shape Dynamics)', needles:['Shape Dynamics','sizeJitter','useTipDynamics','szVr'], control:'ts-size-jitter', applied:false, uiStatus:'coming_soon' },
-  angleJitter: { label:'Angle Jitter',           needles:['angleJitter'],                   control:'ts-angle-jitter', applied:false, uiStatus:'coming_soon' },
-  roundJitter: { label:'Roundness Jitter',       needles:['roundnessJitter'],               control:'ts-round-jitter', applied:false, uiStatus:'coming_soon' },
+  sizeJitter:  { label:'Size Jitter (Shape Dynamics)', needles:['Shape Dynamics','sizeJitter','useTipDynamics','szVr'], control:'ts-size-jitter', applied:true, uiStatus:'implemented' },
+  angleJitter: { label:'Angle Jitter',           needles:['angleJitter'],                   control:'ts-angle-jitter', applied:true, uiStatus:'implemented' },
+  roundJitter: { label:'Roundness Jitter',       needles:['roundnessJitter'],               control:'ts-round-jitter', applied:true, uiStatus:'implemented' },
   colorDynamics:{label:'Color Dynamics',         needles:['Color Dynamics'],                control:'ts-hue-jitter',  applied:false, uiStatus:'coming_soon' },
   transfer:    { label:'Transfer (Opacity/Flow Jitter)', needles:['Transfer'],              control:'ts-min-flow',    applied:false, uiStatus:'coming_soon' },
   smoothing:   { label:'Smoothing',              needles:['Smoothing'],                     control:'ts-stabilize-mode', applied:false, uiStatus:'coming_soon' },
@@ -2464,10 +2485,19 @@ function _extractABRDescriptorValues(buffer) {
     minimumDiameter: findNumber('minimumDiameter'),
     minimumRoundness: findNumber('minimumRoundness'),
     roundnessDynamics: findBoolean('useRoundnessDynamics'),
+    // "jitter" is stored under each *Dynamics descriptor block (szVr/angleDynamics/
+    // roundnessDynamics all share the same brVr sub-structure with a 'jitter' key) --
+    // reuse findNumberAfter the same way scatter/count jitter already do above.
+    angleJitter: findNumberAfter('angleDynamics','jitter'),
+    roundnessJitter: findNumberAfter('roundnessDynamics','jitter'),
     useScatter: findBoolean('useScatter'),
     scatterAmount: findNumberAfter('useScatter','Spcn'),
     scatterCount: findNumber('Cnt'),
     scatterBothAxes: findBoolean('bothAxes'),
+    countDynamicsType: findLongAfter('countDynamics','bVTy'),
+    countJitter: findNumber('countDynamics'),
+    scatterDynamicsType: findLongAfter('scatterDynamics','bVTy'),
+    scatterJitter: findNumber('scatterDynamics'),
     flipX: findBoolean('flipX'),
     flipY: findBoolean('flipY')
   };
@@ -2497,11 +2527,18 @@ function _mapABRValuesToSettings(values, features) {
   if(v.roundness!=null) out['ts-tip-roundness']=Math.max(1,Math.min(100,Number(v.roundness)));
   if(v.minimumRoundness!=null) out['ts-tip-min-roundness']=Math.max(0,Math.min(100,Number(v.minimumRoundness)));
   if(typeof v.roundnessDynamics==='boolean') out['ts-tip-roundness-dynamics']=v.roundnessDynamics;
+  // Shape Dynamics jitter: Photoshop's Size Jitter reuses the szVr number
+  // already extracted as sizeVariation; Angle/Roundness Jitter come from
+  // their own *Dynamics descriptor blocks above.
+  if(hasSizeDynamics&&v.sizeVariation!=null) out['ts-size-jitter']=Math.max(0,Math.min(100,Number(v.sizeVariation)));
+  if(v.angleJitter!=null) out['ts-angle-jitter']=Math.max(0,Math.min(100,Number(v.angleJitter)));
+  if(v.roundnessJitter!=null) out['ts-round-jitter']=Math.max(0,Math.min(100,Number(v.roundnessJitter)));
   if(typeof v.flipX==='boolean') out['ts-tip-flip-x']=v.flipX;
   if(typeof v.flipY==='boolean') out['ts-tip-flip-y']=v.flipY;
   if(typeof v.useScatter==='boolean') out['ts-scatter-enabled']=v.useScatter;
-  if(v.scatterAmount!=null) out['ts-scatter-amount']=Math.max(0,Math.min(100,Number(v.scatterAmount)));
-  if(v.scatterCount!=null) out['ts-scatter-count']=Math.max(1,Math.min(50,Math.round(Number(v.scatterCount))));
+  if(v.scatterJitter!=null||v.scatterAmount!=null) out['ts-scatter-amount']=Math.max(0,Math.min(100,Number(v.scatterJitter??v.scatterAmount)));
+  if(v.scatterCount!=null) out['ts-scatter-count']=Math.max(1,Math.min(50,Math.round(Number(v.scatterCount))-1));
+  if(typeof v.scatterBothAxes==='boolean') out['ts-scatter-both-axes']=v.scatterBothAxes;
   if(v.angleDynamicsType===6) out['ts-rotation-mode']='stroke-direction';
   else out['ts-rotation-mode']='fixed-rotation';
   // Hardness intentionally NOT mapped: this parser only ever extracts
@@ -2537,7 +2574,7 @@ function _applyABRSettingsToUI(size, spacing, settings) {
   }
 
   for (const ctrlId in (settings || {})) {
-    if(ctrlId==='ts-tip-min-roundness'){window.brushTipMinimumRoundness=Math.max(0,Math.min(1,+settings[ctrlId]/100));continue;}
+    if(ctrlId==='ts-scatter-both-axes'){window._tsScatterBothAxes=settings[ctrlId]!==false;continue;}
     if(ctrlId==='ts-tip-roundness-dynamics'){window.brushTipRoundnessDynamics=!!settings[ctrlId];continue;}
     const el = document.getElementById(ctrlId);
     if (!el) continue;
@@ -2576,6 +2613,9 @@ function _abrDetectedSettings(brush, mappedSettings) {
     scatterAmount:values.scatterAmount??null,
     scatterBothAxes:typeof values.scatterBothAxes==='boolean'?values.scatterBothAxes:!!features.scatterBoth,
     scatterCount:values.scatterCount??null,
+    countJitter:values.countJitter??null,
+    countDynamics:{controlType:values.countDynamicsType??null,jitter:values.countJitter??null},
+    scatterDynamics:{controlType:values.scatterDynamicsType??null,jitter:values.scatterJitter??null},
     flipX:typeof values.flipX==='boolean'?values.flipX:!!features.flipX,
     flipY:typeof values.flipY==='boolean'?values.flipY:!!features.flipY,
     texture:!!features.texture,
@@ -2591,7 +2631,7 @@ function _abrUnsupportedList(features) {
   for (const key in _ABR_FEATURE_MAP) {
     if (!f[key]) continue;
     const entry = _ABR_FEATURE_MAP[key];
-    if (entry.applied) continue; // already handled by _mapABRValuesToSettings
+    if (entry.applied||entry.metadataOnly) continue;
     list.push({ key, label: entry.label, uiStatus: entry.uiStatus });
   }
   return list;
@@ -2714,13 +2754,13 @@ function parseABR(buffer) {
     return null; // unsupported depth (e.g. 24/32-bit colour sampled tips)
   }
 
-  // ── Convert a w×h grayscale byte array (0=black/opaque,255=white/transparent
-  //    in Photoshop's inverted brush convention) to a canvas whose alpha mask
-  //    follows our convention: 255=full-paint (black in PS), 0=transparent.
+  // Convert a grayscale brush mask to a canvas alpha mask.
+  // Light pixels paint; dark pixels are transparent.
   function grayscaleToTipCanvas(pixels, w, h) {
+    const TRANSPARENT_THRESHOLD = 5;
     let minX=w,minY=h,maxX=-1,maxY=-1;
     for(let y=0;y<h;y++) for(let x=0;x<w;x++){
-      if(pixels[y*w+x]>0){
+      if(pixels[y*w+x] > TRANSPARENT_THRESHOLD){
         if(x<minX)minX=x;if(x>maxX)maxX=x;if(y<minY)minY=y;if(y>maxY)maxY=y;
       }
     }
@@ -2730,13 +2770,13 @@ function parseABR(buffer) {
     const ctx2=c.getContext('2d');
     const id=ctx2.createImageData(cropW,cropH),d=id.data;
     for(let y=0,p=0;y<cropH;y++) for(let x=0;x<cropW;x++,p+=4){
-      const a=pixels[(minY+y)*w+minX+x];
-      d[p]=d[p+1]=d[p+2]=0;d[p+3]=a;
+      const raw=pixels[(minY+y)*w+minX+x];
+      const alpha=raw<=TRANSPARENT_THRESHOLD?0:raw;
+      d[p]=d[p+1]=d[p+2]=255; d[p+3]=alpha;
     }
     ctx2.putImageData(id,0,0);
     return c;
   }
-
   // ── Read one sampled tip's raw pixel data, already positioned right
   //    after top/left/bottom/right/depth/compression have been read.
   function readSampledPixels(width, height, depth, compressed) {
@@ -2903,7 +2943,7 @@ function parseABR(buffer) {
   brushes.forEach((b, i) => {
     const parsedName=(b.name||'').trim();
     if(values.name) b.name=brushes.length>1?(values.name+' '+String(i+1).padStart(2,'0')):values.name;
-    if(values.diameter!=null&&Number(values.diameter)>0){b.referenceDiameter=Number(values.diameter);b.size=Number(values.diameter);}
+    if(values.diameter!=null&&Number(values.diameter)>0){ const PS_TO_CSS_PX=72/96; const cssPx=Number(values.diameter)*PS_TO_CSS_PX; b.referenceDiameter=cssPx; b.size=cssPx; }
     if(values.spacing!=null) b.spacing=Math.max(1,Math.min(200,Math.round(values.spacing)));
     else if(!parsedName||/^Brush \d+$/i.test(parsedName)) b.name='ABR Brush '+String(i+1).padStart(2,'0');
     b.features=features;
@@ -2951,13 +2991,19 @@ function showABRImportResults(brushes, filename, onContinue) {
 
     if (f.applied) {
       // We know how to apply this one IF the file actually has a value.
-      const v = values[key];
+      const v = values[f.valueKey||key];
       if (v!=null) {
         const unit = (key==='angle') ? ' deg' : (key==='opacity'||key==='hardness'||key==='roundness') ? '%' : '';
         imported.push(f.label+' ('+Math.round(v)+unit+')');
       } else if (features[key]) {
         partial.push(f.label+' - detected but no readable value, left at current setting');
       }
+      continue;
+    }
+
+    if(f.metadataOnly){
+      const v=values[f.valueKey||key];
+      if(v!=null||features[key]) partial.push(f.label+' - stored as metadata for future support');
       continue;
     }
 
@@ -2969,7 +3015,7 @@ function showABRImportResults(brushes, filename, onContinue) {
     // distinctly from "coming soon" or "no equivalent" so it's clear the
     // control itself works fine, it's just not something ABR import sets.
     if (f.sampledInapplicable) {
-      const v = values[key];
+      const v = values[f.valueKey||key];
       const found = v!=null || features[key];
       if (found) partial.push(f.label+" - only applies to Photoshop's procedural round brushes, not image-based tips (left at current setting)");
       continue;

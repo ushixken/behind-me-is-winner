@@ -52,6 +52,7 @@ let brushDensity = 1;
 window.brushTipCanvas   = null;   // HTMLCanvasElement | null
 window.brushTipVersion  = 0;      // integer, incremented on each tip change
 window.brushTipReferenceDiameter = null;
+window.brushTipSpacingBasis = 'diameter';
 // When true the tip mask is multiplied by the standard radial hardness
 // falloff Ã¢â‚¬â€ giving a soft feathered edge even on an imported ABR tip.
 // When false the tip image alpha is used verbatim (hard-edged custom shape).
@@ -64,6 +65,15 @@ window.brushTipMinimumRoundness = 0;
 window.brushTipRoundnessDynamics = false;
 window.brushTipFlipX = false;
 window.brushTipFlipY = false;
+// Shape Dynamics jitter (Photoshop "Shape Dynamics" panel: Size Jitter,
+// Angle Jitter, Roundness Jitter). Each is a 0..1 fraction of full jitter
+// range, resolved freshly per dab in _stampDab so every stamp in a stroke
+// varies independently -- this is what gives an imported tip (e.g. a grass
+// blade) its natural scattered look instead of every dab being an identical
+// stencil copy of the last one.
+window.brushTipSizeJitter = 0;
+window.brushTipAngleJitter = 0;
+window.brushTipRoundnessJitter = 0;
 
 //  Brush Texture Image
 // When non-null, this canvas is tiled as a repeating texture over each dab
@@ -378,7 +388,12 @@ function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   const tipV=tipC?(window.brushTipVersion||0):-1;
   const softAlpha=!!window.brushTipSoftAlpha;
   const tipMode=window.brushTipMode||'multiply';
-  const tipRoundness=Math.max(window.brushTipMinimumRoundness||0,Math.min(1,window.brushTipRoundness==null?1:window.brushTipRoundness));
+  // Per-dab roundness override (set by _drawDabNow from the dab's own
+  // jittered roundness, see Roundness Jitter in _stampDab) takes priority
+  // over the static brushTipRoundness slider so Shape Dynamics can vary the
+  // squish of every individual stamp, exactly like Photoshop.
+  const baseRoundness=(typeof _activeDabRoundness!=='undefined'&&_activeDabRoundness!=null)?_activeDabRoundness:(window.brushTipRoundness==null?1:window.brushTipRoundness);
+  const tipRoundness=Math.max(window.brushTipMinimumRoundness||0,Math.min(1,baseRoundness));
   const r=_quant(rRaw,_Q_R), alpha=_quant(alphaRaw,_Q_ALPHA);
   const hardness=Math.round(Math.max(0,Math.min(0.99,hardnessRaw))*100)/100;
   const key=r.toFixed(2)+'|'+rgb.join(',')+'|'+alpha.toFixed(2)+'|'+composite+'|'+
@@ -414,35 +429,42 @@ function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   const cg=composite==='erase'?0:rgb[1];
   const cb=composite==='erase'?0:rgb[2];
 
-  // Step 1: Fill with solid brush colour.
-  tc.fillStyle=`rgb(${cr},${cg},${cb})`;
-  tc.fillRect(0,0,w,h);
+  // Rasterize the tip into a mask-only canvas. The source grayscale RGB
+  // never enters the output stamp canvas; only the resolved mask alpha is
+  // copied into a fresh brush-coloured ImageData buffer.
+  const maskCanvas=document.createElement('canvas');
+  maskCanvas.width=w; maskCanvas.height=h;
+  const maskCtx=maskCanvas.getContext('2d',{willReadFrequently:true});
+  maskCtx.imageSmoothingEnabled=true;
+  maskCtx.imageSmoothingQuality='high';
+  maskCtx.drawImage(tipC,0,0,tipNativeW,tipNativeH,(w-dabW)/2,(h-dabH)/2,dabW,dabH);
+  const maskData=maskCtx.getImageData(0,0,w,h).data;
 
-  // Step 2: Mask with the tip image (destination-in keeps only pixels where
-  // the tip has alpha > 0, and scales that alpha proportionally). Drawn at
-  // its aspect-correct size (dabWdabH), centered in the padded canvas
-  // not stretched to fill the whole wÃƒâ€”h square.
-  if(tipC){
-    tc.globalCompositeOperation='destination-in';
-    tc.imageSmoothingEnabled=true;
-    tc.imageSmoothingQuality='high';
-    tc.drawImage(tipC,0,0,tipNativeW,tipNativeH,(w-dabW)/2,(h-dabH)/2,dabW,dabH);
-    tc.globalCompositeOperation='source-over';
-  }
-
-  // Step 3: Preserve the imported image-tip alpha without a procedural circular mask.
-  const id=tc.getImageData(0,0,w,h); const d=id.data;
-  for(let py=0;py<h;py++){
-    for(let px=0;px<w;px++){
-      const p=(py*w+px)*4;
-      if(d[p+3]===0) continue;
-      const tipAlphaFrac=d[p+3]/255; // alpha the tip image provided
-      const finalAlpha=alpha*tipAlphaFrac;
-      d[p]=cr; d[p+1]=cg; d[p+2]=cb;
-      d[p+3]=Math.round(Math.min(1,finalAlpha)*255);
+  let legacyAlphaOnlyMask=false;
+  try{
+    const sourceCtx=tipC.getContext('2d',{willReadFrequently:true});
+    const sourceData=sourceCtx.getImageData(0,0,tipNativeW,tipNativeH).data;
+    let maximumVisibleLuminance=0;
+    for(let p=0;p<sourceData.length;p+=4){
+      if(sourceData[p+3]===0) continue;
+      const sourceLuminance=(sourceData[p]*0.2126+sourceData[p+1]*0.7152+sourceData[p+2]*0.0722)/255;
+      if(sourceLuminance>maximumVisibleLuminance) maximumVisibleLuminance=sourceLuminance;
     }
+    legacyAlphaOnlyMask=maximumVisibleLuminance<0.01;
+  }catch(error){
+    legacyAlphaOnlyMask=false;
   }
-  tc.putImageData(id,0,0);
+
+  const output=tc.createImageData(w,h); const outputData=output.data;
+  for(let p=0;p<maskData.length;p+=4){
+    const sourceAlpha=maskData[p+3]/255;
+    const luminance=(maskData[p]*0.2126+maskData[p+1]*0.7152+maskData[p+2]*0.0722)/255;
+    const tipAlpha=legacyAlphaOnlyMask?sourceAlpha:sourceAlpha*luminance;
+    if(tipAlpha<=0) continue;
+    outputData[p]=cr; outputData[p+1]=cg; outputData[p+2]=cb;
+    outputData[p+3]=Math.round(Math.min(1,alpha*tipAlpha)*255);
+  }
+  tc.putImageData(output,0,0);
 
   const stamp={canvas:tmp,w,h};
   if(_tipDabCache.size>=_TIP_DAB_CACHE_MAX) _tipDabCache.delete(_tipDabCache.keys().next().value);
@@ -496,13 +518,12 @@ function _buildAAStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
       let a;
       a=alpha*_roundBrushFalloff(t,inner,hardness);
       if(a<=0) continue; // leave fully transparent (already zeroed by createImageData)
-      // When a tip image is loaded, multiply the computed falloff alpha by the
-      // tip pixel's luminance (average of RGB channels Ã¢â‚¬â€ tip images are stored
-      // as grayscale-on-alpha or pure alpha masks from ABR imports).
+      // When a tip image is loaded, use its alpha channel as the shape mask.
+      // setBrushTip() normalizes flat-alpha (fully opaque) grayscale tips into
+      // real alpha on load (white shape -> opaque, black background -> transparent),
+      // so by now the tip's alpha channel already fully encodes the shape/gradient.
       if(tipPixels){
-        const ta=tipPixels[p+3]/255;           // tip alpha at this pixel
-        const tl=(tipPixels[p]+tipPixels[p+1]+tipPixels[p+2])/(255*3); // luminance
-        const tipFactor=(ta>0?tl:0);           // use luminance; fully transparent tip pixels always 0
+        const tipFactor=tipPixels[p+3]/255;    // tip alpha at this pixel
         if(tipReplace){
           // Replace mode: radial circle is ignored; tip shape is authoritative.
           a=alpha*tipFactor;
@@ -525,6 +546,9 @@ function _buildAAStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   return stamp;
 }
 let _activeDabRotation=0;
+// Per-dab roundness override for the current dab being drawn (Roundness
+// Jitter). null means "use the static brushTipRoundness slider value".
+let _activeDabRoundness=null;
 function _drawUnifiedTipStamp(x,y,r,rgb,alpha,composite){
   const dc=(_inStroke && composite!=='erase')?_strokeCtx:ctx;
   const stamp=_buildTipStamp(r,rgb,alpha,composite,brushHardness);
@@ -538,7 +562,7 @@ function _drawUnifiedTipStamp(x,y,r,rgb,alpha,composite){
   dc.restore();
 }
 function _dabAAGpu(x,y,r,rgb,alpha,composite){
-  if(window.brushTipCanvas || (r>=4 && brushHardness<0.995)){
+  if(window.brushTipCanvas){
     _drawUnifiedTipStamp(x,y,r,rgb,alpha,composite);
     return;
   }
@@ -614,7 +638,7 @@ function _dabAAGpu(x,y,r,rgb,alpha,composite){
 // only the rasterization backend differs (hand-written per-pixel math vs.
 // the browser's hardware gradient/fill).
 function _dabAACpu(x,y,r,rgb,alpha,composite){
-  if(window.brushTipCanvas || (r>=4 && brushHardness<0.995)){
+  if(window.brushTipCanvas){
     _drawUnifiedTipStamp(x,y,r,rgb,alpha,composite);
     return;
   }
@@ -923,11 +947,13 @@ function _drawAutoHardRoundSegment(d){
   return true;
 }function _drawDabNow(d){
   _activeDabRotation=window.brushTipCanvas?(d.rotation||0):0;
+  _activeDabRoundness=window.brushTipCanvas&&d.roundness!=null?d.roundness:null;
   if(!_drawAutoHardRoundSegment(d)){
     if(brushAA) _dabAA(d.x,d.y,d.r,d.rgb,d.alpha,d.composite);
     else _dabAliased(d.x,d.y,d.r,d.rgb,d.alpha,d.composite);
   }
   _activeDabRotation=0;
+  _activeDabRoundness=null;
   // Apply the texture overlay on the same target context the dab went to.
   // Eraser dabs target ctx directly (not the stroke scratch), so we need
   // to match that routing here as well.
@@ -1058,16 +1084,12 @@ function _smoothPoint(x,y,t){
 let _rotationPrevX=0,_rotationPrevY=0,_rotationPrevValid=false,_rotationDirection=0;
 function _resolveDabRotation(x,y){
   const fixed=(Number(window._tsBrushAngle)||0)*Math.PI/180;
-  if(window._tsRotationMode==='stroke-direction'){
-    if(_rotationPrevValid){
-      const dx=x-_rotationPrevX,dy=y-_rotationPrevY;
-      if(dx||dy) _rotationDirection=Math.atan2(dy,dx);
-    } else _rotationDirection=fixed;
-    _rotationPrevX=x;_rotationPrevY=y;_rotationPrevValid=true;
-    return _rotationDirection;
-  }
+  if(_rotationPrevValid){
+    const dx=x-_rotationPrevX,dy=y-_rotationPrevY;
+    if(dx||dy) _rotationDirection=Math.atan2(dy,dx);
+  } else _rotationDirection=fixed;
   _rotationPrevX=x;_rotationPrevY=y;_rotationPrevValid=true;
-  return fixed;
+  return window._tsRotationMode==='stroke-direction'?_rotationDirection:fixed;
 }
 
 function _stampDab(x,y,e){
@@ -1083,14 +1105,39 @@ function _stampDab(x,y,e){
   for(let dabIndex=0;dabIndex<count;dabIndex++){
     let dabX=x,dabY=y;
     if(scatterEnabled&&window._tsScatterAmount>0){
-      const radialSample=count===1?Math.random():(dabIndex+Math.random())/count;
-      const angularJitter=(Math.random()-0.5)*(Math.PI*2/count);
-      const angle=scatterRotation+dabIndex*goldenAngle+angularJitter;
-      const distance=Math.sqrt(radialSample)*r*2*window._tsScatterAmount;
-      dabX+=Math.cos(angle)*distance;
-      dabY+=Math.sin(angle)*distance;
+      if(window._tsScatterBothAxes===false){
+        const perpendicularAngle=_rotationDirection+Math.PI/2;
+        const distance=(Math.random()*2-1)*r*2*window._tsScatterAmount;
+        dabX+=Math.cos(perpendicularAngle)*distance;
+        dabY+=Math.sin(perpendicularAngle)*distance;
+      } else {
+        const radialSample=count===1?Math.random():(dabIndex+Math.random())/count;
+        const angularJitter=(Math.random()-0.5)*(Math.PI*2/count);
+        const angle=scatterRotation+dabIndex*goldenAngle+angularJitter;
+        const distance=Math.sqrt(radialSample)*r*2*window._tsScatterAmount;
+        dabX+=Math.cos(angle)*distance;
+        dabY+=Math.sin(angle)*distance;
+      }
     }
-    _queueDab({x:dabX,y:dabY,r,alpha,rgb,composite,rotation});
+    // Shape Dynamics jitter -- resolved independently for every dab (and
+    // every scattered copy within a dab) so consecutive stamps never look
+    // identical. This matches Photoshop's Size/Angle/Roundness Jitter and is
+    // what turns a single repeated tip stencil (e.g. one grass blade) into a
+    // naturally varied cluster instead of a uniform stripe of clones.
+    let dabR=r;
+    const sizeJit=window.brushTipSizeJitter||0;
+    if(sizeJit>0) dabR=Math.max(0.05,r*(1-Math.random()*sizeJit));
+    let dabRotation=rotation;
+    const angleJit=window.brushTipAngleJitter||0;
+    if(angleJit>0) dabRotation+=(Math.random()*2-1)*Math.PI*angleJit;
+    let dabRoundness=null;
+    const roundJit=window.brushTipRoundnessJitter||0;
+    if(roundJit>0){
+      const baseR=window.brushTipRoundness==null?1:window.brushTipRoundness;
+      const minR=Math.max(window.brushTipMinimumRoundness||0,baseR-roundJit*(baseR-(window.brushTipMinimumRoundness||0)));
+      dabRoundness=minR+Math.random()*(baseR-minR);
+    }
+    _queueDab({x:dabX,y:dabY,r:dabR,alpha,rgb,composite,rotation:dabRotation,roundness:dabRoundness});
   }
 }
 
@@ -1818,6 +1865,24 @@ function _computeSpacingRadius(e, interpolatedPressure){
       r = minR + (baseSize / 2 - minR) * influence;
     }
   }
+  if(window.brushTipCanvas && window.brushTipSpacingBasis === 'image-width'){
+    const tipNativeW = window.brushTipCanvas.width || window.brushTipCanvas.naturalWidth || 1;
+    const tipNativeH = window.brushTipCanvas.height || window.brushTipCanvas.naturalHeight || 1;
+    const referenceDiameter = Number(window.brushTipReferenceDiameter);
+    const spacingReference = Number.isFinite(referenceDiameter) && referenceDiameter > 0
+      ? referenceDiameter
+      : Math.max(tipNativeW, tipNativeH);
+    const tipRoundness = Math.max(
+      window.brushTipMinimumRoundness || 0,
+      Math.min(1, window.brushTipRoundness == null ? 1 : window.brushTipRoundness)
+    );
+    const compressWidth = tipNativeW < tipNativeH;
+    const transformedTipWidth = Math.max(
+      0.1,
+      tipNativeW * ((r * 2) / spacingReference) * (compressWidth ? tipRoundness : 1)
+    );
+    return transformedTipWidth / 2;
+  }
   const isHardRoundPressure=tool==='brush'&&_isDrawingWithPen&&!window.brushTipCanvas&&brushHardness>=0.995&&sizeCtrl==='pressure';
   return Math.max(isHardRoundPressure?0.25:0.05,r);
 }
@@ -1841,8 +1906,43 @@ window._setBrushTipShape=function(roundness,flipX,flipY){
   _tipDabCache.clear();
   _stampCache.clear();
 };
+// Many exported tip images (including the morrowshore.com ABR-extractor's
+// PNGs) are plain OPAQUE grayscale pictures — a white shape on a black
+// background — with NO real transparency at all (every pixel's alpha is
+// 255). The GPU stamp path (_buildTipStamp) masks purely off the ALPHA
+// channel via destination-in, so a flat-alpha image like that produces no
+// masking whatsoever: every dab came out as a solid filled rectangle (the
+// tip's bounding box), not the tip's actual silhouette.
+// Fix: whenever a newly-set tip canvas has essentially no alpha variation,
+// synthesize real alpha from luminance instead — white pixels (the painted
+// shape) become opaque, black pixels (background) become transparent. This
+// matches the same "white = paint" convention _buildAAStamp's CPU path
+// already assumes for the luminance factor, so both renderers agree, and a
+// brush tip painted the intuitive way (light shape on dark background)
+// stops rendering as an inverted blob / solid box.
+function _normalizeTipAlpha(canvas){
+  if(!canvas || !canvas.width || !canvas.height) return canvas;
+  const w=canvas.width, h=canvas.height;
+  const c2d=canvas.getContext('2d',{willReadFrequently:true});
+  let id;
+  try{ id=c2d.getImageData(0,0,w,h); }catch(e){ return canvas; } // tainted canvas (cross-origin) — leave as-is
+  const d=id.data;
+  let minA=255,maxA=0;
+  for(let i=3;i<d.length;i+=4){ const a=d[i]; if(a<minA)minA=a; if(a>maxA)maxA=a; }
+  // Real transparency already present (e.g. a proper alpha-masked tip, or
+  // this function already having run on it) — leave it untouched.
+  if(maxA-minA>4) return canvas;
+  for(let i=0;i<d.length;i+=4){
+    const lum=(d[i]+d[i+1]+d[i+2])/3;
+    d[i]=d[i+1]=d[i+2]=255; // colour is irrelevant to the mask, keep it neutral
+    d[i+3]=Math.round(lum);  // white shape -> opaque, black background -> transparent
+  }
+  c2d.putImageData(id,0,0);
+  return canvas;
+}
 window.setBrushTip=function(canvas,referenceDiameter){
-  window.brushTipCanvas=canvas||null;
+  window.brushTipCanvas=canvas?_normalizeTipAlpha(canvas):null;
+  window.brushTipSpacingBasis=canvas?'image-width':'diameter';
   window.brushTipReferenceDiameter=canvas&&Number.isFinite(Number(referenceDiameter))&&Number(referenceDiameter)>0?Number(referenceDiameter):null;
   window.brushTipVersion=(window.brushTipVersion||0)+1;
   _tipDabCache.clear();
