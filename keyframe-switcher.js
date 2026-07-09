@@ -52,16 +52,23 @@
     const kf=keyframeTimes(curLayer);
     const prev=kf.filter(f=>f<curFrame);
     const next=kf.filter(f=>f>curFrame);
-    elFrame.textContent=(curFrame+1)+' / '+TOTAL;
+    elFrame.textContent=frameLabel(curFrame)+' / '+TOTAL;
     elLayer.textContent=layer.name;
     elCount.textContent=kf.length;
-    elPrev.textContent=prev.length?(prev[prev.length-1]+1):'—';
-    elNext.textContent=next.length?(next[0]+1):'—';
+    elPrev.textContent=prev.length?frameLabel(prev[prev.length-1]):'—';
+    elNext.textContent=next.length?frameLabel(next[0]):'—';
   }
 
   function navigate(direction){
     if(!layers[curLayer]) return;
     const step=Math.max(1,Math.min(100,parseInt(spinStep.value)||1));
+
+    // At the out point, "next frame" wraps to the in point (and vice versa),
+    // same as the timeline's step forward/back buttons — this takes priority
+    // over jumping to the next/prev keyframe or bypass-stepping.
+    if(direction>0&&curFrame>=rangeEnd){ goToFrame(rangeStart); refresh(); return; }
+    if(direction<0&&curFrame<=rangeStart){ goToFrame(rangeEnd); refresh(); return; }
+
     let target;
 
     if(chkBypass.checked){

@@ -86,7 +86,7 @@ function loadFrame(li,fi){
   ctx.clearRect(0,0,CW,CH);
   const k=getHeldKey(li,fi);if(k) ctx.drawImage(k,0,0);
   recomposite(li,fi);updateOnion();updatePlayhead();
-  document.getElementById('frame-info').textContent='Frame '+(fi+1)+' / '+TOTAL;
+  document.getElementById('frame-info').textContent=frameLabel(fi)+' / '+frameLabel(TOTAL-1);
   updateStatus();
 }
 // PERF: recomposite() now accepts an optional `dirtyRect` ({x,y,w,h} in

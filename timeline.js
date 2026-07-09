@@ -1,6 +1,20 @@
 // ════════════════════════════════════════════════════════════════
 // PLAYBACK
 // ════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════
+// FRAME LABELING
+// Internally, frames are always stored at non-negative indices (0..TOTAL-1).
+// frameLabelOffset lets the *displayed* frame number go negative without
+// touching that storage: label(f) = f - frameLabelOffset + 1. It starts at
+// 0 (so index 0 displays as "1", same as before) and is bumped whenever
+// _insertFramesAtStart() inserts blank frames at the front, so whatever was
+// frame 1 stays labeled "1" and the newly inserted space in front of it
+// counts down through 0, -1, -2, … — matching how other animation software
+// numbers frames dragged before the start, instead of relabeling everything
+// with large positive numbers.
+let frameLabelOffset=0;
+function frameLabel(f){return f-frameLabelOffset+1;}
+
 function clampRange(){rangeStart=Math.max(0,Math.min(rangeStart,TOTAL-1));rangeEnd=Math.max(rangeStart,Math.min(rangeEnd,TOTAL-1));}
 function getFPS(){return Math.min(+fpsTl.value,MAX_FPS);}
 
@@ -37,7 +51,7 @@ function togglePlay(){
       displayCtx.drawImage(compC,0,0);
       displayCtx.filter='none';
       updatePlayhead();
-      document.getElementById('frame-info').textContent='Frame '+(curFrame+1)+' / '+TOTAL;
+      document.getElementById('frame-info').textContent=frameLabel(curFrame)+' / '+frameLabel(TOTAL-1);
       renderRulerHighlight();
     },1000/fps);
   } else {
@@ -55,8 +69,14 @@ document.addEventListener('keydown',e=>{
 });
 document.getElementById('btn-prev').onclick=()=>goToFrame(0);
 document.getElementById('btn-last').onclick=()=>goToFrame(TOTAL-1);
-document.getElementById('btn-stepb').onclick=()=>goToFrame(curFrame-1);
-document.getElementById('btn-stepf').onclick=()=>goToFrame(curFrame+1);
+document.getElementById('btn-stepb').onclick=()=>{
+  if(curFrame<=rangeStart) goToFrame(rangeEnd);
+  else goToFrame(curFrame-1);
+};
+document.getElementById('btn-stepf').onclick=()=>{
+  if(curFrame>=rangeEnd) goToFrame(rangeStart);
+  else goToFrame(curFrame+1);
+};
 fpsTl.oninput=e=>{const v=Math.min(+e.target.value,MAX_FPS);fpsTl.value=v;fpsVal.textContent=v;updateFpsSliderColor();if(playing){clearInterval(playTimer);playing=false;togglePlay();}};
 
 // Update slider color: red if below MAX_FPS
@@ -67,7 +87,22 @@ function updateFpsSliderColor(){
 
 
 document.getElementById('btn-new-key').onclick=()=>{createBlankKey();loadFrame(curLayer,curFrame);};
-function deleteKeyframe(){delete layers[curLayer].frames[curFrame];ctx.clearRect(0,0,CW,CH);const h=getHeldKey(curLayer,curFrame);if(h)ctx.drawImage(h,0,0);saveActiveToKey();loadFrame(curLayer,curFrame);renderTimeline();}
+function deleteKeyframe(){
+  delete layers[curLayer].frames[curFrame];
+  ctx.clearRect(0,0,CW,CH);const h=getHeldKey(curLayer,curFrame);if(h)ctx.drawImage(h,0,0);
+  saveActiveToKey();
+  // After deleting, trim any leading blank frames that are no longer needed
+  // (e.g. the deleted keyframe was the only thing in the negative zone).
+  // This also snaps the playhead and scroll back to frame 1 if the offset resets.
+  if(frameLabelOffset>0){
+    _trimLeadingBlanks();
+    // If we trimmed everything and playhead is now before visible frame 1,
+    // jump it to frame 0 (label 1) and scroll there.
+    if(frameLabelOffset===0&&curFrame<0){curFrame=0;}
+    curFrame=Math.max(0,Math.min(TOTAL-1,curFrame));
+  }
+  loadFrame(curLayer,curFrame);renderTimeline();
+}
 document.getElementById('btn-del-key').onclick=deleteKeyframe;
 
 fpsVal.addEventListener('click',()=>{
@@ -92,6 +127,32 @@ tlScroll.addEventListener('scroll',()=>{document.getElementById('tl-labels-rows'
 function frameFromX(clientX){
   const r=tlScroll.getBoundingClientRect();
   return Math.max(0,Math.min(TOTAL-1,Math.floor((clientX-r.left+tlScroll.scrollLeft)/CellW)));
+}
+// Same as frameFromX but NOT clamped to [0,TOTAL-1] — used while dragging a
+// keyframe so we can tell the drag actually wants to go negative (past frame 1)
+// instead of just reporting frame 0 for anything past the left edge.
+function rawFrameFromX(clientX){
+  const r=tlScroll.getBoundingClientRect();
+  return Math.floor((clientX-r.left+tlScroll.scrollLeft)/CellW);
+}
+
+// Inserts `amount` blank frames at the very start of the timeline, shifting
+// every layer's existing keyframes (and TOTAL/range/playhead) to the right
+// by that amount. This is what lets you keep dragging a keyframe backward
+// past frame 1 — instead of the drag hitting a wall at 0, the timeline
+// grows to make room, same as most animation software does.
+function _insertFramesAtStart(amount){
+  if(amount<=0) return;
+  layers.forEach(l=>{
+    const entries=Object.keys(l.frames).map(Number).sort((a,b)=>b-a); // highest first, avoid clobbering
+    const shifted={};
+    entries.forEach(f=>{shifted[f+amount]=l.frames[f];});
+    l.frames=shifted;
+  });
+  TOTAL+=amount;
+  rangeStart+=amount;rangeEnd+=amount;
+  curFrame+=amount;
+  frameLabelOffset+=amount;
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -137,11 +198,23 @@ document.getElementById('ruler-ctx-reset').onclick=()=>{rangeStart=0;rangeEnd=TO
 // ════════════════════════════════════════════════════════════════
 let dragKF=null;
 let kfSelectionAnchor=null;
+let selectedRowLayers=new Set([curLayer]); // which layer indices should show the "selected" cell background band
+
+// Returns the actual layer indices (not display-order indices) spanning between
+// anchorLayerIndex and targetLayerIndex in the timeline's current display order.
+function _rowSpanLayers(anchorLayerIndex,targetLayerIndex){
+  const layerOrder=timelineLayerIndices();
+  const a=layerOrder.indexOf(anchorLayerIndex),t=layerOrder.indexOf(targetLayerIndex);
+  if(a<0||t<0)return[targetLayerIndex];
+  const lo=Math.min(a,t),hi=Math.max(a,t);
+  return layerOrder.slice(lo,hi+1);
+}
 
 function clearKeyframeSelection(){
   if(!selectedKFs.size&&!kfSelectionAnchor)return;
   selectedKFs.clear();
   kfSelectionAnchor=null;
+  selectedRowLayers.clear();
   document.querySelectorAll('.kf-block.selected').forEach(block=>block.classList.remove('selected'));
 }
 
@@ -186,16 +259,61 @@ function startKFDrag(li,fi,e){
     const key=`${layerIndex}:${+frame}`;
     if(!selectedOrigins.has(key)) occupied.add(key);
   }));
-  dragKF={li,originFi:fi,items,layerIndices,occupied,appliedDelta:0,before:_snapshotFrameMaps(layerIndices)};
+  const allLayerIndices=layers.map((_,idx)=>idx);
+  // Store dragStartClientX so onKFDragMove computes delta from pointer
+  // movement in pixels — not from rawFrameFromX which reads scrollLeft and
+  // breaks whenever _insertFramesAtStart widens the timeline mid-drag.
+  dragKF={li,originFi:fi,lockedScroll:tlScroll.scrollLeft,items,layerIndices,allLayerIndices,occupied,appliedDelta:0,anyShift:false,before:_snapshotFrameMaps(allLayerIndices)};
   document.addEventListener('pointermove',onKFDragMove);
   document.addEventListener('pointerup',onKFDragUp);
 }
 function onKFDragMove(e){
   if(!dragKF||!dragKF.items.length) return;
-  const targetFrame=frameFromX(e.clientX);
+
+  // Lock scroll for the duration of this drag so rawFrameFromX is stable.
+  tlScroll.scrollLeft=dragKF.lockedScroll;
+
+  // Where does the pointer map to on the (locked) timeline?
+  const rawTarget=rawFrameFromX(e.clientX);
+
+  // Work out how many frames the dragged item(s) need to move.
+  // minimumFrame / maximumFrame are the current internal positions of the
+  // dragged items (already shifted by any previous insert/trim this drag).
   const minimumFrame=Math.min(...dragKF.items.map(item=>item.frameIndex));
   const maximumFrame=Math.max(...dragKF.items.map(item=>item.frameIndex));
-  const delta=Math.max(-minimumFrame,Math.min((TOTAL-1)-maximumFrame,targetFrame-dragKF.originFi));
+
+  // Unclamped delta: how many frames right of their current positions
+  // should the items end up?  Negative = dragging left.
+  const rawDelta=rawTarget-dragKF.originFi;
+
+  // If dragging left past frame 0, insert exactly enough blank frames at
+  // the start to make room — computed once, no recursion.
+  const wouldBeMin=minimumFrame+rawDelta;
+  if(wouldBeMin<0){
+    const overflow=-wouldBeMin; // frames needed before index 0
+    _insertFramesAtStart(overflow);
+    dragKF.anyShift=true;
+    dragKF.originFi+=overflow;
+    dragKF.items.forEach(item=>item.frameIndex+=overflow);
+    dragKF.occupied=new Set(Array.from(dragKF.occupied,key=>{
+      const[li2,fr]=key.split(':').map(Number);
+      return`${li2}:${fr+overflow}`;
+    }));
+    // Canvas grew left by overflow*CellW — shift locked scroll right to
+    // keep the same visual anchor, then re-lock immediately.
+    dragKF.lockedScroll+=overflow*CellW;
+    tlScroll.scrollLeft=dragKF.lockedScroll;
+    // minimumFrame and originFi have both shifted by overflow, so
+    // rawTarget-dragKF.originFi is now rawDelta-overflow.  Fall through
+    // with the updated state; overflow is 0 now so no risk of re-entry.
+  }
+
+  // Re-read with updated state (items may have shifted above).
+  const minF=Math.min(...dragKF.items.map(item=>item.frameIndex));
+  const maxF=Math.max(...dragKF.items.map(item=>item.frameIndex));
+  // Clamp: can't push past last frame, can't go before frame 0.
+  const delta=Math.max(-minF, Math.min((TOTAL-1)-maxF, rawTarget-dragKF.originFi));
+
   if(delta===dragKF.appliedDelta) return;
   const destinations=dragKF.items.map(item=>({item,target:item.frameIndex+delta}));
   if(destinations.some(move=>dragKF.occupied.has(`${move.item.layerIndex}:${move.target}`))) return;
@@ -205,13 +323,75 @@ function onKFDragMove(e){
   selectedKFs.clear();
   destinations.forEach(move=>selectedKFs.add(`${move.item.layerIndex}:${move.target}`));
   if(dragKF.li===curLayer){curFrame=dragKF.originFi+delta;loadFrame(curLayer,curFrame);}
+  // Trim any now-empty leading blank frames (user dragged back rightward).
+  // Scroll stays locked; trim only adjusts lockedScroll to match canvas shrink.
+  if(frameLabelOffset>0) _trimLeadingBlanks();
   renderTimeline();
 }
+// After a drag that prepended blank frames (anyShift=true), check whether
+// all keyframes have ended up at or after frameLabelOffset (label ≥ 1).
+// If so, trim the unused leading blank frames so the timeline doesn't grow
+// indefinitely and doesn't show a negative-number zone when nothing lives
+// there. This is the "snap back" behaviour described in the bug report:
+// dragging to -4 temporarily expands the timeline, but if the user then
+// drags back to frame 1+, the negative columns silently disappear.
+function _trimLeadingBlanks(){
+  if(frameLabelOffset===0) return; // nothing to trim
+  // Find the earliest internal frame index that has a keyframe on any layer.
+  let earliest=Infinity;
+  layers.forEach(l=>Object.keys(l.frames).forEach(f=>{
+    const n=+f;if(n<earliest) earliest=n;
+  }));
+  if(!isFinite(earliest)) return; // no keyframes at all — leave as-is
+  // How many blank frames sit before the earliest keyframe?
+  // We can only trim up to frameLabelOffset (otherwise we'd push the
+  // display label below 1 for the first real keyframe).
+  const trimmable=Math.min(earliest, frameLabelOffset);
+  if(trimmable<=0) return;
+  // Shift every keyframe left by `trimmable` and update all tracking vars.
+  layers.forEach(l=>{
+    const shifted={};
+    Object.keys(l.frames).forEach(f=>{shifted[+f-trimmable]=l.frames[f];});
+    l.frames=shifted;
+  });
+  TOTAL-=trimmable;
+  rangeStart-=trimmable; rangeEnd-=trimmable;
+  curFrame-=trimmable;
+  frameLabelOffset-=trimmable;
+  clampRange();
+  // If an active drag exists, keep its tracking state in sync so the next
+  // onKFDragMove call computes the right delta after the shift.
+  if(dragKF){
+    dragKF.originFi-=trimmable;
+    dragKF.items.forEach(item=>item.frameIndex-=trimmable);
+    dragKF.occupied=new Set(Array.from(dragKF.occupied,key=>{
+      const[layerIndex,frame]=key.split(':').map(Number);
+      return`${layerIndex}:${frame-trimmable}`;
+    }));
+    // Canvas shrank by trimmable*CellW from the left — shift lockedScroll
+    // left by the same amount so rawFrameFromX stays correct.
+    dragKF.lockedScroll=Math.max(0,dragKF.lockedScroll-trimmable*CellW);
+  }
+  // Clamp curFrame in case the trim moved it below 0 (the playhead was
+  // sitting in the now-removed blank zone).
+  curFrame=Math.max(0,curFrame);
+  // Only scroll to re-anchor the playhead when NOT in an active keyframe drag.
+  // During a drag the viewport must stay still — a scroll shift would change
+  // the apparent position of dragStartClientX and make the pixel-delta
+  // calculation wrong, causing the "frame 1 becomes frame 9" jump.
+  if(!dragKF){
+    tlScroll.scrollLeft=Math.max(0,curFrame*CellW-tlScroll.clientWidth/2);
+  }
+}
+
 function onKFDragUp(){
   document.removeEventListener('pointermove',onKFDragMove);
   document.removeEventListener('pointerup',onKFDragUp);
-  if(dragKF&&dragKF.appliedDelta!==0){
-    undoStack.push({type:'timeline-frames',before:dragKF.before,after:_snapshotFrameMaps(dragKF.layerIndices)});
+  if(dragKF&&(dragKF.appliedDelta!==0||dragKF.anyShift)){
+    // If frames were prepended during this drag, try to reclaim any
+    // leading blank space now that the final position is known.
+    if(frameLabelOffset>0) _trimLeadingBlanks();
+    undoStack.push({type:'timeline-frames',before:dragKF.before,after:_snapshotFrameMaps(dragKF.allLayerIndices)});
     if(undoStack.length>40) undoStack.shift();
     redoStack=[];
   }
@@ -231,7 +411,13 @@ function renderRuler(){
     else if(f===rangeEnd) cls+=' range-end';
     else if(f>rangeStart&&f<rangeEnd) cls+=' in-range';
     c.className=cls;c.style.width=CellW+'px';
-    c.textContent=(f===0||(f+1)%5===0)?(f+1):'';
+    // Show tick label when the *displayed* frame number is a multiple of 5
+    // (or is the very first frame in the clip). Using the internal index
+    // (f) here would put labels on wrong columns whenever frameLabelOffset
+    // is non-zero (i.e. after blank frames have been prepended for a
+    // negative-frame drag). frameLabel() returns the user-visible number.
+    const lbl=frameLabel(f);
+    c.textContent=(lbl%5===0||f===0)?lbl:'';
     c.addEventListener('click',e=>{
       e.stopPropagation();
       goToFrame(f,false,true);
@@ -420,15 +606,15 @@ function renderRows(){
       const cell=document.createElement('div');
       let cls='tl-cell';
       if(f===curFrame&&i===curLayer) cls+=' cur-col';
-      if(selectedFrames.has(f)&&i===curLayer) cls+=' selected';
+      if(selectedFrames.has(f)&&selectedRowLayers.has(i)) cls+=' selected';
       cell.className=cls;cell.style.cssText='left:'+(f*CellW)+'px;position:absolute;width:'+CellW+'px;height:'+CellH+'px;';
       cell.dataset.layerIdx=i;
       cell.addEventListener('pointerdown',ev=>{
         ev.stopPropagation();
         if(!ev.shiftKey)clearKeyframeSelection();
-        if(ev.shiftKey){const anchor=kfSelectionAnchor||{layerIndex:curLayer,frameIndex:curFrame};selectKeyframeRange(anchor,{layerIndex:i,frameIndex:f});if(i!==curLayer)switchLayer(i);curFrame=f;loadFrame(curLayer,curFrame);renderTimeline();}
-        else if(ev.ctrlKey||ev.metaKey){if(selectedFrames.has(f))selectedFrames.delete(f);else selectedFrames.add(f);if(i!==curLayer)switchLayer(i);curFrame=f;loadFrame(curLayer,curFrame);renderTimeline();}
-        else{selectedFrames.clear();selectedFrames.add(f);tlSelDrag={startF:f};if(i!==curLayer)switchLayer(i);goToFrame(f);}
+        if(ev.shiftKey){const anchor=kfSelectionAnchor||{layerIndex:curLayer,frameIndex:curFrame};selectKeyframeRange(anchor,{layerIndex:i,frameIndex:f});selectedRowLayers=new Set(_rowSpanLayers(anchor.layerIndex,i));const lo=Math.min(anchor.frameIndex,f),hi=Math.max(anchor.frameIndex,f);selectedFrames.clear();for(let ff=lo;ff<=hi;ff++)selectedFrames.add(ff);if(i!==curLayer)switchLayer(i);curFrame=f;loadFrame(curLayer,curFrame);renderTimeline();}
+        else if(ev.ctrlKey||ev.metaKey){if(selectedFrames.has(f))selectedFrames.delete(f);else selectedFrames.add(f);selectedRowLayers.add(i);if(i!==curLayer)switchLayer(i);curFrame=f;loadFrame(curLayer,curFrame);renderTimeline();}
+        else{selectedFrames.clear();selectedFrames.add(f);selectedKFs.clear();selectedRowLayers=new Set([i]);kfSelectionAnchor={layerIndex:i,frameIndex:f};document.querySelectorAll('.kf-block.selected').forEach(b=>b.classList.remove('selected'));tlSelDrag={startF:f,anchorLayer:i};if(i!==curLayer)switchLayer(i);goToFrame(f);}
       });
       row.appendChild(cell);
     }
@@ -448,20 +634,26 @@ function renderRows(){
       let cls='kf-block';if(selectedKFs.has(kk)) cls+=' selected';
       block.className=cls;
       block.style.cssText='position:absolute;left:'+(f*CellW+3)+'px;top:4px;bottom:4px;width:'+(CellW-6)+'px;';
-      block.title=l.name+' F'+(f+1);
+      block.title=l.name+' F'+frameLabel(f);
+      block.dataset.layerIdx=i;block.dataset.kk=kk;
       block.addEventListener('pointerdown',ev=>{
         ev.stopPropagation();
         if(ev.shiftKey&&kfSelectionAnchor){
           selectKeyframeRange(kfSelectionAnchor,{layerIndex:i,frameIndex:f});
+          selectedRowLayers=new Set(_rowSpanLayers(kfSelectionAnchor.layerIndex,i));
+          const lo=Math.min(kfSelectionAnchor.frameIndex,f),hi=Math.max(kfSelectionAnchor.frameIndex,f);
+          selectedFrames.clear();for(let ff=lo;ff<=hi;ff++)selectedFrames.add(ff);
         }else if(ev.ctrlKey||ev.metaKey){
           if(selectedKFs.has(kk))selectedKFs.delete(kk);else selectedKFs.add(kk);
+          selectedRowLayers.add(i);
           kfSelectionAnchor={layerIndex:i,frameIndex:f};
         }else{
           if(!selectedKFs.has(kk)){selectedKFs.clear();selectedKFs.add(kk);}
+          selectedRowLayers=new Set([i]);
           kfSelectionAnchor={layerIndex:i,frameIndex:f};
         }
         startKFDrag(i,f,ev);
-        if(i!==curLayer)switchLayer(i);curFrame=f;selectedFrames.clear();selectedFrames.add(f);loadFrame(curLayer,curFrame);renderTimeline();
+        if(i!==curLayer)switchLayer(i);curFrame=f;if(!ev.shiftKey){selectedFrames.clear();selectedFrames.add(f);}loadFrame(curLayer,curFrame);renderTimeline();
       });
       block.addEventListener('click',ev=>{ev.stopPropagation();if(i!==curLayer)switchLayer(i);selectedFrames.clear();selectedFrames.add(f);goToFrame(f);});
       row.appendChild(block);
@@ -512,11 +704,28 @@ function renderRows(){
     if(!tlSelDrag) return;
     const r=tlScroll.getBoundingClientRect();
     const f2=Math.max(0,Math.min(TOTAL-1,Math.floor((e.clientX-r.left+tlScroll.scrollLeft)/CellW)));
+
+    // Figure out which row (layer) the pointer is currently over so the drag
+    // can span multiple rows, not just the layer it started on.
+    let li=tlSelDrag.anchorLayer;
+    const elUnder=document.elementFromPoint(e.clientX,e.clientY);
+    const rowEl=elUnder&&elUnder.closest('[data-layer-idx]');
+    if(rowEl&&rowEl.dataset.layerIdx!==undefined) li=parseInt(rowEl.dataset.layerIdx);
+
     const lo=Math.min(tlSelDrag.startF,f2),hi=Math.max(tlSelDrag.startF,f2);
     selectedFrames.clear();for(let ff=lo;ff<=hi;ff++)selectedFrames.add(ff);
+    selectedRowLayers=new Set(_rowSpanLayers(tlSelDrag.anchorLayer,li));
+
+    // Rebuild the keyframe selection across every row between the anchor row
+    // and the row currently under the pointer (same logic as shift-click range select).
+    if(kfSelectionAnchor){
+      selectKeyframeRange(kfSelectionAnchor,{layerIndex:li,frameIndex:f2});
+    }
+
     curFrame=f2;loadFrame(curLayer,curFrame);
-    document.querySelectorAll('.tl-cell').forEach(c=>{const cf=parseInt(c.style.left)/CellW;const isActive=parseInt(c.dataset.layerIdx)===curLayer;c.classList.toggle('selected',isActive&&selectedFrames.has(cf));c.classList.toggle('cur-col',isActive&&cf===curFrame);});
-    updatePlayhead();document.getElementById('frame-info').textContent='Frame '+(curFrame+1)+' / '+TOTAL;
+    document.querySelectorAll('.tl-cell').forEach(c=>{const cf=parseInt(c.style.left)/CellW;const isSel=selectedRowLayers.has(parseInt(c.dataset.layerIdx));c.classList.toggle('selected',isSel&&selectedFrames.has(cf));c.classList.toggle('cur-col',parseInt(c.dataset.layerIdx)===curLayer&&cf===curFrame);});
+    document.querySelectorAll('.kf-block').forEach(b=>{b.classList.toggle('selected',selectedKFs.has(b.dataset.kk));});
+    updatePlayhead();document.getElementById('frame-info').textContent=frameLabel(curFrame)+' / '+frameLabel(TOTAL-1);
   });
 }
 
@@ -530,15 +739,41 @@ function updatePlayhead(){
   const ph=document.getElementById('playhead');if(!ph) return;
   const left=curFrame*CellW+CellW/2-1;
   ph.style.left=left+'px';ph.style.height=(timelineLayerIndices().length*CellH)+'px';ph.style.top='0';
+  // Frame-number label above the handle (like TVPaint's scrubber tooltip).
+  // Create it once as a child element and update its text each call.
+  let lbl=ph.querySelector('.ph-frame-label');
+  if(!lbl){
+    lbl=document.createElement('span');
+    lbl.className='ph-frame-label';
+    Object.assign(lbl.style,{
+      position:'absolute',
+      bottom:'100%',       // sits above the ruler triangle
+      left:'50%',
+      transform:'translateX(-50%)',
+      fontSize:'9px',
+      lineHeight:'1',
+      padding:'1px 3px',
+      background:'var(--red)',
+      color:'#fff',
+      borderRadius:'2px',
+      whiteSpace:'nowrap',
+      pointerEvents:'none',
+      userSelect:'none',
+      // small gap between label and the triangle
+      marginBottom:'2px',
+    });
+    ph.appendChild(lbl);
+  }
+  lbl.textContent=frameLabel(curFrame);
   const visible=tlScroll.scrollLeft+tlScroll.clientWidth;
   if(left>visible-40||left<tlScroll.scrollLeft+20) tlScroll.scrollLeft=left-tlScroll.clientWidth/2;
 }
 
 function updateStatus(){
   document.getElementById('stat-kf').textContent='KF: '+Object.keys(layers[curLayer]?.frames||{}).length;
-  document.getElementById('stat-range').textContent='Range: '+(rangeStart+1)+'–'+(rangeEnd+1);
+  document.getElementById('stat-range').textContent='Range: '+frameLabel(rangeStart)+'–'+frameLabel(rangeEnd);
   const sel=[...selectedFrames].sort((a,b)=>a-b);
-  document.getElementById('stat-sel').textContent='Sel: '+(sel.length?sel.map(f=>f+1).join(','):'—');
+  document.getElementById('stat-sel').textContent='Sel: '+(sel.length?sel.map(f=>frameLabel(f)).join(','):'—');
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -2294,4 +2529,3 @@ document.getElementById('modal-group-action-ok').onclick=()=>{
   if(action==='insert') _insertGroupInsideGroup(targetGroupId);
   else _wrapSingleGroup(targetGroupId);
 };
-

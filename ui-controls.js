@@ -148,7 +148,7 @@ function applyCanvasResize(nw,nh){
 function applyTotalFrames(n){
   TOTAL=n;rangeStart=Math.min(rangeStart,TOTAL-1);rangeEnd=Math.min(rangeEnd,TOTAL-1);
   if(rangeEnd<rangeStart) rangeEnd=rangeStart;curFrame=Math.min(curFrame,TOTAL-1);
-  document.getElementById('frame-info').textContent='Frame '+(curFrame+1)+' / '+TOTAL;
+  document.getElementById('frame-info').textContent='Frame '+frameLabel(curFrame)+' / '+TOTAL;
   renderTimeline();
 }
 
