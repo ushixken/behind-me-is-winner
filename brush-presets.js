@@ -929,18 +929,53 @@
       const hasTex=!!window.brushTextureCanvas;
       const clearBtn=document.getElementById('ts-texture-clear-btn');
       const depthRow=document.getElementById('ts-texture-depth-custom-row');
+      const scaleRow=document.getElementById('ts-texture-scale-row');
+      const buildupRow=document.getElementById('ts-texture-buildup-row');
+      const brightRow=document.getElementById('ts-texture-brightness-row');
+      const contrastRow=document.getElementById('ts-texture-contrast-row');
       const helpEl=document.getElementById('ts-texture-img-help');
       const filename=document.getElementById('ts-texture-filename');
       if(clearBtn) clearBtn.style.display=hasTex?'':'none';
       if(depthRow) depthRow.style.display=hasTex?'':'none';
+      if(scaleRow) scaleRow.style.display=hasTex?'':'none';
+      if(buildupRow) buildupRow.style.display=hasTex?'':'none';
+      if(brightRow) brightRow.style.display=hasTex?'':'none';
+      if(contrastRow) contrastRow.style.display=hasTex?'':'none';
       if(helpEl) helpEl.style.display=hasTex?'none':'';
       if(!hasTex && filename){ filename.style.display='none'; filename.textContent=''; }
+      // Sync invert checkbox to engine global
+      const invertEl=document.getElementById('ts-texture-invert');
+      if(invertEl) invertEl.checked=!!window.brushTextureInvert;
+      // Sync brightness slider to engine global
+      const brightEl=document.getElementById('ts-texture-brightness');
+      const brightVal=document.getElementById('ts-texture-brightness-val');
+      const brightN=(window.brushTextureBrightness!=null?window.brushTextureBrightness:0);
+      if(brightEl) brightEl.value=brightN;
+      if(brightVal) brightVal.textContent=String(brightN);
+      // Sync contrast slider to engine global
+      const contrastEl=document.getElementById('ts-texture-contrast');
+      const contrastVal=document.getElementById('ts-texture-contrast-val');
+      const contrastN=(window.brushTextureContrast!=null?window.brushTextureContrast:0);
+      if(contrastEl) contrastEl.value=contrastN;
+      if(contrastVal) contrastVal.textContent=String(contrastN);
       // Sync depth slider to engine global
       const depthEl=document.getElementById('ts-texture-depth-custom');
       const depthVal=document.getElementById('ts-texture-depth-custom-val');
-      const pct=Math.round((window.brushTextureDepth||0.5)*100);
+      const pct=Math.round((window.brushTextureDepth!=null?window.brushTextureDepth:1.0)*100);
       if(depthEl) depthEl.value=pct;
       if(depthVal) depthVal.textContent=pct+'%';
+      // Sync scale slider to engine global
+      const scaleEl=document.getElementById('ts-texture-scale');
+      const scaleVal=document.getElementById('ts-texture-scale-val');
+      const scalePct=Math.round((window.brushTextureScale||1.0)*100);
+      if(scaleEl) scaleEl.value=scalePct;
+      if(scaleVal) scaleVal.textContent=scalePct+'%';
+      // Sync buildup slider to engine global
+      const buildupEl=document.getElementById('ts-texture-buildup');
+      const buildupValEl=document.getElementById('ts-texture-buildup-val');
+      const buildupPct=Math.round((window.brushTextureBuildup!=null?window.brushTextureBuildup:1.0)*100);
+      if(buildupEl) buildupEl.value=buildupPct;
+      if(buildupValEl) buildupValEl.textContent=buildupPct+'%';
       _drawTexturePreview();
     };
 
@@ -958,6 +993,11 @@
         const fn=document.getElementById('ts-texture-filename');
         if(fn){ fn.textContent=file.name; fn.style.display=''; }
         window._syncTextureUI();
+        // Persist the texture image into the active preset so it survives
+        // page refresh. captureTip=true is required to write the data URL
+        // into _presetSettings (slider values are captured automatically by
+        // the input-event listener, but image data only via captureTip=true).
+        if(typeof window._captureActiveBrushPreset==='function') window._captureActiveBrushPreset(true);
       };
       img.onerror=()=>{ URL.revokeObjectURL(url); };
       img.src=url;
@@ -983,6 +1023,8 @@
         if(fn){ fn.textContent=''; fn.style.display='none'; }
         if(texFileInput) texFileInput.value='';
         window._syncTextureUI();
+        // Remove the texture dataurl from the persisted preset.
+        if(typeof window._captureActiveBrushPreset==='function') window._captureActiveBrushPreset(true);
       };
     }
     if(texDepthEl){
@@ -991,6 +1033,111 @@
         if(texDepthVal) texDepthVal.textContent=texDepthEl.value+'%';
       };
     }
+
+    // Texture Buildup slider — controls how fast overlapping dabs within one
+    // stroke fill in the grain holes and build up to solid coverage.
+    // At 100% (default) the centre of a stroke becomes dense in a single pass
+    // (TVPaint-style). At 0% each dab shows the same static grain with no
+    // accumulation across dabs. Does NOT affect normal (non-textured) brushes.
+    const texBuildupEl  = document.getElementById('ts-texture-buildup');
+    const texBuildupVal = document.getElementById('ts-texture-buildup-val');
+    if(texBuildupEl){
+      texBuildupEl.oninput=()=>{
+        window.brushTextureBuildup = +texBuildupEl.value / 100;
+        if(texBuildupVal) texBuildupVal.textContent = texBuildupEl.value + '%';
+      };
+    }
+
+    // Texture Scale slider — controls zoom/tile-density of the tiled pattern.
+    // Changing scale only rebuilds the cached pre-scaled canvas (cheap); it
+    // does not bump brushTextureVersion, so the tip/stamp caches are unaffected.
+    const texScaleEl=document.getElementById('ts-texture-scale');
+    const texScaleVal=document.getElementById('ts-texture-scale-val');
+    if(texScaleEl){
+      texScaleEl.oninput=()=>{
+        window.brushTextureScale=+texScaleEl.value/100;
+        if(texScaleVal) texScaleVal.textContent=texScaleEl.value+'%';
+        if(typeof window._invalidateTextureCache==='function') window._invalidateTextureCache();
+      };
+    }
+
+    // Invert checkbox — flips which side of the texture (light/dark) keeps paint.
+    const texInvertEl=document.getElementById('ts-texture-invert');
+    if(texInvertEl){
+      texInvertEl.onchange=()=>{
+        window.brushTextureInvert=!!texInvertEl.checked;
+        if(typeof window._invalidateTextureCache==='function') window._invalidateTextureCache();
+        if(typeof window._captureActiveBrushPreset==='function') window._captureActiveBrushPreset(false);
+      };
+    }
+
+    // Brightness slider — shifts the normalized grain value up/down (opens or
+    // closes the grain holes), same intent as Clip Studio's Brightness control.
+    const texBrightEl=document.getElementById('ts-texture-brightness');
+    const texBrightVal=document.getElementById('ts-texture-brightness-val');
+    if(texBrightEl){
+      texBrightEl.oninput=()=>{
+        window.brushTextureBrightness=+texBrightEl.value;
+        if(texBrightVal) texBrightVal.textContent=texBrightEl.value;
+        if(typeof window._invalidateTextureCache==='function') window._invalidateTextureCache();
+      };
+      texBrightEl.onchange=()=>{ if(typeof window._captureActiveBrushPreset==='function') window._captureActiveBrushPreset(false); };
+    }
+
+    // Contrast slider — sharpens or softens the grain boundary around the
+    // midpoint, same intent as Clip Studio's Contrast control in the Texture
+    // panel. Previously present in the DOM with no wiring at all.
+    const texContrastEl=document.getElementById('ts-texture-contrast');
+    const texContrastVal=document.getElementById('ts-texture-contrast-val');
+    if(texContrastEl){
+      texContrastEl.oninput=()=>{
+        window.brushTextureContrast=+texContrastEl.value;
+        if(texContrastVal) texContrastVal.textContent=texContrastEl.value;
+        if(typeof window._invalidateTextureCache==='function') window._invalidateTextureCache();
+      };
+      texContrastEl.onchange=()=>{ if(typeof window._captureActiveBrushPreset==='function') window._captureActiveBrushPreset(false); };
+    }
+
+    // Drag-and-drop image files onto the texture panel (preview canvas or the
+    // surrounding panel area) — mirrors the file-button workflow without
+    // requiring the user to open a file picker.
+    (function(){
+      const texPanel=document.querySelector('.ts-ps-panel[data-panel="texture"]');
+      const texPreview=document.getElementById('ts-texture-preview');
+      const dropTargets=[texPanel,texPreview].filter(Boolean);
+      dropTargets.forEach(el=>{
+        el.addEventListener('dragover',e=>{
+          if(!e.dataTransfer||![...e.dataTransfer.types].includes('Files')) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect='copy';
+          el.classList.add('tex-drop-hover');
+        });
+        el.addEventListener('dragleave',e=>{
+          // Only clear highlight when leaving this element entirely (not a child)
+          if(el.contains(e.relatedTarget)) return;
+          el.classList.remove('tex-drop-hover');
+        });
+        el.addEventListener('drop',e=>{
+          el.classList.remove('tex-drop-hover');
+          if(!e.dataTransfer) return;
+          e.preventDefault();
+          e.stopPropagation(); // don't let the global image-import handler also fire
+          // image-import.js listens on `document` for drop and resets
+          // _dragCounter + hides the overlay there. Since we stopped
+          // propagation, that cleanup never runs — do it manually so the
+          // "Drop image to import" overlay doesn't stay stuck after the drop.
+          const ov=document.getElementById('img-drop-overlay');
+          if(ov) ov.classList.remove('active','over-canvas');
+          const files=e.dataTransfer.files;
+          for(const f of (files||[])){
+            if(f.type.startsWith('image/')){
+              _loadTextureFromFile(f);
+              break;
+            }
+          }
+        });
+      });
+    })();
 
     // Initial draw
     window._syncTextureUI();
@@ -1003,7 +1150,7 @@
 function getToolPreset(){
   const ids=['ts-size','ts-opacity','ts-flow','ts-density','ts-hardness','ts-spacing','ts-spacing-mode','ts-rotation-mode','ts-angle','ts-angle-jitter','ts-tip-roundness','ts-round-jitter','ts-tip-min-roundness','ts-tip-flip-x','ts-tip-flip-y','ts-scatter-enabled','ts-scatter-amount','ts-scatter-count','ts-airbrush','ts-airbrush-rate',
     'ts-min-size','ts-size-jitter','ts-taper-mode','ts-start-taper','ts-end-taper','ts-size-control','ts-size-pressure-curve','ts-flow-control','ts-flow-pressure-curve','ts-opacity-control','ts-opacity-pressure-curve','ts-min-flow',
-    'ts-texture-scale','ts-texture-depth'];
+    'ts-texture-scale','ts-texture-depth','ts-texture-buildup'];
   const out={};
   ids.forEach(id=>{
     const el=document.getElementById(id);
@@ -1029,7 +1176,12 @@ function getToolPreset(){
   }
   if(window.brushTextureCanvas){
     try{ out['ts-texture-dataurl']=window.brushTextureCanvas.toDataURL('image/png'); }catch(e){}
-    out['ts-texture-depth-custom']=Math.round((window.brushTextureDepth||0.5)*100);
+    out['ts-texture-depth-custom']=Math.round((window.brushTextureDepth!=null?window.brushTextureDepth:1.0)*100);
+    out['ts-texture-buildup-custom']=Math.round((window.brushTextureBuildup!=null?window.brushTextureBuildup:1.0)*100);
+    out['ts-texture-scale']=Math.round((window.brushTextureScale||1.0)*100);
+    out['ts-texture-invert']=!!window.brushTextureInvert;
+    out['ts-texture-brightness']=window.brushTextureBrightness||0;
+    out['ts-texture-contrast']=window.brushTextureContrast||0;
   }
   return out;
 }
@@ -1053,7 +1205,7 @@ function applyToolPreset(json){
   Object.entries(json).forEach(([id,val])=>{
     // Skip virtual/non-DOM keys handled separately below.
     if(id==='ts-tip-dataurl'||id==='ts-texture-dataurl'||
-       id==='ts-tip-mode'||id==='ts-tip-soft-alpha'||id==='ts-tip-reference-diameter'||id==='ts-tip-roundness-dynamics'||id==='ts-texture-depth-custom'||id==='ts-pressure-curves') return;
+       id==='ts-tip-mode'||id==='ts-tip-soft-alpha'||id==='ts-tip-reference-diameter'||id==='ts-tip-roundness-dynamics'||id==='ts-texture-depth-custom'||id==='ts-texture-buildup-custom'||id==='ts-pressure-curves') return;
     const el=document.getElementById(id);
     if(!el) return;
     if(el.type==='checkbox') el.checked=!!val;
@@ -1093,13 +1245,27 @@ function applyToolPreset(json){
   if(json['ts-texture-dataurl']){
     _dataURLToCanvas(json['ts-texture-dataurl']).then(c=>{
       if(typeof window.setBrushTexture==='function') window.setBrushTexture(c);
-      const depth=json['ts-texture-depth-custom']!=null?(+json['ts-texture-depth-custom']/100):0.5;
+      const depth=json['ts-texture-depth-custom']!=null?(+json['ts-texture-depth-custom']/100):1.0;
       window.brushTextureDepth=depth;
-      if(typeof _syncTextureUI==='function') _syncTextureUI();
+      // Restore buildup — default 1.0 (100%) for legacy presets
+      const buildup=json['ts-texture-buildup-custom']!=null?(+json['ts-texture-buildup-custom']/100):1.0;
+      window.brushTextureBuildup=buildup;
+      // Restore texture scale — default to 1.0 (100%) for legacy presets
+      if(json['ts-texture-scale']!=null){
+        window.brushTextureScale=+json['ts-texture-scale']/100;
+      } else {
+        window.brushTextureScale=1.0;
+      }
+      // Restore invert/brightness/contrast — default to neutral for legacy presets
+      window.brushTextureInvert = !!json['ts-texture-invert'];
+      window.brushTextureBrightness = json['ts-texture-brightness']!=null?+json['ts-texture-brightness']:0;
+      window.brushTextureContrast = json['ts-texture-contrast']!=null?+json['ts-texture-contrast']:0;
+      if(typeof window._invalidateTextureCache==='function') window._invalidateTextureCache();
+      if(typeof window._syncTextureUI==='function') window._syncTextureUI();
     }).catch(()=>{});
   } else {
     if(typeof window.clearBrushTexture==='function') window.clearBrushTexture();
-    if(typeof _syncTextureUI==='function') _syncTextureUI();
+    if(typeof window._syncTextureUI==='function') window._syncTextureUI();
   }
 }
 
@@ -1160,7 +1326,8 @@ function applyToolPreset(json){
     'ts-texture-contrast':0,
     'ts-texture-each':false,
     'ts-texture-mode':'multiply',
-    'ts-texture-depth-custom':50,
+    'ts-texture-depth-custom':100,
+    'ts-texture-buildup':100,
     'ts-pressure-curves':{}
   };
   const builtinBrushSettings=overrides=>Object.assign({},DEFAULT_BUILTIN_BRUSH_SETTINGS,{'ts-pressure-curves':{}},overrides);
@@ -1206,7 +1373,8 @@ function applyToolPreset(json){
         'ts-spacing':40,
         'ts-size-control':'off'
       })
-    }
+    },
+
   ];  // User-created presets (saved via the ➕ button). Restored from storage.
   let _customPresets = [];
 
@@ -1256,6 +1424,20 @@ function applyToolPreset(json){
         if(Number.isFinite(Number(window.brushTipReferenceDiameter))&&Number(window.brushTipReferenceDiameter)>0) settings['ts-tip-reference-diameter']=Number(window.brushTipReferenceDiameter);
         else delete settings['ts-tip-reference-diameter'];
       } else {delete settings['ts-tip-dataurl'];delete settings['ts-tip-mode'];delete settings['ts-tip-soft-alpha'];delete settings['ts-tip-reference-diameter'];}
+      // Capture texture image alongside tip — both are images and both are
+      // gated behind captureTip so that normal slider input events (which
+      // pass captureTip=false) don't re-encode the PNG on every drag tick.
+      // The slider numeric values are captured by the querySelectorAll loop
+      // above; the data URL only needs to be captured when the image itself
+      // changes (load / clear), at which point callers pass captureTip=true.
+      if(window.brushTextureCanvas){
+        try{settings['ts-texture-dataurl']=window.brushTextureCanvas.toDataURL('image/png');}catch(e){}
+        settings['ts-texture-depth-custom']=Math.round((window.brushTextureDepth!=null?window.brushTextureDepth:1.0)*100);
+        settings['ts-texture-buildup-custom']=Math.round((window.brushTextureBuildup!=null?window.brushTextureBuildup:1.0)*100);
+        settings['ts-texture-scale']=Math.round((window.brushTextureScale||1.0)*100);
+      } else {
+        delete settings['ts-texture-dataurl'];
+      }
     }
   }
 
@@ -2041,8 +2223,15 @@ function applyToolPreset(json){
       if(typeof _dataURLToCanvas==='function'){
         _dataURLToCanvas(s['ts-texture-dataurl']).then(c=>{
           if(typeof window.setBrushTexture==='function') window.setBrushTexture(c);
-          const depth=s['ts-texture-depth-custom']!=null?(+s['ts-texture-depth-custom']/100):0.5;
+          const depth=s['ts-texture-depth-custom']!=null?(+s['ts-texture-depth-custom']/100):1.0;
           window.brushTextureDepth=depth;
+          const buildup=s['ts-texture-buildup-custom']!=null?(+s['ts-texture-buildup-custom']/100):1.0;
+          window.brushTextureBuildup=buildup;
+          window.brushTextureScale=s['ts-texture-scale']!=null?(+s['ts-texture-scale']/100):1.0;
+          window.brushTextureInvert=!!s['ts-texture-invert'];
+          window.brushTextureBrightness=s['ts-texture-brightness']!=null?+s['ts-texture-brightness']:0;
+          window.brushTextureContrast=s['ts-texture-contrast']!=null?+s['ts-texture-contrast']:0;
+          if(typeof window._invalidateTextureCache==='function') window._invalidateTextureCache();
           if(typeof window._syncTextureUI==='function') window._syncTextureUI();
         }).catch(()=>{});
       }

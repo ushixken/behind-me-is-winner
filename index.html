@@ -961,9 +961,14 @@
                   </select>
                 </div>
                 <div class="ts-row" id="ts-texture-depth-custom-row" style="display:none;">
-                  <span class="ts-label">Depth</span>
-                  <input type="range" class="ts-range" id="ts-texture-depth-custom" min="0" max="100" value="50"/>
-                  <span class="ts-val" id="ts-texture-depth-custom-val">50%</span>
+                  <span class="ts-label">Strength</span>
+                  <input type="range" class="ts-range" id="ts-texture-depth-custom" min="0" max="100" value="100"/>
+                  <span class="ts-val" id="ts-texture-depth-custom-val">100%</span>
+                </div>
+                <div class="ts-row" id="ts-texture-buildup-row" style="display:none;" title="Deprecated: texture buildup has been replaced by a flat single-pass grain (matches Clip Studio) and no longer darkens self-overlapping strokes. This control is kept only so old presets still load; it has no effect.">
+                  <span class="ts-label">Buildup (unused)</span>
+                  <input type="range" class="ts-range" id="ts-texture-buildup" min="0" max="100" value="100" disabled/>
+                  <span class="ts-val" id="ts-texture-buildup-val">100%</span>
                 </div>
                 <div id="ts-texture-img-help" style="font-size:9px;color:var(--text2);line-height:1.4;margin-top:2px;">
                   Load a tileable PNG to apply as a paper / canvas texture over each dab.

@@ -81,8 +81,31 @@ window.brushTipRoundnessJitter = 0;
 // Completely independent from the tip shape above.
 window.brushTextureCanvas  = null; // HTMLCanvasElement | null
 window.brushTextureVersion = 0;    // integer, incremented on each texture change
-// 0Ã¢â‚¬â€œ1 blend strength for the texture overlay (mirrors ts-texture-depth slider)
-window.brushTextureDepth   = 0.5;
+// 0–1 blend strength for the texture overlay (mirrors ts-texture-depth slider).
+// At 1.0 (100%) the texture grain is fully applied — texture-dark areas lose
+// coverage, texture-bright areas keep it. At 0.0 the stroke is solid/unaffected.
+window.brushTextureDepth   = 1.0;
+// Texture zoom/scale (1.0 = native resolution, 0.25 = 25%, 4.0 = 400%).
+// Controlled by the ts-texture-scale slider (25–400%).
+window.brushTextureScale   = 1.0;
+// Texture buildup strength (0–1). Controls how aggressively overlapping dabs
+// within one stroke fill in the grain holes — producing the TVPaint-style
+// density accumulation where the centre darkens in a single pass.
+// At 1.0 (100%): full build-up — a single stroke becomes dense quickly.
+// At 0.0 (0%): no build-up — every dab gets the same static grain cut.
+// Controlled by the ts-texture-buildup slider.
+window.brushTextureBuildup = 1.0;
+// Invert light/dark roles of the texture mask (mirrors the ts-texture-invert checkbox).
+window.brushTextureInvert = false;
+// Brightness shift for the texture mask, -100..100 (mirrors ts-texture-brightness slider).
+// Positive values let more of the texture through (lighter grain holes); negative
+// values darken/close the grain holes down, same intent as Clip Studio's Brightness.
+window.brushTextureBrightness = 0;
+// Contrast for the texture mask, -100..100 (mirrors ts-texture-contrast slider).
+// Positive values sharpen the grain boundary (more binary black/white cut);
+// negative values soften it into a smoother gradient, same intent as Clip
+// Studio's Contrast control in the Texture panel.
+window.brushTextureContrast = 0;
 
 // brushFlow: per-dab paint accumulation rate (0Ã¢â‚¬â€œ1).
 // Controls how much alpha each individual dab deposits while the stroke is
@@ -153,6 +176,7 @@ function _ensureStrokeCanvas(){
   } else {
     _strokeCtx.clearRect(0, 0, w, h);
   }
+  if(typeof _resetTexturedStrokeCanvas==='function') _resetTexturedStrokeCanvas();
 }
 
 // Composite the stroke scratch canvas onto activeC with stroke-level opacity,
@@ -162,10 +186,14 @@ function _ensureStrokeCanvas(){
 // brushOpacity ceiling Ã¢â‚¬â€ no separate end-of-stroke multiplier.
 function _commitStrokeCanvas(){
   if(!_strokeCanvas) return;
+  // forceFull=true: make sure the ENTIRE stroke is masked (not just whatever
+  // region was still pending), so the committed result always matches what
+  // the live preview was showing, even if a frame's mask pass got skipped.
+  const src = _getTexturedStrokeCanvas(_strokeCanvas, true);
   ctx.save();
   ctx.globalAlpha = Math.max(0, Math.min(1, brushOpacity));
   ctx.globalCompositeOperation = 'source-over';
-  ctx.drawImage(_strokeCanvas, 0, 0);
+  ctx.drawImage(src, 0, 0);
   ctx.restore();
   _strokeCtx.clearRect(0, 0, _strokeCanvas.width, _strokeCanvas.height);
 }
@@ -198,10 +226,11 @@ function _getLiveStrokePreview(){
   }
   _strokePreviewCtx.drawImage(activeC, 0, 0);
   if(_strokeCanvas){
+    const src = _getTexturedStrokeCanvas(_strokeCanvas, false);
     _strokePreviewCtx.save();
     _strokePreviewCtx.globalAlpha = Math.max(0, Math.min(1, brushOpacity));
     _strokePreviewCtx.globalCompositeOperation = 'source-over';
-    _strokePreviewCtx.drawImage(_strokeCanvas, 0, 0);
+    _strokePreviewCtx.drawImage(src, 0, 0);
     _strokePreviewCtx.restore();
   }
   return _strokePreviewCanvas;
@@ -552,11 +581,23 @@ function _viewAdjustedTipRotation(){
 // Per-dab roundness override for the current dab being drawn (Roundness
 // Jitter). null means "use the static brushTipRoundness slider value".
 let _activeDabRoundness=null;
+// TVPaint-style dab compositing within a stroke:
+// When dabs land on the stroke scratch canvas (_inStroke=true), use 'lighten'
+// instead of 'source-over'. 'lighten' takes the per-channel maximum, so a
+// new dab NEVER darkens pixels already covered by an earlier dab in the same
+// stroke — it only fills in uncovered/lighter areas. This matches TVPaint's
+// behavior where one slow stroke builds to solid coverage without dabs
+// stacking and re-darkening the same spots (which required multiple strokes).
+// Eraser and direct-to-activeC paths are unaffected.
+function _strokeDabComposite(composite){
+  if(composite==='erase') return 'destination-out';
+  return 'source-over';
+}
 function _drawUnifiedTipStamp(x,y,r,rgb,alpha,composite){
   const dc=(_inStroke && composite!=='erase')?_strokeCtx:ctx;
   const stamp=_buildTipStamp(r,rgb,alpha,composite,brushHardness);
   dc.save();
-  dc.globalCompositeOperation=composite==='erase'?'destination-out':'source-over';
+  dc.globalCompositeOperation=_strokeDabComposite(composite);
   dc.imageSmoothingEnabled=true;
   dc.translate(x,y);
   const adjustedRotation=_viewAdjustedTipRotation();
@@ -579,7 +620,7 @@ function _dabAAGpu(x,y,r,rgb,alpha,composite){
     if(stamp){
       const x0=x-(stamp.w/2), y0=y-(stamp.h/2);
       dc.save();
-      dc.globalCompositeOperation=composite==='erase'?'destination-out':'source-over';
+      dc.globalCompositeOperation=_strokeDabComposite(composite);
       dc.drawImage(stamp.canvas,x0,y0);
       dc.restore();
       return;
@@ -593,7 +634,7 @@ function _dabAAGpu(x,y,r,rgb,alpha,composite){
   const rr=Math.max(0.05,r);
   const isAirbrush=typeof window!=='undefined'&&!!window._brushAirbrush;
   dc.save();
-  dc.globalCompositeOperation=composite==='erase'?'destination-out':'source-over';
+  dc.globalCompositeOperation=_strokeDabComposite(composite);
   const grad=dc.createRadialGradient(x,y,0,x,y,rr);
   const c0=composite==='erase'?[0,0,0]:rgb;
   if(brushHardness<0.95){
@@ -657,7 +698,7 @@ function _dabAACpu(x,y,r,rgb,alpha,composite){
     if(stamp){
       const x0=x-(stamp.w/2), y0=y-(stamp.h/2);
       dc0.save();
-      dc0.globalCompositeOperation=composite==='erase'?'destination-out':'source-over';
+      dc0.globalCompositeOperation=_strokeDabComposite(composite);
       dc0.drawImage(stamp.canvas,x0,y0);
       dc0.restore();
       return;
@@ -827,7 +868,7 @@ function _dabAliased(x,y,r,rgb,alpha,composite){
   const x0=x-(stamp.w/2),y0=y-(stamp.h/2);
   dc.save();
   dc.imageSmoothingEnabled=false;
-  dc.globalCompositeOperation=composite==='erase'?'destination-out':'source-over';
+  dc.globalCompositeOperation=_strokeDabComposite(composite);
   const adjustedRotation=window.brushTipCanvas?_viewAdjustedTipRotation():0;
   if(window.brushTipCanvas&&(adjustedRotation||window.brushTipFlipX||window.brushTipFlipY)){
     dc.translate(x,y);
@@ -878,6 +919,31 @@ function _growDirtyRect(x,y,radiusX,radiusY=radiusX){
     if(maxY>_frameDirty.maxY)_frameDirty.maxY=maxY;
   }
 }
+//  Texture dirty-rect tracking (separate accumulator/consumer from the
+// recomposite dirty-rect above). Grown at the exact same call site
+// (_drawDabNow) but consumed independently by the texture pass in
+// _getLiveStrokePreview/_commitStrokeCanvas, since those may run on a
+// different cadence than recomposite's own consumer. This lets the texture
+// mask be (re)applied only over the region that actually changed since the
+// texture pass last ran, instead of reprocessing the whole stroke canvas —
+// the key to keeping texture real-time on fast strokes.
+let _texPendingRect = null;
+function _growTexDirtyRect(x,y,radiusX,radiusY=radiusX){
+  const padX=radiusX+4,padY=radiusY+4;
+  const minX=x-padX,minY=y-padY,maxX=x+padX,maxY=y+padY;
+  if(!_texPendingRect){
+    _texPendingRect={minX,minY,maxX,maxY};
+  } else {
+    if(minX<_texPendingRect.minX)_texPendingRect.minX=minX;
+    if(minY<_texPendingRect.minY)_texPendingRect.minY=minY;
+    if(maxX>_texPendingRect.maxX)_texPendingRect.maxX=maxX;
+    if(maxY>_texPendingRect.maxY)_texPendingRect.maxY=maxY;
+  }
+}
+function _consumeTexDirtyRect(){
+  const r=_texPendingRect; _texPendingRect=null; return r;
+}
+
 // Pull the accumulated dirty rect (clamped/rounded to canvas bounds) and
 // clear the accumulator for the next frame. Returns null if nothing was
 // drawn since the last call (caller should fall back to a full recomposite
@@ -895,35 +961,294 @@ function _consumeDirtyRect(){
   return {x,y,w,h};
 }
 
-//  Per-dab texture overlay
-// Tiles brushTextureCanvas over the freshly-painted dab area using
-// 'multiply' blending at brushTextureDepth opacity.  The arc clip ensures
-// texture is only applied within the circular dab footprint, not to
-// surrounding already-painted pixels. No-op when brushTextureCanvas is null.
-function _applyTextureToDab(dc, x, y, r, alpha){
+//  Per-dab texture overlay — ALPHA-ONLY masking pipeline
+//
+// The texture modulates the ALPHA channel of the dab only. The brush color
+// is never changed by the texture. Pipeline per dab:
+//   1. Brush dab is already painted onto dc (stroke canvas or activeC).
+//   2. We build a small temporary canvas covering just the dab footprint.
+//   3. We fill it with the brush color at the computed dab alpha (solid flat fill).
+//   4. We tile the grayscale texture mask over it using 'destination-in':
+//      this multiplies each pixel's alpha by the texture's grayscale value —
+//      texture-white keeps full alpha, texture-black zeroes alpha.
+//   5. depth lerps between "no texture" (flat fill) and "full texture mask".
+//   6. The result is blitted onto dc with source-over — color is always the
+//      brush color, only coverage/alpha varies with the texture.
+//
+// CACHE: Two cached canvases are maintained:
+//   _texCachedCanvas    — the source texture scaled to brushTextureScale.
+//   _texGrayMaskCanvas  — the same canvas converted to white+alpha (grayscale
+//                         luminance → alpha, RGB set to 255). Used as the
+//                         destination-in mask. Rebuilt only when version/scale
+//                         or invert setting changes.
+//
+// PERF: The hot path per dab is:
+//   - One small canvas allocation (dab footprint, typically <100x100 px).
+//   - One fillRect (flat color fill).
+//   - One createPattern + fillRect (tile gray mask).
+//   - One drawImage onto dc.
+// No getImageData/putImageData on the stroke canvas; no per-dab pixel loops.
+let _texCachedCanvas   = null; // scaled copy of brushTextureCanvas (for display)
+let _texGrayMaskCanvas = null; // white+alpha grayscale mask, same dimensions
+let _texCacheVersion   = -1;   // brushTextureVersion when caches were built
+let _texCacheScale     = -1;   // brushTextureScale when caches were built
+let _texCacheInvert    = null; // brushTextureInvert when caches were built
+let _texCacheBrightness = null; // brushTextureBrightness when caches were built
+let _texCacheContrast   = null; // brushTextureContrast when caches were built
+
+function _getScaledTextureCanvas(){
   const texC=window.brushTextureCanvas;
-  if(!texC) return;
-  const depth=typeof window.brushTextureDepth!=='undefined'?window.brushTextureDepth:0.5;
-  if(depth<=0) return;
-  const rr=Math.max(1,r);
-  const pat=dc.createPattern(texC,'repeat');
+  if(!texC) return null;
+  const scale=typeof window.brushTextureScale==='number'?window.brushTextureScale:1.0;
+  const ver=window.brushTextureVersion||0;
+  const inv=!!window.brushTextureInvert;
+  const brightness=typeof window.brushTextureBrightness==='number'?window.brushTextureBrightness:0;
+  const contrast=typeof window.brushTextureContrast==='number'?window.brushTextureContrast:0;
+  if(_texCachedCanvas && _texCacheVersion===ver && Math.abs(_texCacheScale-scale)<0.0001 && _texCacheInvert===inv
+     && _texCacheBrightness===brightness && _texCacheContrast===contrast){
+    return _texCachedCanvas;
+  }
+  // Build (or rebuild) the pre-scaled canvas and its grayscale-alpha mask.
+  // This only runs when texture/scale/invert changes — never on the per-dab hot path.
+  const sw=Math.max(1,Math.round(texC.width*scale));
+  const sh=Math.max(1,Math.round(texC.height*scale));
+
+  // Scaled source canvas (kept for any external use / preview).
+  const c=document.createElement('canvas');
+  c.width=sw; c.height=sh;
+  c.getContext('2d').drawImage(texC,0,0,sw,sh);
+  _texCachedCanvas=c;
+
+  // Grayscale-alpha mask: luminance → alpha, RGB forced to white (255,255,255).
+  // This way 'destination-in' compositing only touches alpha, never color.
+  //
+  // Paper-grain behavior:
+  //   - The texture image is treated as a "paper grain" mask.
+  //   - Light texture pixels = paint is kept (high alpha).
+  //   - Dark texture pixels = paint is removed (low alpha).
+  //   - Raw luminance is used as-is — no automatic normalization or forced
+  //     contrast curve, so mid-gray texture pixels stay mid-alpha instead of
+  //     always being pushed toward solid/transparent (which was crushing
+  //     edges to solid black — a "wet ink" look nobody asked for).
+  //   - The Invert flag flips light/dark roles (for dark-on-light textures).
+  //   - Brightness/Contrast (both default to neutral/0) are the only knobs
+  //     that reshape the curve, and only when the user actually moves them.
+  const gm=document.createElement('canvas');
+  gm.width=sw; gm.height=sh;
+  const gctx=gm.getContext('2d',{willReadFrequently:true});
+  gctx.drawImage(texC,0,0,sw,sh);
+  try{
+    const id=gctx.getImageData(0,0,sw,sh);
+    const d=id.data;
+    const n=d.length;
+
+    // Brightness: -100..100 -> shifts the luminance value by up to ±0.5,
+    // same feel as Clip Studio's Brightness (opens up / closes down the grain holes).
+    const brightShift = brightness/100 * 0.5;
+    // Contrast: -100..100 -> a slope multiplier around the 0.5 midpoint.
+    // 0 = neutral (slope 1, i.e. the raw texture, unmodified).
+    const contrastSlope = Math.pow(3, contrast/100);
+    for(let i=0,p=0;i<n;i+=4,p++){
+      let t=(d[i]*0.2126+d[i+1]*0.7152+d[i+2]*0.0722)/255; // raw luminance, 0..1
+      if(inv) t=1-t;                    // invert: dark areas keep paint
+      t=t+brightShift;
+      t=0.5+(t-0.5)*contrastSlope;
+      t=Math.max(0,Math.min(1,t));
+      // Full range [0..1]: dark grain → alpha 0 (transparent, shows canvas),
+      // bright grain → alpha 255 (opaque, full paint color).
+      d[i]=255; d[i+1]=255; d[i+2]=255; // white — color ignored by destination-in
+      d[i+3]=Math.round(t*255);
+    }
+    gctx.putImageData(id,0,0);
+  }catch(e){
+    // Cross-origin / tainted canvas: fall back to drawing the source as-is.
+    // Texture color will bleed through slightly in this edge case but it won't crash.
+  }
+  _texGrayMaskCanvas=gm;
+
+  _texCacheVersion=ver;
+  _texCacheScale=scale;
+  _texCacheInvert=inv;
+  _texCacheBrightness=brightness;
+  _texCacheContrast=contrast;
+  return _texCachedCanvas;
+}
+
+// Exposed so brush-presets can force a rebuild when the Scale slider moves
+// without needing to re-call setBrushTexture (which would bump the version
+// and needlessly clear other caches like _tipDabCache).
+window._invalidateTextureCache=function(){
+  _texCacheVersion=-1; _texPatternVersion=-1;
+  if(typeof _resetTexturedStrokeCanvas==='function') _resetTexturedStrokeCanvas();
+};
+
+// Cached CanvasPattern for the texture mask — recreated only when the mask
+// canvas changes (version/scale/invert). On the per-dab hot path this is a
+// single property read + setTransform, with no canvas allocations at all.
+let _texPatternCache = null;
+let _texPatternVersion = -1;
+
+function _getTexturePattern(ctx2d){
+  _getScaledTextureCanvas(); // ensure _texGrayMaskCanvas is current
+  if(!_texGrayMaskCanvas) return null;
+  const ver = (_texCacheVersion * 1000 + Math.round(_texCacheScale * 100));
+  if(_texPatternCache && _texPatternVersion === ver) return _texPatternCache;
+  _texPatternCache = ctx2d.createPattern(_texGrayMaskCanvas, 'repeat');
+  _texPatternVersion = ver;
+  return _texPatternCache;
+}
+
+// Mask a rectangular region of `dc` in place against the cached texture
+// pattern, blending by `strength`. Shared by both the rare direct-to-ctx
+// path and the stroke-canvas accumulation path below. `dc` must already
+// contain the painted (unmasked) pixels for the region [rx,ry,rw,rh] —
+// this function only changes alpha via destination-in, never color.
+function _maskRegionInPlace(dc, rx, ry, rw, rh, strength){
+  const pat = _getTexturePattern(dc);
   if(!pat) return;
+  // Align tiling to canvas origin (not the region origin) so the texture
+  // is continuous across dabs/regions/frames instead of re-tiling from
+  // whatever rect happens to be processed this time.
+  pat.setTransform(new DOMMatrix());
+
+  if(strength >= 0.999){
+    dc.save();
+    dc.beginPath(); dc.rect(rx, ry, rw, rh); dc.clip();
+    dc.globalCompositeOperation = 'destination-in';
+    dc.globalAlpha = 1;
+    dc.fillStyle = pat;
+    dc.fillRect(rx, ry, rw, rh);
+    dc.restore();
+    return;
+  }
+
+  // strength < 1: result = original*(1-strength) + masked*strength.
+  // 1. Snapshot the original (unmasked) region.
+  if(!_maskRegionInPlace._orig || _maskRegionInPlace._orig.width<rw || _maskRegionInPlace._orig.height<rh){
+    _maskRegionInPlace._orig = document.createElement('canvas');
+    _maskRegionInPlace._orig.width = Math.max(rw,64);
+    _maskRegionInPlace._orig.height = Math.max(rh,64);
+    _maskRegionInPlace._origCtx = _maskRegionInPlace._orig.getContext('2d');
+  }
+  const origCanvas = _maskRegionInPlace._orig, origCtx = _maskRegionInPlace._origCtx;
+  origCtx.clearRect(0,0,rw,rh);
+  origCtx.drawImage(dc.canvas, rx, ry, rw, rh, 0, 0, rw, rh);
+
+  // 2. Build the fully-masked version of that same region in a second tmp.
+  if(!_maskRegionInPlace._masked || _maskRegionInPlace._masked.width<rw || _maskRegionInPlace._masked.height<rh){
+    _maskRegionInPlace._masked = document.createElement('canvas');
+    _maskRegionInPlace._masked.width = Math.max(rw,64);
+    _maskRegionInPlace._masked.height = Math.max(rh,64);
+    _maskRegionInPlace._maskedCtx = _maskRegionInPlace._masked.getContext('2d');
+  }
+  const maskedCanvas = _maskRegionInPlace._masked, maskedCtx = _maskRegionInPlace._maskedCtx;
+  maskedCtx.clearRect(0,0,rw,rh);
+  maskedCtx.drawImage(origCanvas, 0, 0, rw, rh, 0, 0, rw, rh);
+  // Re-anchor the pattern to this tmp canvas's own (0,0)-at-canvas-origin
+  // coordinate space: since tmp's (0,0) corresponds to canvas (rx,ry),
+  // shift the pattern by (-rx,-ry) so the grain still tiles continuously
+  // with the rest of the canvas instead of restarting at (0,0).
+  const patLocal = _getTexturePattern(maskedCtx);
+  const m = new DOMMatrix(); m.translateSelf(-rx, -ry);
+  patLocal.setTransform(m);
+  maskedCtx.globalCompositeOperation = 'destination-in';
+  maskedCtx.fillStyle = patLocal;
+  maskedCtx.fillRect(0, 0, rw, rh);
+  maskedCtx.globalCompositeOperation = 'source-over';
+
+  // 3. Write original back into dc, then draw masked on top at `strength`.
+  dc.clearRect(rx, ry, rw, rh);
+  dc.drawImage(origCanvas, 0, 0, rw, rh, rx, ry, rw, rh);
   dc.save();
-  // Clip to the dab's circular footprint so texture doesn't bleed outside.
-  dc.beginPath();
-  dc.arc(x,y,rr+1,0,Math.PI*2);
-  dc.clip();
-  dc.globalCompositeOperation='multiply';
-  dc.globalAlpha=Math.min(1,depth*alpha);
-  dc.fillStyle=pat;
-  dc.fillRect(x-rr-2,y-rr-2,rr*2+4,rr*2+4);
+  dc.globalAlpha = strength;
+  dc.drawImage(maskedCanvas, 0, 0, rw, rh, rx, ry, rw, rh);
+  dc.globalAlpha = 1;
   dc.restore();
+}
+
+// Rare direct-to-ctx path: a paint dab landed straight on ctx with no stroke
+// buffer to defer masking to (composite!=='erase' but !_inStroke). Masks
+// immediately, restricted to just this dab's own footprint.
+function _applyTextureToDabDirect(dc, x, y, r, alpha){
+  if(!window.brushTextureCanvas) return;
+  const strength = typeof window.brushTextureDepth !== 'undefined' ? window.brushTextureDepth : 1.0;
+  if(strength <= 0) return;
+  if(r < 0.25) return;
+  _getScaledTextureCanvas();
+  if(!_texGrayMaskCanvas) return;
+  const pad = Math.min(1, r) + 1;
+  const rx = Math.floor(x - r - pad), ry = Math.floor(y - r - pad);
+  const rw = Math.ceil((x + r + pad) - rx), rh = Math.ceil((y + r + pad) - ry);
+  _maskRegionInPlace(dc, rx, ry, rw, rh, strength);
+}
+
+//  Stroke-canvas-level texture masking — flat single-pass stencil
+//
+// Texture is applied as a static grain mask over whatever the stroke's
+// CURRENT alpha looks like, recomputed fresh from the live stroke canvas
+// every call. This matches Clip Studio / Photoshop paper-texture behavior:
+// the grain reads the same whether a pixel was touched by one dab or by
+// twenty overlapping dabs (e.g. a single zigzag stroke crossing itself) —
+// only actual ink buildup (Flow/Opacity, a separate and intentional control)
+// changes how dark a pixel is, never the texture pass itself.
+//
+// An earlier revision accumulated the mask incrementally per-dab so that
+// self-overlapping strokes progressively darkened toward solid black at
+// every crossing/turn-around point — a deliberate TVPaint-style effect, but
+// not what Clip Studio does and not what most people expect from a paper
+// texture. That accumulation has been removed; brushTextureBuildup is no
+// longer read here and has no effect on texture darkness.
+//
+// PERFORMANCE: one clearRect + drawImage + mask pass per call, over the
+// full stroke-canvas bounds. Simpler and cheaper than the old delta/snapshot
+// diffing, at the cost of always processing the whole canvas rather than
+// just the dirty region — acceptable since stroke canvases are small.
+
+let _texturedStrokeCanvas = null, _texturedStrokeCtx = null;
+
+function _ensureTexHelper(w, h, existing, existingCtx){
+  if(existing && existing.width === w && existing.height === h) return {c: existing, x: existingCtx};
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  return {c, x: c.getContext('2d')};
+}
+
+function _getTexturedStrokeCanvas(srcCanvas, forceFull){
+  if(!window.brushTextureCanvas) return srcCanvas;
+  const strength = typeof window.brushTextureDepth !== 'undefined' ? window.brushTextureDepth : 1.0;
+  if(strength <= 0) return srcCanvas;
+  _getScaledTextureCanvas();
+  if(!_texGrayMaskCanvas) return srcCanvas;
+
+  const w = srcCanvas.width, h = srcCanvas.height;
+
+  // Ensure output canvas.
+  {const t=_ensureTexHelper(w,h,_texturedStrokeCanvas,_texturedStrokeCtx);
+   _texturedStrokeCanvas=t.c; _texturedStrokeCtx=t.x;}
+
+  const tc = _texturedStrokeCtx;
+  tc.clearRect(0, 0, w, h);
+  tc.globalCompositeOperation = 'source-over';
+  tc.drawImage(srcCanvas, 0, 0);
+  _maskRegionInPlace(tc, 0, 0, w, h, strength);
+
+  return _texturedStrokeCanvas;
+}
+// Reset accumulation state at stroke start (called by _ensureStrokeCanvas
+// and setBrushTexture/_invalidateTextureCache).
+function _resetTexturedStrokeCanvas(){
+  _texPendingRect = null;
+  if(_texturedStrokeCtx && _texturedStrokeCanvas)
+    _texturedStrokeCtx.clearRect(0,0,_texturedStrokeCanvas.width,_texturedStrokeCanvas.height);
 }
 
 const _TAIL_BUFFER = 3;
 const _TAIL_MIN = 0.12; // how thin the very last point of a flick gets
 let _pendingDabs = [];
 let _autoHardRoundPrevDab=null;
+// Tracks the RGB of the dab currently being drawn so _applyTextureToDabDirect can
+// access it without needing an extra parameter through the call chain.
+let _lastDabRGB=[0,0,0];
 function _drawAutoHardRoundSegment(d){
   const eligible=d.composite==='paint'&&_usesAutoHardRoundRaster(d.r);
   if(!eligible){_autoHardRoundPrevDab=null;return false;}
@@ -953,6 +1278,8 @@ function _drawAutoHardRoundSegment(d){
 }function _drawDabNow(d){
   _activeDabRotation=window.brushTipCanvas?(d.rotation||0):0;
   _activeDabRoundness=window.brushTipCanvas&&d.roundness!=null?d.roundness:null;
+  // Track current dab color so _applyTextureToDabDirect can use it for alpha-only masking.
+  _lastDabRGB=d.rgb;
   if(!_drawAutoHardRoundSegment(d)){
     if(brushAA) _dabAA(d.x,d.y,d.r,d.rgb,d.alpha,d.composite);
     else _dabAliased(d.x,d.y,d.r,d.rgb,d.alpha,d.composite);
@@ -971,12 +1298,21 @@ function _drawAutoHardRoundSegment(d){
   }
   _activeDabRotation=0;
   _activeDabRoundness=null;
-  // Apply the texture overlay on the same target context the dab went to.
-  // Eraser dabs target ctx directly (not the stroke scratch), so we need
-  // to match that routing here as well.
+  // Texture is NO LONGER masked per-dab here. Masking every dab individually
+  // meant reading back the stroke canvas and re-applying the texture mask to
+  // pixels that earlier, overlapping dabs had already been masked against —
+  // each overlap multiplied the mask into the same pixels again, so coverage
+  // decayed the more a stroke overlapped itself (the "too faint" bug), and
+  // the per-dab readback/clip/redraw was the main real-time-drawing lag
+  // source on fast strokes. Instead, while inside a buffered stroke we only
+  // grow the texture dirty-rect here; the actual masking happens once per
+  // changed region in _getLiveStrokePreview (for the live preview) and once
+  // more at _commitStrokeCanvas (stroke end) — see _getTexturedStrokeCanvas.
+  // Direct-to-ctx dabs (composite!=='erase' but not inside a stroke buffer,
+  // a rare path with no stroke canvas to defer to) still mask immediately.
   if(window.brushTextureCanvas && d.composite!=='erase'){
-    const dc=_inStroke?_strokeCtx:ctx;
-    _applyTextureToDab(dc,d.x,d.y,d.r,d.alpha);
+    _growTexDirtyRect(d.x,d.y,dirtyRadiusX,dirtyRadiusY);
+    if(!_inStroke) _applyTextureToDabDirect(ctx,d.x,d.y,d.r,d.alpha);
   }
   _growDirtyRect(d.x,d.y,dirtyRadiusX,dirtyRadiusY);
 }
@@ -1972,6 +2308,9 @@ window.clearBrushTip=function(){
 window.setBrushTexture=function(canvas){
   window.brushTextureCanvas=canvas||null;
   window.brushTextureVersion=(window.brushTextureVersion||0)+1;
+  _texCacheVersion=-1;   // force scaled-canvas rebuild on next dab
+  _texPatternVersion=-1; // force pattern rebuild on next dab
+  if(typeof _resetTexturedStrokeCanvas==='function') _resetTexturedStrokeCanvas();
 };
 window.clearBrushTexture=function(){
   window.setBrushTexture(null);
