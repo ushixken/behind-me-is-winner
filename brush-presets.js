@@ -106,6 +106,20 @@
   // 100 (fully solid disc, no feather). Turning AA back on restores the
   // exact settings that were there before, so nothing is lost.
   let _preAA=null; // {opacityCtrl, hardness} snapshot taken the moment AA was switched off
+  // Last non-'none' AA mode -- restored when the AA checkbox/toolbar button
+  // is toggled back on (Requirement 11: clicking AA toggles 'none' <-> the
+  // last enabled mode; the dropdown itself only ever chooses weak/medium/strong).
+  let _lastEnabledAAMode=(window.brushAAMode&&window.brushAAMode!=='none')?window.brushAAMode:'medium';
+  function _syncAAModeUI(){
+    const select=document.getElementById('ts-aa-mode');
+    if(select) select.value=_lastEnabledAAMode;
+    const row=document.getElementById('ts-aa-mode-row');
+    if(row) row.style.display=brushAA?'':'none';
+    const advRow=document.getElementById('ts-advanced-aa-mode-row');
+    if(advRow) advRow.style.display=brushAA?'':'none';
+    const advSelect=advRow?advRow.querySelector('select'):null;
+    if(advSelect) advSelect.value=_lastEnabledAAMode;
+  }
   function _setBrushAA(on){
     const nextAA=!!on;
     const changed=nextAA!==!!brushAA;
@@ -125,7 +139,8 @@
       _preAA=null;
     }
     brushAA=nextAA;
-    if(changed){_aaDabCache.clear();_stampCache.clear();}
+    window.brushAAMode=nextAA?_lastEnabledAAMode:'none';
+    if(changed){_aaDabCache.clear();_stampCache.clear();_tipDabCache.clear();}
     const checkbox=document.getElementById('ts-aa');
     if(checkbox){
       checkbox.checked=brushAA;
@@ -133,8 +148,23 @@
     }
     const button=document.getElementById('btn-aa');if(button)button.classList.toggle('active',brushAA);
     document.getElementById('stat-tool').textContent=(tool==='brush'?(brushAA?'Brush':'Pencil'):tool.charAt(0).toUpperCase()+tool.slice(1));
+    _syncAAModeUI();
     if(typeof applyTransform==='function')applyTransform();
   }  window._setBrushAA=_setBrushAA;
+
+  // AA strength dropdown (None/Weak/Medium/Strong) -- separate from the
+  // on/off checkbox. Selecting weak/medium/strong here always implies AA is
+  // ON (matches Requirement 11); it never sets 'none' itself -- that's only
+  // reachable via the checkbox/toolbar toggle.
+  function _setBrushAAMode(mode){
+    const m=(mode==='weak'||mode==='medium'||mode==='strong')?mode:'medium';
+    _lastEnabledAAMode=m;
+    window.brushAAMode=m;
+    if(!brushAA) _setBrushAA(true); else { _aaDabCache.clear();_stampCache.clear();_tipDabCache.clear(); }
+    _syncAAModeUI();
+    if(typeof applyTransform==='function')applyTransform();
+  }
+  window._setBrushAAMode=_setBrushAAMode;
 
   // AA checkbox in Tool Settings mirrors toolbar AA button
   const tsAA=document.getElementById('ts-aa');
@@ -142,6 +172,12 @@
   tsAA.onchange=()=>{
     _setBrushAA(tsAA.checked);
   };
+  const tsAAMode=document.getElementById('ts-aa-mode');
+  if(tsAAMode){
+    tsAAMode.value=_lastEnabledAAMode;
+    tsAAMode.onchange=()=>{ _setBrushAAMode(tsAAMode.value); };
+  }
+  _syncAAModeUI();
 
   // ── Airbrush mode — Tool Settings checkbox (activate/deactivate from
   // Tool Settings only; no separate toolbar button)
@@ -1157,6 +1193,7 @@ function getToolPreset(){
     if(el) out[id]=(el.type==='checkbox'?el.checked:el.value);
   });
   out['ts-aa']=document.getElementById('ts-aa').checked;
+  out['ts-aa-mode']=window.brushAAMode&&window.brushAAMode!=='none'?window.brushAAMode:'medium';
   out['ts-pressure-curves']=JSON.parse(JSON.stringify(window._tsCustomPressureCurves||{}));
 
   //  Brush tip & texture image data (stored as data URLs for JSON export)
@@ -1305,8 +1342,19 @@ function applyToolPreset(json){
     'ts-scatter-amount':0,
     'ts-scatter-count':1,
     'ts-aa':true,
+    'ts-aa-mode':'medium',
     'ts-size-control':'pressure',
-    'ts-min-size':1,
+    // Was 1 (a hidden 1% minimum-size floor). Hard Round was the only
+    // preset that explicitly overrode this down to 0, which is why it
+    // could taper all the way to a true sub-pixel point at light pressure
+    // while every other brush -- including any imported/custom tip, which
+    // never set its own override -- stayed stuck with a non-zero floor.
+    // That forced custom tips to need a bigger base Size + heavier
+    // pressure just to reach the same visual minimum Hard Round hit
+    // effortlessly. 0 is now the shared default so every brush (including
+    // custom tips) gets Hard Round's full pressure range unless a preset
+    // deliberately opts into a floor.
+    'ts-min-size':0,
     'ts-taper-mode':'off',
     'ts-start-taper':0,
     'ts-end-taper':0,
@@ -1344,9 +1392,9 @@ function applyToolPreset(json){
         'ts-spacing-mode':'auto',
         'ts-min-size':0,
         'ts-min-flow':0,
-        'ts-taper-mode':'percentage',
-        'ts-start-taper':1,
-        'ts-end-taper':10,
+        'ts-taper-mode':'off',
+        'ts-start-taper':0,
+        'ts-end-taper':0,
       })
     },
     {
@@ -1377,6 +1425,12 @@ function applyToolPreset(json){
 
   ];  // User-created presets (saved via the ➕ button). Restored from storage.
   let _customPresets = [];
+  // Built-in "preset packs" loaded from assets/brush-presets/<folder>/ at
+  // startup (see _loadBrushPresetPacks below). Kept separate from
+  // _customPresets so they're never written into localStorage/persist() --
+  // they're re-loaded fresh from disk every session, same as the app's own
+  // built-in Hard Round/Soft Round/etc.
+  let _assetPackPresets = [];
 
   //  Groups (folders)
   // A single ordered list now (no more separate brush/eraser group sets
@@ -1401,7 +1455,26 @@ function applyToolPreset(json){
 
   function _seedPresetSettings(preset,toolType='brush'){
     const key=_presetSettingsKey(preset.id,toolType);
-    if(!_presetSettings[key]) _presetSettings[key]=Object.assign({},preset.settings||{});
+    // Deep-clone the built-in settings so the original BRUSH_PRESETS entry
+    // is never mutated by later UI captures or Object.assign merges.
+    if(!_presetSettings[key]){
+      _presetSettings[key]=JSON.parse(JSON.stringify(preset.settings||{}));
+    } else {
+      // Always re-inject URL-based tip/texture references from the pack preset
+      // definition even when persisted settings already exist. Persisted data
+      // never contains 'ts-tip-url' (only 'ts-tip-dataurl' for user images),
+      // so a stale localStorage entry would permanently hide the pack tip image
+      // without this merge. Only inject the URL when no user-supplied data URL
+      // has overridden the tip for this slot.
+      const ps = preset.settings || {};
+      const existing = _presetSettings[key];
+      if(ps['ts-tip-url'] && !existing['ts-tip-dataurl']){
+        existing['ts-tip-url'] = ps['ts-tip-url'];
+      }
+      if(ps['ts-texture-url'] && !existing['ts-texture-dataurl']){
+        existing['ts-texture-url'] = ps['ts-texture-url'];
+      }
+    }
   }
   // Seed built-ins immediately
   BRUSH_PRESETS.forEach(_seedPresetSettings);
@@ -1507,15 +1580,51 @@ function applyToolPreset(json){
           if(key.includes(':')){
             const restored=Object.assign({},value);
             if(key==='eraser:hard-round') restored['ts-aa']=true;
+            // Migration: brush:hard-round with hardness=55 is a contaminated
+            // entry caused by the HTML slider default (55) being captured
+            // during initialisation before the preset was fully applied.
+            // Restore the canonical Hard Round hardness to 100 while
+            // preserving any other settings the user genuinely changed.
+            if(key==='brush:hard-round'){
+              // Migration: hardness=55 is a contamination from the old HTML
+              // slider default being captured before the preset was applied.
+              if(Number(restored['ts-hardness'])===55) restored['ts-hardness']=100;
+              // Migration: old persisted data may have taper-mode='percentage'
+              // from when Hard Round shipped with taper on. The canonical
+              // default is now 'off'; migrate any non-user-initiated percentage
+              // entry that still carries the original start=1/end=10 values.
+              if(restored['ts-taper-mode']==='percentage' &&
+                 Number(restored['ts-start-taper'])===1 &&
+                 Number(restored['ts-end-taper'])===10){
+                restored['ts-taper-mode']='off';
+                restored['ts-start-taper']=0;
+                restored['ts-end-taper']=0;
+              }
+              // Always enforce canonical structural values — these are never
+              // user-adjustable for Hard Round and must survive any stale
+              // capture that wrote the wrong value before the fix was deployed.
+              restored['ts-min-size']=0;
+              restored['ts-spacing-mode']='auto';
+            }
             _presetSettings[key]=restored;
             return;
           }
           const migrated=Object.assign({},value);
-          if(key==='hard-round'&&Number(migrated['ts-hardness'])===55&&String(migrated['ts-spacing-mode'])!=='auto'&&Number(migrated['ts-spacing'])===12&&Number(migrated['ts-min-size'])===5){
-            migrated['ts-hardness']=100;
-            migrated['ts-spacing-mode']='auto';
-            migrated['ts-spacing']=1;
+          if(key==='hard-round'){
+            // V1 key format (no tool prefix) — migrate contaminated defaults.
+            if(Number(migrated['ts-hardness'])===55) migrated['ts-hardness']=100;
+            // Migrate old taper-mode:'percentage' with original values → 'off'.
+            if(migrated['ts-taper-mode']==='percentage' &&
+               Number(migrated['ts-start-taper'])===1 &&
+               Number(migrated['ts-end-taper'])===10){
+              migrated['ts-taper-mode']='off';
+              migrated['ts-start-taper']=0;
+              migrated['ts-end-taper']=0;
+            }
+            // Always enforce canonical structural values unconditionally.
             migrated['ts-min-size']=0;
+            migrated['ts-spacing-mode']='auto';
+            if(Number(migrated['ts-spacing'])===12) migrated['ts-spacing']=1;
           }
           _presetSettings[_presetSettingsKey(key,'brush')]=migrated;
         });
@@ -1530,7 +1639,7 @@ function applyToolPreset(json){
     });
   }
 
-  function allPresets(){ return BRUSH_PRESETS.concat(_customPresets); }
+  function allPresets(){ return BRUSH_PRESETS.concat(_customPresets).concat(_assetPackPresets); }
   function findPreset(id){ return allPresets().find(p=>p.id===id); }
 
   //  Draw preview canvas
@@ -1601,29 +1710,102 @@ function applyToolPreset(json){
     context.restore();
   }
   window._paintTipThumbnail=_paintTipThumbnail;
-  const _tipThumbCache = {}; // presetId -> HTMLImageElement (decoded once, reused)
+  // presetId -> {alphaCanvas: HTMLCanvasElement, src: string}
+  //
+  // 'alphaCanvas' is always a luminance-as-alpha canvas — the same format that
+  // setBrushTip() produces and that _paintTipThumbnail()'s destination-in
+  // compositing relies on.  We never store the raw HTMLImageElement here.
+  //
+  // 'src' is the raw string passed to img.src (before the browser resolves it),
+  // used for cache-hit checks.  We cannot use img.src for this because the
+  // browser silently turns relative paths into absolute URLs, which would never
+  // compare equal to the relative 'ts-tip-url' string stored in preset settings.
+  const _tipThumbCache = {};
+
+  // Convert any raw image (HTMLImageElement or canvas) into a canvas whose
+  // ALPHA CHANNEL encodes the tip mask: bright pixels → opaque, dark → transparent.
+  // This is the same transform that setBrushTip() applies to the brush engine's
+  // working copy.  Without it, file-URL tip PNGs (which are fully opaque — no
+  // alpha channel) would cause _paintTipThumbnail's destination-in fill to keep
+  // the entire white rectangle → solid white square thumbnail.
+  function _tipImageToAlphaCanvas(img){
+    const w = (img.naturalWidth || img.width) || 1;
+    const h = (img.naturalHeight || img.height) || 1;
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const id = ctx.getImageData(0, 0, w, h);
+    const d = id.data;
+    for(let i = 0; i < d.length; i += 4){
+      // Perceived luminance of the source pixel.
+      const lum = Math.round(0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2]);
+      // If the source already has partial transparency (e.g. processed data-URL
+      // tips that went through setBrushTip once already), respect that alpha
+      // rather than replacing it with luminance again.
+      const a = d[i+3] < 254 ? Math.min(d[i+3], lum) : lum;
+      d[i] = d[i+1] = d[i+2] = 255; // RGB → white (the thumbnail foreground colour)
+      d[i+3] = a;                     // alpha = tip mask
+    }
+    ctx.putImageData(id, 0, 0);
+    return c;
+  }
+
   function drawPresetThumb(canvas, p){
     const s = _presetSettings[_presetSettingsKey(p.id,'brush')];
-    const dataURL = s && s['ts-tip-dataurl'];
-    if(!dataURL){
+    // Support both data-URL tips (imported ABR / user upload) and file-URL tips
+    // (on-disk brush-preset packs). Either key is a valid Image.src value.
+    const tipSrc = s && (s['ts-tip-dataurl'] || s['ts-tip-url']);
+    if(!tipSrc){
       drawPreview(canvas, Object.assign({}, p.preview, {isEraser:_activeTab==='eraser'}));
       return;
     }
     const W=48,H=48;
     canvas.width=W; canvas.height=H;
-    const ctx2=canvas.getContext('2d');
-    function paint(img){
-      _paintTipThumbnail(canvas,img,s,W,H,false);
+    const settings=s; // alias for closure
+
+    function paintOnto(c, alphaCanvas){
+      _paintTipThumbnail(c, alphaCanvas, settings, W, H, false);
     }
+
     const cached=_tipThumbCache[p.id];
-    if(cached && cached.complete && cached.src===dataURL){
-      paint(cached);
-    } else {
-      ctx2.clearRect(0,0,W,H);
-      const img=new Image();
-      img.onload=()=>{ _tipThumbCache[p.id]=img; paint(img); };
-      img.src=dataURL;
+    // Cache hit: alphaCanvas already converted and source unchanged.
+    if(cached && cached.src===tipSrc && cached.alphaCanvas){
+      paintOnto(canvas, cached.alphaCanvas);
+      return;
     }
+
+    // Cache miss or stale entry — (re)load and convert.
+    canvas.getContext('2d').clearRect(0,0,W,H);
+    const img=new Image();
+    const presetId=p.id;
+    img.onload=()=>{
+      // Convert raw image → alpha-channel canvas so destination-in compositing
+      // in _paintTipThumbnail works correctly regardless of the source format.
+      const alphaCanvas=_tipImageToAlphaCanvas(img);
+      _tipThumbCache[presetId]={alphaCanvas, src:tipSrc};
+
+      // Paint the canvas that was live when this load started (may be detached
+      // if buildGrid ran again before the decode finished).
+      paintOnto(canvas, alphaCanvas);
+
+      // Also repaint every currently-DOM-attached canvas for this preset so
+      // a subsequent buildGrid() that created new canvas elements is covered.
+      document.querySelectorAll('.bp-item .bp-preview canvas').forEach(liveCanvas=>{
+        if(liveCanvas===canvas) return; // already painted above
+        const item=liveCanvas.closest('.bp-item');
+        if(item && item.dataset.presetId===presetId){
+          liveCanvas.width=W; liveCanvas.height=H;
+          paintOnto(liveCanvas, alphaCanvas);
+        }
+      });
+    };
+    img.onerror=()=>{
+      // File missing or unloadable — fall back to the generic shape preview so
+      // the thumbnail never stays blank.
+      drawPreview(canvas, Object.assign({}, p.preview, {isEraser:_activeTab==='eraser'}));
+    };
+    img.src=tipSrc;
   }
 
   //  Brush Preset right-click context menu
@@ -2165,6 +2347,7 @@ function applyToolPreset(json){
       'ts-spacing': {slider:'ts-spacing', val:'ts-spacing-val', suffix:'%', extra: v=>{window._tsSpacing=v/100;}},
       'ts-roundness': {slider:'ts-roundness', val:'ts-roundness-val', suffix:'', extra: v=>{window._tsRoundness=v/100; _aaDabCache.clear();_stampCache.clear();}},
       'ts-aa': null,
+      'ts-aa-mode': null,
       'ts-airbrush': null,
       'ts-airbrush-rate': {slider:'ts-airbrush-rate', val:'ts-airbrush-rate-val', suffix:'', extra: v=>{window._tsAirbrushRate=v/100;}},
     };
@@ -2173,7 +2356,20 @@ function applyToolPreset(json){
     });
     Object.entries(s).forEach(([key,val])=>{
       if(key==='ts-pressure-curves') return;
+      if(key==='ts-aa-mode'){
+        // Only apply an explicit mode if AA is (or will be) enabled; a
+        // 'none' from old exports is ignored here since ts-aa itself
+        // already governs on/off (see backward-compat mapping below).
+        if(val&&val!=='none') window._setBrushAAMode(val);
+        return;
+      }
       if(key==='ts-aa'){
+        // Backward compatibility: legacy boolean. false -> AA mode 'none',
+        // true -> AA mode 'medium' (unless a ts-aa-mode value elsewhere in
+        // this same settings object overrides it -- handled by relying on
+        // object key order: modern saves always include both keys, so
+        // ts-aa-mode is processed too and simply wins by being applied
+        // after/independently of this boolean's mode side-effect).
         _setBrushAA(!!val);
         return;
       }
@@ -2201,11 +2397,22 @@ function applyToolPreset(json){
 
     // Tip image: restore from preset data URL if present; clear if absent.
     // This matches what applyToolPreset does for JSON imports.
+    // NEW: 'ts-tip-url'/'ts-texture-url' (a plain relative file path, e.g.
+    // 'assets/brush-presets/rough-pencil/tip.png') are supported as an
+    // alternative to 'ts-tip-dataurl'/'ts-texture-dataurl' -- Image.src
+    // happily loads a real URL exactly like a data: URL, so the SAME
+    // _dataURLToCanvas() loader below works unmodified for both. This lets
+    // built-in preset packs ship real PNG files on disk (see the
+    // Brush-Preset asset-pack loader further down) instead of inlining
+    // huge base64 blobs into the JS, while user-saved/exported custom
+    // presets keep using data URLs exactly as before.
+    const tipSrc=s['ts-tip-dataurl']||s['ts-tip-url'];
+    const textureSrc=s['ts-texture-dataurl']||s['ts-texture-url'];
     const tipLoadGeneration=(window._brushTipLoadGeneration||0)+1;
     window._brushTipLoadGeneration=tipLoadGeneration;
-    if(s['ts-tip-dataurl']){
+    if(tipSrc){
       if(typeof _dataURLToCanvas==='function'){
-        _dataURLToCanvas(s['ts-tip-dataurl']).then(c=>{
+        _dataURLToCanvas(tipSrc).then(c=>{
           if(window._brushTipLoadGeneration!==tipLoadGeneration) return;
           if(typeof window.setBrushTip==='function') window.setBrushTip(c,s['ts-tip-reference-diameter']);
           if(s['ts-tip-mode']) window.brushTipMode=s['ts-tip-mode'];
@@ -2219,9 +2426,9 @@ function applyToolPreset(json){
     }
 
     // Texture image: same pattern.
-    if(s['ts-texture-dataurl']){
+    if(textureSrc){
       if(typeof _dataURLToCanvas==='function'){
-        _dataURLToCanvas(s['ts-texture-dataurl']).then(c=>{
+        _dataURLToCanvas(textureSrc).then(c=>{
           if(typeof window.setBrushTexture==='function') window.setBrushTexture(c);
           const depth=s['ts-texture-depth-custom']!=null?(+s['ts-texture-depth-custom']/100):1.0;
           window.brushTextureDepth=depth;
@@ -2288,6 +2495,11 @@ function applyToolPreset(json){
     _seedPresetSettings(preset,t);
     _activePresetId=presetId;
     const savedSettings=Object.assign({},preset.settings||{},_presetSettings[_presetSettingsKey(presetId,t)]||{});
+    // Non-custom presets: structural settings always come from the preset definition.
+    const PRESET_STRUCTURAL_KEYS=['ts-taper-mode','ts-start-taper','ts-end-taper','ts-min-size','ts-spacing-mode'];
+    if(!preset.custom && preset.settings){
+      PRESET_STRUCTURAL_KEYS.forEach(k=>{ if(k in preset.settings) savedSettings[k]=preset.settings[k]; });
+    }
     if(t==='eraser') savedSettings['ts-aa']=true;
     _applyingPresetSettings=true;
     try{
@@ -2316,6 +2528,16 @@ function applyToolPreset(json){
     // Build a merged settings object: preset.settings as base, then any user-saved
     // tweaks on top, so the preset remembers whatever the user last set on it.
     const savedSettings = Object.assign({},p.settings||{},_presetSettings[_presetSettingsKey(p.id,targetTool)]||{});
+    // For non-custom (built-in / pack) presets, structural settings defined
+    // in the preset itself always win over any stale localStorage capture.
+    // This prevents a user accidentally turning off taper on Hard Round and
+    // having that stick permanently across sessions — the preset definition
+    // is authoritative for these, while cosmetic slider values (size,
+    // hardness, flow, opacity) are still freely remembered per-user.
+    const PRESET_STRUCTURAL_KEYS=['ts-taper-mode','ts-start-taper','ts-end-taper','ts-min-size','ts-spacing-mode'];
+    if(!p.custom && p.settings){
+      PRESET_STRUCTURAL_KEYS.forEach(k=>{ if(k in p.settings) savedSettings[k]=p.settings[k]; });
+    }
     if(targetTool==='eraser') savedSettings['ts-aa']=true;
     _activePresetId = id;
     _toolState[targetTool].presetId = id;
@@ -2335,6 +2557,56 @@ function applyToolPreset(json){
       el.classList.toggle('active', el.dataset.presetId===_activePresetId);
     });
   }
+
+  //  Brush preset "packs" (folder-based, on-disk assets)
+  // File layout on disk (see assets/brush-presets/README.md for the full
+  // spec):
+  //
+  //   assets/brush-presets/<slug>/
+  //     tip.png        (optional -- brush tip / stamp shape)
+  //     texture.png     (optional -- grain/texture overlay)
+  //     settings.json   (required -- name + all the ts-* numeric settings)
+  //
+  // To add a new preset: drop a new folder in assets/brush-presets/ with
+  // that layout, then add its folder name to BRUSH_PRESET_PACKS below.
+  // Nothing else needs to change -- this loader fetches settings.json,
+  // wires 'ts-tip-url'/'ts-texture-url' to the sibling PNGs automatically
+  // (only if settings.json says they exist), and adds the preset to the
+  // General Brushes folder just like a built-in.
+  const BRUSH_PRESET_PACKS=['rough-pencil'];
+  async function _loadBrushPresetPacks(){
+    for(const slug of BRUSH_PRESET_PACKS){
+      const base=`assets/brush-presets/${slug}/`;
+      try{
+        const res=await fetch(base+'settings.json');
+        if(!res.ok) throw new Error('settings.json fetch failed: '+res.status);
+        const json=await res.json();
+        const id='pack:'+slug;
+        if(allPresets().some(p=>p.id===id)) continue; // already loaded (e.g. hot-reload)
+        const settings=builtinBrushSettings(Object.assign({},json.settings||{}));
+        if(json.hasTip!==false) settings['ts-tip-url']=base+(json.tipFile||'tip.png');
+        if(json.hasTexture!==false && (json.hasTexture||json.textureFile||true)){
+          // hasTexture defaults to "try it, ignore failure" since the
+          // texture loader below already .catch()es a missing file quietly.
+          settings['ts-texture-url']=base+(json.textureFile||'texture.png');
+        }
+        const preset={
+          id, name:json.name||slug, custom:false, pack:slug,
+          preview:{ shape:(json.settings&&json.settings['ts-roundness']<60)?'ellipse':'circle',
+                    hardness:(json.settings&&json.settings['ts-hardness']!=null)?json.settings['ts-hardness']/100:0.5 },
+          settings
+        };
+        _assetPackPresets.push(preset);
+        _seedPresetSettings(preset);
+        const general=_groups.find(g=>g.default)||_groups[0];
+        if(general && !general.ids.includes(id)) general.ids.push(id);
+      }catch(err){
+        console.warn('[brush-presets] failed to load preset pack "'+slug+'":',err);
+      }
+    }
+    buildGrid();
+  }
+  _loadBrushPresetPacks();
 
   // ── Switch preset panel tab (brush|eraser) — both show the SAME
   //    folders/presets; only the highlighted preset + size bar differ
@@ -2396,7 +2668,7 @@ function applyToolPreset(json){
     const preset = {
       id, name, custom:true,
       preview:{ shape: roundness<60?'ellipse':'circle', hardness: hardness/100, aliased:!brushAA },
-      settings:{ 'ts-size':size, 'ts-hardness':hardness, 'ts-opacity':opacity, 'ts-flow':flow, 'ts-density':density, 'ts-spacing':spacing, 'ts-spacing-mode':document.getElementById('ts-spacing-mode')?.value||'fixed', 'ts-rotation-mode':document.getElementById('ts-rotation-mode')?.value||'fixed-rotation', 'ts-angle':+(document.getElementById('ts-angle')?.value||0), 'ts-tip-roundness':+(document.getElementById('ts-tip-roundness')?.value||100), 'ts-tip-flip-x':!!document.getElementById('ts-tip-flip-x')?.checked, 'ts-tip-flip-y':!!document.getElementById('ts-tip-flip-y')?.checked, 'ts-scatter-enabled':!!document.getElementById('ts-scatter-enabled')?.checked, 'ts-scatter-amount':+(document.getElementById('ts-scatter-amount')?.value||0), 'ts-scatter-count':+(document.getElementById('ts-scatter-count')?.value||1), 'ts-roundness':roundness, 'ts-aa':!!brushAA }
+      settings:{ 'ts-size':size, 'ts-hardness':hardness, 'ts-opacity':opacity, 'ts-flow':flow, 'ts-density':density, 'ts-spacing':spacing, 'ts-spacing-mode':document.getElementById('ts-spacing-mode')?.value||'fixed', 'ts-rotation-mode':document.getElementById('ts-rotation-mode')?.value||'fixed-rotation', 'ts-angle':+(document.getElementById('ts-angle')?.value||0), 'ts-tip-roundness':+(document.getElementById('ts-tip-roundness')?.value||100), 'ts-tip-flip-x':!!document.getElementById('ts-tip-flip-x')?.checked, 'ts-tip-flip-y':!!document.getElementById('ts-tip-flip-y')?.checked, 'ts-scatter-enabled':!!document.getElementById('ts-scatter-enabled')?.checked, 'ts-scatter-amount':+(document.getElementById('ts-scatter-amount')?.value||0), 'ts-scatter-count':+(document.getElementById('ts-scatter-count')?.value||1), 'ts-roundness':roundness, 'ts-aa':!!brushAA, 'ts-aa-mode':(window.brushAAMode&&window.brushAAMode!=='none'?window.brushAAMode:'medium') }
     };
     _customPresets.push(preset);
     _seedPresetSettings(preset); // give it its own settings slot immediately

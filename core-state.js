@@ -20,10 +20,17 @@ const toolSizes={brush:6,eraser:20,fill:6,line:3};
 let drawing=false,lx=0,ly=0,lineStart=null;
 // TVPaint-style brush engine state
 let brushOpacity=1.0; // flow/opacity 0-1
-let brushHardness=0.55; // edge softness 0-1 (1=hard, 0=very soft airbrush) — pen-feel default: wide antialiased rim like TVPaint's Pen brush, not a mostly-solid disc
+let brushHardness=1.0; // edge softness 0-1 (1=hard, 0=very soft airbrush)
 // Antialiasing mode: true = sub-pixel soft edges (TVPaint PenBrush / Clip Studio normal)
 //                   false = hard pixel-snapped edges (TVPaint Pencil / Clip Studio pixel pen)
 let brushAA=true;
+// Antialiasing STRENGTH mode: 'none' | 'weak' | 'medium' | 'strong'.
+// Independent of brushHardness (radial falloff) -- controls only edge
+// pixel coverage / subpixel smoothing width. brushAA (legacy boolean) is
+// kept in sync for old code paths/UI: brushAA === (brushAAMode !== 'none').
+// Backward compatibility: old saved settings with ts-aa=false map to
+// 'none', ts-aa=true maps to 'medium' (also the default for Hard Round).
+window.brushAAMode='medium';
 // Renderer preference (Edit ▸ Preferences): 'gpu' uses the browser's
 // hardware-accelerated canvas gradient/fill primitives (fast, default).
 // 'cpu' uses a hand-written per-pixel software rasterizer instead, closer

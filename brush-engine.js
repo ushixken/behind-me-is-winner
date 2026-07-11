@@ -257,6 +257,9 @@ window._getLiveStrokePreview = _getLiveStrokePreview;
 // The eraser always uses the same mode as the current brush.
 //
 
+function _currentAAMode(){
+  return _normalizeAAMode(typeof window!=='undefined'?window.brushAAMode:null);
+}
 function _hexToRGB(hex){
   const h=hex.replace('#','');
   return[parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)];
@@ -289,26 +292,56 @@ function _quant(v,step){return Math.round(v/step)*step;}
 // Fix: compute the edge band in actual pixels and clamp it to a small max,
 // so a big hard brush still gets a crisp, near-constant-width edge instead
 // of a soft gradient that scales with size.
-const _EDGE_PX_MIN = 0.6;  // thinnest the AA rim is ever allowed to be
-function _edgeWidthPx(r, hardness){
-  return Math.min(r,Math.max(_EDGE_PX_MIN,(1-hardness)*r));
-  // Hard Round / Soft Round / eraser etc. keep the exact original
-  // behavior: rim width is proportional to (1-hardness)*r, clamped to a
-  // flat 3px max at any size. Left untouched on purpose.
-  // Airbrush-only exception: the Airbrush preset (hardness=0, size 60) is
-  // meant to be a true soft spray-cone dot  like Clip Studio's airbrush
-  // where the feather spans the ENTIRE radius, not just a thin 3px rim
-  // around a flat opaque core. That's what made it look like a hard-edged
-  // blob instead of a smooth gaussian spray. Scoped strictly to
-  // window._brushAirbrush so Hard Round/Soft Round/eraser are unaffected.
+const _EDGE_PX_MIN = 0.6;  // legacy floor, kept for airbrush-only math elsewhere
+
+//  AA strength modes (Edit ▸ Tool Settings ▸ Antialiasing dropdown)
+// Root cause of the "chunky, stair-stepped" Hard Round edge (see bug report /
+// reference pics): for a near-100%-hardness brush, (1-hardness)*r collapses
+// to ~0, so the old _edgeWidthPx fell all the way down to its ONE global
+// floor, _EDGE_PX_MIN = 0.6px. A 0.6px-wide antialiasing ramp is barely more
+// than a single pixel row of partial coverage — on any diagonal/curved edge
+// that reads as a near-binary, stair-stepped boundary even though a
+// gradient/coverage calc technically ran. The GPU path made this worse by
+// only using extra gradient stops (12) when hardness<0.95; Hard Round
+// (hardness>=0.95) got just 3 stops across that already-tiny 0.6px band —
+// effectively a linear, unantialiased-looking cliff.
+//
+// Fix: the edge-pixel floor is now driven by an explicit AA MODE that is
+// fully independent of Hardness. Hardness still controls the radial
+// falloff/core size exactly as before ((1-hardness)*r contributes to the
+// edge width for soft brushes); AA mode only sets the MINIMUM edge-pixel
+// coverage band and the number of samples/gradient stops used to render it.
+// For a 100%-hardness Hard Round, hardness contributes ~0px, so the AA mode
+// floor determines the whole visible rim — giving predictable, selectable
+// smoothing (None/Weak/Medium/Strong) without ever touching Hardness (the
+// solid core / "hard" feel is untouched; only the 1-2px boundary ring is).
+const _AA_MODE_EDGE_PX = { none:0, weak:0.85, medium:1.6, strong:2.6 };
+const _AA_MODE_EDGE_MAX_PX = { none:0, weak:2, medium:4, strong:7 };
+// Gradient stop / supersample counts per mode — more stops means the
+// (necessarily coarse, linearly-interpolated) canvas gradient reads as a
+// smooth curve instead of a visibly faceted ramp across the edge band.
+const _AA_MODE_STOPS = { none:2, weak:8, medium:14, strong:20 };
+function _normalizeAAMode(mode){
+  return (mode==='none'||mode==='weak'||mode==='medium'||mode==='strong')?mode:'medium';
+}
+function _edgeWidthPx(r, hardness, mode){
+  const m=_normalizeAAMode(mode);
+  if(m==='none') return 0;
+  const floor=_AA_MODE_EDGE_PX[m];
+  const cap=Math.min(r,_AA_MODE_EDGE_MAX_PX[m]);
+  // Hardness still narrows/widens the band exactly as before; the AA mode
+  // just sets the minimum (so Hard Round always gets a real antialiased rim
+  // sized per-mode) and a mode-appropriate maximum (so "Strong" doesn't
+  // silently turn into a soft/blurry brush on a big brush).
+  return Math.min(cap,Math.max(floor,(1-hardness)*r));
 }
 // Returns the inner-core fraction (0..1) equivalent to a clamped, constant-
 // pixel-width edge band for a brush of true radius r. Everything downstream
 // still just uses `inner` as before (a fraction of r), so this is a drop-in
 // replacement for `hardness` at the point each renderer computes its falloff.
-function _effectiveInnerFrac(r, hardness){
+function _effectiveInnerFrac(r, hardness, mode){
   const rr = Math.max(0.05, r);
-  const edgePx = _edgeWidthPx(rr, Math.max(0,Math.min(1,hardness)));
+  const edgePx = _edgeWidthPx(rr, Math.max(0,Math.min(1,hardness)), mode);
   return Math.max(0, Math.min(0.999, 1 - edgePx/rr));
 }
 
@@ -423,7 +456,15 @@ function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   // squish of every individual stamp, exactly like Photoshop.
   const baseRoundness=(typeof _activeDabRoundness!=='undefined'&&_activeDabRoundness!=null)?_activeDabRoundness:(window.brushTipRoundness==null?1:window.brushTipRoundness);
   const tipRoundness=Math.max(window.brushTipMinimumRoundness||0,Math.min(1,baseRoundness));
-  const r=_quant(rRaw,_Q_R), alpha=_quant(alphaRaw,_Q_ALPHA);
+  // Cache granularity: 0.25px steps are fine for normal-sized dabs, but at
+  // small pressure-driven radii a 0.25px bucket is a large fraction of the
+  // whole dab -- consecutive dabs along a smoothly shrinking taper would
+  // visibly jump between a handful of cached sizes ("stepping") instead of
+  // shrinking continuously. Use a much finer bucket once the dab gets
+  // small; still cheap since there are only ever a few distinct tiny sizes
+  // alive in a stroke at once relative to the cache's max size.
+  const rQuantStep=rRaw<=4?0.02:_Q_R;
+  const r=_quant(rRaw,rQuantStep), alpha=_quant(alphaRaw,_Q_ALPHA);
   const hardness=Math.round(Math.max(0,Math.min(0.99,hardnessRaw))*100)/100;
   const key=r.toFixed(2)+'|'+rgb.join(',')+'|'+alpha.toFixed(2)+'|'+composite+'|'+
             hardness.toFixed(2)+'|t'+tipV+'|'+(softAlpha?'s':'h')+'|'+tipMode+'|rd'+tipRoundness.toFixed(3);
@@ -443,6 +484,15 @@ function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   const tipNativeH=tipC?(tipC.height||tipC.naturalHeight||1):1;
   const tipScale=(2*rr)/Math.max(tipNativeW,tipNativeH);
   const compressWidth=tipNativeW<tipNativeH;
+  // NOTE: genuinely tiny dabs (r<=1, matching Hard Round's own cutoff) are
+  // now rendered by _dabTipTinyCoverage instead (see _dabAA), via direct
+  // supersampled coverage sampling of the ORIGINAL tip source. That path
+  // preserves true float size/position and produces genuine fractional-
+  // pixel antialiased coverage, so light-pressure strokes get their pale
+  // look from real AA coverage the same way Hard Round's tiny dabs do --
+  // never from an artificial alpha multiplier. This function only ever
+  // handles r>1 now, where a >=1px raster is a true, non-floored
+  // representation of the dab.
   const dabW=Math.max(1,tipNativeW*tipScale*(compressWidth?tipRoundness:1));
   const dabH=Math.max(1,tipNativeH*tipScale*(compressWidth?1:tipRoundness));
 
@@ -484,11 +534,39 @@ function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   }
 
   const output=tc.createImageData(w,h); const outputData=output.data;
+  // Apply the SAME radial hardness falloff every other brush already gets
+  // (see _roundBrushFalloff/_effectiveInnerFrac used by the procedural
+  // round-brush renderers). Previously `hardness`/`softAlpha` were read and
+  // even baked into the cache key, but never actually multiplied into the
+  // output alpha below -- so Hardness had zero effect on imported tips and
+  // every dab's edge was exactly as raw/jagged as the source image, with no
+  // AA feather at all. This is the main cause of the blocky, stamp-like
+  // edges on custom tips. Fixed by feathering the mask's outer band by an
+  // elliptical falloff sized to the dab's own (possibly non-square) aspect
+  // ratio, so non-circular tips (e.g. a calligraphy bar) still feather
+  // correctly along their own silhouette instead of a plain circle.
+  const aaMode=_currentAAMode();
+  // Falloff is gated on tipMode, not just softAlpha: per brushTipMode's own
+  // contract ('multiply' = tip as an alpha-mask ON TOP OF the round dab;
+  // 'replace' = tip alpha IS the sole shape, no circle at all), 'replace'
+  // must never get the radial falloff layered on top of it -- doing so
+  // would silently clip a non-circular tip's corners and double up the
+  // antialiasing (once from the tip's own edge, once from the falloff).
+  const applyFalloff=softAlpha&&tipMode!=='replace';
+  const inner=applyFalloff?_effectiveInnerFrac(rr,hardness,aaMode):1;
+  const semiW=Math.max(0.5,dabW/2), semiH=Math.max(0.5,dabH/2);
   for(let p=0;p<maskData.length;p+=4){
     const sourceAlpha=maskData[p+3]/255;
     const luminance=(maskData[p]*0.2126+maskData[p+1]*0.7152+maskData[p+2]*0.0722)/255;
-    const tipAlpha=legacyAlphaOnlyMask?sourceAlpha:sourceAlpha*luminance;
+    let tipAlpha=legacyAlphaOnlyMask?sourceAlpha:sourceAlpha*luminance;
     if(tipAlpha<=0) continue;
+    if(applyFalloff){
+      const i=p/4, px=i%w, py=Math.floor(i/w);
+      const dx=(px+0.5-cx)/semiW, dy=(py+0.5-cy)/semiH;
+      const t=Math.sqrt(dx*dx+dy*dy);
+      tipAlpha*=_roundBrushFalloff(t,inner,hardness);
+      if(tipAlpha<=0) continue;
+    }
     outputData[p]=cr; outputData[p+1]=cg; outputData[p+2]=cb;
     outputData[p+3]=Math.round(Math.min(1,alpha*tipAlpha)*255);
   }
@@ -515,15 +593,21 @@ function _buildAAStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   const r=_quant(rRaw,_Q_R), alpha=_quant(alphaRaw,_Q_ALPHA);
   const hardness=Math.round(Math.max(0,Math.min(0.99,hardnessRaw))*100)/100;
   const isAirbrush=typeof window!=='undefined'&&!!window._brushAirbrush;
+  const aaMode=_currentAAMode();
   // Include the current tip version in the cache key so that loading a new
   // tip (or clearing it) automatically invalidates all previous CPU stamps
-  // without an extra cache.clear() call.
+  // without an extra cache.clear() call. AA mode is included so switching
+  // None/Weak/Medium/Strong correctly rebuilds every cached stamp instead of
+  // reusing a stale edge width.
   const tipV=(window.brushTipCanvas?(window.brushTipVersion||0):-1);
-  const key=r.toFixed(2)+'|'+rgb.join(',')+'|'+alpha.toFixed(2)+'|'+composite+'|'+hardness.toFixed(2)+'|'+(isAirbrush?'ab':'n')+'|tv'+tipV;
+  const key=r.toFixed(2)+'|'+rgb.join(',')+'|'+alpha.toFixed(2)+'|'+composite+'|'+hardness.toFixed(2)+'|'+(isAirbrush?'ab':'n')+'|tv'+tipV+'|aa'+aaMode;
   const hit=_aaDabCache.get(key);
   if(hit) return hit;
   const rr=Math.max(0.05,r);
-  const pad=2,ir=Math.ceil(rr);
+  // Padding must cover the widest possible edge band (Strong mode can push
+  // the antialiased rim up to _AA_MODE_EDGE_MAX_PX.strong px past r), or the
+  // stamp bitmap would clip the soft tail and reintroduce a hard cutoff.
+  const pad=Math.max(2,Math.ceil(_AA_MODE_EDGE_MAX_PX[aaMode]||2)),ir=Math.ceil(rr);
   const w=(ir+pad)*2+1,h=(ir+pad)*2+1;
   const cx=w/2,cy=h/2;
   const tmp=document.createElement('canvas');tmp.width=w;tmp.height=h;
@@ -531,7 +615,7 @@ function _buildAAStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   const id=tc.createImageData(w,h);
   const d=id.data;
   const cr=composite==='erase'?0:rgb[0], cg=composite==='erase'?0:rgb[1], cb=composite==='erase'?0:rgb[2];
-  const inner=_effectiveInnerFrac(rr,hardness);
+  const inner=_effectiveInnerFrac(rr,hardness,aaMode);
   const outerSpan=Math.max(0.0001,1-inner);
   // Sample tip pixels at this stamp's resolution once (null when no tip loaded).
   const tipPixels=_getTipPixelsForStamp(w,h);
@@ -637,23 +721,37 @@ function _dabAAGpu(x,y,r,rgb,alpha,composite){
   dc.globalCompositeOperation=_strokeDabComposite(composite);
   const grad=dc.createRadialGradient(x,y,0,x,y,rr);
   const c0=composite==='erase'?[0,0,0]:rgb;
+  const aaMode=_currentAAMode();
   if(brushHardness<0.95){
     // Sample the true-gaussian curve at several stops Ã¢â‚¬â€ canvas gradients
     // only interpolate linearly BETWEEN stops, so enough stops are needed
     // to read as a smooth curve rather than a linear ramp. Every other
     // brush (below, in the else branch) is completely untouched.
-    const inner=_effectiveInnerFrac(rr,brushHardness);
-    const STOPS=12;
+    const inner=_effectiveInnerFrac(rr,brushHardness,aaMode);
+    const STOPS=Math.max(12,_AA_MODE_STOPS[aaMode]||14);
     for(let i=0;i<=STOPS;i++){
       const t=i/STOPS;
       const a=alpha*_roundBrushFalloff(t,inner,brushHardness);
       grad.addColorStop(t,`rgba(${c0[0]},${c0[1]},${c0[2]},${a})`);
     }
   } else {
-    const inner=_effectiveInnerFrac(rr,brushHardness);
-    grad.addColorStop(0,`rgba(${c0[0]},${c0[1]},${c0[2]},${alpha})`);
-    grad.addColorStop(inner,`rgba(${c0[0]},${c0[1]},${c0[2]},${alpha})`);
-    grad.addColorStop(1,`rgba(${c0[0]},${c0[1]},${c0[2]},0)`);
+    // FIX: this branch (hardness>=0.95, i.e. Hard Round) used to add just
+    // THREE stops (0 / inner / 1). Canvas gradients only interpolate
+    // LINEARLY between stops, so across the old fixed 0.6px edge band that
+    // 2-segment ramp rendered as a visibly faceted/stepped cliff rather
+    // than a smooth curve -- the actual cause of the "chunky, stair-stepped"
+    // look in the bug report. Sampling the same analytic falloff at
+    // AA-mode-driven stop counts (None skips this whole codepath -- see
+    // _dabAA dispatch below) gives Hard Round a real smooth antialiased rim
+    // while the flat opaque core (t<=inner) and hardness-controlled falloff
+    // shape are completely unchanged.
+    const inner=_effectiveInnerFrac(rr,brushHardness,aaMode);
+    const STOPS=_AA_MODE_STOPS[aaMode]||14;
+    for(let i=0;i<=STOPS;i++){
+      const t=i/STOPS;
+      const a=alpha*_roundBrushFalloff(t,inner,brushHardness);
+      grad.addColorStop(t,`rgba(${c0[0]},${c0[1]},${c0[2]},${a})`);
+    }
   }
   dc.fillStyle=grad;
   dc.beginPath();dc.arc(x,y,rr,0,Math.PI*2);dc.fill();
@@ -707,9 +805,13 @@ function _dabAACpu(x,y,r,rgb,alpha,composite){
   const dc = (_inStroke && composite !== 'erase') ? _strokeCtx : ctx;
   const rr=Math.max(0.05,r);
   const isAirbrush=typeof window!=='undefined'&&!!window._brushAirbrush;
-  const inner=_effectiveInnerFrac(rr,brushHardness);
+  const aaModeCpu=_currentAAMode();
+  const inner=_effectiveInnerFrac(rr,brushHardness,aaModeCpu);
   const cw=dc.canvas.width, ch=dc.canvas.height;
-  const pad=1, ir=Math.ceil(rr)+pad;
+  // Pad enough to cover the widest possible edge band for the active AA
+  // mode (Strong can extend several px past r) so the falloff tail isn't
+  // clipped by the sample rect, which would reintroduce a hard cutoff.
+  const pad=Math.max(1,Math.ceil(_AA_MODE_EDGE_MAX_PX[aaModeCpu]||1)), ir=Math.ceil(rr)+pad;
   const sx=Math.max(0,Math.floor(x-ir)), sy=Math.max(0,Math.floor(y-ir));
   const ex=Math.min(cw,Math.ceil(x+ir)), ey=Math.min(ch,Math.ceil(y+ir));
   const rw=ex-sx, rh=ey-sy;
@@ -759,7 +861,7 @@ function _dabAATinyCoverage(x,y,r,rgb,alpha,composite){
   const width=ex-sx,height=ey-sy;
   if(width<=0||height<=0) return;
   const image=dc.getImageData(sx,sy,width,height),data=image.data;
-  const inner=_effectiveInnerFrac(rr,brushHardness);
+  const inner=_effectiveInnerFrac(rr,brushHardness,_currentAAMode());
   const samples=4,invSamples=1/(samples*samples);
   for(let py=0;py<height;py++){
     for(let px=0;px<width;px++){
@@ -788,9 +890,153 @@ function _dabAATinyCoverage(x,y,r,rgb,alpha,composite){
     }
   }
   dc.putImageData(image,sx,sy);
-}function _dabAA(x,y,r,rgb,alpha,composite){
+}// ---- Tiny custom-tip coverage renderer (matches _dabAATinyCoverage) ----
+// Hard Round gets its light-pressure "pale, thin, still visible" look from
+// _dabAATinyCoverage: at r<=1 it stops using a cached, integer-rasterized
+// bitmap and instead supersamples the ANALYTIC falloff directly into the
+// destination per output pixel, so a 0.2px-radius dab really does render as
+// a faint partial-coverage smudge instead of jumping to some floored
+// minimum size. Custom tips never had an equivalent -- _buildTipStamp always
+// rasterized into an integer-pixel canvas with a 1px floor, so a tip dab
+// that should be much smaller than 1px still occupied a full 1px cell.
+// (An earlier fix compensated by multiplying alpha down proportionally,
+// which worked visually but was exactly the "fake it by reducing alpha"
+// shortcut this task asks NOT to do.)
+//
+// This function is the real fix: it supersamples the tip's OWN alpha mask
+// directly (bilinear-sampled from the original tip source, never from a
+// pre-scaled cached bitmap) at the true floating-point size/position/
+// rotation, so the pale appearance comes from genuine fractional-pixel
+// coverage -- identical in spirit to Hard Round, just sampling a tip mask
+// instead of an analytic circle.
+let _tipAlphaBuf=null,_tipAlphaBufVersion=-1,_tipAlphaBufW=0,_tipAlphaBufH=0,_tipAlphaBufLegacy=false;
+function _getTipAlphaBuffer(){
+  const tipC=window.brushTipCanvas;
+  if(!tipC) return null;
+  const v=window.brushTipVersion||0;
+  if(_tipAlphaBufVersion!==v){
+    const w=tipC.width||1,h=tipC.height||1;
+    const sctx=tipC.getContext('2d',{willReadFrequently:true});
+    const d=sctx.getImageData(0,0,w,h).data;
+    // Same legacy-mask detection as _buildTipStamp: if the source has no
+    // real luminance variation (a pure alpha-channel mask, RGB≈white),
+    // treat alpha alone as the mask instead of alpha*luminance.
+    let maxLum=0;
+    for(let p=0;p<d.length;p+=4){
+      if(d[p+3]===0) continue;
+      const lum=(d[p]*0.2126+d[p+1]*0.7152+d[p+2]*0.0722)/255;
+      if(lum>maxLum) maxLum=lum;
+    }
+    const legacy=maxLum<0.01;
+    const buf=new Float32Array(w*h);
+    for(let i=0,p=0;p<d.length;p+=4,i++){
+      const a=d[p+3]/255;
+      const lum=(d[p]*0.2126+d[p+1]*0.7152+d[p+2]*0.0722)/255;
+      buf[i]=legacy?a:a*lum;
+    }
+    _tipAlphaBuf=buf;_tipAlphaBufW=w;_tipAlphaBufH=h;_tipAlphaBufVersion=v;_tipAlphaBufLegacy=legacy;
+  }
+  return{data:_tipAlphaBuf,w:_tipAlphaBufW,h:_tipAlphaBufH};
+}
+function _sampleTipAlphaBilinear(buf,w,h,u,v){
+  if(u<0||v<0||u>=w||v>=h) return 0;
+  const x0=Math.floor(u),y0=Math.floor(v);
+  const x1=Math.min(w-1,x0+1),y1=Math.min(h-1,y0+1);
+  const fx=u-x0,fy=v-y0;
+  const a00=buf[y0*w+x0],a10=buf[y0*w+x1],a01=buf[y1*w+x0],a11=buf[y1*w+x1];
+  const top=a00+(a10-a00)*fx, bot=a01+(a11-a01)*fx;
+  return top+(bot-top)*fy;
+}
+function _dabTipTinyCoverage(x,y,r,rgb,alpha,composite){
+  const tipInfo=_getTipAlphaBuffer();
+  if(!tipInfo){_dabAATinyCoverage(x,y,r,rgb,alpha,composite);return;}
+  const dc=(_inStroke&&composite!=='erase')?_strokeCtx:ctx;
+  const rr=Math.max(0.05,r);
+  const softAlpha=!!window.brushTipSoftAlpha;
+  const tipMode=window.brushTipMode||'multiply';
+  const baseRoundness=(typeof _activeDabRoundness!=='undefined'&&_activeDabRoundness!=null)?_activeDabRoundness:(window.brushTipRoundness==null?1:window.brushTipRoundness);
+  const tipRoundness=Math.max(window.brushTipMinimumRoundness||0,Math.min(1,baseRoundness));
+  const tipNativeW=tipInfo.w,tipNativeH=tipInfo.h;
+  const tipScale=(2*rr)/Math.max(tipNativeW,tipNativeH);
+  const compressWidth=tipNativeW<tipNativeH;
+  // True, unfloored float size -- this is the whole point: a dab that's
+  // "really" 0.3px wide stays 0.3px wide all the way to rasterization.
+  const dabW=Math.max(0.02,tipNativeW*tipScale*(compressWidth?tipRoundness:1));
+  const dabH=Math.max(0.02,tipNativeH*tipScale*(compressWidth?1:tipRoundness));
+  const semiW=dabW/2, semiH=dabH/2;
+  const rotation=_viewAdjustedTipRotation();
+  const cosR=Math.cos(-rotation), sinR=Math.sin(-rotation); // world -> tip-local
+  const flipXsign=window.brushTipFlipX?-1:1, flipYsign=window.brushTipFlipY?-1:1;
+
+  const pad=1;
+  const halfSpan=Math.max(semiW,semiH)+pad;
+  const sx=Math.max(0,Math.floor(x-halfSpan)),sy=Math.max(0,Math.floor(y-halfSpan));
+  const ex=Math.min(dc.canvas.width,Math.ceil(x+halfSpan)),ey=Math.min(dc.canvas.height,Math.ceil(y+halfSpan));
+  const width=ex-sx,height=ey-sy;
+  if(width<=0||height<=0) return;
+  const image=dc.getImageData(sx,sy,width,height),data=image.data;
+
+  const aaMode=_currentAAMode();
+  const applyFalloff=softAlpha&&tipMode!=='replace';
+  const inner=applyFalloff?_effectiveInnerFrac(rr,brushHardness,aaMode):1;
+  const samples=4,invSamples=1/(samples*samples);
+  const cr=composite==='erase'?0:rgb[0],cg=composite==='erase'?0:rgb[1],cb=composite==='erase'?0:rgb[2];
+  const tipBuf=tipInfo.data;
+
+  for(let py=0;py<height;py++){
+    for(let px=0;px<width;px++){
+      let coverage=0;
+      for(let sampleY=0;sampleY<samples;sampleY++){
+        for(let sampleX=0;sampleX<samples;sampleX++){
+          const wx=sx+px+(sampleX+0.5)/samples;
+          const wy=sy+py+(sampleY+0.5)/samples;
+          let rx=wx-x, ry=wy-y;
+          if(rotation){
+            const rrx=rx*cosR-ry*sinR, rry=rx*sinR+ry*cosR;
+            rx=rrx; ry=rry;
+          }
+          rx*=flipXsign; ry*=flipYsign;
+          const u=(rx/dabW+0.5)*tipNativeW;
+          const v=(ry/dabH+0.5)*tipNativeH;
+          const tipA=_sampleTipAlphaBilinear(tipBuf,tipNativeW,tipNativeH,u,v);
+          if(tipA<=0) continue;
+          if(applyFalloff){
+            const t=Math.sqrt((rx/Math.max(0.02,semiW))**2+(ry/Math.max(0.02,semiH))**2);
+            coverage+=tipA*_roundBrushFalloff(t,inner,brushHardness);
+          } else {
+            coverage+=tipA;
+          }
+        }
+      }
+      const sourceAlpha=Math.max(0,Math.min(1,alpha*coverage*invSamples));
+      if(sourceAlpha<=0) continue;
+      const offset=(py*width+px)*4;
+      if(composite==='erase'){
+        data[offset+3]*=1-sourceAlpha;
+      }else{
+        const destinationAlpha=data[offset+3]/255;
+        const outputAlpha=sourceAlpha+destinationAlpha*(1-sourceAlpha);
+        data[offset]=(cr*sourceAlpha+data[offset]*destinationAlpha*(1-sourceAlpha))/outputAlpha;
+        data[offset+1]=(cg*sourceAlpha+data[offset+1]*destinationAlpha*(1-sourceAlpha))/outputAlpha;
+        data[offset+2]=(cb*sourceAlpha+data[offset+2]*destinationAlpha*(1-sourceAlpha))/outputAlpha;
+        data[offset+3]=outputAlpha*255;
+      }
+    }
+  }
+  dc.putImageData(image,sx,sy);
+}
+function _dabAA(x,y,r,rgb,alpha,composite){
+  // AA mode 'none' is fully pixel-snapped/binary (Requirement 2), so it uses
+  // the exact same aliased/quantized stamp path as the legacy AA-off toggle
+  // -- no partial-alpha edge pixels at all, regardless of hardness.
+  if(_currentAAMode()==='none'){_dabAliased(x,y,r,rgb,alpha,composite);return;}
   const tinyGeneratedHardRound=r<=1&&!window._brushAirbrush&&!window.brushTipCanvas&&brushHardness>=0.995;
   if(tinyGeneratedHardRound){_dabAATinyCoverage(x,y,r,rgb,alpha,composite);return;}
+  // Same cutoff (r<=1) as Hard Round above, so custom tips remain visible
+  // down to approximately the same minimum size Hard Round hits, via the
+  // same class of genuine supersampled-coverage rendering.
+  const tinyTipDab=r<=1&&!window._brushAirbrush&&!!window.brushTipCanvas;
+  if(tinyTipDab){_dabTipTinyCoverage(x,y,r,rgb,alpha,composite);return;}
   if(brushRenderer==='cpu') _dabAACpu(x,y,r,rgb,alpha,composite);
   else _dabAAGpu(x,y,r,rgb,alpha,composite);
 }
@@ -1570,7 +1816,19 @@ function _strokeTaperFactor(baseSize){
 // airbrush cap).
 function _effectiveSpacingFrac(){
   const mode=document.getElementById('ts-spacing-mode');
-  if(mode&&mode.value==='auto'&&tool==='brush'&&!window._brushAirbrush&&!window.brushTipCanvas&&brushHardness>=0.995) return 0.01;
+  const isAuto=mode&&mode.value==='auto'&&tool==='brush'&&!window._brushAirbrush;
+  // Auto mode's whole purpose (per its own UI tooltip: "automatically
+  // adjusts spacing for smoother brush strokes") is to force dabs dense
+  // enough that consecutive stamps blend into a continuous stroke instead
+  // of reading as separate circles. It previously only ever did this for
+  // the procedural hard-round brush (`!window.brushTipCanvas` excluded
+  // imported tips), so a custom tip brush left on Auto silently fell back
+  // to the raw manual Spacing % and kept showing visible stamp-to-stamp
+  // seams -- Auto looked like it did nothing. Imported tips need this at
+  // least as much as the round brush (arguably more, since their edges
+  // aren't a uniform soft circle), so they now get the same tight spacing.
+  if(isAuto&&!window.brushTipCanvas&&brushHardness>=0.995) return 0.01;
+  if(isAuto&&window.brushTipCanvas) return 0.01;
   return (typeof window!=='undefined' && window._tsSpacing!=null) ? window._tsSpacing : 0;
 }
 
@@ -2151,7 +2409,18 @@ function _computeEffectiveParams(e){
   // The deliberate stroke-start taper below is applied AFTER this floor and
   // is allowed to go thinner than it Ã¢â‚¬â€ that's the intentional tapered point
   // at the very tip of a stroke, not an accidental disappearance.
-  r=Math.max(0.5,r);
+  // Absolute visibility floor -- LOWERED from 0.5px radius (1px diameter)
+  // to 0.1px radius (0.2px diameter). The old 0.5px floor silently
+  // overrode Minimum Size entirely: even with ts-min-size set to 0%, every
+  // dab was still clamped up to a 1px-diameter minimum, so a light flick
+  // could never taper to a true fine point (a real needle-point taper, like
+  // Clip Studio/TVPaint, needs the tip to shrink to sub-pixel width before
+  // antialiasing fades it out -- 1px was simply too coarse a floor for that).
+  // This floor still exists purely so a dab can never render as literally
+  // zero-size (which would be invisible/divide-by-zero downstream); it's
+  // just set low enough now to stay out of the way of an intentional thin
+  // tip instead of being the thing that defines how thin "thin" can be.
+  r=Math.max(0.1,r);
 
   // Stroke-start taper: DISABLED per request Ã¢â‚¬â€ every dab now draws at its
   // full computed width/alpha from the very first point of the stroke, no
@@ -2430,4 +2699,4 @@ activeC.addEventListener('pointerup',e=>{
   if(activeC.hasPointerCapture(e.pointerId))activeC.releasePointerCapture(e.pointerId);
   _pointerEndStroke(e);
 });
-activeC.addEventListener('pointercancel',()=>{_endStroke();});
+activeC.addEventListener('pointercancel',()=>{_endStroke();});z

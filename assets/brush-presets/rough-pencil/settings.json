@@ -1,0 +1,29 @@
+{
+  "name": "Rough Pencil",
+  "tipFile": "tip.png",
+  "textureFile": "texture.png",
+  "hasTip": true,
+  "hasTexture": true,
+  "settings": {
+    "ts-size": 12,
+    "ts-hardness": 100,
+    "ts-opacity": 100,
+    "ts-flow": 100,
+    "ts-density": 90,
+    "ts-spacing": 8,
+    "ts-spacing-mode": "auto",
+    "ts-rotation-mode": "fixed-rotation",
+    "ts-angle": 0,
+    "ts-tip-roundness": 100,
+    "ts-tip-flip-x": false,
+    "ts-tip-flip-y": false,
+    "ts-scatter-enabled": false,
+    "ts-scatter-amount": 0,
+    "ts-scatter-count": 1,
+    "ts-roundness": 100,
+    "ts-aa": false,
+    "ts-aa-mode": "medium",
+    "ts-texture-depth": 55,
+    "ts-texture-scale": 100
+  }
+}
