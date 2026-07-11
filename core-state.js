@@ -309,10 +309,12 @@ function rotateCanvasTo(newRot,pivotX,pivotY){
   applyTransform();showRotation();
 }
 
-/** Reset rotation back to 0°, keeping the canvas centered. */
+/** Reset rotation back to 0°, keeping the canvas-space point under the
+ *  nav pivot visually fixed — same pivot-preserving math as rotateCanvasTo().
+ *  Pan, zoom, and flip are all preserved; only rotation changes. */
 function resetRotation(){
-  rotation=0;
-  centerCanvas();showRotation();
+  const p=getNavPivot();
+  rotateCanvasTo(0,p.cx,p.cy);
 }
 
 /**
