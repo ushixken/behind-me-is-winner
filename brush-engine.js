@@ -327,21 +327,25 @@ function _normalizeAAMode(mode){
 function _edgeWidthPx(r, hardness, mode){
   const m=_normalizeAAMode(mode);
   if(m==='none') return 0;
-  const floor=_AA_MODE_EDGE_PX[m];
-  const cap=Math.min(r,_AA_MODE_EDGE_MAX_PX[m]);
-  // Hardness still narrows/widens the band exactly as before; the AA mode
-  // just sets the minimum (so Hard Round always gets a real antialiased rim
-  // sized per-mode) and a mode-appropriate maximum (so "Strong" doesn't
-  // silently turn into a soft/blurry brush on a big brush).
-  return Math.min(cap,Math.max(floor,(1-hardness)*r));
+  const aaFloor=_AA_MODE_EDGE_PX[m];
+  // Edge width in pixels: hardness controls how wide the feather is across
+  // the full radius (no pixel cap), while AA mode sets only a minimum floor
+  // so even a 100%-hardness Hard Round gets a smooth antialiased rim.
+  // The OLD code capped this at _AA_MODE_EDGE_MAX_PX (e.g. 4px) which
+  // destroyed the hardness signal on large brushes: both 0% and 100%
+  // hardness collapsed to a ~4px feather out of 150px radius (~0.97 inner),
+  // making them look identical. The cap is removed: hardness freely sets
+  // the feather from 0px (hardness=1) to r px (hardness=0).
+  return Math.max(aaFloor, (1-hardness)*r);
 }
-// Returns the inner-core fraction (0..1) equivalent to a clamped, constant-
-// pixel-width edge band for a brush of true radius r. Everything downstream
-// still just uses `inner` as before (a fraction of r), so this is a drop-in
-// replacement for `hardness` at the point each renderer computes its falloff.
+// Returns the inner-core fraction (0..1) where the falloff begins.
+//   hardness=1.0  -> edgePx ~ AA_floor (e.g. 1.6px on 150r = 0.989 inner)
+//   hardness=0.5  -> edgePx = r/2 = 75px -> inner = 0.5
+//   hardness=0.0  -> edgePx = r   = 150px -> inner = 0.0
 function _effectiveInnerFrac(r, hardness, mode){
   const rr = Math.max(0.05, r);
-  const edgePx = _edgeWidthPx(rr, Math.max(0,Math.min(1,hardness)), mode);
+  const h = Math.max(0, Math.min(1, hardness));
+  const edgePx = _edgeWidthPx(rr, h, mode);
   return Math.max(0, Math.min(0.999, 1 - edgePx/rr));
 }
 
@@ -349,7 +353,12 @@ function _roundBrushFalloff(t,inner,hardness){
   if(t>=1) return 0;
   if(t<=inner) return 1;
   const u=(t-inner)/Math.max(0.0001,1-inner);
-  if(hardness>=0.95) return 1-u;
+  // Always use the smooth hermite (smoothstep) curve for the feather zone.
+  // Previously hardness>=0.95 used a linear ramp, but since inner is now
+  // driven by hardness directly (hardness=1 -> inner~1, tiny feather zone),
+  // the curve shape in that tiny zone doesn't matter visually. Using the
+  // same curve everywhere keeps the falloff consistent and avoids a
+  // sudden transition in feel around hardness=0.95.
   return 1-u*u*(3-2*u);
 }
 
@@ -722,35 +731,31 @@ function _dabAAGpu(x,y,r,rgb,alpha,composite){
   const grad=dc.createRadialGradient(x,y,0,x,y,rr);
   const c0=composite==='erase'?[0,0,0]:rgb;
   const aaMode=_currentAAMode();
-  if(brushHardness<0.95){
-    // Sample the true-gaussian curve at several stops Ã¢â‚¬â€ canvas gradients
-    // only interpolate linearly BETWEEN stops, so enough stops are needed
-    // to read as a smooth curve rather than a linear ramp. Every other
-    // brush (below, in the else branch) is completely untouched.
+  {
+    // Build gradient stops DENSE inside the feather zone [inner..1] and
+    // sparse in the solid core [0..inner].
+    //
+    // Old approach: uniform stops at t=i/STOPS across 0..1. For a hard
+    // brush (inner=0.989 on a 300px brush) the feather zone is <1.1% of
+    // the gradient range. With 12 uniform stops, the nearest core stop is
+    // at t=11/12=0.917 and the only feather stop is t=1.0. The browser
+    // linearly interpolates between them -> a ~12px ramp instead of 1.6px,
+    // creating the wide blurry halo at large sizes.
+    // Fix: pin two stops at t=0 and t=inner (both full alpha, solid core),
+    // then place STOPS densely within [inner, 1.0] to faithfully represent
+    // the narrow falloff curve at whatever pixel width it actually spans.
     const inner=_effectiveInnerFrac(rr,brushHardness,aaMode);
-    const STOPS=Math.max(12,_AA_MODE_STOPS[aaMode]||14);
-    for(let i=0;i<=STOPS;i++){
-      const t=i/STOPS;
-      const a=alpha*_roundBrushFalloff(t,inner,brushHardness);
-      grad.addColorStop(t,`rgba(${c0[0]},${c0[1]},${c0[2]},${a})`);
+    const STOPS=Math.max(8,_AA_MODE_STOPS[aaMode]||14);
+    // Solid core: two anchors so the browser never interpolates across it.
+    grad.addColorStop(0,`rgba(${c0[0]},${c0[1]},${c0[2]},${alpha})`);
+    if(inner>0.0001){
+      grad.addColorStop(Math.min(0.9999,inner),`rgba(${c0[0]},${c0[1]},${c0[2]},${alpha})`);
     }
-  } else {
-    // FIX: this branch (hardness>=0.95, i.e. Hard Round) used to add just
-    // THREE stops (0 / inner / 1). Canvas gradients only interpolate
-    // LINEARLY between stops, so across the old fixed 0.6px edge band that
-    // 2-segment ramp rendered as a visibly faceted/stepped cliff rather
-    // than a smooth curve -- the actual cause of the "chunky, stair-stepped"
-    // look in the bug report. Sampling the same analytic falloff at
-    // AA-mode-driven stop counts (None skips this whole codepath -- see
-    // _dabAA dispatch below) gives Hard Round a real smooth antialiased rim
-    // while the flat opaque core (t<=inner) and hardness-controlled falloff
-    // shape are completely unchanged.
-    const inner=_effectiveInnerFrac(rr,brushHardness,aaMode);
-    const STOPS=_AA_MODE_STOPS[aaMode]||14;
-    for(let i=0;i<=STOPS;i++){
-      const t=i/STOPS;
+    // Feather zone: dense stops from inner to 1.0.
+    for(let i=1;i<=STOPS;i++){
+      const t=inner+(1-inner)*(i/STOPS);
       const a=alpha*_roundBrushFalloff(t,inner,brushHardness);
-      grad.addColorStop(t,`rgba(${c0[0]},${c0[1]},${c0[2]},${a})`);
+      grad.addColorStop(Math.min(1,t),`rgba(${c0[0]},${c0[1]},${c0[2]},${Math.max(0,a)})`);
     }
   }
   dc.fillStyle=grad;

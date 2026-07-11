@@ -14,7 +14,7 @@
   // Density (per-dab alpha build-up, works alongside Flow/Opacity)
   bindRange('ts-density','ts-density-val','',v=>{brushDensity=v/100;});
   // Hardness
-  bindRange('ts-hardness','ts-hardness-val','',v=>{brushHardness=v/100;_aaDabCache.clear();_stampCache.clear();});
+  bindRange('ts-hardness','ts-hardness-val','',v=>{brushHardness=v/100;_aaDabCache.clear();_tipDabCache.clear();_stampCache.clear();});
   bindRange('ts-spacing','ts-spacing-val','%',v=>{window._tsSpacing=v/100;});
   const spacingEl=document.getElementById('ts-spacing');
   window._tsSpacing=spacingEl?(+spacingEl.value/100):0.12;
