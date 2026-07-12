@@ -672,6 +672,7 @@ function renderRows(){
       const f1=kfs[ki],f2=kfs[ki+1];if(f1>=TOTAL) continue;
       const bar=document.createElement('div');bar.className='kf-extend';
       bar.style.left=(f1*CellW+CellW/2)+'px';bar.style.width=((Math.min(f2,TOTAL-1)-f1)*CellW)+'px';bar.style.top=(CellH/2-1)+'px';
+      bar.style.setProperty('--kf-mark-color',getMarkDef(getDrawingMark(i,f1)).color);
       row.appendChild(bar);
     }
 
