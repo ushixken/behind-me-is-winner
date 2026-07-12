@@ -95,7 +95,7 @@
   syncDynamicsMinimums();
   // Transfer / Texture
   bindRange('ts-texture-scale','ts-texture-scale-val','%');
-  bindRange('ts-texture-depth','ts-texture-depth-val','');
+  bindRange('ts-texture-strength','ts-texture-strength-val','');
 
   //  AA off = pixelated pencil mode
   // Anti-aliasing off is meant to give a hard, pixel-perfect stamp — so it
@@ -964,7 +964,7 @@
     window._syncTextureUI=function(){
       const hasTex=!!window.brushTextureCanvas;
       const clearBtn=document.getElementById('ts-texture-clear-btn');
-      const depthRow=document.getElementById('ts-texture-depth-custom-row');
+      const depthRow=document.getElementById('ts-texture-strength-row');
       const scaleRow=document.getElementById('ts-texture-scale-row');
       const buildupRow=document.getElementById('ts-texture-buildup-row');
       const brightRow=document.getElementById('ts-texture-brightness-row');
@@ -994,10 +994,10 @@
       const contrastN=(window.brushTextureContrast!=null?window.brushTextureContrast:0);
       if(contrastEl) contrastEl.value=contrastN;
       if(contrastVal) contrastVal.textContent=String(contrastN);
-      // Sync depth slider to engine global
-      const depthEl=document.getElementById('ts-texture-depth-custom');
-      const depthVal=document.getElementById('ts-texture-depth-custom-val');
-      const pct=Math.round((window.brushTextureDepth!=null?window.brushTextureDepth:1.0)*100);
+      // Sync strength slider to engine global
+      const depthEl=document.getElementById('ts-texture-strength');
+      const depthVal=document.getElementById('ts-texture-strength-val');
+      const pct=Math.round((window.brushTextureStrength!=null?window.brushTextureStrength:1.0)*100);
       if(depthEl) depthEl.value=pct;
       if(depthVal) depthVal.textContent=pct+'%';
       // Sync scale slider to engine global
@@ -1042,8 +1042,8 @@
     const texFileInput=document.getElementById('ts-texture-file-input');
     const texLoadBtn=document.getElementById('ts-texture-load-btn');
     const texClearBtn=document.getElementById('ts-texture-clear-btn');
-    const texDepthEl=document.getElementById('ts-texture-depth-custom');
-    const texDepthVal=document.getElementById('ts-texture-depth-custom-val');
+    const texDepthEl=document.getElementById('ts-texture-strength');
+    const texDepthVal=document.getElementById('ts-texture-strength-val');
 
     if(texLoadBtn && texFileInput){
       texLoadBtn.onclick=()=>{ texFileInput.value=''; texFileInput.click(); };
@@ -1065,7 +1065,7 @@
     }
     if(texDepthEl){
       texDepthEl.oninput=()=>{
-        window.brushTextureDepth=+texDepthEl.value/100;
+        window.brushTextureStrength=+texDepthEl.value/100;
         if(texDepthVal) texDepthVal.textContent=texDepthEl.value+'%';
       };
     }
@@ -1186,7 +1186,7 @@
 function getToolPreset(){
   const ids=['ts-size','ts-opacity','ts-flow','ts-density','ts-hardness','ts-spacing','ts-spacing-mode','ts-rotation-mode','ts-angle','ts-angle-jitter','ts-tip-roundness','ts-round-jitter','ts-tip-min-roundness','ts-tip-flip-x','ts-tip-flip-y','ts-scatter-enabled','ts-scatter-amount','ts-scatter-count','ts-airbrush','ts-airbrush-rate',
     'ts-min-size','ts-size-jitter','ts-taper-mode','ts-start-taper','ts-end-taper','ts-size-control','ts-size-pressure-curve','ts-flow-control','ts-flow-pressure-curve','ts-opacity-control','ts-opacity-pressure-curve','ts-min-flow',
-    'ts-texture-scale','ts-texture-depth','ts-texture-buildup'];
+    'ts-texture-scale','ts-texture-strength','ts-texture-buildup','ts-texture-brightness','ts-texture-contrast','ts-texture-invert','ts-texture-each','ts-texture-mode'];
   const out={};
   ids.forEach(id=>{
     const el=document.getElementById(id);
@@ -1213,7 +1213,7 @@ function getToolPreset(){
   }
   if(window.brushTextureCanvas){
     try{ out['ts-texture-dataurl']=window.brushTextureCanvas.toDataURL('image/png'); }catch(e){}
-    out['ts-texture-depth-custom']=Math.round((window.brushTextureDepth!=null?window.brushTextureDepth:1.0)*100);
+    out['ts-texture-strength']=Math.round((window.brushTextureStrength!=null?window.brushTextureStrength:1.0)*100);
     out['ts-texture-buildup-custom']=Math.round((window.brushTextureBuildup!=null?window.brushTextureBuildup:1.0)*100);
     out['ts-texture-scale']=Math.round((window.brushTextureScale||1.0)*100);
     out['ts-texture-invert']=!!window.brushTextureInvert;
@@ -1242,7 +1242,7 @@ function applyToolPreset(json){
   Object.entries(json).forEach(([id,val])=>{
     // Skip virtual/non-DOM keys handled separately below.
     if(id==='ts-tip-dataurl'||id==='ts-texture-dataurl'||
-       id==='ts-tip-mode'||id==='ts-tip-soft-alpha'||id==='ts-tip-reference-diameter'||id==='ts-tip-roundness-dynamics'||id==='ts-texture-depth-custom'||id==='ts-texture-buildup-custom'||id==='ts-pressure-curves') return;
+       id==='ts-tip-mode'||id==='ts-tip-soft-alpha'||id==='ts-tip-reference-diameter'||id==='ts-tip-roundness-dynamics'||id==='ts-texture-strength'||id==='ts-texture-buildup-custom'||id==='ts-pressure-curves') return;
     const el=document.getElementById(id);
     if(!el) return;
     if(el.type==='checkbox') el.checked=!!val;
@@ -1282,8 +1282,9 @@ function applyToolPreset(json){
   if(json['ts-texture-dataurl']){
     _dataURLToCanvas(json['ts-texture-dataurl']).then(c=>{
       if(typeof window.setBrushTexture==='function') window.setBrushTexture(c);
-      const depth=json['ts-texture-depth-custom']!=null?(+json['ts-texture-depth-custom']/100):1.0;
-      window.brushTextureDepth=depth;
+      const strengthValue=json['ts-texture-strength']??json['ts-texture-depth-custom']??json['ts-texture-depth'];
+      const strength=strengthValue!=null?(+strengthValue/100):1.0;
+      window.brushTextureStrength=strength;
       // Restore buildup — default 1.0 (100%) for legacy presets
       const buildup=json['ts-texture-buildup-custom']!=null?(+json['ts-texture-buildup-custom']/100):1.0;
       window.brushTextureBuildup=buildup;
@@ -1374,11 +1375,30 @@ function applyToolPreset(json){
     'ts-texture-contrast':0,
     'ts-texture-each':false,
     'ts-texture-mode':'multiply',
-    'ts-texture-depth-custom':100,
+    'ts-texture-strength':100,
     'ts-texture-buildup':100,
     'ts-pressure-curves':{}
   };
-  const builtinBrushSettings=overrides=>Object.assign({},DEFAULT_BUILTIN_BRUSH_SETTINGS,{'ts-pressure-curves':{}},overrides);
+  function normalizeTextureSettings(settings){
+    const normalized=Object.assign({},settings||{});
+    if(normalized['ts-texture-strength']==null && normalized['ts-texture-depth-custom']!=null){
+      normalized['ts-texture-strength']=normalized['ts-texture-depth-custom'];
+    }
+    if(normalized['ts-texture-strength']==null && normalized['ts-texture-depth']!=null){
+      normalized['ts-texture-strength']=normalized['ts-texture-depth'];
+    }
+    if(normalized['ts-texture-buildup-custom']==null && normalized['ts-texture-buildup']!=null){
+      normalized['ts-texture-buildup-custom']=normalized['ts-texture-buildup'];
+    }
+    if(normalized['ts-texture-brightness']==null && normalized['ts-brightness']!=null){
+      normalized['ts-texture-brightness']=normalized['ts-brightness'];
+    }
+    if(normalized['ts-texture-contrast']==null && normalized['ts-contrast']!=null){
+      normalized['ts-texture-contrast']=normalized['ts-contrast'];
+    }
+    return normalized;
+  }
+  const builtinBrushSettings=overrides=>Object.assign({},DEFAULT_BUILTIN_BRUSH_SETTINGS,{'ts-pressure-curves':{}},normalizeTextureSettings(overrides));
 
   const BRUSH_PRESETS = [
     {
@@ -1505,7 +1525,7 @@ function applyToolPreset(json){
       // changes (load / clear), at which point callers pass captureTip=true.
       if(window.brushTextureCanvas){
         try{settings['ts-texture-dataurl']=window.brushTextureCanvas.toDataURL('image/png');}catch(e){}
-        settings['ts-texture-depth-custom']=Math.round((window.brushTextureDepth!=null?window.brushTextureDepth:1.0)*100);
+        settings['ts-texture-strength']=Math.round((window.brushTextureStrength!=null?window.brushTextureStrength:1.0)*100);
         settings['ts-texture-buildup-custom']=Math.round((window.brushTextureBuildup!=null?window.brushTextureBuildup:1.0)*100);
         settings['ts-texture-scale']=Math.round((window.brushTextureScale||1.0)*100);
       } else {
@@ -2430,8 +2450,8 @@ function applyToolPreset(json){
       if(typeof _dataURLToCanvas==='function'){
         _dataURLToCanvas(textureSrc).then(c=>{
           if(typeof window.setBrushTexture==='function') window.setBrushTexture(c);
-          const depth=s['ts-texture-depth-custom']!=null?(+s['ts-texture-depth-custom']/100):1.0;
-          window.brushTextureDepth=depth;
+          const depth=s['ts-texture-strength']!=null?(+s['ts-texture-strength']/100):1.0;
+          window.brushTextureStrength=depth;
           const buildup=s['ts-texture-buildup-custom']!=null?(+s['ts-texture-buildup-custom']/100):1.0;
           window.brushTextureBuildup=buildup;
           window.brushTextureScale=s['ts-texture-scale']!=null?(+s['ts-texture-scale']/100):1.0;
@@ -2496,7 +2516,7 @@ function applyToolPreset(json){
     _activePresetId=presetId;
     const savedSettings=Object.assign({},preset.settings||{},_presetSettings[_presetSettingsKey(presetId,t)]||{});
     // Non-custom presets: structural settings always come from the preset definition.
-    const PRESET_STRUCTURAL_KEYS=['ts-taper-mode','ts-start-taper','ts-end-taper','ts-min-size','ts-spacing-mode'];
+    const PRESET_STRUCTURAL_KEYS=['ts-taper-mode','ts-start-taper','ts-end-taper','ts-min-size','ts-spacing-mode','ts-texture-scale','ts-texture-strength','ts-texture-buildup-custom','ts-texture-brightness','ts-texture-contrast','ts-texture-invert','ts-texture-each','ts-texture-mode','ts-texture-url'];
     if(!preset.custom && preset.settings){
       PRESET_STRUCTURAL_KEYS.forEach(k=>{ if(k in preset.settings) savedSettings[k]=preset.settings[k]; });
     }
@@ -2534,7 +2554,7 @@ function applyToolPreset(json){
     // having that stick permanently across sessions — the preset definition
     // is authoritative for these, while cosmetic slider values (size,
     // hardness, flow, opacity) are still freely remembered per-user.
-    const PRESET_STRUCTURAL_KEYS=['ts-taper-mode','ts-start-taper','ts-end-taper','ts-min-size','ts-spacing-mode'];
+    const PRESET_STRUCTURAL_KEYS=['ts-taper-mode','ts-start-taper','ts-end-taper','ts-min-size','ts-spacing-mode','ts-texture-scale','ts-texture-strength','ts-texture-buildup-custom','ts-texture-brightness','ts-texture-contrast','ts-texture-invert','ts-texture-each','ts-texture-mode','ts-texture-url'];
     if(!p.custom && p.settings){
       PRESET_STRUCTURAL_KEYS.forEach(k=>{ if(k in p.settings) savedSettings[k]=p.settings[k]; });
     }
@@ -2568,14 +2588,32 @@ function applyToolPreset(json){
   //     settings.json   (required -- name + all the ts-* numeric settings)
   //
   // To add a new preset: drop a new folder in assets/brush-presets/ with
-  // that layout, then add its folder name to BRUSH_PRESET_PACKS below.
+  // that layout, then add its folder name to assets/brush-presets/manifest.json.
   // Nothing else needs to change -- this loader fetches settings.json,
   // wires 'ts-tip-url'/'ts-texture-url' to the sibling PNGs automatically
   // (only if settings.json says they exist), and adds the preset to the
   // General Brushes folder just like a built-in.
   const BRUSH_PRESET_PACKS=['rough-pencil'];
+  async function _getBrushPresetPackSlugs(){
+    try{
+      const res=await fetch('assets/brush-presets/manifest.json',{cache:'no-store'});
+      if(!res.ok) throw new Error('manifest fetch failed: '+res.status);
+      const json=await res.json();
+      if(Array.isArray(json.presets)){
+        const slugs=json.presets
+          .filter(slug=>typeof slug==='string')
+          .map(slug=>slug.trim())
+          .filter(Boolean);
+        if(slugs.length) return Array.from(new Set(slugs));
+      }
+    }catch(err){
+      console.warn('[brush-presets] failed to load preset manifest; using fallback list:',err);
+    }
+    return BRUSH_PRESET_PACKS;
+  }
   async function _loadBrushPresetPacks(){
-    for(const slug of BRUSH_PRESET_PACKS){
+    const packSlugs=await _getBrushPresetPackSlugs();
+    for(const slug of packSlugs){
       const base=`assets/brush-presets/${slug}/`;
       try{
         const res=await fetch(base+'settings.json');

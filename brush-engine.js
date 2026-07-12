@@ -77,14 +77,19 @@ window.brushTipRoundnessJitter = 0;
 
 //  Brush Texture Image
 // When non-null, this canvas is tiled as a repeating texture over each dab
-// with globalCompositeOperation='multiply' at depth-controlled opacity.
+// with globalCompositeOperation='multiply' at strength-controlled opacity.
 // Completely independent from the tip shape above.
 window.brushTextureCanvas  = null; // HTMLCanvasElement | null
 window.brushTextureVersion = 0;    // integer, incremented on each texture change
-// 0–1 blend strength for the texture overlay (mirrors ts-texture-depth slider).
+// 0–1 blend strength for the texture overlay (mirrors ts-texture-strength slider).
 // At 1.0 (100%) the texture grain is fully applied — texture-dark areas lose
 // coverage, texture-bright areas keep it. At 0.0 the stroke is solid/unaffected.
-window.brushTextureDepth   = 1.0;
+window.brushTextureStrength   = 1.0;
+Object.defineProperty(window,'brushTextureDepth',{
+  configurable:true,
+  get(){ return window.brushTextureStrength; },
+  set(value){ window.brushTextureStrength=value; }
+});
 // Texture zoom/scale (1.0 = native resolution, 0.25 = 25%, 4.0 = 400%).
 // Controlled by the ts-texture-scale slider (25–400%).
 window.brushTextureScale   = 1.0;
@@ -1407,10 +1412,15 @@ function _maskRegionInPlace(dc, rx, ry, rw, rh, strength){
   maskedCtx.fillRect(0, 0, rw, rh);
   maskedCtx.globalCompositeOperation = 'source-over';
 
-  // 3. Write original back into dc, then draw masked on top at `strength`.
+  // 3. Blend the unmasked and fully-masked versions by strength.
+  // Drawing the original at full alpha first makes every sub-100% value look
+  // almost solid because source-over preserves the opaque original underneath.
+  // Instead, draw the solid copy only for the untextured remainder, then draw
+  // the masked copy for the textured portion.
   dc.clearRect(rx, ry, rw, rh);
-  dc.drawImage(origCanvas, 0, 0, rw, rh, rx, ry, rw, rh);
   dc.save();
+  dc.globalAlpha = 1 - strength;
+  dc.drawImage(origCanvas, 0, 0, rw, rh, rx, ry, rw, rh);
   dc.globalAlpha = strength;
   dc.drawImage(maskedCanvas, 0, 0, rw, rh, rx, ry, rw, rh);
   dc.globalAlpha = 1;
@@ -1422,7 +1432,7 @@ function _maskRegionInPlace(dc, rx, ry, rw, rh, strength){
 // immediately, restricted to just this dab's own footprint.
 function _applyTextureToDabDirect(dc, x, y, r, alpha){
   if(!window.brushTextureCanvas) return;
-  const strength = typeof window.brushTextureDepth !== 'undefined' ? window.brushTextureDepth : 1.0;
+  const strength = typeof window.brushTextureStrength !== 'undefined' ? window.brushTextureStrength : 1.0;
   if(strength <= 0) return;
   if(r < 0.25) return;
   _getScaledTextureCanvas();
@@ -1466,7 +1476,7 @@ function _ensureTexHelper(w, h, existing, existingCtx){
 
 function _getTexturedStrokeCanvas(srcCanvas, forceFull){
   if(!window.brushTextureCanvas) return srcCanvas;
-  const strength = typeof window.brushTextureDepth !== 'undefined' ? window.brushTextureDepth : 1.0;
+  const strength = typeof window.brushTextureStrength !== 'undefined' ? window.brushTextureStrength : 1.0;
   if(strength <= 0) return srcCanvas;
   _getScaledTextureCanvas();
   if(!_texGrayMaskCanvas) return srcCanvas;

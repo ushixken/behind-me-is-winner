@@ -1,5 +1,5 @@
 {
-  "name": "Rough Pencil",
+  "name": "Dark Pencil",
   "tipFile": "tip.png",
   "textureFile": "texture.png",
   "hasTip": true,
@@ -23,9 +23,9 @@
     "ts-roundness": 100,
     "ts-aa": false,
     "ts-aa-mode": "medium",
-    "ts-texture-strength": 85,
-    "ts-texture-scale": 100,
-    "ts-texture-brightness": 0,
-    "ts-texture-contrast": 0
+    "ts-texture-strength": 100,
+    "ts-texture-scale": 175,
+    "ts-texture-brightness": 65,
+    "ts-texture-contrast": 20
   }
 }
