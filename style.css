@@ -333,7 +333,6 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
   border-radius:2px;
   cursor:grab;
   transition:background .12s;
-  touch-action:none;-ms-touch-action:none;
 }
 #tl-hscroll-thumb:hover,
 #tl-hscroll-thumb.tl-thumb-drag{
@@ -833,7 +832,7 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 
 /* ── Flip Through filter section ────────────────────────────────── */
 .kfsw-flipthrough{display:flex;flex-direction:column;gap:4px;}
-.kfsw-ft-btns{display:flex;gap:3px;}
+.kfsw-ft-btns{display:flex;gap:3px;justify-content:center;width:100%;}
 .kfsw-ft-item{display:flex;align-items:center;cursor:pointer;}
 .kfsw-ft-item input[type=checkbox]{display:none;}
 .kfsw-ft-chip{
