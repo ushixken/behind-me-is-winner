@@ -12,7 +12,7 @@ document.addEventListener('DOMContentLoaded',()=>{
 // STATE
 // ════════════════════════════════════════════════════════════════
 let CW=1920,CH=1080,TOTAL=48,MAX_FPS=24;
-const CellW=28,CellH=28;
+let CellW=28;const CellH=28;
 let curFrame=0,curLayer=0,playing=false,playTimer=null;
 let tool='brush',color='#000000',bgColor='#ffffff';
 let rangeStart=0,rangeEnd=47,loopRange=false,rulerCtxFrame=0;

@@ -445,7 +445,406 @@ function onKFDragUp(){
   dragKF=null;
   renderTimeline();
 }
-function renderTimeline(){renderRuler();renderRows();renderLabelCol();updatePlayhead();updateStatus();updateRangeOverlay();}
+function renderTimeline(){renderRuler();renderRows();renderLabelCol();updatePlayhead();updateStatus();updateRangeOverlay();updateTlHScroll();}
+
+// ── Shared Timeline zoom state helpers ──────────────────────────────────────
+// Single source of truth for the safe zoom range and for "zoom to a given
+// visible frame-span while keeping one frame anchored under a fixed screen
+// X". Used by scrollbar edge-dragging, mouse-wheel zoom, and the
+// Ctrl+Space+drag zoom gesture — all three drive the same CellW/scrollLeft
+// state, never a second independent zoom variable.
+const TL_MIN_HANDLE_PX   = 24;   // matches the CSS min-width on #tl-hscroll-thumb
+const TL_MIN_SPAN_FRAMES = 4;    // never zoom in past this many visible frames
+
+function tlMinSpan(){
+  const track  = document.getElementById('tl-hscroll-track');
+  const trackW = track ? track.clientWidth : 200;
+  return Math.max(TL_MIN_SPAN_FRAMES, (TL_MIN_HANDLE_PX / trackW) * TOTAL);
+}
+
+// Re-derive CellW and scrollLeft so that `anchorFrame` (a frame position,
+// can be fractional) stays under `anchorScreenX` (px, relative to tlScroll's
+// left edge) after the visible span changes to `newSpan` frames. Clamps to
+// the shared min/max span and re-syncs the ruler/cells/exposure
+// lines/playhead/scrollbar via renderTimeline().
+function tlZoomToSpan(newSpan, anchorFrame, anchorScreenX){
+  const viewW = tlScroll.clientWidth;
+  const minSpan = tlMinSpan();
+  newSpan = Math.max(minSpan, Math.min(TOTAL, newSpan));
+  if(newSpan <= 0) return;
+  CellW = viewW / newSpan;
+  const maxScroll = Math.max(0, TOTAL * CellW - viewW);
+  tlScroll.scrollLeft = Math.max(0, Math.min(maxScroll, anchorFrame * CellW - anchorScreenX));
+  renderTimeline();
+}
+
+// ── FL-style horizontal scrollbar ────────────────────────────────────────────
+(function(){
+  const row   = document.getElementById('tl-hscroll-row');
+  const gutter= document.getElementById('tl-hscroll-gutter');
+  const track = document.getElementById('tl-hscroll-track');
+  const thumb = document.getElementById('tl-hscroll-thumb');
+
+  // Sync the gutter width to the actual label-column + resizer width so the
+  // track starts exactly where the scrollable frame area starts.
+  function syncGutter(){
+    const col = document.getElementById('tl-labels-col');
+    const rsz = document.getElementById('tl-labels-resize');
+    const w   = (col ? col.offsetWidth : 150) + (rsz ? rsz.offsetWidth : 1);
+    gutter.style.width = w + 'px';
+  }
+
+  window.updateTlHScroll = function updateTlHScroll(){
+    syncGutter();
+
+    const totalW = TOTAL * CellW;
+    const viewW  = tlScroll.clientWidth;
+    const trackW = track.clientWidth;   // track is flex:1 with 4px margins each side
+
+    // Diagnostics — remove once confirmed working
+    console.log('[tl-hscroll] totalW='+totalW+' viewW='+viewW+' trackW='+trackW+' scrollLeft='+tlScroll.scrollLeft);
+
+    const fits = totalW <= viewW;
+    row.classList.toggle('tl-hscroll-full', fits);
+
+    if(fits){
+      // Full-width thumb; no scroll position to represent
+      thumb.style.left  = '0px';
+      thumb.style.width = trackW + 'px';
+      return;
+    }
+
+    const ratio    = viewW / totalW;
+    const thumbW   = Math.max(24, Math.round(trackW * ratio));
+    const maxScroll= totalW - viewW;
+    const maxLeft  = trackW - thumbW;
+    const leftPx   = maxLeft > 0
+      ? Math.round((tlScroll.scrollLeft / maxScroll) * maxLeft)
+      : 0;
+
+    thumb.style.width = thumbW + 'px';
+    thumb.style.left  = leftPx + 'px';
+
+    console.log('[tl-hscroll] thumbW='+thumbW+' leftPx='+leftPx);
+  };
+
+  // Keep thumb in sync whenever tlScroll is scrolled by any other means
+  tlScroll.addEventListener('scroll', updateTlHScroll, {passive: true});
+
+  // Pointer drag on thumb — center = pan, edges = FL Studio-style zoom.
+  //
+  // The handle IS the visible Timeline range: handle-left == visibleStart
+  // (in frames), handle-right == visibleEnd, handle-width == visibleSpan /
+  // TOTAL. Edge drags move ONE boundary in track-pixel space 1:1 with the
+  // pointer and hold the other boundary's frame fixed; CellW (the existing
+  // Timeline frame-width/zoom state used by the ruler, cells, exposure
+  // lines, and playhead) is then derived from the resulting span — there is
+  // no second, independent zoom variable.
+  const EDGE_ZONE     = 6;    // px from each end of the thumb that grabs the edge instead of the center
+  const MIN_HANDLE_PX = TL_MIN_HANDLE_PX;   // matches the CSS min-width on #tl-hscroll-thumb
+
+  let dragging = false, dragMode = null; // 'center' | 'left' | 'right'
+  let activePointerId = null;
+  let startX = 0, startScrollLeft = 0;
+  // Snapshot taken once at pointerdown; all movement is computed relative
+  // to this so there is zero jump/snap when the drag begins.
+  let trackW0 = 0, leftPx0 = 0, rightPx0 = 0, visibleStart0 = 0, visibleEnd0 = 0;
+
+  function edgeModeFor(e){
+    const rect = thumb.getBoundingClientRect();
+    const offsetX = e.clientX - rect.left;
+    if(offsetX <= EDGE_ZONE) return 'left';
+    if(offsetX >= rect.width - EDGE_ZONE) return 'right';
+    return 'center';
+  }
+
+  function startDrag(e, mode){
+    dragging        = true;
+    dragMode        = mode;
+    activePointerId = e.pointerId;
+    startX          = e.clientX;
+    startScrollLeft = tlScroll.scrollLeft;
+
+    const viewW = tlScroll.clientWidth;
+    trackW0 = track.clientWidth;
+    leftPx0 = thumb.offsetLeft;
+    rightPx0= leftPx0 + thumb.offsetWidth;
+    // Current visible frame range, clamped to the Timeline's own bounds
+    // (the "fits" case can otherwise report a visibleEnd past TOTAL).
+    visibleStart0 = Math.max(0, tlScroll.scrollLeft / CellW);
+    visibleEnd0   = Math.min(TOTAL, visibleStart0 + viewW / CellW);
+
+    thumb.classList.add('tl-thumb-drag');
+    thumb.style.cursor = mode === 'center' ? 'grabbing' : 'ew-resize';
+    document.body.style.userSelect = 'none';
+    window._tlEdgeZooming = (mode !== 'center');
+
+    // Pointer Events: once captured, the element keeps receiving move/up
+    // for this pointerId no matter where it travels — including a pen
+    // moving off the handle, off the track, or off the panel entirely.
+    // Capture can occasionally fail to establish (rare, but not zero) so
+    // a document-level fallback below also watches for up/cancel.
+    try{ thumb.setPointerCapture(e.pointerId); }catch(err){}
+  }
+
+  thumb.addEventListener('pointerdown', e => {
+    if(e.button !== 0 && e.pointerType !== 'pen') return;
+    if(dragging) return;   // a drag is already active under another pointer
+    const mode   = edgeModeFor(e);
+    const totalW = TOTAL * CellW;
+    const viewW  = tlScroll.clientWidth;
+    if(mode === 'center' && totalW <= viewW) return;   // fully fits — nothing to pan
+    e.preventDefault();
+    startDrag(e, mode);
+  });
+
+  // Hover cursor: grab over the center, ew-resize near either edge.
+  thumb.addEventListener('pointermove', e => {
+    if(dragging) return;
+    thumb.style.cursor = edgeModeFor(e) === 'center' ? 'grab' : 'ew-resize';
+  });
+  thumb.addEventListener('pointerleave', () => {
+    if(!dragging) thumb.style.cursor = '';
+  });
+
+  function applyDrag(e){
+    if(!dragging || e.pointerId !== activePointerId) return;
+    const viewW = tlScroll.clientWidth;
+    const dx    = e.clientX - startX;   // screen px == track px (1:1, no scaling)
+
+    if(dragMode === 'center'){
+      const totalW  = TOTAL * CellW;
+      const trackW  = track.clientWidth;
+      const thumbW  = thumb.offsetWidth;
+      const maxLeft = trackW - thumbW;
+      const maxScroll = totalW - viewW;
+      if(maxLeft <= 0) return;
+      tlScroll.scrollLeft = Math.max(0, Math.min(maxScroll,
+        startScrollLeft + (dx / maxLeft) * maxScroll));
+      return;
+    }
+
+    // Minimum span in frames, driven by whichever is larger: an absolute
+    // frame-count floor, or the span implied by the minimum handle width
+    // in pixels (so the handle never shrinks below its usable size).
+    const minSpan = tlMinSpan();
+
+    let visibleStart, visibleEnd;
+    if(dragMode === 'left'){
+      // Left edge follows the pointer 1:1; right boundary stays anchored.
+      const newLeftPx = Math.max(0, Math.min(rightPx0 - MIN_HANDLE_PX, leftPx0 + dx));
+      visibleEnd   = visibleEnd0;
+      visibleStart = (newLeftPx / trackW0) * TOTAL;
+      let span = visibleEnd - visibleStart;
+      span = Math.max(minSpan, Math.min(TOTAL, span));
+      visibleStart = visibleEnd - span;   // re-derive from the clamped span, anchor stays exact
+      if(visibleStart < 0){ visibleStart = 0; }
+    } else {
+      // Right edge follows the pointer 1:1; left boundary stays anchored.
+      const newRightPx = Math.min(trackW0, Math.max(leftPx0 + MIN_HANDLE_PX, rightPx0 + dx));
+      visibleStart = visibleStart0;
+      visibleEnd   = (newRightPx / trackW0) * TOTAL;
+      let span = visibleEnd - visibleStart;
+      span = Math.max(minSpan, Math.min(TOTAL, span));
+      visibleEnd = visibleStart + span;   // re-derive from the clamped span, anchor stays exact
+      if(visibleEnd > TOTAL){ visibleEnd = TOTAL; }
+    }
+
+    const span = Math.max(minSpan, visibleEnd - visibleStart);
+    CellW = viewW / span;                 // derive zoom/frame-width from the new visible range
+    tlScroll.scrollLeft = Math.max(0, visibleStart * CellW);   // derive scroll from the same range
+
+    renderTimeline();   // CellW/scrollLeft changed — ruler/cells/exposure lines/playhead/thumb all resync from it
+  }
+  // Bound to the captured element (thumb); with setPointerCapture active
+  // this fires regardless of where the pointer physically is.
+  thumb.addEventListener('pointermove', applyDrag);
+  // Document-level fallback: catches movement when capture was lost or
+  // never established (pen tablets can cancel capture via pointercancel
+  // when touch-action isn't none; also guards against browsers that don't
+  // reliably maintain capture across element boundaries).
+  // applyDrag is idempotent for the same event — calling it twice (once
+  // from the captured thumb listener, once here via bubbling) is harmless.
+  document.addEventListener('pointermove', e => {
+    if(!dragging || e.pointerId !== activePointerId) return;
+    applyDrag(e);
+  });
+
+  function endDrag(e){
+    if(!dragging) return;
+    if(e && e.pointerId !== activePointerId) return;
+    dragging = false;
+    dragMode = null;
+    window._tlEdgeZooming = false;
+    try{ if(activePointerId!=null) thumb.releasePointerCapture(activePointerId); }catch(err){}
+    activePointerId = null;
+    thumb.classList.remove('tl-thumb-drag');
+    thumb.style.cursor = '';
+    document.body.style.userSelect = '';
+  }
+  thumb.addEventListener('pointerup',       endDrag);
+  thumb.addEventListener('pointercancel',   endDrag);
+  // lostpointercapture fires whenever capture ends for any reason (up,
+  // cancel, or the browser revoking it) — final safety net so drag state
+  // can never get stuck active with no way to clear it.
+  thumb.addEventListener('lostpointercapture', endDrag);
+  // Document-level fallback for pointerup/cancel, in case the pointer
+  // capture never took (so events wouldn't otherwise reach thumb once the
+  // pointer left it) and the pointer is released elsewhere entirely.
+  document.addEventListener('pointerup',     endDrag);
+  document.addEventListener('pointercancel', endDrag);
+
+  // Re-sync on resize (panel height drag, window resize, zoom change)
+  const ro = new ResizeObserver(() => { syncGutter(); updateTlHScroll(); });
+  ro.observe(tlScroll);
+})();
+
+// ── Mouse-wheel zoom ─────────────────────────────────────────────────────────
+// Ctrl+Wheel over any Timeline viewport area (ruler, frame cells, exposure
+// area, empty background) zooms horizontally, anchored to the frame under the
+// cursor — never the playhead. Plain wheel scrolls the timeline normally
+// (vertical with many layers; Shift+wheel = horizontal pan). Canvas zoom is
+// untouched (listener is scoped to tlScroll, not canvas-area).
+(function(){
+  const WHEEL_ZOOM_SPEED = 0.0015;   // deltaY per "notch" (~100) -> ~16% span change
+
+  tlScroll.addEventListener('wheel', e => {
+    // Exclude layer-list column, toolbar, and scrollbar.
+    if(e.target && typeof e.target.closest === 'function'){
+      if(e.target.closest('#tl-labels-col') || e.target.closest('#tl-controls') || e.target.closest('#tl-hscroll-row')) return;
+    }
+    // Plain wheel (no Ctrl) = normal scroll; Shift+wheel = horizontal pan (both handled natively).
+    // Only Ctrl+wheel zooms the timeline.
+    if(!e.ctrlKey) return;
+    e.preventDefault();
+    const r = tlScroll.getBoundingClientRect();
+    const cursorX = e.clientX - r.left;              // px, relative to viewport's left edge
+    const viewW   = tlScroll.clientWidth;
+    const curSpan = viewW / CellW;
+    const frameAtCursor = (tlScroll.scrollLeft + cursorX) / CellW;   // the frame currently under the cursor
+    // deltaY<0 (scroll up / pinch out) => zoom in (smaller span); deltaY>0 => zoom out.
+    const factor  = Math.exp(e.deltaY * WHEEL_ZOOM_SPEED);
+    // Suppress playhead auto-scroll during zoom so pointer-anchored scrollLeft isn't overridden
+    window._tlZooming = true;
+    tlZoomToSpan(curSpan * factor, frameAtCursor, cursorX);
+    window._tlZooming = false;
+  }, {passive:false});
+})();
+
+// ── Ctrl+Space+drag zoom (pen-friendly) ─────────────────────────────────────
+// Mirrors the canvas's own Ctrl+Space+drag zoom gesture (core-state.js), but
+// scoped to the Timeline and driving CellW/scrollLeft instead of canvas
+// zoom/pan. spaceHeld/ctrlHeld are the same globals core-state.js already
+// tracks from keydown/keyup, so the two gestures never fight over key state.
+// The Timeline sits inside #bottom-area, which core-state.js's
+// _isNavBlocked() already excludes from canvas nav — so starting this
+// gesture inside the Timeline can never also trigger canvas zoom.
+//
+// NOTE: #tl-scroll carries [data-space-pan], which panel-pan.js normally
+// turns into a plain Space+drag scrollLeft pan. panel-pan.js has been
+// updated to yield whenever ctrlHeld is true, precisely so it can't
+// stopPropagation this gesture away before frame width is ever touched.
+(function(){
+  const timelineArea = document.getElementById('timeline-area');
+  if(!timelineArea) return;
+
+  const ZOOM_SENSITIVITY = 0.01;   // dx (px) -> exponent; matches the requested exp(dx*0.01) mapping
+
+  // Dedicated gesture state (distinct from scrollbar dragging/scrubbing/
+  // selection state) so other handlers can check it if they ever need to.
+  window.timelineZoomDragActive = false;
+
+  let dragging = false, pointerId = null;
+  let startX = 0, initialFrameWidth = 28, initialScrollLeft = 0, anchoredFrame = 0, pointerLocalX = 0;
+
+  // Returns true for any UI chrome that must NOT trigger the Ctrl+Space zoom gesture:
+  // scrollbar, layer-label column, toolbar row, and the resize handle between them.
+  function isOverScrollbar(t){
+    return !!(t && typeof t.closest === 'function' && (
+      t.closest('#tl-hscroll-row') ||
+      t.closest('#tl-labels-col') ||
+      t.closest('#tl-labels-resize') ||
+      t.closest('#tl-controls')
+    ));
+  }
+
+  // Safe zoom range expressed as frame width (px/frame), derived from the
+  // same tlMinSpan()/TOTAL bounds the scrollbar edges and wheel-zoom use —
+  // one shared min/max, just expressed in a different unit here.
+  function frameWidthBounds(){
+    const viewW = tlScroll.clientWidth;
+    const minSpan = tlMinSpan();
+    return {
+      minFrameWidth: viewW / TOTAL,     // whole Timeline visible = smallest frame width
+      maxFrameWidth: viewW / minSpan,   // most zoomed in = largest frame width
+    };
+  }
+
+  timelineArea.addEventListener('pointerdown', e => {
+    if(!spaceHeld || !ctrlHeld) return;
+    if(e.pointerType !== 'pen' && e.pointerType !== 'mouse') return;   // no synthetic/touch events for this gesture
+    if(e.pointerType === 'mouse' && e.button !== 0) return;
+    if(isOverScrollbar(e.target)) return;   // never steal the scrollbar's own center/edge drags
+    e.preventDefault();
+    e.stopPropagation();   // block frame scrubbing/selection drag from also starting
+
+    const r = tlScroll.getBoundingClientRect();
+    pointerLocalX     = e.clientX - r.left;         // pointer position relative to the Timeline viewport
+    initialScrollLeft = tlScroll.scrollLeft;
+    initialFrameWidth = CellW;                      // snapshot of the existing Timeline zoom/frame-width state
+    anchoredFrame      = (initialScrollLeft + pointerLocalX) / initialFrameWidth;   // frame under the pointer — stays put, NOT the playhead
+    startX = e.clientX;
+
+    dragging  = true;
+    pointerId = e.pointerId;
+    window.timelineZoomDragActive = true;
+    document.body.style.userSelect = 'none';
+    timelineArea.style.cursor = 'zoom-in';
+    try{ timelineArea.setPointerCapture(e.pointerId); }catch(err){}   // so pen movement continues even outside the Timeline
+  }, {capture:true});
+
+  timelineArea.addEventListener('pointermove', e => {
+    if(!dragging || e.pointerId !== pointerId) return;
+    e.preventDefault();
+
+    const dx = e.clientX - startX;                        // real pointer delta, not movementX
+    const zoomFactor = Math.exp(dx * ZOOM_SENSITIVITY);    // drag right -> >1 (zoom in), drag left -> <1 (zoom out)
+    const {minFrameWidth, maxFrameWidth} = frameWidthBounds();
+    const newFrameWidth = Math.max(minFrameWidth, Math.min(maxFrameWidth, initialFrameWidth * zoomFactor));
+
+    CellW = newFrameWidth;   // this IS the Timeline zoom/frame-width state — actually changes cell width, not just scroll
+
+    // Re-anchor: the frame captured at pointerdown must stay under the
+    // pointer's ORIGINAL local X, independent of where curFrame/playhead is.
+    const anchorContentX = anchoredFrame * CellW;
+    const viewW = tlScroll.clientWidth;
+    const maxScroll = Math.max(0, TOTAL * CellW - viewW);
+    tlScroll.scrollLeft = Math.max(0, Math.min(maxScroll, anchorContentX - pointerLocalX));
+
+    // Suppress playhead auto-scroll during zoom so the pointer-anchored scrollLeft isn't overridden
+    window._tlZooming = true;
+    renderTimeline();   // ruler/cells/exposure lines/playhead/scrollbar all resync from the new CellW/scrollLeft
+    window._tlZooming = false;
+  });
+
+  function endDrag(e){
+    if(!dragging) return;
+    if(e && e.pointerId !== pointerId) return;
+    dragging = false;
+    window.timelineZoomDragActive = false;
+    try{ if(pointerId!=null) timelineArea.releasePointerCapture(pointerId); }catch(err){}
+    pointerId = null;
+    document.body.style.userSelect = '';
+    timelineArea.style.cursor = '';
+  }
+  timelineArea.addEventListener('pointerup',        endDrag);
+  timelineArea.addEventListener('pointercancel',    endDrag);
+  timelineArea.addEventListener('lostpointercapture', endDrag);
+  // Document-level fallback in case capture didn't establish and the
+  // pointer is released off the Timeline entirely.
+  document.addEventListener('pointerup',     endDrag);
+  document.addEventListener('pointercancel', endDrag);
+})();
 
 function renderRuler(){
   rulerEl.innerHTML='';
@@ -672,7 +1071,6 @@ function renderRows(){
       const f1=kfs[ki],f2=kfs[ki+1];if(f1>=TOTAL) continue;
       const bar=document.createElement('div');bar.className='kf-extend';
       bar.style.left=(f1*CellW+CellW/2)+'px';bar.style.width=((Math.min(f2,TOTAL-1)-f1)*CellW)+'px';bar.style.top=(CellH/2-1)+'px';
-      bar.style.setProperty('--kf-mark-color',getMarkDef(getDrawingMark(i,f1)).color);
       row.appendChild(bar);
     }
 
@@ -814,8 +1212,18 @@ function updatePlayhead(){
     ph.appendChild(lbl);
   }
   lbl.textContent=frameLabel(curFrame);
-  const visible=tlScroll.scrollLeft+tlScroll.clientWidth;
-  if(left>visible-40||left<tlScroll.scrollLeft+20) tlScroll.scrollLeft=left-tlScroll.clientWidth/2;
+  // Auto-scroll to keep the playhead in view — but NOT while the scrollbar
+  // edge handles are actively driving zoom (window._tlEdgeZooming). During
+  // an edge drag, scrollLeft is derived purely from the dragged boundary's
+  // visibleStart/visibleEnd; re-centering on curFrame here would silently
+  // override that and make zoom appear to anchor on the playhead instead
+  // of the edge being dragged.
+  // Skip playhead-centering scroll during ANY zoom gesture (edge-drag, wheel, or Ctrl+Space drag)
+  // so the pointer-anchored scrollLeft computed by the zoom isn't clobbered.
+  if(!window._tlEdgeZooming && !window._tlZooming){
+    const visible=tlScroll.scrollLeft+tlScroll.clientWidth;
+    if(left>visible-40||left<tlScroll.scrollLeft+20) tlScroll.scrollLeft=left-tlScroll.clientWidth/2;
+  }
 }
 
 function updateStatus(){

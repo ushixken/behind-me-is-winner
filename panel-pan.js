@@ -21,12 +21,12 @@
       if(hoverEl&&!panActive) setCursor(hoverEl,'');
       hoverEl=p;
     }
-    if(hoverEl&&typeof spaceHeld!=='undefined'&&spaceHeld&&!panActive) setCursor(hoverEl,'grab');
+    if(hoverEl&&typeof spaceHeld!=='undefined'&&spaceHeld&&!(typeof ctrlHeld!=='undefined'&&ctrlHeld)&&!panActive) setCursor(hoverEl,'grab');
   });
 
   // Reflect spaceHeld changes onto whichever panel is currently hovered.
   window.addEventListener('keydown',e=>{
-    if(e.code==='Space'&&hoverEl&&!panActive) setCursor(hoverEl,'grab');
+    if(e.code==='Space'&&hoverEl&&!panActive&&!(typeof ctrlHeld!=='undefined'&&ctrlHeld)) setCursor(hoverEl,'grab');
   },{capture:true});
   window.addEventListener('keyup',e=>{
     if(e.code==='Space'&&hoverEl&&!panActive) setCursor(hoverEl,'');
@@ -34,6 +34,11 @@
 
   document.addEventListener('pointerdown',e=>{
     if(typeof spaceHeld==='undefined'||!spaceHeld) return;
+    // Ctrl+Space is reserved for zoom gestures (canvas Ctrl+Space+drag, and
+    // the Timeline's own Ctrl+Space+drag zoom) — plain Space+drag panning
+    // must yield instead of stopPropagation-ing the event before those
+    // zoom handlers ever see it.
+    if(typeof ctrlHeld!=='undefined'&&ctrlHeld) return;
     if(e.button!==0&&e.pointerType!=='pen') return;
     if(e.pointerType==='pen'&&!(e.buttons&1)) return;
     const p=findPannable(e.target);

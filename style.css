@@ -292,7 +292,58 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 #fps-tl{width:50px;accent-color:var(--accent);}
 #fps-tl.below-max{accent-color:var(--red);}
 
-#tl-body{display:flex;flex:1;overflow:hidden;}
+#tl-body{display:flex;flex:1 1 0;min-height:0;overflow:hidden;}
+
+/* ── FL-style horizontal scrollbar row ───────────────────────────────── */
+/* Sits as a flex sibling of #tl-body inside #timeline-area (flex column).
+   Fixed height so it always has space; never clipped by overflow:hidden on
+   #timeline-area because it's a proper flex child, not an overflow child.  */
+#tl-hscroll-row{
+  display:flex;
+  flex-direction:row;
+  flex-shrink:0;
+  height:12px;
+  background:var(--bg2);
+  border-top:1px solid var(--border);
+  align-items:center;
+}
+/* Gutter that mirrors the fixed label column width so the track starts
+   exactly where the scrollable frame cells start. Width set by JS.        */
+#tl-hscroll-gutter{
+  flex-shrink:0;
+  width:151px; /* default; overridden by JS to match actual label col width */
+  height:100%;
+  background:var(--bg3);
+  border-right:1px solid var(--border);
+}
+#tl-hscroll-track{
+  flex:1;
+  height:6px;
+  margin:0 4px;
+  background:var(--bg3);
+  border-radius:2px;
+  position:relative;
+}
+#tl-hscroll-thumb{
+  position:absolute;
+  top:0;
+  height:100%;
+  min-width:24px;
+  background:var(--border2);
+  border-radius:2px;
+  cursor:grab;
+  transition:background .12s;
+  touch-action:none;-ms-touch-action:none;
+}
+#tl-hscroll-thumb:hover,
+#tl-hscroll-thumb.tl-thumb-drag{
+  background:var(--text2);
+  cursor:grabbing;
+}
+/* When timeline fully fits, show full-width thumb but disable grab cursor */
+#tl-hscroll-row.tl-hscroll-full #tl-hscroll-thumb{
+  cursor:default;
+}
 #tl-labels-col{width:150px;flex-shrink:0;border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;}
 #tl-labels-ruler-spacer{height:var(--ruler-h);background:var(--bg3);border-bottom:1px solid var(--border);flex-shrink:0;display:flex;align-items:center;justify-content:center;padding:0 4px;position:relative;z-index:30;}
 #tl-hide-zone{
@@ -782,7 +833,7 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 
 /* ── Flip Through filter section ────────────────────────────────── */
 .kfsw-flipthrough{display:flex;flex-direction:column;gap:4px;}
-.kfsw-ft-btns{display:flex;gap:3px;justify-content:center;}
+.kfsw-ft-btns{display:flex;gap:3px;}
 .kfsw-ft-item{display:flex;align-items:center;cursor:pointer;}
 .kfsw-ft-item input[type=checkbox]{display:none;}
 .kfsw-ft-chip{
