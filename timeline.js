@@ -70,11 +70,13 @@ document.addEventListener('keydown',e=>{
 document.getElementById('btn-prev').onclick=()=>goToFrame(0);
 document.getElementById('btn-last').onclick=()=>goToFrame(TOTAL-1);
 document.getElementById('btn-stepb').onclick=()=>{
-  if(curFrame<=rangeStart) goToFrame(rangeEnd);
+  if(typeof kfswNavigate==='function') kfswNavigate(-1);
+  else if(curFrame<=rangeStart) goToFrame(rangeEnd);
   else goToFrame(curFrame-1);
 };
 document.getElementById('btn-stepf').onclick=()=>{
-  if(curFrame>=rangeEnd) goToFrame(rangeStart);
+  if(typeof kfswNavigate==='function') kfswNavigate(+1);
+  else if(curFrame>=rangeEnd) goToFrame(rangeStart);
   else goToFrame(curFrame+1);
 };
 fpsTl.oninput=e=>{const v=Math.min(+e.target.value,MAX_FPS);fpsTl.value=v;fpsVal.textContent=v;updateFpsSliderColor();if(playing){clearInterval(playTimer);playing=false;togglePlay();}};
@@ -148,6 +150,12 @@ function _insertFramesAtStart(amount){
     const shifted={};
     entries.forEach(f=>{shifted[f+amount]=l.frames[f];});
     l.frames=shifted;
+    // Shift frameMeta in tandem so marks track their drawings
+    if(l.frameMeta&&Object.keys(l.frameMeta).length){
+      const shiftedMeta={};
+      Object.keys(l.frameMeta).forEach(f=>{shiftedMeta[+f+amount]=l.frameMeta[f];});
+      l.frameMeta=shiftedMeta;
+    }
   });
   TOTAL+=amount;
   rangeStart+=amount;rangeEnd+=amount;
@@ -238,11 +246,29 @@ function selectKeyframeRange(anchor,target){
 }
 function _snapshotFrameMaps(layerIndices){
   const snapshot={};
-  layerIndices.forEach(layerIndex=>{snapshot[layerIndex]=Object.assign({},layers[layerIndex].frames);});
+  layerIndices.forEach(layerIndex=>{
+    const l=layers[layerIndex];
+    snapshot[layerIndex]={
+      frames: Object.assign({},l.frames),
+      frameMeta: _deepCopyFrameMeta(l.frameMeta)
+    };
+  });
   return snapshot;
 }
 function _restoreFrameMaps(snapshot){
-  Object.keys(snapshot).forEach(layerIndex=>{layers[+layerIndex].frames=Object.assign({},snapshot[layerIndex]);});
+  Object.keys(snapshot).forEach(layerIndex=>{
+    const l=layers[+layerIndex];
+    const s=snapshot[layerIndex];
+    l.frames=Object.assign({},s.frames);
+    l.frameMeta=_deepCopyFrameMeta(s.frameMeta);
+  });
+}
+// Shallow-copy the per-frame meta objects so snapshot entries are independent
+function _deepCopyFrameMeta(meta){
+  if(!meta) return {};
+  const out={};
+  Object.keys(meta).forEach(f=>{out[f]=Object.assign({},meta[f]);});
+  return out;
 }
 function startKFDrag(li,fi,e){
   e.preventDefault();e.stopPropagation();
@@ -250,7 +276,12 @@ function startKFDrag(li,fi,e){
   const keys=selectedKFs.has(draggedKey)?Array.from(selectedKFs):[draggedKey];
   const items=keys.map(key=>{
     const [layerIndex,frameIndex]=key.split(':').map(Number);
-    return {layerIndex,frameIndex,data:layers[layerIndex]&&layers[layerIndex].frames[frameIndex]};
+    const l=layers[layerIndex];
+    return {
+      layerIndex,frameIndex,
+      data:l&&l.frames[frameIndex],
+      meta:(l&&l.frameMeta&&l.frameMeta[frameIndex])?Object.assign({},l.frameMeta[frameIndex]):null
+    };
   }).filter(item=>item.data);
   const layerIndices=Array.from(new Set(items.map(item=>item.layerIndex)));
   const selectedOrigins=new Set(items.map(item=>`${item.layerIndex}:${item.frameIndex}`));
@@ -317,8 +348,18 @@ function onKFDragMove(e){
   if(delta===dragKF.appliedDelta) return;
   const destinations=dragKF.items.map(item=>({item,target:item.frameIndex+delta}));
   if(destinations.some(move=>dragKF.occupied.has(`${move.item.layerIndex}:${move.target}`))) return;
-  dragKF.items.forEach(item=>delete layers[item.layerIndex].frames[item.frameIndex+dragKF.appliedDelta]);
-  destinations.forEach(move=>{layers[move.item.layerIndex].frames[move.target]=move.item.data;});
+  dragKF.items.forEach(item=>{
+    const li=item.layerIndex,src=item.frameIndex+dragKF.appliedDelta;
+    delete layers[li].frames[src];
+    if(layers[li].frameMeta) delete layers[li].frameMeta[src];
+  });
+  destinations.forEach(move=>{
+    const li=move.item.layerIndex;
+    layers[li].frames[move.target]=move.item.data;
+    if(!layers[li].frameMeta) layers[li].frameMeta={};
+    if(move.item.meta) layers[li].frameMeta[move.target]=Object.assign({},move.item.meta);
+    else delete layers[li].frameMeta[move.target];
+  });
   dragKF.appliedDelta=delta;
   selectedKFs.clear();
   destinations.forEach(move=>selectedKFs.add(`${move.item.layerIndex}:${move.target}`));
@@ -353,6 +394,12 @@ function _trimLeadingBlanks(){
     const shifted={};
     Object.keys(l.frames).forEach(f=>{shifted[+f-trimmable]=l.frames[f];});
     l.frames=shifted;
+    // Shift frameMeta in tandem so marks track their drawings
+    if(l.frameMeta&&Object.keys(l.frameMeta).length){
+      const shiftedMeta={};
+      Object.keys(l.frameMeta).forEach(f=>{const nf=+f-trimmable;if(nf>=0) shiftedMeta[nf]=l.frameMeta[f];});
+      l.frameMeta=shiftedMeta;
+    }
   });
   TOTAL-=trimmable;
   rangeStart-=trimmable; rangeEnd-=trimmable;
@@ -634,6 +681,7 @@ function renderRows(){
       let cls='kf-block';if(selectedKFs.has(kk)) cls+=' selected';
       block.className=cls;
       block.style.cssText='position:absolute;left:'+(f*CellW+3)+'px;top:4px;bottom:4px;width:'+(CellW-6)+'px;';
+      block.style.setProperty('--kf-mark-color',getMarkDef(getDrawingMark(i,f)).color);
       block.title=l.name+' F'+frameLabel(f);
       block.dataset.layerIdx=i;block.dataset.kk=kk;
       block.addEventListener('pointerdown',ev=>{
@@ -1895,7 +1943,7 @@ function startAddLayerDrag(downEv){
     }
     if(layerDropTarget.idx!=null){
       saveActiveToKey();
-      const newLayer={name:'Layer '+(layers.length+1),visible:true,onTimeline:true,color:'transparent',frames:{},opacity:1,stencil:'none',clipTo:null,groupId:null};
+      const newLayer={name:'Layer '+(layers.length+1),visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},opacity:1,stencil:'none',clipTo:null,groupId:null};
       const flatFull=_buildFlatDisplayItemsAll();
       let insertSlot,joinGroupId=null;
       if(layerDropTarget.isGroup&&layerDropTarget.dropMode==='into'){
@@ -2340,7 +2388,7 @@ function showGroupOpacityPopup(grp,cx,cy){
 
 function _doAddLayer(placement){
   saveActiveToKey();
-  const newLayer={name:'Layer '+(layers.length+1),visible:true,onTimeline:true,color:'transparent',frames:{},opacity:1,stencil:'none',clipTo:null,groupId:null};
+  const newLayer={name:'Layer '+(layers.length+1),visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},opacity:1,stencil:'none',clipTo:null,groupId:null};
   let insertAt=layers.length;
   let targetGroupId=null;
 
@@ -2471,7 +2519,7 @@ function _insertGroupInsideGroup(targetGroupId){
   const id=makeGroupId();
   const name='Group '+(groups.length+1);
   groups.push({id,name,visible:true,collapsed:false,opacity:1,color:'transparent',stencil:'none',clipToGroup:null,parentId:targetGroupId});
-  const newLayer={name:'Layer '+(layers.length+1),visible:true,onTimeline:true,color:'transparent',frames:{},opacity:1,stencil:'none',clipTo:null,groupId:id};
+  const newLayer={name:'Layer '+(layers.length+1),visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},opacity:1,stencil:'none',clipTo:null,groupId:id};
   let topIdx=-1;
   layers.forEach((l,i)=>{if(l.groupId===targetGroupId&&i>topIdx) topIdx=i;});
   const insertAt=topIdx>=0?topIdx+1:layers.length;

@@ -58,8 +58,13 @@
         const nf = f + 1;
         if (nf < TOTAL) {
           layer.frames[nf] = layer.frames[f];
+          // Carry the mark forward with its drawing
+          if (!layer.frameMeta) layer.frameMeta = {};
+          if (layer.frameMeta[f]) layer.frameMeta[nf] = Object.assign({}, layer.frameMeta[f]);
+          else delete layer.frameMeta[nf];
         }
         delete layer.frames[f];
+        if (layer.frameMeta) delete layer.frameMeta[f];
       }
     });
   }
@@ -78,8 +83,13 @@
         const nf = f - 1;
         if (nf >= 0) {
           layer.frames[nf] = layer.frames[f];
+          // Carry the mark back with its drawing
+          if (!layer.frameMeta) layer.frameMeta = {};
+          if (layer.frameMeta[f]) layer.frameMeta[nf] = Object.assign({}, layer.frameMeta[f]);
+          else delete layer.frameMeta[nf];
         }
         delete layer.frames[f];
+        if (layer.frameMeta) delete layer.frameMeta[f];
       }
     });
   }

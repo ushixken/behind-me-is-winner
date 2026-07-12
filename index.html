@@ -110,6 +110,7 @@
       <div class="dd-item" id="dd-show-timeline"><span class="dd-check" id="chk-timeline">✓</span>Timeline</div>
       <div class="dd-item" id="dd-show-keyframe-switcher"><span class="dd-check" id="chk-keyframe-switcher"></span>Flipper</div>
       <div class="dd-item" id="dd-show-keyframe-exposure"><span class="dd-check" id="chk-keyframe-exposure"></span>Exposure</div>
+      <div class="dd-item" id="dd-show-drawing-marks"><span class="dd-check" id="chk-drawing-marks"></span>Drawing Marks</div>
       <div class="dd-item" id="dd-show-toolbar"><span class="dd-check" id="chk-toolbar">✓</span>Toolbar</div>
       <div class="dd-sep"></div>
       <div class="dd-item" id="dd-reset-layout">Reset Layout</div>
@@ -268,6 +269,24 @@
             <button class="tbtn" id="kfsw-btn-prev" style="flex:1;" title="Jump to previous keyframe"><span class="kfsw-nav-full">◀ Prev</span><span class="kfsw-nav-short">◀</span></button>
             <button class="tbtn" id="kfsw-btn-next" style="flex:1;" title="Jump to next keyframe"><span class="kfsw-nav-full">Next ▶</span><span class="kfsw-nav-short">▶</span></button>
           </div>
+          <div class="kfsw-flipthrough" id="kfsw-flipthrough">
+            <div class="tf-panel-label">Flip Through</div>
+            <div class="kfsw-ft-btns">
+              <label class="kfsw-ft-item" title="Navigate Keyframes">
+                <input type="checkbox" id="kfsw-ft-kf" checked/>
+                <span class="kfsw-ft-chip" data-mark="keyframe">KF</span>
+              </label>
+              <label class="kfsw-ft-item" title="Navigate Breakdowns">
+                <input type="checkbox" id="kfsw-ft-bd" checked/>
+                <span class="kfsw-ft-chip" data-mark="breakdown">BD</span>
+              </label>
+              <label class="kfsw-ft-item" title="Navigate Inbetweens">
+                <input type="checkbox" id="kfsw-ft-ib" checked/>
+                <span class="kfsw-ft-chip" data-mark="inbetween">IB</span>
+              </label>
+            </div>
+          </div>
+
           <div class="kfsw-options">
             <div class="tf-panel-label">Options</div>
             <div class="kfsw-row">
@@ -312,6 +331,27 @@
             <span class="kfexp-hint">Tip: assign shortcuts via Settings → Keybinds.</span>
           </div>
           <div class="kfexp-status" id="kfexp-status"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DRAWING MARKS PANEL -->
+    <div id="drawing-marks-panel" class="float-panel fp-hidden" data-panel="drawing-marks" style="top:16px;left:800px;width:180px;">
+      <div class="fp-tabbar" style="display:none;"></div>
+      <div class="fp-titlebar"><span class="fp-grip">⠿</span><span class="fp-name">Drawing Marks</span><span class="fp-close" title="Close panel">✕</span></div>
+      <div class="fp-body-wrap">
+        <div class="fp-body active" data-body="drawing-marks" style="flex-direction:column;">
+          <div class="dm-mark-row">
+            <div class="dm-swatch-wrap">
+              <span class="dm-swatch" id="dm-swatch"></span>
+              <span class="dm-label" id="dm-label">No drawing</span>
+            </div>
+            <div class="dm-btns">
+              <button class="tbtn dm-btn" id="dm-btn-kf" data-mark="keyframe"  title="Keyframe — principal pose">KF</button>
+              <button class="tbtn dm-btn" id="dm-btn-bd" data-mark="breakdown" title="Breakdown — passing position">BD</button>
+              <button class="tbtn dm-btn" id="dm-btn-ib" data-mark="inbetween" title="Inbetween — interpolated drawing">IB</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>

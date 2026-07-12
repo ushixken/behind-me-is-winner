@@ -45,10 +45,99 @@ try{ brushRenderer=localStorage.getItem('animator_renderer')||'gpu'; }catch(e){}
 let undoStack=[],redoStack=[],clipboard=null;
 const LCOLORS=['#7F77DD','#1D9E75','#EF9F27','#e24b4a','#D4537E','#378ADD'];
 
+// ════════════════════════════════════════════════════════════════
+// DRAWING MARK SYSTEM (Toon Boom Harmony-style)
+// A "drawing mark" annotates each keyframe with its role in the
+// animation. Only the mark's ID string is stored on each drawing
+// (layer.frameMeta[frameIndex].markType). The full definition —
+// abbreviation, display name, color — lives here in one place.
+//
+// Built-in mark IDs:
+//   "keyframe"   — KF, the principal drawing for a movement
+//   "breakdown"  — BD, a passing position between two keyframes
+//   "inbetween"  — IB, an interpolated in-between drawing
+//
+// Drawings without an explicit markType default to "inbetween".
+// ════════════════════════════════════════════════════════════════
+const DRAWING_MARKS = {
+  keyframe: {
+    id:          'keyframe',
+    abbrev:      'KF',
+    displayName: 'Keyframe',
+    color:       '#e24b4a'   // red — principal poses
+  },
+  breakdown: {
+    id:          'breakdown',
+    abbrev:      'BD',
+    displayName: 'Breakdown',
+    color:       '#EF9F27'   // amber — passing positions
+  },
+  inbetween: {
+    id:          'inbetween',
+    abbrev:      'IB',
+    displayName: 'Inbetween',
+    color:       '#7F77DD'   // violet — interpolated drawings
+  }
+};
+
+// The mark ID applied when no markType is stored (new drawings,
+// old projects without markType). "inbetween" matches Harmony's
+// default — every cell starts unmarked / as a plain inbetween.
+const DRAWING_MARK_DEFAULT = 'inbetween';
+
+// ── Drawing mark helpers ───────────────────────────────────────
+// These are the ONLY way other modules should read/write markType,
+// so the storage location (layer.frameMeta) is encapsulated here.
+
+/** Returns the DRAWING_MARKS entry for a given mark ID (or default). */
+function getMarkDef(markId) {
+  return DRAWING_MARKS[markId] || DRAWING_MARKS[DRAWING_MARK_DEFAULT];
+}
+
+/**
+ * Returns the markType string for layer `li` at frame `fi`.
+ * Falls back to DRAWING_MARK_DEFAULT for drawings that pre-date
+ * this system or that have never been explicitly marked.
+ */
+function getDrawingMark(li, fi) {
+  const layer = layers[li];
+  if (!layer) return DRAWING_MARK_DEFAULT;
+  const meta = layer.frameMeta && layer.frameMeta[fi];
+  return (meta && meta.markType) ? meta.markType : DRAWING_MARK_DEFAULT;
+}
+
+/**
+ * Sets the markType for layer `li` at frame `fi`.
+ * Creates frameMeta / the per-frame entry as needed.
+ * Pass null / undefined to reset to the default (removes the key).
+ */
+function setDrawingMark(li, fi, markType) {
+  const layer = layers[li];
+  if (!layer) return;
+  if (!layer.frameMeta) layer.frameMeta = {};
+  if (!markType || markType === DRAWING_MARK_DEFAULT) {
+    // Removing an explicit mark — delete the key to keep storage lean
+    if (layer.frameMeta[fi]) {
+      delete layer.frameMeta[fi].markType;
+      // Clean up the per-frame object entirely if nothing else lives in it
+      if (Object.keys(layer.frameMeta[fi]).length === 0) {
+        delete layer.frameMeta[fi];
+      }
+    }
+  } else {
+    if (!DRAWING_MARKS[markType]) {
+      console.warn('[DrawingMark] Unknown mark ID:', markType, '— ignoring.');
+      return;
+    }
+    if (!layer.frameMeta[fi]) layer.frameMeta[fi] = {};
+    layer.frameMeta[fi].markType = markType;
+  }
+}
+
 // Layer object shape: {name, visible, onTimeline, color, frames, opacity(0-1), stencil('none'|'inside'|'outside'), clipTo(layerIdx|null), groupId(string|null)}
 // Group object shape: {id, name, visible, collapsed, opacity(0-1), color, parentId(string|null — id of the group this group is nested inside, null = top level)}
 let groups=[];
-let layers=[{name:'Layer 1',visible:true,onTimeline:true,color:'transparent',frames:{},opacity:1,stencil:'none',clipTo:null,groupId:null}];
+let layers=[{name:'Layer 1',visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},opacity:1,stencil:'none',clipTo:null,groupId:null}];
 
 // Zoom / Pan / Rotate — stored in canvas-area coordinate space
 let zoom=1,panX=0,panY=0;

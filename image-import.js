@@ -120,6 +120,7 @@
         onTimeline: true,
         color: LCOLORS[layers.length % LCOLORS.length],
         frames: {},
+        frameMeta: {},
         opacity: 1,
         stencil: 'none',
         clipTo: null,

@@ -341,9 +341,9 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 .tl-cell:hover{background:var(--bg4);}
 .tl-cell.cur-col{background:#1e1e28;}
 .tl-cell.selected{background:rgba(127,119,221,0.22);outline:1px solid rgba(127,119,221,0.45);}
-.kf-block{position:absolute;top:4px;bottom:4px;border-radius:3px;background:var(--accent);cursor:grab;z-index:5;touch-action:none;}
-.kf-block:hover{background:#9490e8;}
-.kf-block.selected{background:#bbb8f0;outline:2px solid rgba(255,255,255,0.2);}
+.kf-block{position:absolute;top:4px;bottom:4px;border-radius:3px;background:var(--kf-mark-color,var(--accent));cursor:grab;z-index:5;touch-action:none;}
+.kf-block:hover{filter:brightness(1.15);}
+.kf-block.selected{filter:brightness(1.4);outline:2px solid rgba(255,255,255,0.25);}
 .kf-extend{position:absolute;top:50%;height:2px;background:#4a4780;transform:translateY(-50%);z-index:2;pointer-events:none;}
 #playhead{position:absolute;top:0;width:2px;background:var(--red);z-index:20;pointer-events:none;}
 #playhead::before{content:'';position:absolute;top:0;left:-4px;width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:7px solid var(--red);}
@@ -779,6 +779,99 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 #keyframe-switcher-panel.kfsw-compact .kfsw-bypass-full{display:none;}
 /* Hard minimum size so the panel never crushes below its nav buttons */
 #keyframe-switcher-panel{min-width:106px;}
+
+/* ── Flip Through filter section ────────────────────────────────── */
+.kfsw-flipthrough{display:flex;flex-direction:column;gap:4px;}
+.kfsw-ft-btns{display:flex;gap:3px;}
+.kfsw-ft-item{display:flex;align-items:center;cursor:pointer;}
+.kfsw-ft-item input[type=checkbox]{display:none;}
+.kfsw-ft-chip{
+  width:28px;height:22px;display:flex;align-items:center;justify-content:center;
+  font-size:10px;font-weight:700;letter-spacing:.02em;
+  border:1px solid var(--border2);border-radius:5px;
+  background:var(--bg3);color:var(--text2);
+  cursor:pointer;transition:background .12s,border-color .12s,color .12s;
+  user-select:none;flex-shrink:0;
+}
+.kfsw-ft-chip:hover{background:var(--bg4,var(--bg3));color:var(--text);}
+.kfsw-ft-item input:checked + .kfsw-ft-chip{
+  background:var(--kfsw-mark-color,var(--accent-bg));
+  border-color:var(--kfsw-mark-color,var(--accent));
+  color:#fff;
+}
+#keyframe-switcher-panel.kfsw-hide-flipthrough .kfsw-flipthrough{display:none;}
+#keyframe-switcher-panel.kfsw-hide-options .kfsw-options{display:none;}
+
+/* ── Drawing Marks panel ────────────────────────────────────────── */
+#drawing-marks-panel{min-width:40px;}
+/* .fp-body-wrap has global flex:1 which forces it to fill panel height —
+   override so the panel shrink-wraps to its single row of content. */
+#drawing-marks-panel .fp-body-wrap{flex:0 0 auto !important;overflow:hidden;}
+#drawing-marks-panel .fp-body{
+  flex:0 0 auto !important;
+  padding:6px 8px;
+  gap:0;
+  overflow:hidden;
+}
+
+/* Horizontal layout (default) */
+.dm-mark-row{display:flex;align-items:center;justify-content:space-between;gap:6px;}
+.dm-swatch-wrap{display:flex;align-items:center;gap:5px;min-width:0;flex:1;overflow:hidden;}
+.dm-swatch{
+  display:inline-block;width:8px;height:8px;border-radius:50%;flex-shrink:0;
+  background:var(--border2);border:1px solid transparent;
+  transition:background .15s;
+}
+.dm-label{font-size:10px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1;}
+.dm-btns{display:flex;gap:3px;flex-shrink:0;}
+.dm-btn{
+  width:28px;height:22px;padding:0;font-size:10px;font-weight:700;letter-spacing:.02em;
+  border:1px solid var(--border2);border-radius:5px;
+  background:var(--bg3);color:var(--text2);
+  cursor:pointer;transition:background .12s,border-color .12s,color .12s;
+  flex-shrink:0;
+}
+.dm-btn:hover{background:var(--bg4,var(--bg3));color:var(--text);border-color:var(--border2);}
+.dm-btn.dm-btn-active{
+  background:var(--kfsw-mark-color,var(--accent-bg));
+  border-color:var(--kfsw-mark-color,var(--accent));
+  color:#fff;
+}
+
+/* ── Compact mode (185-106px): label hidden, buttons horizontal ───── */
+/* JS adds .dm-compact when 106 <= width < 185px                         */
+#drawing-marks-panel.dm-compact .dm-swatch-wrap{display:none;}
+#drawing-marks-panel.dm-compact .dm-mark-row{justify-content:center;}
+
+/* ── Vertical mode (< 106px): KF/BD/IB stacked, 30x30, centered ─── */
+/* 106px = 3x28px btns + 2x3px gaps + 2x8px padding                     */
+/* JS adds .dm-vertical; height:auto shrink-wraps to content              */
+#drawing-marks-panel.dm-vertical{min-width:40px;height:auto !important;}
+#drawing-marks-panel.dm-vertical .fp-body{
+  padding:4px;
+  align-items:center;
+  overflow:hidden;
+}
+#drawing-marks-panel.dm-vertical .dm-mark-row{
+  flex-direction:column;
+  align-items:center;
+  justify-content:flex-start;
+  gap:3px;
+  width:100%;
+}
+#drawing-marks-panel.dm-vertical .dm-swatch-wrap{display:none;}
+#drawing-marks-panel.dm-vertical .dm-btns{
+  flex-direction:column;
+  gap:3px;
+  align-items:center;
+  width:100%;
+}
+#drawing-marks-panel.dm-vertical .dm-btn{
+  width:30px;
+  height:30px;
+  border-radius:4px;
+  flex-shrink:0;
+}
 
 /* ── KEYFRAME EXPOSURE PANEL ──────────────────────────────────── */
 #keyframe-exposure-panel{min-width:106px;}

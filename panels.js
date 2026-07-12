@@ -72,10 +72,18 @@ function _groupUsedAsGroupMaskSource(gid){
 }
 
 function createBlankKey(){
-  if(!layers[curLayer].frames[curFrame]){layers[curLayer].frames[curFrame]=mkLayerCanvas();ctx.clearRect(0,0,CW,CH);renderTimeline();updateStatus();}
+  if(!layers[curLayer].frames[curFrame]){
+    layers[curLayer].frames[curFrame]=mkLayerCanvas();
+    ctx.clearRect(0,0,CW,CH);
+    renderTimeline();updateStatus();
+  }
 }
 function ensureKey(){
-  if(!layers[curLayer].frames[curFrame]){layers[curLayer].frames[curFrame]=mkLayerCanvas();ctx.clearRect(0,0,CW,CH);renderTimeline();updateStatus();}
+  if(!layers[curLayer].frames[curFrame]){
+    layers[curLayer].frames[curFrame]=mkLayerCanvas();
+    ctx.clearRect(0,0,CW,CH);
+    renderTimeline();updateStatus();
+  }
 }
 function saveActiveToKey(){
   const kf=layers[curLayer].frames[curFrame];if(!kf) return;
@@ -322,6 +330,7 @@ const FloatPanels=(function(){
     color:        {minSize:120, maxSize:500, floatResizable:false},
     'keyframe-switcher':{minSize:106,maxSize:500,floatResizable:true,get minHeight(){const p=document.getElementById('keyframe-switcher-panel');return p&&parseFloat(p.style.minHeight)||120;}},
     'keyframe-exposure':{minSize:106,maxSize:500,floatResizable:true,get minHeight(){const p=document.getElementById('keyframe-exposure-panel');return p&&parseFloat(p.style.minHeight)||160;}},
+    'drawing-marks':{get minSize(){return 40;},maxSize:500,floatResizable:true,get minHeight(){const p=document.getElementById('drawing-marks-panel');if(!p)return 40;const tb=p.querySelector('.fp-titlebar');const body=p.querySelector('.fp-body');const tbH=tb?tb.offsetHeight:0;const cs=body?getComputedStyle(body):null;const pt=cs?(parseFloat(cs.paddingTop)||0):0;const pb=cs?(parseFloat(cs.paddingBottom)||0):0;const kids=body?Array.from(body.children).filter(c=>getComputedStyle(c).display!=='none'):[];const kH=kids.reduce((s,c)=>s+c.offsetHeight,0);return tbH+pt+kH+pb;}},
   };
   function cfgOf(key){ return PANEL_CFG[key]||{minSize:120,maxSize:500}; }
 
@@ -899,6 +908,7 @@ const FloatPanels=(function(){
     color:false,
     'keyframe-switcher':false,
     'keyframe-exposure':false,
+    'drawing-marks':false,
   };
   function resetLayout(){
     allPanels.forEach(panel=>{
@@ -992,7 +1002,7 @@ const FloatPanels=(function(){
       el.style.cssText='position:absolute;'+EDGE_CSS[side]+'z-index:10;touch-action:none;';
       panel.appendChild(el);
       const cursorMap={right:'col-resize',left:'col-resize',bottom:'row-resize',top:'row-resize'};
-      let active=false,sx=0,sy=0,startRect=null;
+      let active=false,sx=0,sy=0,startRect=null,startMinH=120,startMinW=0;
       el.addEventListener('pointerdown',e=>{
         if(panelMode[key]!=='floating') return;
         e.preventDefault();e.stopPropagation();
@@ -1004,14 +1014,19 @@ const FloatPanels=(function(){
         sx=e.clientX;sy=e.clientY;
         const r=floatRect[key]||{x:panel.offsetLeft,y:panel.offsetTop};
         startRect={x:r.x,y:r.y,w:panel.offsetWidth,h:panel.offsetHeight};
+        // Snapshot minH once at drag-start so the floor doesn't chase the
+        // panel height during the drag (e.g. drawing-marks reads offsetHeight
+        // live, which would rise as you drag taller and prevent shrinking back).
+        startMinH=cfg.contentFitHeight?_toolsMinHeight():(cfg.minHeight||120);
+        startMinW=cfg.minSize;
       });
       el.addEventListener('pointermove',e=>{
         if(!active) return;
         const dx=e.clientX-sx, dy=e.clientY-sy;
         const r=Object.assign({},floatRect[key]||{},startRect);
-        const minH=cfg.contentFitHeight?_toolsMinHeight():(cfg.minHeight||120);
-        if(side==='right'){ r.w=Math.max(cfg.minSize,Math.min(cfg.maxSize,startRect.w+dx)); }
-        else if(side==='left'){ r.w=Math.max(cfg.minSize,Math.min(cfg.maxSize,startRect.w-dx)); r.x=startRect.x+(startRect.w-r.w); }
+        const minH=startMinH;
+        if(side==='right'){ r.w=Math.max(startMinW,Math.min(cfg.maxSize,startRect.w+dx)); }
+        else if(side==='left'){ r.w=Math.max(startMinW,Math.min(cfg.maxSize,startRect.w-dx)); r.x=startRect.x+(startRect.w-r.w); }
         else if(side==='bottom'){ r.h=Math.max(minH,Math.min(700,startRect.h+dy)); }
         else if(side==='top'){ r.h=Math.max(minH,Math.min(700,startRect.h-dy)); r.y=startRect.y+(startRect.h-r.h); }
         floatRect[key]=r;

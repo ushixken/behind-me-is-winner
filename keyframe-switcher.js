@@ -13,6 +13,7 @@
 (function(){
   const STORE_KEY_STEP='animator_kfsw_step';
   const STORE_KEY_BYPASS='animator_kfsw_bypass';
+  const STORE_KEY_FLIPTHROUGH='animator_kfsw_flipthrough';
 
   const elFrame=document.getElementById('kfsw-frame');
   const elLayer=document.getElementById('kfsw-layer');
@@ -24,6 +25,72 @@
   const spinStep=document.getElementById('kfsw-step');
   const chkBypass=document.getElementById('kfsw-bypass');
 
+  // ── Flip Through DOM refs ──────────────────────────────────────
+  const chkFtKf = document.getElementById('kfsw-ft-kf');
+  const chkFtBd = document.getElementById('kfsw-ft-bd');
+  const chkFtIb = document.getElementById('kfsw-ft-ib');
+  const ftChips = document.querySelectorAll('.kfsw-ft-chip');
+
+  // ── Drawing Mark DOM refs (Drawing Marks panel) ───────────────
+  const markSwatch  = document.getElementById('dm-swatch');
+  const markName    = document.getElementById('dm-label');
+  const markBtns    = document.querySelectorAll('.dm-btn');
+
+  // ── Highlight helpers ──────────────────────────────────────────
+  // Apply --kfsw-mark-color as a CSS custom property so the active button
+  // tints via CSS without needing per-element inline styles beyond one var.
+  function _applyMarkColor(btn, colorHex){
+    btn.style.setProperty('--kfsw-mark-color', colorHex);
+  }
+
+  function _refreshMarkButtons(currentMarkId){
+    const hasKey = !!(layers[curLayer] && layers[curLayer].frames[curFrame]);
+    const def = (typeof DRAWING_MARKS !== 'undefined') ? DRAWING_MARKS : null;
+
+    markBtns.forEach(btn => {
+      const id = btn.dataset.mark;
+      const isActive = hasKey && id === currentMarkId;
+      btn.classList.toggle('dm-btn-active', isActive);
+      btn.disabled = false;
+      if(def && def[id]){
+        _applyMarkColor(btn, def[id].color);
+      }
+    });
+
+    // Swatch + label reflect the current frame's mark (or dim if no key)
+    if(hasKey && def && def[currentMarkId]){
+      const m = def[currentMarkId];
+      markSwatch.style.background = m.color;
+      markSwatch.style.borderColor = m.color;
+      markName.textContent = m.displayName;
+      markName.style.color = '';
+    } else {
+      markSwatch.style.background = '';
+      markSwatch.style.borderColor = '';
+      markName.textContent = hasKey ? '—' : 'No drawing';
+      markName.style.color = 'var(--text2)';
+    }
+  }
+
+  // ── refreshMarks — called from the polling loop ────────────────
+  function refreshMarks(){
+    if(typeof getDrawingMark !== 'function') return;
+    const id = getDrawingMark(curLayer, curFrame);
+    _refreshMarkButtons(id);
+  }
+
+  // ── Assign mark on button click ────────────────────────────────
+  markBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const layer = layers[curLayer];
+      if(!layer || !layer.frames[curFrame]) return; // no drawing to mark
+      const id = btn.dataset.mark;
+      if(typeof setDrawingMark === 'function') setDrawingMark(curLayer, curFrame, id);
+      refreshMarks();
+      if(typeof renderTimeline === 'function') renderTimeline();
+    });
+  });
+
   // Restore saved options (step + bypass), same pattern as other prefs in this app.
   try{
     const savedStep=parseInt(localStorage.getItem(STORE_KEY_STEP));
@@ -32,6 +99,53 @@
   try{
     chkBypass.checked=localStorage.getItem(STORE_KEY_BYPASS)==='1';
   }catch(e){}
+
+  // ── Flip Through filter state ──────────────────────────────────
+  // Controls which drawing marks Prev/Next navigation will visit.
+  // At least one filter must always remain enabled.
+  let _flipThrough = { keyframe: true, breakdown: true, inbetween: true };
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORE_KEY_FLIPTHROUGH));
+    if(saved && typeof saved === 'object'){
+      const v = { keyframe: !!saved.keyframe, breakdown: !!saved.breakdown, inbetween: !!saved.inbetween };
+      if(v.keyframe || v.breakdown || v.inbetween) _flipThrough = v;
+    }
+  } catch(e) {}
+
+  function _saveFlipThrough(){
+    try{ localStorage.setItem(STORE_KEY_FLIPTHROUGH, JSON.stringify(_flipThrough)); }catch(e){}
+  }
+
+  // Apply mark colors from DRAWING_MARKS to chips as CSS custom properties,
+  // mirroring the _applyMarkColor() pattern used by the mark buttons above.
+  function _initFlipThroughChips(){
+    const def = (typeof DRAWING_MARKS !== 'undefined') ? DRAWING_MARKS : null;
+    ftChips.forEach(chip => {
+      const mark = chip.dataset.mark;
+      if(def && def[mark]) chip.style.setProperty('--kfsw-mark-color', def[mark].color);
+    });
+    chkFtKf.checked = _flipThrough.keyframe;
+    chkFtBd.checked = _flipThrough.breakdown;
+    chkFtIb.checked = _flipThrough.inbetween;
+  }
+  _initFlipThroughChips();
+
+  function _onFlipThroughChange(markId, chk){
+    if(!chk.checked){
+      // Reject the uncheck if it would leave nothing enabled.
+      const othersEnabled = Object.entries(_flipThrough)
+        .filter(([k]) => k !== markId)
+        .some(([, v]) => v);
+      if(!othersEnabled){ chk.checked = true; return; }
+    }
+    _flipThrough[markId] = chk.checked;
+    _saveFlipThrough();
+    refresh();
+  }
+
+  chkFtKf.addEventListener('change', () => _onFlipThroughChange('keyframe',   chkFtKf));
+  chkFtBd.addEventListener('change', () => _onFlipThroughChange('breakdown',  chkFtBd));
+  chkFtIb.addEventListener('change', () => _onFlipThroughChange('inbetween',  chkFtIb));
 
   // Returns the sorted list of frame indices on `li` that hold an actual
   // keyframe (i.e. layers[li].frames[f] exists) — the equivalent of
@@ -42,21 +156,36 @@
     return Object.keys(layer.frames).map(Number).sort((a,b)=>a-b);
   }
 
+  // Returns only the frames whose drawing mark is enabled in _flipThrough.
+  // Used exclusively by navigate() and the Prev/Next display in refresh() —
+  // the total Keyframes count and Drawing Mark section are always unfiltered.
+  function filteredFrameTimes(li){
+    const times = keyframeTimes(li);
+    if(_flipThrough.keyframe && _flipThrough.breakdown && _flipThrough.inbetween) return times;
+    return times.filter(f => {
+      const mark = (typeof getDrawingMark === 'function') ? getDrawingMark(li, f) : 'inbetween';
+      return !!_flipThrough[mark];
+    });
+  }
+
   function refresh(){
     const layer=layers[curLayer];
     if(!layer){
       elFrame.textContent='—';elLayer.textContent='—';elCount.textContent='—';
       elPrev.textContent='—';elNext.textContent='—';
+      refreshMarks();
       return;
     }
     const kf=keyframeTimes(curLayer);
-    const prev=kf.filter(f=>f<curFrame);
-    const next=kf.filter(f=>f>curFrame);
+    const fkf=filteredFrameTimes(curLayer);
+    const prev=fkf.filter(f=>f<curFrame);
+    const next=fkf.filter(f=>f>curFrame);
     elFrame.textContent=frameLabel(curFrame)+' / '+TOTAL;
     elLayer.textContent=layer.name;
     elCount.textContent=kf.length;
     elPrev.textContent=prev.length?frameLabel(prev[prev.length-1]):'—';
     elNext.textContent=next.length?frameLabel(next[0]):'—';
+    refreshMarks();
   }
 
   function navigate(direction){
@@ -75,9 +204,10 @@
       // Bypass: always move by the frame step, ignore keyframes entirely.
       target=curFrame+direction*step;
     } else {
-      // Normal: jump to the next/prev keyframe on the active layer,
-      // falling back to a plain step if there isn't one that direction.
-      const kf=keyframeTimes(curLayer);
+      // Normal: jump to the next/prev drawing that passes the Flip Through
+      // filter (KF / BD / IB checkboxes), falling back to a plain step if
+      // there is no matching frame in that direction.
+      const kf=filteredFrameTimes(curLayer);
       if(direction>0){
         target=kf.find(f=>f>curFrame);
       } else {
@@ -101,11 +231,14 @@
   // of a plain curFrame±1.
   window.kfswNavigate=navigate;
 
-  spinStep.onchange=()=>{
+  function _commitStep(){
     const v=Math.max(1,Math.min(100,parseInt(spinStep.value)||1));
     spinStep.value=v;
     try{localStorage.setItem(STORE_KEY_STEP,v);}catch(e){}
-  };
+    refresh();
+  }
+  spinStep.oninput=_commitStep;
+  spinStep.onchange=_commitStep;
   chkBypass.onchange=()=>{
     try{localStorage.setItem(STORE_KEY_BYPASS,chkBypass.checked?'1':'0');}catch(e){}
     setTimeout(()=>chkBypass.blur(),0);
@@ -204,34 +337,118 @@
       'kfsw-hide-state',
     ];
 
-    const ro = new ResizeObserver(entries => {
-      for(const entry of entries){
-        const w = entry.contentRect.width;
-        const h = availableHeight();
-        const isDocked = kfswPanel.classList.contains('docked');
+    // _resizeDragging: true while a float-edge drag is active.
+    let _resizeDragging = false;
 
-        // Width axis: collapse whole state block at extreme narrow width only.
-        kfswPanel.classList.toggle('kfsw-compact', w < 106);
+    function _applyLayout(){
+      const w = kfswPanel.offsetWidth;
+      const h = availableHeight();
+      const isDocked = kfswPanel.classList.contains('docked');
 
-        // Height axis: reset, then progressively hide rows until content fits.
-        HEIGHT_SEQ.forEach(cls => kfswPanel.classList.remove(cls));
-        if(!kfswPanel.classList.contains('kfsw-compact')){
-          for(const cls of HEIGHT_SEQ){
-            if(measuredContentHeight() <= h) break;
-            kfswPanel.classList.add(cls);
-          }
+      // Width axis collapse
+      kfswPanel.classList.toggle('kfsw-compact', w < 106);
+
+      // Height axis: reset all hide classes, then re-apply until content fits
+      HEIGHT_SEQ.forEach(cls => kfswPanel.classList.remove(cls));
+      if(!kfswPanel.classList.contains('kfsw-compact')){
+        for(const cls of HEIGHT_SEQ){
+          if(measuredContentHeight() <= h) break;
+          kfswPanel.classList.add(cls);
         }
+      }
 
-        // Floating: lock min-height at compact floor so panel can't shrink further.
-        // Docked: clear min-height — split handle controls height, body scrolls.
-        if(!isDocked){
+      // minHeight strategy (floating only):
+      //   Once all Current State rows are hidden (state block gone), lock
+      //   minHeight to the remaining content — nav + flipthrough + options —
+      //   so the panel can't be squished any further.
+      //   While state rows are still collapsing, keep minHeight clear so the
+      //   drag handle can keep moving without fighting back.
+      if(!isDocked){
+        const stateFullyHidden = kfswPanel.classList.contains('kfsw-hide-state');
+        if(stateFullyHidden){
           kfswPanel.style.minHeight = measuredContentHeight() + 'px';
         } else {
           kfswPanel.style.minHeight = '';
         }
+      } else {
+        kfswPanel.style.minHeight = '';
       }
+    }
+
+    kfswPanel.addEventListener('pointerdown', e => {
+      if(e.target && e.target.classList && e.target.classList.contains('fp-float-resize')){
+        _resizeDragging = true;
+      }
+    }, true);
+    function _onKfswResizeEnd(){
+      if(!_resizeDragging) return;
+      _resizeDragging = false;
+      _applyLayout();
+    }
+    document.addEventListener('pointerup',    _onKfswResizeEnd, true);
+    document.addEventListener('pointercancel',_onKfswResizeEnd, true);
+
+    const ro = new ResizeObserver(() => {
+      // Run the full layout pass on every resize (including during drag).
+      // minHeight is only written when all rows are already hidden, so it
+      // never freezes the floor mid-drag and never fights panels.js.
+      _applyLayout();
     });
     ro.observe(kfswPanel);
+  }
+
+  // ── Drawing Marks panel — responsive layout ──────────────────────
+  // Three states based on panel width:
+  //   Normal   (>= 185px): [dot No drawing] [KF] [BD] [IB]
+  //   Compact  (106-184px): label hidden, [KF] [BD] [IB] horizontal
+  //   Vertical (< 106px):  KF / BD / IB stacked
+  //
+  // Fixed breakpoints avoid dynamic DOM measurement during resize:
+  //   Vertical = 106px: 3x28px btns + 2x3px gaps + 2x8px body padding
+  //   Compact  = 185px: above + 8px swatch + 5px gap + ~55px label + 6px row-gap
+  //
+  // NO MutationObserver: classList.toggle() fires MutationObserver which
+  // re-invokes the callback -> infinite layout loop. Only ResizeObserver
+  // is used. _dmState tracks the last applied state so classList is only
+  // written when the target actually changes (pure read path when idle).
+  // RAF throttle collapses burst callbacks during fast drags into one pass.
+  const dmPanel = document.getElementById('drawing-marks-panel');
+  if(dmPanel && typeof ResizeObserver !== 'undefined'){
+    const DM_COMPACT_BREAKPOINT  = 185;
+    const DM_VERTICAL_BREAKPOINT = 106;
+    let _dmState = '';         // '' | 'normal' | 'compact' | 'vertical'
+    let _dmRafPending = false;
+
+    function _dmApplyLayout(){
+      _dmRafPending = false;
+      const w = dmPanel.offsetWidth;
+      const next = w < DM_VERTICAL_BREAKPOINT ? 'vertical'
+                 : w < DM_COMPACT_BREAKPOINT  ? 'compact'
+                 : 'normal';
+      if(next === _dmState) return;  // no change -- do NOT touch DOM
+      _dmState = next;
+
+      // Write classes exactly once per real state change.
+      dmPanel.classList.toggle('dm-compact',  next === 'compact');
+      dmPanel.classList.toggle('dm-vertical', next === 'vertical');
+
+      // Clear inline height on vertical entry so CSS height:auto takes over.
+      if(next === 'vertical'){
+        dmPanel.style.height = '';
+        if(typeof FloatPanels !== 'undefined' && FloatPanels.setFloatSize){
+          FloatPanels.setFloatSize('drawing-marks', null, null);
+        }
+      }
+    }
+
+    function _dmSchedule(){
+      if(_dmRafPending) return;
+      _dmRafPending = true;
+      requestAnimationFrame(_dmApplyLayout);
+    }
+
+    new ResizeObserver(_dmSchedule).observe(dmPanel);
+    _dmSchedule();
   }
 
   // Stop wheel events from bubbling to the canvas when scrolling the body
