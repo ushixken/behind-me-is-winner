@@ -26,13 +26,16 @@
 
   function normalizeHex(hex){
     hex=String(hex||'').trim();
+    if(/^#[0-9a-f]{8}$/i.test(hex)) return hex.toLowerCase();
     if(/^#[0-9a-f]{6}$/i.test(hex)) return hex.toLowerCase();
     return '#000000';
   }
-  function isValidHex(text){return /^#[0-9a-f]{6}$/i.test(String(text||'').trim());}
+  function isTransparentHex(hex){return /^#[0-9a-f]{8}$/i.test(String(hex||'').trim())&&String(hex).slice(7,9).toLowerCase()==='00';}
+  function isValidHex(text){return /^#[0-9a-f]{6}([0-9a-f]{2})?$/i.test(String(text||'').trim());}
   function hexToRgba(hex){
     hex=normalizeHex(hex);
-    return {r:parseInt(hex.slice(1,3),16),g:parseInt(hex.slice(3,5),16),b:parseInt(hex.slice(5,7),16),a:1};
+    const alpha=hex.length===9?parseInt(hex.slice(7,9),16)/255:1;
+    return {r:parseInt(hex.slice(1,3),16),g:parseInt(hex.slice(3,5),16),b:parseInt(hex.slice(5,7),16),a:alpha};
   }
   function byteToHex(value){
     const n=Math.max(0,Math.min(255,Math.round(Number(value)||0)));
@@ -43,19 +46,31 @@
     const rgba=hexToRgba(hex);
     return [rgba.r,rgba.g,rgba.b,Math.round((Number.isFinite(+rgba.a)?rgba.a:1)*255)];
   }
+  function displayHex(hex){return normalizeHex(hex).slice(0,7);}
+  function currentForegroundHex(){return normalizeHex(typeof color!=='undefined'?color:'#000000').slice(0,7);}
   function makeId(prefix){return prefix+'_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,8);}
   function makeSwatch(hex,id,name){
     const safeHex=normalizeHex(hex);
-    const swatch={id:id||makeId('pal'),hex:safeHex,rgba:hexToRgba(safeHex)};
+    const swatch={id:id||makeId('pal'),type:'swatch',hex:safeHex,rgba:hexToRgba(safeHex)};
     const cleanName=String(name||'').trim();
     if(cleanName) swatch.name=cleanName;
     return swatch;
   }
-  function cloneSwatch(swatch){return makeSwatch(swatch.hex,null,swatch&&swatch.name);}
+  function makeSeparator(id){return {id:id||makeId('sep'),type:'separator'};}
+  function makeSpacer(id){return {id:id||makeId('space'),type:'spacer'};}
+  function isSeparator(item){return !!item&&item.type==='separator';}
+  function isSpacer(item){return !!item&&item.type==='spacer';}
+  function isSwatch(item){return !!item&&item.type!=='separator'&&item.type!=='spacer';}
+  function cloneSwatch(swatch){return isSeparator(swatch)?makeSeparator():isSpacer(swatch)?makeSpacer():makeSwatch(swatch.hex,null,swatch&&swatch.name);}
   function defaultSwatches(){return defaultHexes.map(hex=>makeSwatch(hex));}
+  function sanitizePaletteItem(item){
+    if(item&&item.type==='separator') return makeSeparator(item.id);
+    if(item&&item.type==='spacer') return makeSpacer(item.id);
+    return makeSwatch(item&&item.hex,item&&item.id,item&&item.name);
+  }
   function sanitizeSwatches(input,allowEmpty){
     const list=Array.isArray(input)?input:[];
-    const clean=list.map(item=>makeSwatch(item&&item.hex,item&&item.id,item&&item.name)).filter(Boolean);
+    const clean=list.map(sanitizePaletteItem).filter(Boolean);
     return clean.length||allowEmpty?clean:defaultSwatches();
   }
   function nextPaletteName(){
@@ -124,7 +139,7 @@
   }
   function serialize(){
     rememberSelection();
-    return {version:2,palettes:palettes.map(p=>({id:p.id,name:p.name,swatches:p.swatches.map(s=>({id:s.id,hex:s.hex,rgba:s.rgba})),selectedId:p.selectedId||null})),activePaletteId,view:{swatchSize,scrollTop:savedScrollTop}};
+    return {version:2,palettes:palettes.map(p=>({id:p.id,name:p.name,swatches:p.swatches.map(exportSwatchData),selectedId:p.selectedId||null})),activePaletteId,view:{swatchSize,scrollTop:savedScrollTop}};
   }
   function load(data){
     const payload=data&&typeof data==='object'?data:null;
@@ -155,13 +170,14 @@
   }
   function setForeground(hex,openPicker){
     const safeHex=normalizeHex(hex);
+    if(isTransparentHex(safeHex)) return;
     if(typeof window.setForegroundColorFromPalette==='function') window.setForegroundColorFromPalette(safeHex,!!openPicker);
     else {
-      color=safeHex;
+      color=displayHex(safeHex);
       const input=document.getElementById('color-input');
-      if(input) input.value=safeHex;
+      if(input) input.value=displayHex(safeHex);
       const stat=document.getElementById('stat-color');
-      if(stat) stat.textContent='Color: '+safeHex;
+      if(stat) stat.textContent='Color: '+displayHex(safeHex);
     }
   }
   function clampSwatchSize(value){
@@ -201,10 +217,11 @@
     restoreScrollPending=false;
     requestAnimationFrame(()=>{grid.scrollTop=savedScrollTop;ensureSelectedVisible();});
   }
-  function selectedSwatch(){return swatches.find(s=>s.id===selectedId)||null;}
+  function selectedSwatch(){const item=swatches.find(s=>s.id===selectedId)||null;return isSwatch(item)?item:null;}
+  function selectedItem(){return swatches.find(s=>s.id===selectedId)||null;}
   function swatchIndex(id){return swatches.findIndex(s=>s.id===id);}
   function updateSwatchColor(swatch,hex){
-    if(!swatch) return;
+    if(!isSwatch(swatch)) return;
     swatch.hex=normalizeHex(hex);
     swatch.rgba=hexToRgba(swatch.hex);
     if(swatch.id===selectedId) setForeground(swatch.hex,false);
@@ -221,7 +238,7 @@
       rememberSelection();
       syncSelectionClasses();
     }
-    if(opts.setForeground) setForeground(swatch.hex,false);
+    if(opts.setForeground&&isSwatch(swatch)) setForeground(swatch.hex,false);
     persist();
   }
   function selectSwatch(swatch,applyColor){
@@ -412,7 +429,7 @@
     if(state.sourceEl&&state.captured){try{state.sourceEl.releasePointerCapture(event.pointerId);}catch(e){}}
     clearPaletteListIndicators();
     document.querySelectorAll('.palette-list-item.dragging').forEach(node=>node.classList.remove('dragging'));
-    if(state.active){
+    if(state.active&&!cancelled){
       event.preventDefault();
       if(state.overId&&state.overId!==state.id) reorderPalette(state.id,state.overId,state.side);
       return;
@@ -465,9 +482,20 @@
       btn.type='button';
       btn.className='palette-swatch';
       btn.dataset.id=s.id;
-      btn.style.background=s.hex;
-      btn.title=s.hex;
-      btn.setAttribute('aria-label','Palette color '+s.hex);
+      if(isSeparator(s)){
+        btn.classList.add('separator');
+        btn.title='Separator';
+        btn.setAttribute('aria-label','Palette separator');
+      }else if(isSpacer(s)){
+        btn.classList.add('spacer');
+        btn.tabIndex=-1;
+        btn.setAttribute('aria-hidden','true');
+      }else{
+        if(isTransparentHex(s.hex)) btn.classList.add('transparent');
+        else btn.style.background=displayHex(s.hex);
+        btn.title=s.hex;
+        btn.setAttribute('aria-label','Palette color '+s.hex);
+      }
       btn.classList.toggle('selected',s.id===selectedId);
       btn.addEventListener('pointerdown',event=>{
         if(event.isPrimary===false) return;
@@ -480,14 +508,29 @@
         rememberSelection();
         render();
         persist();
-        editSwatch(s);
+        if(isSwatch(s)) editSwatch(s);
       });
       grid.appendChild(btn);
     });
     grid.scrollTop=restoreScrollPending?savedScrollTop:previousScroll;
+    updateToolbarState();
     restoreScrollIfNeeded();
+    requestAnimationFrame(()=>checkGridOverflow());
+  }
+  function checkGridOverflow(){
+    const grid=document.getElementById('palette-grid');
+    if(!grid) return;
+    grid.classList.toggle('is-overflow',grid.scrollHeight>grid.clientHeight+1);
+  }
+  function updateToolbarState(){
+    const item=selectedItem();
+    const apply=document.getElementById('palette-apply-color');
+    const remove=document.getElementById('palette-remove-color');
+    if(apply) apply.disabled=!isSwatch(item);
+    if(remove) remove.disabled=!item;
   }
   function syncSelectionClasses(){
+    updateToolbarState();
     document.querySelectorAll('#palette-grid .palette-swatch').forEach(node=>{
       node.classList.toggle('selected',node.dataset.id===selectedId);
     });
@@ -638,7 +681,9 @@
     return base+'.'+ext;
   }
   function exportSwatchData(swatch){
-    return {id:swatch.id,hex:normalizeHex(swatch.hex).toUpperCase(),rgba:rgbaArray(swatch.hex),name:swatch.name||undefined};
+    if(isSeparator(swatch)) return {id:swatch.id,type:'separator'};
+    if(isSpacer(swatch)) return {id:swatch.id,type:'spacer'};
+    return {id:swatch.id,type:'swatch',hex:normalizeHex(swatch.hex).toUpperCase(),rgba:rgbaArray(swatch.hex),name:swatch.name||undefined};
   }
   function downloadText(filename,text,type){
     const blob=new Blob([text],{type:type||'text/plain'});
@@ -675,7 +720,7 @@
     const active=activePalette();
     if(!active) return;
     const lines=['GIMP Palette','Name: '+active.name,'Columns: 8','#'];
-    (active.swatches||[]).forEach(s=>{
+    (active.swatches||[]).filter(isSwatch).forEach(s=>{
       const c=hexToRgba(s.hex);
       const label=s.name?(' '+s.name):'';
       lines.push(String(c.r).padStart(3,' ')+' '+String(c.g).padStart(3,' ')+' '+String(c.b).padStart(3,' ')+label);
@@ -685,6 +730,8 @@
   }
   function swatchFromImport(item){
     if(!item||typeof item!=='object') return null;
+    if(item.type==='separator') return makeSeparator();
+    if(item.type==='spacer') return makeSpacer();
     let hex=isValidHex(item.hex)?normalizeHex(item.hex):null;
     if(!hex&&Array.isArray(item.rgba)&&item.rgba.length>=3) hex=rgbToHex(item.rgba[0],item.rgba[1],item.rgba[2]);
     if(!hex) return null;
@@ -802,22 +849,28 @@
     item.addEventListener('click',()=>{hideContextMenu();fn();});
     return item;
   }
-  function showContextMenu(x,y,swatch){
+  function showContextMenu(x,y,item){
     hideContextMenu();
     const menu=document.createElement('div');
     menu.id='palette-context-menu';
     menu.className='ctx-menu';
     menu.addEventListener('pointerdown',event=>event.stopPropagation());
-    const items=[
-      menuItem('Edit Color',()=>editSwatch(swatch)),
-      menuItem('Duplicate Color',()=>duplicateSwatch(swatch)),
-      menuItem('Delete Color',()=>deleteSwatch(swatch),true),
+    const items=isSeparator(item)?[
+      menuItem('Duplicate Separator',()=>duplicateSwatch(item)),
+      menuItem('Delete Separator',()=>deleteSwatch(item),true),
       menuItem('-'),
-      menuItem('Insert Color Before',()=>insertNear(swatch,'before')),
-      menuItem('Insert Color After',()=>insertNear(swatch,'after')),
+      menuItem('Move to Beginning',()=>moveItemToEdge(item,'start')),
+      menuItem('Move to End',()=>moveItemToEdge(item,'end'))
+    ]:[
+      menuItem('Edit Color',()=>editSwatch(item)),
+      menuItem('Duplicate Color',()=>duplicateSwatch(item)),
+      menuItem('Delete Color',()=>deleteSwatch(item),true),
       menuItem('-'),
-      menuItem('Copy HEX',()=>copyHex(swatch)),
-      menuItem('Paste Color',()=>pasteColor(swatch))
+      menuItem('Insert Color Before',()=>insertNear(item,'before')),
+      menuItem('Insert Color After',()=>insertNear(item,'after')),
+      menuItem('-'),
+      menuItem('Copy HEX',()=>copyHex(item)),
+      menuItem('Paste Color',()=>pasteColor(item))
     ];
     items.forEach(item=>menu.appendChild(item));
     document.body.appendChild(menu);
@@ -827,7 +880,7 @@
   }
   function hideContextMenu(){const menu=document.getElementById('palette-context-menu');if(menu) menu.remove();}
   function editSwatch(swatch){
-    if(!swatch) return;
+    if(!isSwatch(swatch)) return;
     const originalBrush=typeof color!=='undefined'?color:'#000000';
     selectedId=swatch.id;
     rememberSelection();
@@ -857,6 +910,18 @@
     panel.appendChild(bar);
   }
   function hideEditConfirmBar(){const bar=document.getElementById('palette-edit-confirm');if(bar) bar.remove();}
+  function moveItemToEdge(item,edge){
+    const idx=swatchIndex(item&&item.id);
+    if(idx<0) return;
+    const [moved]=swatches.splice(idx,1);
+    if(edge==='start') swatches.unshift(moved);
+    else swatches.push(moved);
+    selectedId=moved.id;
+    rememberSelection();
+    render();
+    persist();
+  }
+
   function duplicateSwatch(swatch){
     const idx=swatchIndex(swatch.id);
     if(idx<0) return;
@@ -868,20 +933,20 @@
     persist();
   }
   function deleteSwatch(swatch){
-    if(swatches.length<=1) return;
     const idx=swatchIndex(swatch.id);
     if(idx<0) return;
     swatches.splice(idx,1);
-    selectedId=swatches[Math.min(idx,swatches.length-1)].id;
+    selectedId=swatches.length?swatches[Math.min(idx,swatches.length-1)].id:null;
     rememberSelection();
     render();
     persist();
   }
-  function deleteSelected(){const swatch=selectedSwatch();if(swatch) deleteSwatch(swatch);}
+  function deleteSelected(){const item=selectedItem();if(item) deleteSwatch(item);}
   function insertNear(swatch,where){
+    if(!isSwatch(swatch)) return;
     const idx=swatchIndex(swatch.id);
     if(idx<0) return;
-    const inserted=makeSwatch(typeof color!=='undefined'?color:'#000000');
+    const inserted=makeSwatch(currentForegroundHex());
     swatches.splice(where==='before'?idx:idx+1,0,inserted);
     selectedId=inserted.id;
     rememberSelection();
@@ -889,6 +954,7 @@
     persist();
   }
   async function copyHex(swatch){
+    if(!isSwatch(swatch)) return;
     const text=swatch.hex.toUpperCase();
     try{await navigator.clipboard.writeText(text);}catch(e){
       const input=document.createElement('input');
@@ -934,20 +1000,29 @@
     });
   }
   async function pasteColor(swatch){
+    if(!isSwatch(swatch)) return;
     let text='';
     try{ text=await navigator.clipboard.readText(); }catch(e){ text=await requestPasteHex(); }
     text=String(text||'').trim();
     if(!isValidHex(text)) return;
     updateSwatchColor(swatch,text);
   }
-  function addCurrent(){
-    const created=makeSwatch(typeof color!=='undefined'?color:'#000000');
-    swatches.push(created);
-    selectedId=created.id;
+  function insertItemAfterSelection(item){
+    const idx=selectedId?swatchIndex(selectedId):-1;
+    swatches.splice(idx>=0?idx+1:swatches.length,0,item);
+    selectedId=item.id;
     rememberSelection();
     render();
     persist();
   }
+  function addTransparentSwatch(){insertItemAfterSelection(makeSwatch('#00000000'));}
+  function addSeparator(){insertItemAfterSelection(makeSeparator());}
+  function applyCurrentColorToSelected(){
+    const swatch=selectedSwatch();
+    if(!swatch) return;
+    updateSwatchColor(swatch,currentForegroundHex());
+  }
+  function addCurrent(){addTransparentSwatch();}
   async function clearAll(){
     if(!swatches.length) return;
     const ok=await requestPaletteConfirm('Clear Palette','Clear every color in this palette?','Clear');
@@ -963,13 +1038,33 @@
     if(event.isPrimary===false) return;
     if(event.button!==undefined&&event.button!==0) return;
     hideContextMenu();
-    dragState={id:swatch.id,startX:event.clientX,startY:event.clientY,active:false,overId:swatch.id,side:'after',pointerId:event.pointerId,sourceEl:el,captured:false};
+    const rect=el.getBoundingClientRect();
+    dragState={id:swatch.id,startX:event.clientX,startY:event.clientY,grabOffsetX:event.clientX-rect.left,grabOffsetY:event.clientY-rect.top,swatchWidth:rect.width,swatchHeight:rect.height,pointerType:event.pointerType||'mouse',active:false,overId:swatch.id,side:'after',targetGroupIndex:null,targetLocalIndex:null,targetGlobalIndex:null,targetSeparatorSide:null,targetSeparatorId:null,rafPending:false,lastMove:null,pointerId:event.pointerId,sourceEl:el,captured:false};
     document.addEventListener('pointermove',onDragMove);
     document.addEventListener('pointerup',onDragEnd);
     document.addEventListener('pointercancel',onDragEnd);
   }
+  function separatorDropSide(separatorEl,centerY){
+    const rect=separatorEl.getBoundingClientRect();
+    const center=rect.top+rect.height/2;
+    const previous=dragState&&dragState.overId===separatorEl.dataset.id?dragState.side:null;
+    const deadZone=dragState&&dragState.pointerType==='pen'?10:8;
+    if(previous&&centerY>=center-deadZone&&centerY<=center+deadZone) return previous;
+    return centerY<center?'before':'after';
+  }
   function onDragMove(event){
     if(!dragState||event.pointerId!==dragState.pointerId) return;
+    dragState.lastMove={clientX:event.clientX,clientY:event.clientY,pointerId:event.pointerId};
+    event.preventDefault();
+    if(dragState.rafPending) return;
+    dragState.rafPending=true;
+    requestAnimationFrame(processDragMove);
+  }
+  function processDragMove(){
+    if(!dragState||!dragState.lastMove) return;
+    dragState.rafPending=false;
+    const event=dragState.lastMove;
+    if(event.pointerId!==dragState.pointerId) return;
     const dx=event.clientX-dragState.startX;
     const dy=event.clientY-dragState.startY;
     if(!dragState.active){
@@ -982,15 +1077,20 @@
       const dragged=document.querySelector('.palette-swatch[data-id="'+CSS.escape(dragState.id)+'"]');
       if(dragged) dragged.classList.add('dragging');
     }
-    event.preventDefault();
-    const target=document.elementFromPoint(event.clientX,event.clientY);
-    const swatchEl=target&&target.closest?target.closest('.palette-swatch'):null;
-    clearInsertIndicators();
-    if(!swatchEl||swatchEl.dataset.id===dragState.id) return;
-    const rect=swatchEl.getBoundingClientRect();
-    dragState.overId=swatchEl.dataset.id;
-    dragState.side=event.clientX<rect.left+rect.width/2?'before':'after';
-    swatchEl.classList.add(dragState.side==='before'?'insert-before':'insert-after');
+    const dragX=event.clientX-dragState.grabOffsetX;
+    const dragY=event.clientY-dragState.grabOffsetY;
+    const dragCenterX=dragX+(dragState.swatchWidth||swatchSize)/2;
+    const dragCenterY=dragY+(dragState.swatchHeight||swatchSize)/2;
+    const grid=document.getElementById('palette-grid');
+    if(!grid) return;
+    const gridRect=grid.getBoundingClientRect();
+    const insideGrid=event.clientX>=gridRect.left&&event.clientX<=gridRect.right&&event.clientY>=gridRect.top&&event.clientY<=gridRect.bottom;
+    const target=paletteDropTargetAt(grid,dragCenterX,dragCenterY,event.clientX,event.clientY);
+    if(!target){
+      if(!insideGrid) clearInsertIndicators();
+      return;
+    }
+    setPaletteDragTarget(target);
   }
   function onDragEnd(event){
     if(!dragState||event.pointerId!==dragState.pointerId) return;
@@ -1002,19 +1102,398 @@
     if(state.sourceEl&&state.captured){
       try{state.sourceEl.releasePointerCapture(event.pointerId);}catch(e){}
     }
+    const cancelled=event.type==='pointercancel';
     clearInsertIndicators();
     document.querySelectorAll('.palette-swatch.dragging').forEach(node=>node.classList.remove('dragging'));
-    if(state.active){
+    if(state.active&&!cancelled){
       event.preventDefault();
-      if(state.overId&&state.overId!==state.id) reorderSwatch(state.id,state.overId,state.side);
+      if(state.lineMode==='slot'&&Number.isInteger(state.targetGroupStart)&&Number.isInteger(state.targetGroupEnd)&&Number.isInteger(state.targetLocalSlot)) reorderSwatchToSlot(state.id,state.targetGroupStart,state.targetGroupEnd,state.targetLocalSlot);
+      else if(state.overId&&state.overId!==state.id) reorderSwatch(state.id,state.overId,state.side);
       else activatePaletteSwatch(state.id,{select:true,setForeground:false});
       setTimeout(()=>{suppressClick=false;},0);
       return;
     }
-    activatePaletteSwatch(state.id,{select:true,setForeground:true});
+    if(!cancelled) activatePaletteSwatch(state.id,{select:true,setForeground:true});
+    if(state.active) setTimeout(()=>{suppressClick=false;},0);
+  }
+  function paletteDropItems(grid){
+    return Array.from(grid.querySelectorAll('.palette-swatch:not(.dragging)')).filter(node=>!node.classList.contains('palette-drop-placeholder'));
+  }
+  function paletteDropTargetAt(grid,clientX,clientY,pointerX,pointerY){
+    const items=paletteDropItems(grid).filter(node=>node.dataset.id!==dragState.id);
+    const allSeps=items.filter(n=>n.classList.contains('separator'));
+    const swatchNodes=items.filter(n=>!n.classList.contains('spacer')&&!n.classList.contains('separator'));
+
+    // Resolve which group the pointer Y belongs to by checking separator positions.
+    // Returns the separator node that is the boundary above the pointer, or null
+    // if the pointer is in the first (top) group.
+    function groupSeparatorAbove(py){
+      let lastSep=null;
+      for(const sep of allSeps){
+        const r=sep.getBoundingClientRect();
+        if(py>r.bottom) lastSep=sep;
+        else break;
+      }
+      return lastSep;
+    }
+
+    // Within the group determined by sepAbove, find the best edge anchor.
+    // If the group has swatches, snap to nearest swatch in that group.
+    // If the group is empty, use the separator itself as the 'after' anchor.
+    function edgeInGroup(sepAbove,px,py){
+      // Collect swatches that belong to the group below sepAbove.
+      // A swatch belongs here if it is below sepAbove (or at the top if no sep)
+      // and above the next separator.
+      const sepNodes=allSeps;
+      const sepAboveIdx=sepAbove?sepNodes.indexOf(sepAbove):-1;
+      const nextSep=sepNodes[sepAboveIdx+1]||null;
+      const groupSwatches=swatchNodes.filter(n=>{
+        const r=n.getBoundingClientRect();
+        const cy=r.top+r.height/2;
+        const aboveOk=sepAbove?cy>sepAbove.getBoundingClientRect().bottom:true;
+        const belowOk=nextSep?cy<nextSep.getBoundingClientRect().top:true;
+        return aboveOk&&belowOk;
+      });
+      if(groupSwatches.length){
+        // Nearest swatch in this group by distance.
+        let nearest=null,nearestDist=Infinity;
+        for(const n of groupSwatches){
+          const r=n.getBoundingClientRect();
+          const cx=Math.max(r.left,Math.min(px,r.right));
+          const cy=Math.max(r.top,Math.min(py,r.bottom));
+          const d=Math.hypot(px-cx,py-cy);
+          if(d<nearestDist){nearestDist=d;nearest=n;}
+        }
+        const r=nearest.getBoundingClientRect();
+        const side=px<r.left+r.width/2?'before':'after';
+        return {el:nearest,side,mode:'edge'};
+      }
+      // Group is empty — anchor to the separator above it.
+      if(sepAbove) return {el:sepAbove,side:'after',mode:'edge'};
+      return null;
+    }
+
+    // --- Separator being dragged: always vertical line, never box ---
+    const draggingItem=swatches.find(s=>s.id===dragState.id);
+    if(draggingItem&&isSeparator(draggingItem)){
+      if(!swatchNodes.length) return null;
+      let nearest=null,nearestDist=Infinity;
+      for(const n of swatchNodes){
+        const r=n.getBoundingClientRect();
+        const cx=Math.max(r.left,Math.min(pointerX,r.right));
+        const cy=Math.max(r.top,Math.min(pointerY,r.bottom));
+        const d=Math.hypot(pointerX-cx,pointerY-cy);
+        if(d<nearestDist){nearestDist=d;nearest=n;}
+      }
+      if(!nearest) return null;
+      const r=nearest.getBoundingClientRect();
+      const side=pointerX<r.left+r.width/2?'before':'after';
+      return {el:nearest,side,mode:'edge'};
+    }
+
+    // --- Swatch being dragged ---
+    const el=document.elementFromPoint(pointerX,pointerY);
+    let item=el&&el.closest?el.closest('.palette-swatch'):null;
+    if(item&&(!grid.contains(item)||item.dataset.id===dragState.id||item.classList.contains('spacer'))) item=null;
+
+    if(item&&item.classList.contains('separator')){
+      // Pointer on a separator — use the group on the correct side of it.
+      const r=item.getBoundingClientRect();
+      const sepAbove=pointerY<r.top+r.height/2
+        ?groupSeparatorAbove(r.top-1)   // above this sep → group above
+        :item;                            // below this sep → group below
+      return edgeInGroup(sepAbove,pointerX,pointerY)||{el:item,side:'after',mode:'edge'};
+    }
+
+    if(item){
+      // Pointer directly on a swatch.
+      const rect=item.getBoundingClientRect();
+      const previousSame=dragState.overId===item.dataset.id?dragState.side:null;
+      const mid=rect.left+rect.width/2;
+      const threshold=dragState.pointerType==='pen'?8:5;
+      const side=previousSame&&Math.abs(pointerX-mid)<threshold?previousSame:pointerX<mid?'before':'after';
+      return {el:item,side,mode:'edge'};
+    }
+
+    // Pointer in empty space — resolve to correct group by Y.
+    return edgeInGroup(groupSeparatorAbove(pointerY),pointerX,pointerY);
+  }
+  function paletteGridMetrics(grid){
+    const styles=getComputedStyle(grid);
+    const gap=parseFloat(styles.gap)||parseFloat(styles.rowGap)||parseFloat(styles.columnGap)||6;
+    return {gap};
+  }
+  function paletteGridColumnCount(grid,gap){
+    const styles=getComputedStyle(grid);
+    const padLeft=parseFloat(styles.paddingLeft)||0;
+    const padRight=parseFloat(styles.paddingRight)||0;
+    const width=grid.clientWidth-padLeft-padRight;
+    return Math.max(1,Math.floor((width+gap)/(swatchSize+gap)));
+  }
+  function paletteGroupsFromItems(items){
+    const groups=[];
+    let current={startIndex:0,items:[],separatorBefore:null,separatorAfter:null};
+    items.forEach(node=>{
+      const idx=swatchIndex(node.dataset.id);
+      if(node.classList.contains('separator')){
+        current.separatorAfter=node;
+        current.endIndex=idx;
+        groups.push(current);
+        current={startIndex:idx+1,items:[],separatorBefore:node,separatorAfter:null};
+      }else{
+        current.items.push(node);
+      }
+    });
+    current.endIndex=swatches.length;
+    groups.push(current);
+    return groups;
+  }
+  function paletteSlotTargetAt(grid,clientX,clientY,groupY){
+    const allItems=paletteDropItems(grid);
+    if(!allItems.length) return null;
+    const gap=paletteGridMetrics(grid).gap;
+    const styles=getComputedStyle(grid);
+    const padLeft=parseFloat(styles.paddingLeft)||0;
+    const padTop=parseFloat(styles.paddingTop)||0;
+    const gridRect=grid.getBoundingClientRect();
+    const columnCount=paletteGridColumnCount(grid,gap);
+    const groups=paletteGroupsFromItems(allItems);
+    const groupProbeY=Number.isFinite(groupY)?groupY:clientY;
+    let group=groups[0];
+    for(let i=0;i<groups.length;i++){
+      const sep=groups[i].separatorBefore;
+      if(!sep) continue;
+      const rect=sep.getBoundingClientRect();
+      const center=rect.top+rect.height/2;
+      const deadZone=dragState&&dragState.pointerType==='pen'?10:8;
+      if(groupProbeY>=center-deadZone&&groupProbeY<=center+deadZone){
+        const stable=Number.isInteger(dragState&&dragState.targetGroupStart)?groups.find(candidate=>candidate.startIndex===dragState.targetGroupStart):null;
+        if(stable){group=stable;break;}
+      }
+      if(groupProbeY<center){group=groups[Math.max(0,i-1)];break;}
+      group=groups[i];
+    }
+    const first=group.items[0];
+    let groupTop=gridRect.top+padTop;
+    if(first) groupTop=first.getBoundingClientRect().top;
+    else if(group.separatorBefore) groupTop=group.separatorBefore.getBoundingClientRect().bottom+gap;
+    const groupLeft=gridRect.left+padLeft;
+    const localY=clientY-groupTop;
+    if(localY<0) return null;
+    const cellHeight=swatchSize+gap;
+    const row=Math.max(0,Math.floor(localY/cellHeight));
+    const rowStart=row*columnCount;
+    const rowEnd=rowStart+columnCount;
+    const rowEntries=group.items.map((node,index)=>({node,index})).filter(entry=>entry.index>=rowStart&&entry.index<rowEnd);
+    const rowSwatches=rowEntries.filter(entry=>!entry.node.classList.contains('spacer'));
+    let localSlot=rowStart;
+    if(rowSwatches.length){
+      localSlot=rowSwatches[rowSwatches.length-1].index+1;
+      for(const entry of rowSwatches){
+        const rect=entry.node.getBoundingClientRect();
+        const mid=rect.left+rect.width/2;
+        if(clientX<mid){localSlot=entry.index;break;}
+      }
+    }else{
+      const localX=clientX-groupLeft;
+      const cellWidth=swatchSize+gap;
+      const column=Math.max(0,Math.min(columnCount-1,Math.floor(localX/cellWidth)));
+      localSlot=rowStart+column;
+    }
+    const column=Math.max(0,Math.min(columnCount-1,localSlot-rowStart));
+    const afterRowSwatch=rowSwatches.length&&localSlot===rowSwatches[rowSwatches.length-1].index+1;
+    const anchor=afterRowSwatch?rowSwatches[rowSwatches.length-1].node:null;
+    return {mode:'slot',group,startIndex:group.startIndex,endIndex:group.endIndex,row,column,localSlot,columnCount,gap,groupLeft,groupTop,afterRowSwatch,anchor};
+  }
+  function setPaletteDragTarget(target){
+    if(!dragState||!target) return;
+    if(target.mode==='slot'){
+      const changed=dragState.lineMode!=='slot'||dragState.targetGroupStart!==target.startIndex||dragState.targetGroupEnd!==target.endIndex||dragState.targetLocalSlot!==target.localSlot||dragState.targetRow!==target.row||dragState.targetColumn!==target.column;
+      if(!changed) return;
+      dragState.lineMode='slot';
+      dragState.overId=null;
+      dragState.side='after';
+      dragState.targetGroupStart=target.startIndex;
+      dragState.targetGroupEnd=target.endIndex;
+      dragState.targetLocalSlot=target.localSlot;
+      dragState.targetRow=target.row;
+      dragState.targetColumn=target.column;
+      showPaletteSlotBox(target);
+      return;
+    }
+    const item=target.el;
+    const side=target.side;
+    const nextMode=target.mode||'edge';
+    if(!item||!side) return;
+    if(dragState.overId===item.dataset.id&&dragState.side===side&&dragState.lineMode===nextMode) return;
+    dragState.overId=item.dataset.id;
+    dragState.side=side;
+    dragState.lineMode=nextMode;
+    dragState.targetGroupStart=null;
+    dragState.targetGroupEnd=null;
+    dragState.targetLocalSlot=null;
+    showPaletteDropLine(item,side,nextMode);
+  }
+  function showPaletteSlotBox(target){
+    const grid=document.getElementById('palette-grid');
+    if(!grid) return;
+    clearInsertIndicators();
+    let line=grid.querySelector('.palette-drop-line');
+    if(!line){
+      line=document.createElement('div');
+      line.className='palette-drop-line';
+      grid.appendChild(line);
+    }
+    const gridRect=grid.getBoundingClientRect();
+    line.classList.add('box');
+    line.classList.remove('horizontal','vertical');
+    line.style.left=(target.groupLeft+target.column*(swatchSize+target.gap)-gridRect.left+grid.scrollLeft)+'px';
+    line.style.top=(target.groupTop+target.row*(swatchSize+target.gap)-gridRect.top+grid.scrollTop)+'px';
+    line.style.width=swatchSize+'px';
+    line.style.height=swatchSize+'px';
+    showPaletteGroupBoundary(target);
+  }
+  function showPaletteGroupBoundary(target){
+    const grid=document.getElementById('palette-grid');
+    const separator=target&&target.group&&target.group.separatorBefore;
+    if(!grid||!separator) return;
+    let boundary=grid.querySelector('.palette-group-drop-line');
+    if(!boundary){
+      boundary=document.createElement('div');
+      boundary.className='palette-group-drop-line';
+      grid.appendChild(boundary);
+    }
+    const gridRect=grid.getBoundingClientRect();
+    const rect=separator.getBoundingClientRect();
+    const y=rect.top+rect.height/2-gridRect.top+grid.scrollTop;
+    boundary.style.left='0px';
+    boundary.style.top=(y-1)+'px';
+    boundary.style.width=grid.clientWidth+'px';
+    boundary.style.height='2px';
+  }
+  function showPaletteDropLine(item,side,mode){
+    const grid=document.getElementById('palette-grid');
+    if(!grid||!item) return;
+    clearInsertIndicators();
+    let line=grid.querySelector('.palette-drop-line');
+    if(!line){
+      line=document.createElement('div');
+      line.className='palette-drop-line';
+      grid.appendChild(line);
+    }
+    const gridRect=grid.getBoundingClientRect();
+    const rect=item.getBoundingClientRect();
+    const scrollTop=grid.scrollTop;
+    const scrollLeft=grid.scrollLeft;
+    if(mode==='bottom'){
+      const gap=paletteGridMetrics(grid).gap;
+      const styles=getComputedStyle(grid);
+      const padLeft=parseFloat(styles.paddingLeft)||0;
+      const gridLeft=gridRect.left+padLeft;
+      const nextX=rect.right+gap+swatchSize<=gridRect.right?rect.right+gap:gridLeft;
+      const nextY=nextX===gridLeft?rect.bottom+gap:rect.top;
+      line.classList.add('box');
+      line.classList.remove('horizontal','vertical');
+      line.style.left=(nextX-gridRect.left+scrollLeft)+'px';
+      line.style.top=(nextY-gridRect.top+scrollTop)+'px';
+      line.style.width=swatchSize+'px';
+      line.style.height=swatchSize+'px';
+      return;
+    }
+    if(item.classList.contains('separator')){
+      // Anchor is a separator (empty group below it) — show line at left edge below the separator.
+      const gap=paletteGridMetrics(grid).gap;
+      const styles=getComputedStyle(grid);
+      const padLeft=parseFloat(styles.paddingLeft)||0;
+      line.classList.add('vertical');
+      line.classList.remove('horizontal','box');
+      line.style.left=padLeft+'px';
+      line.style.top=(rect.bottom-gridRect.top+scrollTop+gap/2)+'px';
+      line.style.width='2px';
+      line.style.height=swatchSize+'px';
+      return;
+    }
+    const neighbor=side==='before'?previousPaletteItem(item):nextPaletteItem(item);
+    let edge;
+    if(neighbor&&!neighbor.classList.contains('separator')){
+      const nr=neighbor.getBoundingClientRect();
+      const sameRow=Math.abs((nr.top+nr.bottom)/2-(rect.top+rect.bottom)/2)<Math.max(rect.height,nr.height)/2;
+      edge=sameRow
+        ?(side==='before'?(rect.left+nr.right)/2:(rect.right+nr.left)/2)
+        :(side==='before'?rect.left:rect.right);
+    }else{
+      edge=side==='before'?rect.left:rect.right;
+    }
+    line.classList.add('vertical');
+    line.classList.remove('horizontal');
+    line.style.left=(edge-gridRect.left+scrollLeft-1)+'px';
+    line.style.top=(rect.top-gridRect.top+scrollTop-2)+'px';
+    line.style.width='2px';
+    line.style.height=(rect.height+4)+'px';
+  }
+  function previousPaletteItem(item){
+    let node=item.previousElementSibling;
+    while(node&&(node.classList.contains('dragging')||node.classList.contains('palette-drop-line')||node.classList.contains('palette-group-drop-line')||node.classList.contains('palette-drop-placeholder'))) node=node.previousElementSibling;
+    return node;
+  }
+  function nextPaletteItem(item){
+    let node=item.nextElementSibling;
+    while(node&&(node.classList.contains('dragging')||node.classList.contains('palette-drop-line')||node.classList.contains('palette-group-drop-line')||node.classList.contains('palette-drop-placeholder'))) node=node.nextElementSibling;
+    return node;
   }
   function clearInsertIndicators(){
     document.querySelectorAll('.palette-swatch.insert-before,.palette-swatch.insert-after').forEach(node=>node.classList.remove('insert-before','insert-after'));
+    const grid=document.getElementById('palette-grid');
+    if(grid){
+      grid.classList.remove('empty-drop-target');
+      const placeholder=grid.querySelector('.palette-drop-placeholder');
+      if(placeholder) placeholder.remove();
+      const line=grid.querySelector('.palette-drop-line');
+      if(line) line.remove();
+      const groupLine=grid.querySelector('.palette-group-drop-line');
+      if(groupLine) groupLine.remove();
+    }
+  }
+  function reorderSwatchToSlot(id,groupStart,groupEnd,localSlot){
+    const from=swatchIndex(id);
+    if(from<0) return;
+    const [moved]=swatches.splice(from,1);
+    let start=groupStart;
+    let end=groupEnd;
+    if(from<start) start--;
+    if(from<end) end--;
+    start=Math.max(0,Math.min(start,swatches.length));
+    end=Math.max(start,Math.min(end,swatches.length));
+    let insertIndex=start+localSlot;
+    while(insertIndex>end){
+      swatches.splice(end,0,makeSpacer());
+      end++;
+    }
+    insertIndex=Math.max(start,Math.min(insertIndex,end));
+    swatches.splice(insertIndex,0,moved);
+    selectedId=id;
+    rememberSelection();
+    render();
+    persist();
+  }
+  function reorderSwatchToIndex(id,targetIndex){
+    const from=swatchIndex(id);
+    if(from<0) return;
+    let to=Math.max(0,Math.min(targetIndex,swatches.length));
+    if(to>from) to--;
+    if(to===from){
+      selectedId=id;
+      rememberSelection();
+      render();
+      persist();
+      return;
+    }
+    const [moved]=swatches.splice(from,1);
+    swatches.splice(to,0,moved);
+    selectedId=id;
+    rememberSelection();
+    render();
+    persist();
   }
   function reorderSwatch(id,overId,side){
     const from=swatchIndex(id);
@@ -1046,14 +1525,15 @@
     if(!panel||typeof ResizeObserver==='undefined'||resizeObserver) return;
     resizeObserver=new ResizeObserver(()=>{
       persistView();
-      requestAnimationFrame(()=>{ensureSelectedVisible();requestSideMenuPosition();requestPaletteDropdownPosition();});
+      requestAnimationFrame(()=>{ensureSelectedVisible();requestSideMenuPosition();requestPaletteDropdownPosition();checkGridOverflow();});
     });
     resizeObserver.observe(panel);
   }
   function bind(){
     const add=document.getElementById('palette-add-color');
     const remove=document.getElementById('palette-remove-color');
-    const clear=document.getElementById('palette-clear');
+    const applyColor=document.getElementById('palette-apply-color');
+    const addSeparatorBtn=document.getElementById('palette-add-separator');
     const newBtn=document.getElementById('palette-new');
     const renameBtn=document.getElementById('palette-rename');
     const duplicateBtn=document.getElementById('palette-duplicate');
@@ -1089,9 +1569,10 @@
     const panel=document.getElementById('palette-panel');
     const closeBtn=panel?panel.querySelector('.fp-close'):null;
     if(closeBtn) closeBtn.addEventListener('click',()=>setTimeout(closeSideMenu,0));
-    if(add) add.addEventListener('click',addCurrent);
+    if(add) add.addEventListener('click',addTransparentSwatch);
+    if(applyColor) applyColor.addEventListener('click',applyCurrentColorToSelected);
+    if(addSeparatorBtn) addSeparatorBtn.addEventListener('click',addSeparator);
     if(remove) remove.addEventListener('click',deleteSelected);
-    if(clear) clear.addEventListener('click',clearAll);
     const sizeSlider=document.getElementById('palette-size-slider');
     if(sizeSlider&&!sizeSlider.dataset.bound){
       sizeSlider.addEventListener('input',()=>setSwatchSize(sizeSlider.value,true));

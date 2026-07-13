@@ -409,9 +409,10 @@
               <button id="palette-settings" class="palette-settings-btn" title="Palette settings" aria-label="Palette settings" aria-expanded="false">&#9881;</button>
             </div>
             <div class="palette-toolbar">
-              <button id="palette-add-color" title="Add current foreground color">+ Add Color</button>
-              <button id="palette-remove-color" title="Remove selected color">Remove Color</button>
-              <button id="palette-clear" title="Clear palette">Clear Palette</button>
+              <button id="palette-add-color" class="palette-icon-btn" title="Add transparent swatch" aria-label="Add transparent swatch">+</button>
+              <button id="palette-apply-color" class="palette-icon-btn palette-apply-btn" title="Apply current color to selected swatch" aria-label="Apply current color to selected swatch"><span></span></button>
+              <button id="palette-add-separator" class="palette-icon-btn palette-separator-btn" title="Add separator" aria-label="Add separator"><span></span></button>
+              <button id="palette-remove-color" class="palette-icon-btn" title="Remove selected swatch" aria-label="Remove selected swatch">&minus;</button>
             </div>
             <div class="palette-label">Palette grid</div>
             <div id="palette-grid" tabindex="0" aria-label="Palette grid"></div>
