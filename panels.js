@@ -326,6 +326,7 @@ const FloatPanels=(function(){
   const PANEL_CFG={
     tools:        {minSize:38,  maxSize:400, floatResizable:true,  contentFitHeight:true},
     'brush-presets':{minSize:150,maxSize:500, floatResizable:true},
+    palette:      {minSize:160, maxSize:500, floatResizable:true},
     layers:       {minSize:120, maxSize:500, floatResizable:true},
     color:        {minSize:120, maxSize:500, floatResizable:false},
     'keyframe-switcher':{minSize:106,maxSize:500,floatResizable:true,get minHeight(){const p=document.getElementById('keyframe-switcher-panel');return p&&parseFloat(p.style.minHeight)||120;}},
@@ -898,12 +899,14 @@ const FloatPanels=(function(){
   const DEFAULT_LAYOUT={
     tools:{dock:'left',size:40},
     'brush-presets':{dock:'left',size:220},
+    palette:{x:590,y:16,w:220,h:320},
     layers:{dock:'right',size:200},
     color:{x:130,y:16,w:200,h:240},
   };
   const DEFAULT_VISIBILITY={
     tools:true,
     'brush-presets':true,
+    palette:false,
     layers:true,
     color:false,
     'keyframe-switcher':false,

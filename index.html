@@ -105,6 +105,7 @@
     <div class="dropdown" id="dd-window">
       <div class="dd-item" id="dd-show-tools"><span class="dd-check" id="chk-tools">✓</span>Tools Panel</div>
       <div class="dd-item" id="dd-show-brush-presets"><span class="dd-check" id="chk-brush-presets">✓</span>Brush Presets</div>
+      <div class="dd-item" id="dd-show-palette"><span class="dd-check" id="chk-palette"></span>Palette</div>
       <div class="dd-item" id="dd-show-colorpanel"><span class="dd-check" id="chk-colorpanel"></span>Color Panel</div>
       <div class="dd-item" id="dd-show-layers"><span class="dd-check" id="chk-layers">✓</span>Layers Panel</div>
       <div class="dd-item" id="dd-show-timeline"><span class="dd-check" id="chk-timeline">✓</span>Timeline</div>
@@ -395,6 +396,25 @@
       </div>
     </div>
 
+
+    <!-- PALETTE PANEL -->
+    <div id="palette-panel" class="float-panel fp-hidden" data-panel="palette" style="top:16px;left:590px;width:220px;height:320px;">
+      <div class="fp-tabbar"></div>
+      <div class="fp-titlebar"><span class="fp-grip">&#10247;</span><span class="fp-name">Palette</span><span class="fp-close" title="Close panel">&times;</span></div>
+      <div class="fp-body-wrap">
+        <div class="fp-body active" data-body="palette">
+          <div id="palette-body" tabindex="0">
+            <div class="palette-toolbar">
+              <button id="palette-add-color" title="Add current foreground color">+ Add Color</button>
+              <button id="palette-remove-color" title="Remove selected color">Remove Color</button>
+              <button id="palette-clear" title="Clear palette">Clear Palette</button>
+            </div>
+            <div class="palette-label">Palette grid</div>
+            <div id="palette-grid" tabindex="0" aria-label="Palette grid"></div>
+          </div>
+        </div>
+      </div>
+    </div>
     <!-- LAYERS PANEL -->
     <div id="right-panel" class="float-panel dock-right docked" data-panel="layers" style="width:200px;right:0;">
       <div class="fp-tabbar" style="display:none;"></div>
@@ -1367,6 +1387,7 @@
 <script src="brush-engine.js"></script>
 <script src="panels.js"></script>
 <script src="tools-color.js"></script>
+<script src="palette.js"></script>
 <script src="brush-presets.js"></script>
 <script src="timeline.js"></script>
 <script src="layers.js"></script>

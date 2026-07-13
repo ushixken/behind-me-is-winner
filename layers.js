@@ -404,6 +404,7 @@ document.getElementById('modal-new-project-ok').onclick=()=>{
   // Explicitly clear activeC — if canvas dimensions are unchanged, resizing
   // in initCanvas does NOT clear it, so old drawing would bleed through.
   ctx.clearRect(0,0,CW,CH);
+  if(window.PaletteDocker&&typeof window.PaletteDocker.reset==='function') window.PaletteDocker.reset();
   renderLayerPanel();renderTimeline();loadFrame(0,0);
   // Re-center the canvas for the new project
   fitCanvasToView();
@@ -451,6 +452,7 @@ document.getElementById('dd-clear').onclick=()=>{clearCurrentFrame();closeAllDro
 function updateWindowChecks(){
   document.getElementById('chk-tools').textContent=FloatPanels.isVisible('tools')?'✓':'';
   document.getElementById('chk-brush-presets').textContent=FloatPanels.isVisible('brush-presets')?'✓':'';
+  document.getElementById('chk-palette').textContent=FloatPanels.isVisible('palette')?'\u2713':'';
   document.getElementById('chk-colorpanel').textContent=FloatPanels.isVisible('color')?'✓':'';
   document.getElementById('chk-layers').textContent=FloatPanels.isVisible('layers')?'✓':'';
   document.getElementById('chk-timeline').textContent=showTimeline?'✓':'';
@@ -470,6 +472,10 @@ document.getElementById('dd-show-tools').onclick=()=>{
 };
 document.getElementById('dd-show-brush-presets').onclick=()=>{
   FloatPanels.setVisible('brush-presets',!FloatPanels.isVisible('brush-presets'));
+  updateWindowChecks();closeAllDropdowns();
+};
+document.getElementById('dd-show-palette').onclick=()=>{
+  FloatPanels.setVisible('palette',!FloatPanels.isVisible('palette'));
   updateWindowChecks();closeAllDropdowns();
 };
 document.getElementById('dd-show-colorpanel').onclick=()=>{

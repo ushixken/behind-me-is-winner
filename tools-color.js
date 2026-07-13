@@ -542,6 +542,16 @@ function syncColorPanelInputs(){
   setFromHex(currentEditColor());
   syncColorPanelSwatches();
 }
+window.setForegroundColorFromPalette=function(hex,openPicker){
+  colorTarget='fg';
+  setFromHex(hex);
+  if(openPicker){
+    const panel=document.getElementById('color-panel');
+    if(typeof FloatPanels!=='undefined'&&FloatPanels.setVisible) FloatPanels.setVisible('color',true);
+    if(panel&&typeof FloatPanels!=='undefined'&&FloatPanels.bringToFront) FloatPanels.bringToFront(panel);
+  }
+  if(window.PaletteDocker&&typeof window.PaletteDocker.renderCurrentColors==='function') window.PaletteDocker.renderCurrentColors();
+};
 
 // ── Slider / number input interaction ──
 function onSliderChange(){
