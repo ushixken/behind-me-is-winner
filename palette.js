@@ -34,16 +34,28 @@
     hex=normalizeHex(hex);
     return {r:parseInt(hex.slice(1,3),16),g:parseInt(hex.slice(3,5),16),b:parseInt(hex.slice(5,7),16),a:1};
   }
-  function makeId(prefix){return prefix+'_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,8);}
-  function makeSwatch(hex,id){
-    const safeHex=normalizeHex(hex);
-    return {id:id||makeId('pal'),hex:safeHex,rgba:hexToRgba(safeHex)};
+  function byteToHex(value){
+    const n=Math.max(0,Math.min(255,Math.round(Number(value)||0)));
+    return n.toString(16).padStart(2,'0');
   }
-  function cloneSwatch(swatch){return makeSwatch(swatch.hex);}
+  function rgbToHex(r,g,b){return '#'+byteToHex(r)+byteToHex(g)+byteToHex(b);}
+  function rgbaArray(hex){
+    const rgba=hexToRgba(hex);
+    return [rgba.r,rgba.g,rgba.b,Math.round((Number.isFinite(+rgba.a)?rgba.a:1)*255)];
+  }
+  function makeId(prefix){return prefix+'_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,8);}
+  function makeSwatch(hex,id,name){
+    const safeHex=normalizeHex(hex);
+    const swatch={id:id||makeId('pal'),hex:safeHex,rgba:hexToRgba(safeHex)};
+    const cleanName=String(name||'').trim();
+    if(cleanName) swatch.name=cleanName;
+    return swatch;
+  }
+  function cloneSwatch(swatch){return makeSwatch(swatch.hex,null,swatch&&swatch.name);}
   function defaultSwatches(){return defaultHexes.map(hex=>makeSwatch(hex));}
   function sanitizeSwatches(input,allowEmpty){
     const list=Array.isArray(input)?input:[];
-    const clean=list.map(item=>makeSwatch(item&&item.hex,item&&item.id)).filter(Boolean);
+    const clean=list.map(item=>makeSwatch(item&&item.hex,item&&item.id,item&&item.name)).filter(Boolean);
     return clean.length||allowEmpty?clean:defaultSwatches();
   }
   function nextPaletteName(){
@@ -60,7 +72,17 @@
     let candidate=root+' '+n;
     while(names.has(candidate.toLowerCase())) candidate=root+' '+(++n);
     return candidate;
-  }  function uniqueCopyName(name){
+  }
+  function uniqueImportedPaletteName(name){
+    const root=String(name||'Palette').trim()||'Palette';
+    const names=new Set(palettes.map(p=>String(p.name||'').toLowerCase()));
+    if(!names.has(root.toLowerCase())) return root;
+    let n=2;
+    let candidate=root+' ('+n+')';
+    while(names.has(candidate.toLowerCase())) candidate=root+' ('+(++n)+')';
+    return candidate;
+  }
+  function uniqueCopyName(name){
     const root=String(name||'Palette').trim()||'Palette';
     let candidate=root+' Copy';
     let n=2;
@@ -603,6 +625,156 @@
     render();
     persist();
   }
+  function showPaletteWarning(message){
+    const box=document.getElementById('palette-import-warning');
+    if(!box) return;
+    box.textContent=message||'';
+    box.classList.toggle('hidden',!message);
+    requestSideMenuPosition();
+  }
+  function hidePaletteWarning(){showPaletteWarning('');}
+  function safeFilename(name,ext){
+    const base=String(name||'palette').trim().replace(/[\\/:*?"<>|]+/g,'-').replace(/\s+/g,' ').slice(0,64)||'palette';
+    return base+'.'+ext;
+  }
+  function exportSwatchData(swatch){
+    return {id:swatch.id,hex:normalizeHex(swatch.hex).toUpperCase(),rgba:rgbaArray(swatch.hex),name:swatch.name||undefined};
+  }
+  function downloadText(filename,text,type){
+    const blob=new Blob([text],{type:type||'text/plain'});
+    const url=URL.createObjectURL(blob);
+    const link=document.createElement('a');
+    link.href=url;
+    link.download=filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),0);
+  }
+  function activePaletteExportData(){
+    const active=activePalette();
+    if(!active) return null;
+    return {version:1,name:active.name,swatches:(active.swatches||[]).map(exportSwatchData)};
+  }
+  function allPalettesExportData(){
+    rememberSelection();
+    return {version:1,palettes:palettes.map(p=>({id:p.id,name:p.name,swatches:(p.swatches||[]).map(exportSwatchData),selectedId:p.selectedId||null})),activePaletteId};
+  }
+  function exportActivePaletteJson(){
+    const active=activePalette();
+    const data=activePaletteExportData();
+    if(!active||!data) return;
+    downloadText(safeFilename(active.name,'json'),JSON.stringify(data,null,2),'application/json');
+    closeSideMenu();
+  }
+  function exportAllPalettesJson(){
+    downloadText('palettes.json',JSON.stringify(allPalettesExportData(),null,2),'application/json');
+    closeSideMenu();
+  }
+  function exportActivePaletteGpl(){
+    const active=activePalette();
+    if(!active) return;
+    const lines=['GIMP Palette','Name: '+active.name,'Columns: 8','#'];
+    (active.swatches||[]).forEach(s=>{
+      const c=hexToRgba(s.hex);
+      const label=s.name?(' '+s.name):'';
+      lines.push(String(c.r).padStart(3,' ')+' '+String(c.g).padStart(3,' ')+' '+String(c.b).padStart(3,' ')+label);
+    });
+    downloadText(safeFilename(active.name,'gpl'),lines.join('\n')+'\n','text/plain');
+    closeSideMenu();
+  }
+  function swatchFromImport(item){
+    if(!item||typeof item!=='object') return null;
+    let hex=isValidHex(item.hex)?normalizeHex(item.hex):null;
+    if(!hex&&Array.isArray(item.rgba)&&item.rgba.length>=3) hex=rgbToHex(item.rgba[0],item.rgba[1],item.rgba[2]);
+    if(!hex) return null;
+    return makeSwatch(hex,null,item.name);
+  }
+  function paletteFromImport(name,swatchItems,selectedImportId){
+    const source=Array.isArray(swatchItems)?swatchItems:[];
+    const swatchList=[];
+    let selectedIndex=-1;
+    source.forEach((item)=>{
+      const swatch=swatchFromImport(item);
+      if(!swatch) return;
+      if(item&&item.id===selectedImportId) selectedIndex=swatchList.length;
+      swatchList.push(swatch);
+    });
+    if(!swatchList.length) return null;
+    const selected=selectedIndex>=0&&swatchList[selectedIndex]?swatchList[selectedIndex].id:null;
+    return makePalette(uniqueImportedPaletteName(name),swatchList,null,selected,true);
+  }
+  function parsePaletteJson(text){
+    let data;
+    try{data=JSON.parse(text);}catch(e){throw new Error('Invalid JSON palette file.');}
+    if(!data||typeof data!=='object') throw new Error('Invalid palette file.');
+    if(Array.isArray(data.palettes)){
+      const imported=[];
+      data.palettes.forEach((p,i)=>{
+        const palette=paletteFromImport(p&&p.name||('Palette '+(i+1)),p&&p.swatches,p&&p.selectedId);
+        if(!palette) return;
+        if(p&&p.id===data.activePaletteId) imported.activeId=palette.id;
+        imported.push(palette);
+      });
+      if(!imported.length) throw new Error('No colors were found in this palette file.');
+      if(!imported.activeId) imported.activeId=imported[0].id;
+      return imported;
+    }
+    const one=paletteFromImport(data.name||'Imported Palette',data.swatches,data.selectedId);
+    if(!one) throw new Error('No colors were found in this palette file.');
+    return [one];
+  }
+  function parseGpl(text){
+    const lines=String(text||'').split(/\r?\n/);
+    let name='Imported GPL Palette';
+    const swatchList=[];
+    lines.forEach(line=>{
+      const trimmed=line.trim();
+      if(!trimmed||trimmed[0]==='#'||trimmed==='GIMP Palette') return;
+      const nameMatch=trimmed.match(/^Name:\s*(.+)$/i);
+      if(nameMatch){name=nameMatch[1].trim()||name;return;}
+      if(/^[A-Za-z]+:/.test(trimmed)) return;
+      const match=trimmed.match(/^(\d{1,3})\s+(\d{1,3})\s+(\d{1,3})(?:\s+(.+))?$/);
+      if(!match) return;
+      const r=+match[1],g=+match[2],b=+match[3];
+      if([r,g,b].some(v=>!Number.isFinite(v)||v<0||v>255)) return;
+      swatchList.push(makeSwatch(rgbToHex(r,g,b),null,match[4]||''));
+    });
+    if(!swatchList.length) throw new Error('No GPL colors were found.');
+    return [makePalette(uniqueImportedPaletteName(name),swatchList,null,null,true)];
+  }
+  function importPalettes(imported){
+    if(!Array.isArray(imported)||!imported.length) throw new Error('No palettes were imported.');
+    rememberSelection();
+    palettes=palettes.concat(imported);
+    activePaletteId=imported.activeId&&imported.some(p=>p.id===imported.activeId)?imported.activeId:imported[0].id;
+    restoreScrollPending=true;
+    hidePaletteWarning();
+    render();
+    persist();
+    closeSideMenu();
+  }
+  function handleImportFile(file){
+    if(!file) return;
+    const reader=new FileReader();
+    reader.onload=()=>{
+      try{
+        const text=String(reader.result||'');
+        const imported=/\.gpl$/i.test(file.name)?parseGpl(text):parsePaletteJson(text);
+        importPalettes(imported);
+      }catch(e){showPaletteWarning(e&&e.message?e.message:'Invalid palette file.');}
+    };
+    reader.onerror=()=>showPaletteWarning('Could not read that palette file.');
+    reader.readAsText(file);
+  }
+  function chooseImportFile(){
+    hidePaletteInlinePanels();
+    hidePaletteWarning();
+    const input=document.getElementById('palette-import-file');
+    if(!input) return;
+    input.value='';
+    input.click();
+  }
   function deletePalette(){showDeleteConfirm();}
   function handleGridContextMenu(event){
     const swatchEl=event.target&&event.target.closest?event.target.closest('.palette-swatch'):null;
@@ -885,6 +1057,11 @@
     const newBtn=document.getElementById('palette-new');
     const renameBtn=document.getElementById('palette-rename');
     const duplicateBtn=document.getElementById('palette-duplicate');
+    const importBtn=document.getElementById('palette-import');
+    const exportActiveBtn=document.getElementById('palette-export-active');
+    const exportActiveGplBtn=document.getElementById('palette-export-active-gpl');
+    const exportAllBtn=document.getElementById('palette-export-all');
+    const importFile=document.getElementById('palette-import-file');
     const deleteBtn=document.getElementById('palette-delete');
     const renameInput=document.getElementById('palette-rename-inline-input');
     const renameOk=document.getElementById('palette-rename-inline-ok');
@@ -898,6 +1075,11 @@
     if(newBtn) newBtn.addEventListener('click',()=>{hidePaletteInlinePanels();newPalette();closeSideMenu();});
     if(renameBtn) renameBtn.addEventListener('click',renamePalette);
     if(duplicateBtn) duplicateBtn.addEventListener('click',()=>{hidePaletteInlinePanels();duplicatePalette();closeSideMenu();});
+    if(importBtn) importBtn.addEventListener('click',chooseImportFile);
+    if(exportActiveBtn) exportActiveBtn.addEventListener('click',exportActivePaletteJson);
+    if(exportActiveGplBtn) exportActiveGplBtn.addEventListener('click',exportActivePaletteGpl);
+    if(exportAllBtn) exportAllBtn.addEventListener('click',exportAllPalettesJson);
+    if(importFile) importFile.addEventListener('change',()=>handleImportFile(importFile.files&&importFile.files[0]));
     if(deleteBtn) deleteBtn.addEventListener('click',deletePalette);
     if(renameOk) renameOk.addEventListener('click',applyInlineRename);
     if(renameCancel) renameCancel.addEventListener('click',()=>{hidePaletteInlinePanels();positionSideMenu();});

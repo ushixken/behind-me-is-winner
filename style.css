@@ -1428,7 +1428,7 @@ input.size-val-input{
 .palette-active-arrow{flex:0 0 auto;color:var(--text2);font-size:9px;line-height:1;}
 .palette-settings-btn{flex:0 0 26px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;padding:0;border:1px solid var(--border2);border-radius:5px;background:var(--bg3);color:var(--text2);font-size:14px;line-height:1;cursor:pointer;}
 .palette-settings-btn:hover,.palette-settings-btn.active{background:var(--bg4);border-color:var(--accent);color:var(--accent);}
-.palette-side-menu{position:fixed;z-index:10060;width:132px;pointer-events:auto;box-sizing:border-box;padding:4px;background:var(--bg2);border:1px solid var(--border2);border-radius:0 6px 6px 0;box-shadow:0 10px 26px rgba(0,0,0,.42);display:flex;flex-direction:column;gap:0;}
+.palette-side-menu{position:fixed;z-index:10060;width:172px;pointer-events:auto;box-sizing:border-box;padding:4px;background:var(--bg2);border:1px solid var(--border2);border-radius:0 6px 6px 0;box-shadow:0 10px 26px rgba(0,0,0,.42);display:flex;flex-direction:column;gap:0;}
 .palette-side-menu.hidden{display:none;}
 .palette-side-menu.left{border-radius:6px 0 0 6px;}
 .palette-dropdown{position:fixed;z-index:10060;width:180px;pointer-events:auto;box-sizing:border-box;padding:4px;background:var(--bg2);border:1px solid var(--border2);border-radius:6px;box-shadow:0 10px 26px rgba(0,0,0,.42);display:flex;flex-direction:column;gap:2px;max-height:min(320px,calc(100vh - 12px));overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;scrollbar-color:var(--border2) transparent;}
@@ -1454,7 +1454,8 @@ input.size-val-input{
 .palette-list-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 
 .palette-inline-editor,.palette-delete-confirm{display:flex;flex-direction:column;gap:6px;margin:4px;padding:6px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);}
-.palette-inline-editor.hidden,.palette-delete-confirm.hidden{display:none;}
+.palette-import-warning{margin:4px;padding:6px;border:1px solid rgba(226,75,74,0.38);border-radius:6px;background:rgba(226,75,74,0.12);color:var(--red);font-size:11px;line-height:1.35;}
+.palette-inline-editor.hidden,.palette-delete-confirm.hidden,.palette-import-warning.hidden{display:none;}
 .palette-inline-editor input{width:100%;box-sizing:border-box;padding:5px 7px;border:1px solid var(--border2);border-radius:5px;background:var(--bg2);color:var(--text);font-size:11px;outline:none;}
 .palette-inline-editor input:focus{border-color:var(--accent);}
 .palette-delete-confirm{font-size:11px;color:var(--text2);line-height:1.35;}
