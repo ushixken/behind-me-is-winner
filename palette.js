@@ -47,6 +47,68 @@
     const rgba=hexToRgba(hex);
     return [rgba.r,rgba.g,rgba.b,Math.round((Number.isFinite(+rgba.a)?rgba.a:1)*255)];
   }
+  function rgbaToHex(r,g,b,a){
+    const alpha=Number.isFinite(+a)?Math.max(0,Math.min(255,Math.round(+a))):255;
+    const base=rgbToHex(r,g,b);
+    return alpha<255?base+byteToHex(alpha):base;
+  }
+  function rgbToHsv(r,g,b){
+    r=Math.max(0,Math.min(255,+r||0))/255;
+    g=Math.max(0,Math.min(255,+g||0))/255;
+    b=Math.max(0,Math.min(255,+b||0))/255;
+    const max=Math.max(r,g,b);
+    const min=Math.min(r,g,b);
+    const delta=max-min;
+    let h=0;
+    if(delta){
+      if(max===r) h=((g-b)/delta)%6;
+      else if(max===g) h=(b-r)/delta+2;
+      else h=(r-g)/delta+4;
+      h*=60;
+      if(h<0) h+=360;
+    }
+    const s=max===0?0:delta/max;
+    return {h,s,v:max};
+  }
+  function hsvToRgb(h,s,v){
+    h=((+h||0)%360+360)%360;
+    s=Math.max(0,Math.min(1,+s||0));
+    v=Math.max(0,Math.min(1,+v||0));
+    const c=v*s;
+    const x=c*(1-Math.abs((h/60)%2-1));
+    const m=v-c;
+    let r=0,g=0,b=0;
+    if(h<60){r=c;g=x;}else if(h<120){r=x;g=c;}else if(h<180){g=c;b=x;}else if(h<240){g=x;b=c;}else if(h<300){r=x;b=c;}else{r=c;b=x;}
+    return {r:Math.round((r+m)*255),g:Math.round((g+m)*255),b:Math.round((b+m)*255)};
+  }
+  function rgbToHsl(r,g,b){
+    r=Math.max(0,Math.min(255,+r||0))/255;
+    g=Math.max(0,Math.min(255,+g||0))/255;
+    b=Math.max(0,Math.min(255,+b||0))/255;
+    const max=Math.max(r,g,b);
+    const min=Math.min(r,g,b);
+    const l=(max+min)/2;
+    let h=0,s=0;
+    if(max!==min){
+      const d=max-min;
+      s=l>.5?d/(2-max-min):d/(max+min);
+      if(max===r) h=(g-b)/d+(g<b?6:0);
+      else if(max===g) h=(b-r)/d+2;
+      else h=(r-g)/d+4;
+      h*=60;
+    }
+    return {h,s,l};
+  }
+  function hslToRgb(h,s,l){
+    h=((+h||0)%360+360)%360/360;
+    s=Math.max(0,Math.min(1,+s||0));
+    l=Math.max(0,Math.min(1,+l||0));
+    if(s===0){const v=Math.round(l*255);return {r:v,g:v,b:v};}
+    const hue2rgb=(p,q,t)=>{if(t<0)t+=1;if(t>1)t-=1;if(t<1/6)return p+(q-p)*6*t;if(t<1/2)return q;if(t<2/3)return p+(q-p)*(2/3-t)*6;return p;};
+    const q=l<.5?l*(1+s):l+s-l*s;
+    const p=2*l-q;
+    return {r:Math.round(hue2rgb(p,q,h+1/3)*255),g:Math.round(hue2rgb(p,q,h)*255),b:Math.round(hue2rgb(p,q,h-1/3)*255)};
+  }
   function displayHex(hex){return normalizeHex(hex).slice(0,7);}
   function currentForegroundHex(){return normalizeHex(typeof color!=='undefined'?color:'#000000').slice(0,7);}
   function makeId(prefix){return prefix+'_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,8);}
@@ -898,16 +960,17 @@
     persist();
     showContextMenu(event.clientX,event.clientY,swatch);
   }
-  function menuItem(label,fn,danger){
+  function menuItem(label,fn,danger,disabled){
     if(label==='-'){
       const sep=document.createElement('div');
       sep.className='ctx-sep';
       return sep;
     }
     const item=document.createElement('div');
-    item.className='ctx-item'+(danger?' danger':'');
+    item.className='ctx-item'+(danger?' danger':'')+(disabled?' disabled':'');
     item.textContent=label;
-    item.addEventListener('click',()=>{hideContextMenu();fn();});
+    if(disabled) item.setAttribute('aria-disabled','true');
+    else item.addEventListener('click',()=>{hideContextMenu();fn();});
     return item;
   }
   function showContextMenu(x,y,item){
@@ -923,7 +986,7 @@
       menuItem('Move to Beginning',()=>moveItemToEdge(item,'start')),
       menuItem('Move to End',()=>moveItemToEdge(item,'end'))
     ]:[
-      menuItem('Edit Color',()=>editSwatch(item)),
+      menuItem('Edit Color',()=>editSwatch(item),false,!!item.locked),
       menuItem('Duplicate Color',()=>duplicateSwatch(item)),
       menuItem('Delete Color',()=>deleteSwatch(item),true),
       menuItem('-'),
@@ -941,36 +1004,141 @@
   }
   function hideContextMenu(){const menu=document.getElementById('palette-context-menu');if(menu) menu.remove();}
   function editSwatch(swatch){
-    if(!isSwatch(swatch)) return;
-    const originalBrush=typeof color!=='undefined'?color:'#000000';
+    if(!isSwatch(swatch)||swatch.locked) return;
     selectedId=swatch.id;
     rememberSelection();
-    setForeground(swatch.hex,true);
-    render();
-    persist();
-    showEditConfirmBar(swatch,originalBrush);
+    syncSelectionClasses();
+    showEditColorModal(swatch);
   }
-  function showEditConfirmBar(swatch,originalBrush){
+  function showEditColorModal(swatch){
     hideEditConfirmBar();
-    const panel=document.getElementById('color-panel');
-    if(!panel) return;
-    const bar=document.createElement('div');
-    bar.id='palette-edit-confirm';
-    const label=document.createElement('span');
-    label.textContent='Edit palette color';
-    const cancel=document.createElement('button');
-    cancel.type='button';
-    cancel.textContent='Cancel';
-    const apply=document.createElement('button');
-    apply.type='button';
-    apply.textContent='Apply';
-    apply.className='primary';
-    cancel.addEventListener('click',()=>{setForeground(originalBrush,false);hideEditConfirmBar();});
-    apply.addEventListener('click',()=>{updateSwatchColor(swatch,typeof color!=='undefined'?color:swatch.hex);hideEditConfirmBar();});
-    bar.append(label,cancel,apply);
-    panel.appendChild(bar);
-  }
-  function hideEditConfirmBar(){const bar=document.getElementById('palette-edit-confirm');if(bar) bar.remove();}
+    const existing=document.getElementById('palette-color-modal');
+    if(existing) existing.remove();
+    const original=normalizeHex(swatch.hex);
+    const start=hexToRgba(original);
+    let alpha=Math.round((Number.isFinite(+start.a)?start.a:1)*255);
+    let hsv=rgbToHsv(start.r,start.g,start.b);
+    let mode='RGB';
+    const modal=document.createElement('div');
+    modal.id='palette-color-modal';
+    modal.innerHTML='<div class="palette-color-dialog wheel" role="dialog" aria-modal="true" aria-label="Edit color" tabindex="-1"><div class="palette-color-title"><span>Edit Color</span><button type="button" class="palette-color-close" aria-label="Cancel">&times;</button></div><div class="palette-color-body"><div class="palette-color-picker-column"><div class="palette-color-previews"><div><span>Current</span><div class="palette-color-preview current"></div></div><div><span>New</span><div class="palette-color-preview next"></div></div></div><div class="palette-wheel-wrap"><div class="palette-hue-wheel"><div class="palette-hue-cursor"></div><div class="palette-inner-sv"><div class="palette-sv-cursor"></div></div></div></div></div><div class="palette-color-control-column"><div class="palette-mode-tabs"><button type="button" data-mode="RGB">RGB</button><button type="button" data-mode="HSV">HSV</button><button type="button" data-mode="HSL">HSL</button><button type="button" data-mode="HEX">HEX</button></div><div class="palette-mode-fields"></div></div></div><div class="palette-color-actions"><button type="button" class="palette-color-ok">OK</button><button type="button" class="palette-color-cancel">Cancel</button></div></div>';
+    document.body.appendChild(modal);
+    const dialog=modal.querySelector('.palette-color-dialog');
+    const wheel=modal.querySelector('.palette-hue-wheel');
+    const sv=modal.querySelector('.palette-inner-sv');
+    const hueCursor=modal.querySelector('.palette-hue-cursor');
+    const svCursor=modal.querySelector('.palette-sv-cursor');
+    const fields=modal.querySelector('.palette-mode-fields');
+    const currentPreview=modal.querySelector('.palette-color-preview.current');
+    const nextPreview=modal.querySelector('.palette-color-preview.next');
+    let dragging='';
+    function currentRgb(){return hsvToRgb(hsv.h,hsv.s,hsv.v);}
+    function colorHex(){const rgb=currentRgb();return rgbaToHex(rgb.r,rgb.g,rgb.b,alpha);}
+    function paintPreview(el,hex){if(isTransparentHex(hex)) el.classList.add('transparent');else el.classList.remove('transparent');el.style.background=isTransparentHex(hex)?'':displayHex(hex);}
+    function setRgb(r,g,b,nextAlpha){
+      const rgb={r:Math.max(0,Math.min(255,Math.round(+r||0))),g:Math.max(0,Math.min(255,Math.round(+g||0))),b:Math.max(0,Math.min(255,Math.round(+b||0)))};
+      if(nextAlpha!==undefined) alpha=Math.max(0,Math.min(255,Math.round(+nextAlpha||0)));
+      hsv=rgbToHsv(rgb.r,rgb.g,rgb.b);
+      syncAll();
+    }
+    function setHsv(h,s,v,nextAlpha){
+      hsv={h:Math.max(0,Math.min(359,+h||0)),s:Math.max(0,Math.min(1,(+s||0)/100)),v:Math.max(0,Math.min(1,(+v||0)/100))};
+      if(nextAlpha!==undefined) alpha=Math.max(0,Math.min(255,Math.round(+nextAlpha||0)));
+      syncAll();
+    }
+    function setHsl(h,s,l,nextAlpha){
+      const rgb=hslToRgb(h,(+s||0)/100,(+l||0)/100);
+      setRgb(rgb.r,rgb.g,rgb.b,nextAlpha);
+    }
+    function setFromHex(value){
+      const clean=String(value||'').trim();
+      if(!isValidHex(clean)) return;
+      const rgba=hexToRgba(clean);
+      setRgb(rgba.r,rgba.g,rgba.b,Math.round((Number.isFinite(+rgba.a)?rgba.a:1)*255));
+    }
+    function field(label,value,min,max,step,cls){
+      return '<label>'+label+'<div class="palette-field-row"><input class="'+cls+'-range" type="range" min="'+min+'" max="'+max+'" step="'+step+'" value="'+value+'"><input class="'+cls+'" type="number" min="'+min+'" max="'+max+'" step="'+step+'" value="'+value+'"></div></label>';
+    }
+    function renderFields(){
+      const rgb=currentRgb();
+      const hsl=rgbToHsl(rgb.r,rgb.g,rgb.b);
+      modal.querySelectorAll('.palette-mode-tabs button').forEach(btn=>btn.classList.toggle('active',btn.dataset.mode===mode));
+      if(mode==='RGB') fields.innerHTML=field('R',rgb.r,0,255,1,'edit-r')+field('G',rgb.g,0,255,1,'edit-g')+field('B',rgb.b,0,255,1,'edit-b')+field('A',alpha,0,255,1,'edit-a');
+      else if(mode==='HSV') fields.innerHTML=field('H',Math.round(hsv.h),0,359,1,'edit-h')+field('S',Math.round(hsv.s*100),0,100,1,'edit-s')+field('V',Math.round(hsv.v*100),0,100,1,'edit-v')+field('A',alpha,0,255,1,'edit-a');
+      else if(mode==='HSL') fields.innerHTML=field('H',Math.round(hsl.h),0,359,1,'edit-hsl-h')+field('S',Math.round(hsl.s*100),0,100,1,'edit-hsl-s')+field('L',Math.round(hsl.l*100),0,100,1,'edit-hsl-l')+field('A',alpha,0,255,1,'edit-a');
+      else fields.innerHTML='<label>HEX <input class="edit-hex" type="text" spellcheck="false" value="'+colorHex().toUpperCase()+'"></label>';
+      bindFields();
+    }
+    function bindPair(cls,fn){
+      const number=fields.querySelector('.'+cls);
+      const range=fields.querySelector('.'+cls+'-range');
+      [number,range].forEach(input=>{if(input) input.addEventListener('input',()=>{if(number&&range){number.value=input.value;range.value=input.value;}fn();});});
+    }
+    function bindFields(){
+      if(mode==='RGB'){
+        const fn=()=>setRgb(fields.querySelector('.edit-r').value,fields.querySelector('.edit-g').value,fields.querySelector('.edit-b').value,fields.querySelector('.edit-a').value);
+        ['edit-r','edit-g','edit-b','edit-a'].forEach(cls=>bindPair(cls,fn));
+      }else if(mode==='HSV'){
+        const fn=()=>setHsv(fields.querySelector('.edit-h').value,fields.querySelector('.edit-s').value,fields.querySelector('.edit-v').value,fields.querySelector('.edit-a').value);
+        ['edit-h','edit-s','edit-v','edit-a'].forEach(cls=>bindPair(cls,fn));
+      }else if(mode==='HSL'){
+        const fn=()=>setHsl(fields.querySelector('.edit-hsl-h').value,fields.querySelector('.edit-hsl-s').value,fields.querySelector('.edit-hsl-l').value,fields.querySelector('.edit-a').value);
+        ['edit-hsl-h','edit-hsl-s','edit-hsl-l','edit-a'].forEach(cls=>bindPair(cls,fn));
+      }else{
+        const hex=fields.querySelector('.edit-hex');
+        if(hex) hex.addEventListener('input',()=>setFromHex(hex.value));
+      }
+    }
+    function syncWheel(){
+      const hueColor=rgbToHex(...Object.values(hsvToRgb(hsv.h,1,1)));
+      sv.style.setProperty('--palette-edit-hue',hueColor);
+      const rect=wheel.getBoundingClientRect();
+      const radius=rect.width/2;
+      const angle=(hsv.h-180)*Math.PI/180;
+      const cursorRadius=radius-10;
+      hueCursor.style.left=(radius+Math.cos(angle)*cursorRadius)+'px';
+      hueCursor.style.top=(radius+Math.sin(angle)*cursorRadius)+'px';
+      svCursor.style.left=(hsv.s*100)+'%';
+      svCursor.style.top=((1-hsv.v)*100)+'%';
+    }
+    function syncAll(){paintPreview(nextPreview,colorHex());syncWheel();renderFields();}
+    function setHueFromEvent(event){
+      const rect=wheel.getBoundingClientRect();
+      const cx=rect.left+rect.width/2;
+      const cy=rect.top+rect.height/2;
+      hsv.h=(Math.atan2(event.clientY-cy,event.clientX-cx)*180/Math.PI+180+360)%360;
+      syncAll();
+    }
+    function setSvFromEvent(event){
+      const rect=sv.getBoundingClientRect();
+      hsv.s=Math.max(0,Math.min(1,(event.clientX-rect.left)/rect.width));
+      hsv.v=1-Math.max(0,Math.min(1,(event.clientY-rect.top)/rect.height));
+      syncAll();
+    }
+    function close(){document.removeEventListener('keydown',onKey);modal.remove();}
+    function ok(){updateSwatchColor(swatch,colorHex());close();}
+    function cancel(){close();}
+    function onKey(event){if(event.key==='Escape'){event.preventDefault();cancel();}else if(event.key==='Enter'&&event.target.tagName!=='TEXTAREA'){event.preventDefault();ok();}}
+    paintPreview(currentPreview,original);
+    paintPreview(nextPreview,original);
+    renderFields();
+    requestAnimationFrame(syncWheel);
+    modal.querySelectorAll('.palette-mode-tabs button').forEach(btn=>btn.addEventListener('click',()=>{mode=btn.dataset.mode;renderFields();}));
+    wheel.addEventListener('pointerdown',event=>{if(event.target.closest('.palette-inner-sv')) return;dragging='hue';wheel.setPointerCapture(event.pointerId);setHueFromEvent(event);});
+    wheel.addEventListener('pointermove',event=>{if(dragging==='hue') setHueFromEvent(event);});
+    wheel.addEventListener('pointerup',event=>{if(dragging==='hue'){dragging='';try{wheel.releasePointerCapture(event.pointerId);}catch(e){}}});
+    wheel.addEventListener('pointercancel',()=>{dragging='';});
+    sv.addEventListener('pointerdown',event=>{event.stopPropagation();dragging='sv';sv.setPointerCapture(event.pointerId);setSvFromEvent(event);});
+    sv.addEventListener('pointermove',event=>{if(dragging==='sv') setSvFromEvent(event);});
+    sv.addEventListener('pointerup',event=>{if(dragging==='sv'){dragging='';try{sv.releasePointerCapture(event.pointerId);}catch(e){}}});
+    sv.addEventListener('pointercancel',()=>{dragging='';});
+    modal.querySelector('.palette-color-ok').addEventListener('click',ok);
+    modal.querySelector('.palette-color-cancel').addEventListener('click',cancel);
+    modal.querySelector('.palette-color-close').addEventListener('click',cancel);
+    modal.addEventListener('pointerdown',event=>{if(event.target===modal) cancel();});
+    document.addEventListener('keydown',onKey);
+    requestAnimationFrame(()=>dialog.focus());
+  }  function hideEditConfirmBar(){const modal=document.getElementById('palette-color-modal');if(modal) modal.remove();const bar=document.getElementById('palette-edit-confirm');if(bar) bar.remove();}
   function moveItemToEdge(item,edge){
     const idx=swatchIndex(item&&item.id);
     if(idx<0) return;
