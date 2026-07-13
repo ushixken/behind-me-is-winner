@@ -139,6 +139,9 @@
   <button class="tbtn" id="btn-flip-h" title="Flip Horizontal (H)">⇄</button>
   <button class="tbtn" id="btn-flip-v" title="Flip Vertical (V)">⇅</button>
   <div class="tsep"></div>
+  <div id="toolbar-palette-wrap" class="toolbar-palette-wrap hidden" aria-label="Toolbar palette">
+    <div id="toolbar-palette-strip" class="toolbar-palette-strip"></div>
+  </div>
   <label style="display:flex;align-items:center;gap:4px;cursor:pointer;flex-shrink:0;">
     <input type="checkbox" id="onion-chk" checked style="accent-color:var(--accent);"/>
     <span class="tlabel">Onion</span>
@@ -425,6 +428,8 @@
       <div class="palette-menu-actions">
         <button id="palette-new" type="button">New Palette</button>
         <button id="palette-rename" type="button">Rename Palette</button>
+        <div class="palette-menu-sep" role="separator"></div>
+        <button id="palette-toolbar-toggle" type="button">Attach to Toolbar</button>
         <div class="palette-menu-sep" role="separator"></div>
         <button id="palette-duplicate" type="button">Duplicate</button>
         <div class="palette-menu-sep" role="separator"></div>

@@ -20,6 +20,7 @@
   let sideMenuFrame=null;
   let dropdownOpen=false;
   let dropdownFrame=null;
+  let toolbarPaletteMode='hidden';
   let popupListenersBound=false;
   let paletteDragState=null;
   const defaultHexes=['#000000','#ffffff','#f23636','#ff9f1c','#ffd23f','#2ec4b6','#3a86ff','#8338ec'];
@@ -128,18 +129,19 @@
   function persistView(){
     const grid=document.getElementById('palette-grid');
     if(grid) savedScrollTop=grid.scrollTop;
-    try{localStorage.setItem(VIEW_KEY,JSON.stringify({swatchSize,scrollTop:savedScrollTop}));}catch(e){}
+    try{localStorage.setItem(VIEW_KEY,JSON.stringify({swatchSize,scrollTop:savedScrollTop,toolbarPaletteMode}));}catch(e){}
   }
   function loadView(){
     try{
       const view=JSON.parse(localStorage.getItem(VIEW_KEY)||'null');
       if(view&&Number.isFinite(+view.swatchSize)) swatchSize=clampSwatchSize(+view.swatchSize);
       if(view&&Number.isFinite(+view.scrollTop)) savedScrollTop=Math.max(0,+view.scrollTop);
+      toolbarPaletteMode=view&&view.toolbarPaletteMode==='active'?'active':'hidden';
     }catch(e){}
   }
   function serialize(){
     rememberSelection();
-    return {version:2,palettes:palettes.map(p=>({id:p.id,name:p.name,swatches:p.swatches.map(exportSwatchData),selectedId:p.selectedId||null})),activePaletteId,view:{swatchSize,scrollTop:savedScrollTop}};
+    return {version:2,palettes:palettes.map(p=>({id:p.id,name:p.name,swatches:p.swatches.map(exportSwatchData),selectedId:p.selectedId||null})),activePaletteId,view:{swatchSize,scrollTop:savedScrollTop,toolbarPaletteMode}};
   }
   function load(data){
     const payload=data&&typeof data==='object'?data:null;
@@ -154,6 +156,7 @@
     syncActiveRefs();
     if(payload&&payload.view&&Number.isFinite(+payload.view.swatchSize)) swatchSize=clampSwatchSize(+payload.view.swatchSize);
     if(payload&&payload.view&&Number.isFinite(+payload.view.scrollTop)) savedScrollTop=Math.max(0,+payload.view.scrollTop);
+    if(payload&&payload.view) toolbarPaletteMode=payload.view.toolbarPaletteMode==='active'?'active':'hidden';
     restoreScrollPending=true;
     applyViewSettings(false);
     render();
@@ -217,6 +220,53 @@
     restoreScrollPending=false;
     requestAnimationFrame(()=>{grid.scrollTop=savedScrollTop;ensureSelectedVisible();});
   }
+  function toolbarPaletteEnabled(){return toolbarPaletteMode==='active';}
+  function syncToolbarSelection(){}
+  function renderToolbarPalette(){
+    const wrap=document.getElementById('toolbar-palette-wrap');
+    const strip=document.getElementById('toolbar-palette-strip');
+    if(!wrap||!strip) return;
+    wrap.classList.toggle('hidden',!toolbarPaletteEnabled());
+    strip.innerHTML='';
+    if(!toolbarPaletteEnabled()) return;
+    const active=activePalette();
+    const items=active&&Array.isArray(active.swatches)?active.swatches:[];
+    items.forEach(item=>{
+      if(isSeparator(item)){
+        const gap=document.createElement('span');
+        gap.className='toolbar-palette-separator';
+        gap.setAttribute('aria-hidden','true');
+        strip.appendChild(gap);
+        return;
+      }
+      if(!isSwatch(item)) return;
+      const btn=document.createElement('button');
+      btn.type='button';
+      btn.className='toolbar-palette-swatch';
+      btn.dataset.id=item.id;
+      btn.title=item.hex;
+      btn.setAttribute('aria-label','Set color '+item.hex);
+      if(isTransparentHex(item.hex)) btn.classList.add('transparent');
+      else {
+        btn.style.background=displayHex(item.hex);
+        const c=hexToRgba(item.hex);
+        if(c.r<=24&&c.g<=24&&c.b<=24) btn.classList.add('dark-color');
+      }
+      btn.addEventListener('click',event=>{
+        event.preventDefault();
+        activatePaletteSwatch(item.id,{select:true,setForeground:true});
+      });
+      strip.appendChild(btn);
+    });
+  }
+  function toggleToolbarPalette(){
+    toolbarPaletteMode=toolbarPaletteEnabled()?'hidden':'active';
+    renderPaletteSelector();
+    renderToolbarPalette();
+    persistView();
+    persist();
+    closeSideMenu();
+  }
   function selectedSwatch(){const item=swatches.find(s=>s.id===selectedId)||null;return isSwatch(item)?item:null;}
   function selectedItem(){return swatches.find(s=>s.id===selectedId)||null;}
   function swatchIndex(id){return swatches.findIndex(s=>s.id===id);}
@@ -237,6 +287,7 @@
       selectedId=swatch.id;
       rememberSelection();
       syncSelectionClasses();
+      syncToolbarSelection();
     }
     if(opts.setForeground&&isSwatch(swatch)) setForeground(swatch.hex,false);
     persist();
@@ -466,6 +517,11 @@
     if(nameEl) nameEl.textContent=active?active.name:'Palette';
     const del=document.getElementById('palette-delete');
     if(del) del.disabled=palettes.length<=1;
+    const toolbarToggle=document.getElementById('palette-toolbar-toggle');
+    if(toolbarToggle){
+      toolbarToggle.classList.toggle('active',toolbarPaletteEnabled());
+      toolbarToggle.textContent=(toolbarPaletteEnabled()?'[On] ':'')+'Attach to Toolbar';
+    }
     renderPaletteList();
     requestSideMenuPosition();
   }
@@ -492,7 +548,11 @@
         btn.setAttribute('aria-hidden','true');
       }else{
         if(isTransparentHex(s.hex)) btn.classList.add('transparent');
-        else btn.style.background=displayHex(s.hex);
+        else {
+          btn.style.background=displayHex(s.hex);
+          const c=hexToRgba(s.hex);
+          if(c.r<=24&&c.g<=24&&c.b<=24) btn.classList.add('dark-color');
+        }
         btn.title=s.hex;
         btn.setAttribute('aria-label','Palette color '+s.hex);
       }
@@ -514,6 +574,7 @@
     });
     grid.scrollTop=restoreScrollPending?savedScrollTop:previousScroll;
     updateToolbarState();
+    renderToolbarPalette();
     restoreScrollIfNeeded();
     requestAnimationFrame(()=>checkGridOverflow());
   }
@@ -1543,6 +1604,7 @@
     const exportAllBtn=document.getElementById('palette-export-all');
     const importFile=document.getElementById('palette-import-file');
     const deleteBtn=document.getElementById('palette-delete');
+    const toolbarToggle=document.getElementById('palette-toolbar-toggle');
     const renameInput=document.getElementById('palette-rename-inline-input');
     const renameOk=document.getElementById('palette-rename-inline-ok');
     const renameCancel=document.getElementById('palette-rename-inline-cancel');
@@ -1561,6 +1623,7 @@
     if(exportAllBtn) exportAllBtn.addEventListener('click',exportAllPalettesJson);
     if(importFile) importFile.addEventListener('change',()=>handleImportFile(importFile.files&&importFile.files[0]));
     if(deleteBtn) deleteBtn.addEventListener('click',deletePalette);
+    if(toolbarToggle) toolbarToggle.addEventListener('click',toggleToolbarPalette);
     if(renameOk) renameOk.addEventListener('click',applyInlineRename);
     if(renameCancel) renameCancel.addEventListener('click',()=>{hidePaletteInlinePanels();positionSideMenu();});
     if(renameInput) renameInput.addEventListener('keydown',event=>{if(event.key==='Enter') applyInlineRename(); if(event.key==='Escape'){hidePaletteInlinePanels();positionSideMenu();}});
