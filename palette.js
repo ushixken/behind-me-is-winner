@@ -1,9 +1,19 @@
 (function(){
   const STORE_KEY='animatorPaletteV1';
+  const VIEW_KEY='animatorPaletteViewV1';
+  const SWATCH_SIZE_MIN=16;
+  const SWATCH_SIZE_MAX=64;
+  const SWATCH_SIZE_STEP=2;
+  const SWATCH_SIZE_DEFAULT=28;
   let swatches=[];
   let selectedId=null;
   let dragState=null;
   let suppressClick=false;
+  let swatchSize=SWATCH_SIZE_DEFAULT;
+  let savedScrollTop=0;
+  let restoreScrollPending=false;
+  let scrollSaveTimer=null;
+  let resizeObserver=null;
   const defaultHexes=['#000000','#ffffff','#f23636','#ff9f1c','#ffd23f','#2ec4b6','#3a86ff','#8338ec'];
 
   function normalizeHex(hex){
@@ -28,15 +38,33 @@
     return clean.length?clean:defaultPalette();
   }
   function persist(){try{localStorage.setItem(STORE_KEY,JSON.stringify(serialize()));}catch(e){}}
-  function serialize(){return {version:1,swatches:swatches.map(s=>({id:s.id,hex:s.hex,rgba:s.rgba})),selectedId};}
+  function persistView(){
+    const grid=document.getElementById('palette-grid');
+    if(grid) savedScrollTop=grid.scrollTop;
+    try{localStorage.setItem(VIEW_KEY,JSON.stringify({swatchSize,scrollTop:savedScrollTop}));}catch(e){}
+  }
+  function loadView(){
+    try{
+      const view=JSON.parse(localStorage.getItem(VIEW_KEY)||'null');
+      if(view&&Number.isFinite(+view.swatchSize)) swatchSize=clampSwatchSize(+view.swatchSize);
+      if(view&&Number.isFinite(+view.scrollTop)) savedScrollTop=Math.max(0,+view.scrollTop);
+    }catch(e){}
+  }
+  function serialize(){return {version:1,swatches:swatches.map(s=>({id:s.id,hex:s.hex,rgba:s.rgba})),selectedId,view:{swatchSize,scrollTop:savedScrollTop}};}
   function load(data){
     const payload=data&&Array.isArray(data.swatches)?data:null;
     swatches=sanitizePalette(payload?payload.swatches:null);
+    if(payload&&payload.view&&Number.isFinite(+payload.view.swatchSize)) swatchSize=clampSwatchSize(+payload.view.swatchSize);
+    if(payload&&payload.view&&Number.isFinite(+payload.view.scrollTop)) savedScrollTop=Math.max(0,+payload.view.scrollTop);
     selectedId=payload&&swatches.some(s=>s.id===payload.selectedId)?payload.selectedId:swatches[0].id;
+    restoreScrollPending=true;
+    applyViewSettings(false);
     render();
     persist();
   }
   function loadPersisted(){
+    loadView();
+    applyViewSettings(false);
     try{
       const saved=JSON.parse(localStorage.getItem(STORE_KEY)||'null');
       if(saved&&Array.isArray(saved.swatches)){load(saved);return;}
@@ -53,6 +81,48 @@
       const stat=document.getElementById('stat-color');
       if(stat) stat.textContent='Color: '+safeHex;
     }
+  }
+  function clampSwatchSize(value){
+    const numeric=Number.isFinite(+value)?+value:SWATCH_SIZE_DEFAULT;
+    const stepped=Math.round(numeric/SWATCH_SIZE_STEP)*SWATCH_SIZE_STEP;
+    return Math.max(SWATCH_SIZE_MIN,Math.min(SWATCH_SIZE_MAX,stepped));
+  }
+  function applyViewSettings(keepSelectedVisible){
+    swatchSize=clampSwatchSize(swatchSize);
+    const body=document.getElementById('palette-body');
+    if(body) body.style.setProperty('--palette-swatch-size',swatchSize+'px');
+    const slider=document.getElementById('palette-size-slider');
+    const value=document.getElementById('palette-size-value');
+    if(slider) slider.value=String(swatchSize);
+    if(value) value.textContent=swatchSize+' px';
+    if(keepSelectedVisible) requestAnimationFrame(()=>ensureSelectedVisible());
+  }
+  function setSwatchSize(nextSize,keepSelectedVisible){
+    const clamped=clampSwatchSize(nextSize);
+    if(clamped===swatchSize) return;
+    swatchSize=clamped;
+    applyViewSettings(keepSelectedVisible!==false);
+    persistView();
+    persist();
+  }
+  function stepSwatchSize(delta){
+    setSwatchSize(swatchSize+(delta*SWATCH_SIZE_STEP),true);
+  }
+  function ensureSelectedVisible(){
+    const grid=document.getElementById('palette-grid');
+    if(!grid||!selectedId) return;
+    const selected=grid.querySelector('.palette-swatch[data-id="'+CSS.escape(selectedId)+'"]');
+    if(selected) selected.scrollIntoView({block:'nearest',inline:'nearest'});
+  }
+  function restoreScrollIfNeeded(){
+    if(!restoreScrollPending) return;
+    const grid=document.getElementById('palette-grid');
+    if(!grid) return;
+    restoreScrollPending=false;
+    requestAnimationFrame(()=>{
+      grid.scrollTop=savedScrollTop;
+      ensureSelectedVisible();
+    });
   }
   function selectedSwatch(){return swatches.find(s=>s.id===selectedId)||null;}
   function swatchIndex(id){return swatches.findIndex(s=>s.id===id);}
@@ -74,6 +144,7 @@
   function render(){
     const grid=document.getElementById('palette-grid');
     if(!grid) return;
+    const previousScroll=grid.scrollTop;
     grid.innerHTML='';
     swatches.forEach(s=>{
       const btn=document.createElement('button');
@@ -99,6 +170,8 @@
       btn.addEventListener('pointerdown',event=>beginDrag(event,s,btn));
       grid.appendChild(btn);
     });
+    grid.scrollTop=restoreScrollPending?savedScrollTop:previousScroll;
+    restoreScrollIfNeeded();
   }
   function syncSelectionClasses(){
     document.querySelectorAll('#palette-grid .palette-swatch').forEach(node=>{
@@ -337,6 +410,27 @@
     render();
     persist();
   }
+  function handleGridWheel(event){
+    if(!event.ctrlKey) return;
+    event.preventDefault();
+    stepSwatchSize(event.deltaY<0?1:-1);
+  }
+  function handleGridScroll(){
+    const grid=document.getElementById('palette-grid');
+    if(!grid) return;
+    savedScrollTop=grid.scrollTop;
+    clearTimeout(scrollSaveTimer);
+    scrollSaveTimer=setTimeout(()=>persistView(),120);
+  }
+  function bindResizeObserver(){
+    const panel=document.getElementById('palette-panel');
+    if(!panel||typeof ResizeObserver==='undefined'||resizeObserver) return;
+    resizeObserver=new ResizeObserver(()=>{
+      persistView();
+      requestAnimationFrame(()=>ensureSelectedVisible());
+    });
+    resizeObserver.observe(panel);
+  }
   function bind(){
     const add=document.getElementById('palette-add-color');
     const remove=document.getElementById('palette-remove-color');
@@ -344,11 +438,20 @@
     if(add) add.addEventListener('click',addCurrent);
     if(remove) remove.addEventListener('click',deleteSelected);
     if(clear) clear.addEventListener('click',clearAll);
+    const sizeSlider=document.getElementById('palette-size-slider');
+    if(sizeSlider&&!sizeSlider.dataset.bound){
+      sizeSlider.addEventListener('input',()=>setSwatchSize(sizeSlider.value,true));
+      sizeSlider.dataset.bound='1';
+    }
     const grid=document.getElementById('palette-grid');
     if(grid&&!grid.dataset.contextBound){
       grid.addEventListener('contextmenu',handleGridContextMenu);
+      grid.addEventListener('wheel',handleGridWheel,{passive:false});
+      grid.addEventListener('scroll',handleGridScroll,{passive:true});
       grid.dataset.contextBound='1';
     }
+    bindResizeObserver();
+    applyViewSettings(false);
     document.addEventListener('keydown',e=>{if(e.key==='Escape'){hideContextMenu();hideEditConfirmBar();}});
   }
   window.PaletteDocker={serialize,load,reset(){load(null);},renderCurrentColors:render,refresh:render};
