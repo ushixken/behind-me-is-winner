@@ -5,6 +5,8 @@
   const SWATCH_SIZE_MAX=64;
   const SWATCH_SIZE_STEP=2;
   const SWATCH_SIZE_DEFAULT=28;
+  let palettes=[];
+  let activePaletteId=null;
   let swatches=[];
   let selectedId=null;
   let dragState=null;
@@ -14,6 +16,8 @@
   let restoreScrollPending=false;
   let scrollSaveTimer=null;
   let resizeObserver=null;
+  let sideMenuOpen=false;
+  let sideMenuFrame=null;
   const defaultHexes=['#000000','#ffffff','#f23636','#ff9f1c','#ffd23f','#2ec4b6','#3a86ff','#8338ec'];
 
   function normalizeHex(hex){
@@ -26,16 +30,50 @@
     hex=normalizeHex(hex);
     return {r:parseInt(hex.slice(1,3),16),g:parseInt(hex.slice(3,5),16),b:parseInt(hex.slice(5,7),16),a:1};
   }
+  function makeId(prefix){return prefix+'_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,8);}
   function makeSwatch(hex,id){
     const safeHex=normalizeHex(hex);
-    return {id:id||('pal_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,8)),hex:safeHex,rgba:hexToRgba(safeHex)};
+    return {id:id||makeId('pal'),hex:safeHex,rgba:hexToRgba(safeHex)};
   }
   function cloneSwatch(swatch){return makeSwatch(swatch.hex);}
-  function defaultPalette(){return defaultHexes.map(hex=>makeSwatch(hex));}
-  function sanitizePalette(input){
+  function defaultSwatches(){return defaultHexes.map(hex=>makeSwatch(hex));}
+  function sanitizeSwatches(input,allowEmpty){
     const list=Array.isArray(input)?input:[];
     const clean=list.map(item=>makeSwatch(item&&item.hex,item&&item.id)).filter(Boolean);
-    return clean.length?clean:defaultPalette();
+    return clean.length||allowEmpty?clean:defaultSwatches();
+  }
+  function nextPaletteName(){
+    let n=1;
+    const names=new Set(palettes.map(p=>String(p.name||'').toLowerCase()));
+    while(names.has(('Palette '+n).toLowerCase())) n++;
+    return 'Palette '+n;
+  }
+  function uniqueCopyName(name){
+    const root=String(name||'Palette').trim()||'Palette';
+    let candidate=root+' Copy';
+    let n=2;
+    const names=new Set(palettes.map(p=>String(p.name||'').toLowerCase()));
+    while(names.has(candidate.toLowerCase())) candidate=root+' Copy '+n++;
+    return candidate;
+  }
+  function makePalette(name,swatchList,id,selection,allowEmpty){
+    const cleanSwatches=sanitizeSwatches(swatchList,!!allowEmpty);
+    const selected=selection&&cleanSwatches.some(s=>s.id===selection)?selection:(cleanSwatches[0]?cleanSwatches[0].id:null);
+    return {id:id||makeId('palette'),name:String(name||'').trim()||nextPaletteName(),swatches:cleanSwatches,selectedId:selected};
+  }
+  function activePalette(){return palettes.find(p=>p.id===activePaletteId)||palettes[0]||null;}
+  function rememberSelection(){const active=activePalette();if(active) active.selectedId=selectedId;}
+  function syncActiveRefs(){
+    let active=activePalette();
+    if(!active){
+      active=makePalette('Palette 1',defaultSwatches());
+      palettes=[active];
+      activePaletteId=active.id;
+    }
+    activePaletteId=active.id;
+    swatches=active.swatches;
+    selectedId=active.selectedId&&swatches.some(s=>s.id===active.selectedId)?active.selectedId:(swatches[0]?swatches[0].id:null);
+    active.selectedId=selectedId;
   }
   function persist(){try{localStorage.setItem(STORE_KEY,JSON.stringify(serialize()));}catch(e){}}
   function persistView(){
@@ -50,13 +88,23 @@
       if(view&&Number.isFinite(+view.scrollTop)) savedScrollTop=Math.max(0,+view.scrollTop);
     }catch(e){}
   }
-  function serialize(){return {version:1,swatches:swatches.map(s=>({id:s.id,hex:s.hex,rgba:s.rgba})),selectedId,view:{swatchSize,scrollTop:savedScrollTop}};}
+  function serialize(){
+    rememberSelection();
+    return {version:2,palettes:palettes.map(p=>({id:p.id,name:p.name,swatches:p.swatches.map(s=>({id:s.id,hex:s.hex,rgba:s.rgba})),selectedId:p.selectedId||null})),activePaletteId,view:{swatchSize,scrollTop:savedScrollTop}};
+  }
   function load(data){
-    const payload=data&&Array.isArray(data.swatches)?data:null;
-    swatches=sanitizePalette(payload?payload.swatches:null);
+    const payload=data&&typeof data==='object'?data:null;
+    if(payload&&Array.isArray(payload.palettes)){
+      palettes=payload.palettes.map((p,i)=>makePalette(p&&p.name||('Palette '+(i+1)),p&&p.swatches,p&&p.id,p&&p.selectedId,true)).filter(Boolean);
+      if(!palettes.length) palettes=[makePalette('Palette 1',defaultSwatches())];
+      activePaletteId=palettes.some(p=>p.id===payload.activePaletteId)?payload.activePaletteId:palettes[0].id;
+    }else{
+      palettes=[makePalette('Palette 1',payload&&Array.isArray(payload.swatches)?payload.swatches:null,null,payload&&payload.selectedId,false)];
+      activePaletteId=palettes[0].id;
+    }
+    syncActiveRefs();
     if(payload&&payload.view&&Number.isFinite(+payload.view.swatchSize)) swatchSize=clampSwatchSize(+payload.view.swatchSize);
     if(payload&&payload.view&&Number.isFinite(+payload.view.scrollTop)) savedScrollTop=Math.max(0,+payload.view.scrollTop);
-    selectedId=payload&&swatches.some(s=>s.id===payload.selectedId)?payload.selectedId:swatches[0].id;
     restoreScrollPending=true;
     applyViewSettings(false);
     render();
@@ -67,7 +115,7 @@
     applyViewSettings(false);
     try{
       const saved=JSON.parse(localStorage.getItem(STORE_KEY)||'null');
-      if(saved&&Array.isArray(saved.swatches)){load(saved);return;}
+      if(saved&&(Array.isArray(saved.swatches)||Array.isArray(saved.palettes))){load(saved);return;}
     }catch(e){}
     load(null);
   }
@@ -105,9 +153,7 @@
     persistView();
     persist();
   }
-  function stepSwatchSize(delta){
-    setSwatchSize(swatchSize+(delta*SWATCH_SIZE_STEP),true);
-  }
+  function stepSwatchSize(delta){setSwatchSize(swatchSize+(delta*SWATCH_SIZE_STEP),true);}
   function ensureSelectedVisible(){
     const grid=document.getElementById('palette-grid');
     if(!grid||!selectedId) return;
@@ -119,10 +165,7 @@
     const grid=document.getElementById('palette-grid');
     if(!grid) return;
     restoreScrollPending=false;
-    requestAnimationFrame(()=>{
-      grid.scrollTop=savedScrollTop;
-      ensureSelectedVisible();
-    });
+    requestAnimationFrame(()=>{grid.scrollTop=savedScrollTop;ensureSelectedVisible();});
   }
   function selectedSwatch(){return swatches.find(s=>s.id===selectedId)||null;}
   function swatchIndex(id){return swatches.findIndex(s=>s.id===id);}
@@ -131,19 +174,102 @@
     swatch.hex=normalizeHex(hex);
     swatch.rgba=hexToRgba(swatch.hex);
     if(swatch.id===selectedId) setForeground(swatch.hex,false);
+    rememberSelection();
     render();
+    persist();
+  }
+  function activatePaletteSwatch(swatchId,options){
+    const swatch=swatches.find(s=>s.id===swatchId);
+    if(!swatch) return;
+    const opts=options||{};
+    if(opts.select!==false){
+      selectedId=swatch.id;
+      rememberSelection();
+      syncSelectionClasses();
+    }
+    if(opts.setForeground) setForeground(swatch.hex,false);
     persist();
   }
   function selectSwatch(swatch,applyColor){
     if(!swatch) return;
-    selectedId=swatch.id;
-    if(applyColor) setForeground(swatch.hex,false);
+    activatePaletteSwatch(swatch.id,{select:true,setForeground:!!applyColor});
     render();
-    persist();
+  }
+  function sideMenu(){return document.getElementById('palette-side-menu');}
+  function settingsButton(){return document.getElementById('palette-settings');}
+  function positionSideMenu(){
+    if(!sideMenuOpen) return;
+    const menu=sideMenu();
+    const panel=document.getElementById('palette-panel');
+    const button=settingsButton();
+    if(!menu||!panel||panel.classList.contains('fp-hidden')){closeSideMenu();return;}
+    const panelRect=panel.getBoundingClientRect();
+    const buttonRect=button?button.getBoundingClientRect():panelRect;
+    const menuWidth=menu.offsetWidth||132;
+    const menuHeight=menu.offsetHeight||120;
+    const gap=0;
+    const margin=6;
+    const useLeft=panelRect.right+menuWidth+gap>window.innerWidth-margin&&panelRect.left-menuWidth-gap>=margin;
+    const left=useLeft?Math.max(margin,panelRect.left-menuWidth-gap):Math.min(window.innerWidth-menuWidth-margin,panelRect.right+gap);
+    const idealTop=buttonRect.top;
+    const top=Math.max(margin,Math.min(window.innerHeight-menuHeight-margin,idealTop));
+    menu.style.left=left+'px';
+    menu.style.top=top+'px';
+    menu.classList.toggle('left',useLeft);
+  }
+  function requestSideMenuPosition(){
+    if(!sideMenuOpen||sideMenuFrame) return;
+    sideMenuFrame=requestAnimationFrame(()=>{sideMenuFrame=null;positionSideMenu();});
+  }
+  function openSideMenu(){
+    const menu=sideMenu();
+    const button=settingsButton();
+    if(!menu) return;
+    sideMenuOpen=true;
+    menu.classList.remove('hidden');
+    if(button){button.classList.add('active');button.setAttribute('aria-expanded','true');}
+    renderPaletteSelector();
+    positionSideMenu();
+  }
+  function closeSideMenu(){
+    const menu=sideMenu();
+    const button=settingsButton();
+    sideMenuOpen=false;
+    if(sideMenuFrame){cancelAnimationFrame(sideMenuFrame);sideMenuFrame=null;}
+    if(menu) menu.classList.add('hidden');
+    if(button){button.classList.remove('active');button.setAttribute('aria-expanded','false');}
+  }
+  function toggleSideMenu(){sideMenuOpen?closeSideMenu():openSideMenu();}
+  function handleSideMenuOutside(event){
+    if(!sideMenuOpen) return;
+    const menu=sideMenu();
+    const panel=document.getElementById('palette-panel');
+    const target=event.target;
+    if((menu&&menu.contains(target))||(panel&&panel.contains(target))) return;
+    closeSideMenu();
+  }
+  function renderPaletteSelector(){
+    const selector=document.getElementById('palette-selector');
+    if(selector){
+      selector.innerHTML='';
+      palettes.forEach(p=>{
+        const option=document.createElement('option');
+        option.value=p.id;
+        option.textContent=p.name;
+        selector.appendChild(option);
+      });
+      selector.value=activePaletteId;
+    }
+    const del=document.getElementById('palette-delete');
+    if(del) del.disabled=palettes.length<=1;
+    requestSideMenuPosition();
   }
   function render(){
     const grid=document.getElementById('palette-grid');
     if(!grid) return;
+    syncActiveRefs();
+    removeEscapedNewlineArtifacts();
+    renderPaletteSelector();
     const previousScroll=grid.scrollTop;
     grid.innerHTML='';
     swatches.forEach(s=>{
@@ -155,19 +281,19 @@
       btn.title=s.hex;
       btn.setAttribute('aria-label','Palette color '+s.hex);
       btn.classList.toggle('selected',s.id===selectedId);
-      btn.addEventListener('click',()=>{
-        if(suppressClick){suppressClick=false;return;}
-        selectSwatch(s,true);
+      btn.addEventListener('pointerdown',event=>{
+        if(event.isPrimary===false) return;
+        if(event.button!==undefined&&event.button!==0) return;
+        beginDrag(event,s,btn);
       });
       btn.addEventListener('dblclick',event=>{
         event.preventDefault();
         selectedId=s.id;
+        rememberSelection();
         render();
         persist();
         editSwatch(s);
       });
-
-      btn.addEventListener('pointerdown',event=>beginDrag(event,s,btn));
       grid.appendChild(btn);
     });
     grid.scrollTop=restoreScrollPending?savedScrollTop:previousScroll;
@@ -178,6 +304,144 @@
       node.classList.toggle('selected',node.dataset.id===selectedId);
     });
   }
+  function removeEscapedNewlineArtifacts(){
+    const body=document.getElementById('palette-body');
+    if(!body) return;
+    const tick=String.fromCharCode(96);
+    const slash=String.fromCharCode(92);
+    const artifacts=[tick+'r'+tick+'n',slash+'r'+slash+'n','r'+tick+'n','&'+'#13;'];
+    Array.from(body.childNodes||[]).forEach(node=>{
+      const text=node.nodeValue||'';
+      if(node.nodeType===3&&artifacts.some(mark=>text.indexOf(mark)!==-1)) node.remove();
+    });
+  }
+  function requestPaletteName(currentName){
+    return new Promise(resolve=>{
+      const modal=document.getElementById('modal-palette-rename');
+      const input=document.getElementById('palette-rename-input');
+      const ok=document.getElementById('palette-rename-ok');
+      const cancel=document.getElementById('palette-rename-cancel');
+      if(!modal||!input||!ok||!cancel){resolve(null);return;}
+      let done=false;
+      function close(value){
+        if(done) return;
+        done=true;
+        modal.classList.remove('visible');
+        ok.removeEventListener('click',onOk);
+        cancel.removeEventListener('click',onCancel);
+        modal.removeEventListener('click',onBackdrop);
+        input.removeEventListener('keydown',onKey);
+        resolve(value);
+      }
+      function onOk(){close(input.value);}
+      function onCancel(){close(null);}
+      function onBackdrop(event){if(event.target===modal) close(null);}
+      function onKey(event){
+        if(event.key==='Enter') onOk();
+        if(event.key==='Escape') onCancel();
+      }
+      input.value=currentName||'';
+      ok.addEventListener('click',onOk);
+      cancel.addEventListener('click',onCancel);
+      modal.addEventListener('click',onBackdrop);
+      input.addEventListener('keydown',onKey);
+      modal.classList.add('visible');
+      requestAnimationFrame(()=>{input.focus();input.select();});
+    });
+  }
+  function requestPaletteConfirm(title,message,okLabel){
+    return new Promise(resolve=>{
+      const modal=document.getElementById('modal-palette-confirm');
+      const titleEl=document.getElementById('palette-confirm-title');
+      const msgEl=document.getElementById('palette-confirm-message');
+      const ok=document.getElementById('palette-confirm-ok');
+      const cancel=document.getElementById('palette-confirm-cancel');
+      if(!modal||!ok||!cancel){resolve(false);return;}
+      let done=false;
+      function close(value){
+        if(done) return;
+        done=true;
+        modal.classList.remove('visible');
+        ok.removeEventListener('click',onOk);
+        cancel.removeEventListener('click',onCancel);
+        modal.removeEventListener('click',onBackdrop);
+        document.removeEventListener('keydown',onKey);
+        resolve(!!value);
+      }
+      function onOk(){close(true);}
+      function onCancel(){close(false);}
+      function onBackdrop(event){if(event.target===modal) close(false);}
+      function onKey(event){
+        if(event.key==='Enter') onOk();
+        if(event.key==='Escape') onCancel();
+      }
+      if(titleEl) titleEl.textContent=title||'Confirm';
+      if(msgEl) msgEl.textContent=message||'';
+      ok.textContent=okLabel||'OK';
+      ok.addEventListener('click',onOk);
+      cancel.addEventListener('click',onCancel);
+      modal.addEventListener('click',onBackdrop);
+      document.addEventListener('keydown',onKey);
+      modal.classList.add('visible');
+      requestAnimationFrame(()=>{if(ok.focus) ok.focus();});
+    });
+  }
+  function switchPalette(id){
+    if(!palettes.some(p=>p.id===id)||id===activePaletteId) return;
+    rememberSelection();
+    activePaletteId=id;
+    restoreScrollPending=true;
+    hideContextMenu();
+    hideEditConfirmBar();
+    render();
+    persist();
+  }
+  function newPalette(){
+    rememberSelection();
+    const palette=makePalette(nextPaletteName(),[],null,null,true);
+    palettes.push(palette);
+    activePaletteId=palette.id;
+    restoreScrollPending=true;
+    render();
+    persist();
+  }
+  async function renamePalette(){
+    const active=activePalette();
+    if(!active) return;
+    const next=await requestPaletteName(active.name);
+    if(next===null) return;
+    const clean=String(next).trim();
+    if(!clean) return;
+    active.name=clean;
+    renderPaletteSelector();
+    persist();
+  }
+  function duplicatePalette(){
+    const active=activePalette();
+    if(!active) return;
+    rememberSelection();
+    const copy=makePalette(uniqueCopyName(active.name),active.swatches.map(cloneSwatch),null,active.selectedId,true);
+    palettes.push(copy);
+    activePaletteId=copy.id;
+    restoreScrollPending=true;
+    render();
+    persist();
+  }
+  async function deletePalette(){
+    if(palettes.length<=1) return;
+    const active=activePalette();
+    if(!active) return;
+    const ok=await requestPaletteConfirm('Delete Palette','Delete palette "'+active.name+'"?','Delete');
+    if(!ok) return;
+    const idx=palettes.findIndex(p=>p.id===active.id);
+    palettes.splice(idx,1);
+    activePaletteId=palettes[Math.min(idx,palettes.length-1)].id;
+    restoreScrollPending=true;
+    hideContextMenu();
+    hideEditConfirmBar();
+    render();
+    persist();
+  }
   function handleGridContextMenu(event){
     const swatchEl=event.target&&event.target.closest?event.target.closest('.palette-swatch'):null;
     const grid=document.getElementById('palette-grid');
@@ -187,6 +451,7 @@
     const swatch=swatches.find(s=>s.id===swatchEl.dataset.id);
     if(!swatch) return;
     selectedId=swatch.id;
+    rememberSelection();
     render();
     persist();
     showContextMenu(event.clientX,event.clientY,swatch);
@@ -231,6 +496,7 @@
     if(!swatch) return;
     const originalBrush=typeof color!=='undefined'?color:'#000000';
     selectedId=swatch.id;
+    rememberSelection();
     setForeground(swatch.hex,true);
     render();
     persist();
@@ -263,6 +529,7 @@
     const copy=cloneSwatch(swatch);
     swatches.splice(idx+1,0,copy);
     selectedId=copy.id;
+    rememberSelection();
     render();
     persist();
   }
@@ -272,6 +539,7 @@
     if(idx<0) return;
     swatches.splice(idx,1);
     selectedId=swatches[Math.min(idx,swatches.length-1)].id;
+    rememberSelection();
     render();
     persist();
   }
@@ -282,6 +550,7 @@
     const inserted=makeSwatch(typeof color!=='undefined'?color:'#000000');
     swatches.splice(where==='before'?idx:idx+1,0,inserted);
     selectedId=inserted.id;
+    rememberSelection();
     render();
     persist();
   }
@@ -341,35 +610,45 @@
     const created=makeSwatch(typeof color!=='undefined'?color:'#000000');
     swatches.push(created);
     selectedId=created.id;
+    rememberSelection();
     render();
     persist();
   }
-  function clearAll(){
+  async function clearAll(){
     if(!swatches.length) return;
-    if(!confirm('Clear every color in this palette?')) return;
+    const ok=await requestPaletteConfirm('Clear Palette','Clear every color in this palette?','Clear');
+    if(!ok) return;
     swatches=[];
     selectedId=null;
+    const active=activePalette();
+    if(active){active.swatches=swatches;active.selectedId=null;}
     render();
     persist();
   }
   function beginDrag(event,swatch,el){
-    if(event.button!==0) return;
+    if(event.isPrimary===false) return;
+    if(event.button!==undefined&&event.button!==0) return;
     hideContextMenu();
-    dragState={id:swatch.id,startX:event.clientX,startY:event.clientY,active:false,overId:swatch.id,side:'after',pointerId:event.pointerId};
-    el.setPointerCapture(event.pointerId);
-    el.addEventListener('pointermove',onDragMove);
-    el.addEventListener('pointerup',onDragEnd);
-    el.addEventListener('pointercancel',onDragEnd);
+    dragState={id:swatch.id,startX:event.clientX,startY:event.clientY,active:false,overId:swatch.id,side:'after',pointerId:event.pointerId,sourceEl:el,captured:false};
+    document.addEventListener('pointermove',onDragMove);
+    document.addEventListener('pointerup',onDragEnd);
+    document.addEventListener('pointercancel',onDragEnd);
   }
   function onDragMove(event){
     if(!dragState||event.pointerId!==dragState.pointerId) return;
     const dx=event.clientX-dragState.startX;
     const dy=event.clientY-dragState.startY;
-    if(!dragState.active&&Math.hypot(dx,dy)<5) return;
-    dragState.active=true;
-    suppressClick=true;
-    const dragged=document.querySelector('.palette-swatch[data-id="'+CSS.escape(dragState.id)+'"]');
-    if(dragged) dragged.classList.add('dragging');
+    if(!dragState.active){
+      if(Math.hypot(dx,dy)<5) return;
+      dragState.active=true;
+      suppressClick=true;
+      if(dragState.sourceEl&&!dragState.captured){
+        try{dragState.sourceEl.setPointerCapture(event.pointerId);dragState.captured=true;}catch(e){}
+      }
+      const dragged=document.querySelector('.palette-swatch[data-id="'+CSS.escape(dragState.id)+'"]');
+      if(dragged) dragged.classList.add('dragging');
+    }
+    event.preventDefault();
     const target=document.elementFromPoint(event.clientX,event.clientY);
     const swatchEl=target&&target.closest?target.closest('.palette-swatch'):null;
     clearInsertIndicators();
@@ -381,19 +660,24 @@
   }
   function onDragEnd(event){
     if(!dragState||event.pointerId!==dragState.pointerId) return;
-    const el=document.querySelector('.palette-swatch[data-id="'+CSS.escape(dragState.id)+'"]');
-    if(el){
-      try{el.releasePointerCapture(event.pointerId);}catch(e){}
-      el.removeEventListener('pointermove',onDragMove);
-      el.removeEventListener('pointerup',onDragEnd);
-      el.removeEventListener('pointercancel',onDragEnd);
-    }
     const state=dragState;
     dragState=null;
+    document.removeEventListener('pointermove',onDragMove);
+    document.removeEventListener('pointerup',onDragEnd);
+    document.removeEventListener('pointercancel',onDragEnd);
+    if(state.sourceEl&&state.captured){
+      try{state.sourceEl.releasePointerCapture(event.pointerId);}catch(e){}
+    }
     clearInsertIndicators();
     document.querySelectorAll('.palette-swatch.dragging').forEach(node=>node.classList.remove('dragging'));
-    if(state.active&&state.overId&&state.overId!==state.id) reorderSwatch(state.id,state.overId,state.side);
-    setTimeout(()=>{suppressClick=false;},0);
+    if(state.active){
+      event.preventDefault();
+      if(state.overId&&state.overId!==state.id) reorderSwatch(state.id,state.overId,state.side);
+      else activatePaletteSwatch(state.id,{select:true,setForeground:false});
+      setTimeout(()=>{suppressClick=false;},0);
+      return;
+    }
+    activatePaletteSwatch(state.id,{select:true,setForeground:true});
   }
   function clearInsertIndicators(){
     document.querySelectorAll('.palette-swatch.insert-before,.palette-swatch.insert-after').forEach(node=>node.classList.remove('insert-before','insert-after'));
@@ -407,6 +691,7 @@
     if(side==='after') to++;
     swatches.splice(to,0,moved);
     selectedId=id;
+    rememberSelection();
     render();
     persist();
   }
@@ -427,7 +712,7 @@
     if(!panel||typeof ResizeObserver==='undefined'||resizeObserver) return;
     resizeObserver=new ResizeObserver(()=>{
       persistView();
-      requestAnimationFrame(()=>ensureSelectedVisible());
+      requestAnimationFrame(()=>{ensureSelectedVisible();requestSideMenuPosition();});
     });
     resizeObserver.observe(panel);
   }
@@ -435,6 +720,21 @@
     const add=document.getElementById('palette-add-color');
     const remove=document.getElementById('palette-remove-color');
     const clear=document.getElementById('palette-clear');
+    const selector=document.getElementById('palette-selector');
+    const newBtn=document.getElementById('palette-new');
+    const renameBtn=document.getElementById('palette-rename');
+    const duplicateBtn=document.getElementById('palette-duplicate');
+    const deleteBtn=document.getElementById('palette-delete');
+    const settings=settingsButton();
+    if(selector) selector.addEventListener('change',()=>switchPalette(selector.value));
+    if(settings) settings.addEventListener('click',event=>{event.stopPropagation();toggleSideMenu();});
+    if(newBtn) newBtn.addEventListener('click',()=>{newPalette();closeSideMenu();});
+    if(renameBtn) renameBtn.addEventListener('click',()=>{renamePalette();closeSideMenu();});
+    if(duplicateBtn) duplicateBtn.addEventListener('click',()=>{duplicatePalette();closeSideMenu();});
+    if(deleteBtn) deleteBtn.addEventListener('click',()=>{deletePalette();closeSideMenu();});
+    const panel=document.getElementById('palette-panel');
+    const closeBtn=panel?panel.querySelector('.fp-close'):null;
+    if(closeBtn) closeBtn.addEventListener('click',()=>setTimeout(closeSideMenu,0));
     if(add) add.addEventListener('click',addCurrent);
     if(remove) remove.addEventListener('click',deleteSelected);
     if(clear) clear.addEventListener('click',clearAll);
@@ -452,7 +752,10 @@
     }
     bindResizeObserver();
     applyViewSettings(false);
-    document.addEventListener('keydown',e=>{if(e.key==='Escape'){hideContextMenu();hideEditConfirmBar();}});
+    document.addEventListener('pointerdown',handleSideMenuOutside);
+    document.addEventListener('pointermove',requestSideMenuPosition);
+    window.addEventListener('resize',requestSideMenuPosition);
+    document.addEventListener('keydown',e=>{if(e.key==='Escape'){hideContextMenu();hideEditConfirmBar();closeSideMenu();}});
   }
   window.PaletteDocker={serialize,load,reset(){load(null);},renderCurrentColors:render,refresh:render};
   document.addEventListener('DOMContentLoaded',()=>{bind();loadPersisted();});

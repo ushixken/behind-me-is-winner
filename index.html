@@ -404,6 +404,10 @@
       <div class="fp-body-wrap">
         <div class="fp-body active" data-body="palette">
           <div id="palette-body" tabindex="0">
+            <div class="palette-manager">
+              <select id="palette-selector" title="Active palette" aria-label="Active palette"></select>
+              <button id="palette-settings" class="palette-settings-btn" title="Palette settings" aria-label="Palette settings" aria-expanded="false">&#9881;</button>
+            </div>
             <div class="palette-toolbar">
               <button id="palette-add-color" title="Add current foreground color">+ Add Color</button>
               <button id="palette-remove-color" title="Remove selected color">Remove Color</button>
@@ -415,6 +419,14 @@
           </div>
         </div>
       </div>
+    </div>
+    <div id="palette-side-menu" class="palette-side-menu hidden" aria-label="Palette settings menu">
+      <button id="palette-new" type="button">New Palette</button>
+      <button id="palette-rename" type="button">Rename Palette</button>
+      <div class="palette-menu-sep" role="separator"></div>
+      <button id="palette-duplicate" type="button">Duplicate</button>
+      <div class="palette-menu-sep" role="separator"></div>
+      <button id="palette-delete" class="danger" type="button">Delete Palette</button>
     </div>
     <!-- LAYERS PANEL -->
     <div id="right-panel" class="float-panel dock-right docked" data-panel="layers" style="width:200px;right:0;">
@@ -1286,6 +1298,26 @@
     <div class="modal-actions">
       <button class="modal-btn" id="palette-paste-cancel">Cancel</button>
       <button class="modal-btn primary" id="palette-paste-ok">Apply</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="modal-palette-rename">
+  <div class="modal" style="min-width:300px;">
+    <h2>Rename Palette</h2>
+    <div class="modal-row"><label>Palette name</label><input id="palette-rename-input" type="text" value=""/></div>
+    <div class="modal-actions">
+      <button class="modal-btn" id="palette-rename-cancel">Cancel</button>
+      <button class="modal-btn primary" id="palette-rename-ok">Rename</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="modal-palette-confirm">
+  <div class="modal" style="min-width:280px;">
+    <h2 id="palette-confirm-title">Confirm</h2>
+    <p id="palette-confirm-message" style="font-size:12px;color:var(--text2);margin-bottom:16px;"></p>
+    <div class="modal-actions">
+      <button class="modal-btn" id="palette-confirm-cancel">Cancel</button>
+      <button class="modal-btn danger" id="palette-confirm-ok">Delete</button>
     </div>
   </div>
 </div>
