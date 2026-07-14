@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
@@ -558,6 +558,16 @@
   <span class="stat" id="stat-zoom">Zoom: 100%</span>
   <span class="stat" id="stat-rotation">Rotation: 0°</span>
   <span class="stat" id="stat-sel">Sel: —</span>
+  <!-- ⚠ TEMPORARY DEBUG — Advanced Palette style-index inspector. Remove before release. -->
+  <!-- Status-bar readout replaced by floating pointer tooltip; kept hidden so old IDs remain valid. -->
+  <span class="stat" id="stat-style-debug" style="display:none !important;" aria-hidden="true">
+    <span id="sdbg-label"></span>
+    <span id="sdbg-xy"></span>
+    <span id="sdbg-alpha"></span>
+    <span id="sdbg-index"></span>
+    <span id="sdbg-id"></span>
+    <span id="sdbg-name"></span>
+  </span>
 </div>
 
 <!-- ── CANVAS CONTEXT MENU ─────────────────────────────────── -->
@@ -1470,5 +1480,275 @@
 <script src="perspective-controller.js"></script>
 <script src="transform-tool.js"></script>
 <script src="local-storage-panel.js"></script>
+
+<!-- ⚠ TEMPORARY: Advanced Palette style-index debug tooltip. Remove before release. -->
+<style>
+/* Floating pointer tooltip for the Advanced Palette style-index debugger.
+   Fixed positioning keeps it in screen space independent of scroll/zoom.
+   pointer-events:none ensures it never intercepts canvas input.
+   z-index sits above panels (typically 1000-9000) but below modal overlays. */
+#adv-pal-dbg-tip {
+  position: fixed;
+  display: none;
+  pointer-events: none;
+  z-index: 9990;
+  /* Dark theme to match the app chrome */
+  background: rgba(18, 18, 22, 0.93);
+  color: #e8e8ec;
+  border: 1px solid rgba(255,255,255,0.13);
+  border-radius: 5px;
+  padding: 5px 8px;
+  /* Compact monospace so coordinates and hex IDs stay aligned */
+  font: 11px/1.55 ui-monospace, 'Cascadia Code', 'Fira Mono', monospace;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.55);
+  /* Tiny accent strip on the left edge to hint "this is a debug overlay" */
+  border-left: 3px solid #7b68ee;
+}
+#adv-pal-dbg-tip .dbg-row {
+  display: flex;
+  gap: 6px;
+}
+#adv-pal-dbg-tip .dbg-label {
+  color: rgba(255,255,255,0.42);
+  user-select: none;
+}
+#adv-pal-dbg-tip .dbg-val {
+  color: #e8e8ec;
+}
+#adv-pal-dbg-tip .dbg-val.dbg-highlight {
+  color: #9ddbff;
+}
+#adv-pal-dbg-tip .dbg-sep {
+  border: none;
+  border-top: 1px solid rgba(255,255,255,0.09);
+  margin: 3px 0;
+}
+</style>
+
+<div id="adv-pal-dbg-tip" role="tooltip" aria-live="off"></div>
+
+<script>
+(function(){
+  'use strict';
+
+  // ── Tooltip element ───────────────────────────────────────────
+  const tip = document.getElementById('adv-pal-dbg-tip');
+  if(!tip) return;
+
+  // Offset so the tooltip does not sit directly under the cursor/pen tip.
+  const OFFSET_X = 14;
+  const OFFSET_Y = 14;
+
+  // ── Helpers ───────────────────────────────────────────────────
+
+  // Resolve a style ID to its display name via PaletteDocker.serialize().
+  function resolveStyleName(styleId){
+    if(!styleId || styleId.startsWith('__deleted__:')) return null;
+    try{
+      const data = window.PaletteDocker && typeof window.PaletteDocker.serialize === 'function'
+        ? window.PaletteDocker.serialize()
+        : null;
+      if(!data) return null;
+      const styles = data.advancedPalette && data.advancedPalette.styles;
+      if(!Array.isArray(styles)) return null;
+      const match = styles.find(s => s && s.type !== 'separator' && s.id === styleId);
+      return match ? (match.name || null) : null;
+    }catch(e){ return null; }
+  }
+
+  // Read the artwork-layer RGBA at canvas pixel (cx, cy).
+  function artworkRGBA(cx, cy){
+    try{
+      if(typeof activeC === 'undefined' || !activeC) return null;
+      const px = Math.max(0, Math.min(Math.round(cx), CW - 1));
+      const py = Math.max(0, Math.min(Math.round(cy), CH - 1));
+      return activeC.getContext('2d').getImageData(px, py, 1, 1).data;
+    }catch(e){ return null; }
+  }
+
+  function isEnabled(){
+    if(typeof window.isAdvancedPalettePaintingEnabled === 'function')
+      return window.isAdvancedPalettePaintingEnabled();
+    if(window.PaletteDocker && typeof window.PaletteDocker.isAdvancedPalettePaintingEnabled === 'function')
+      return window.PaletteDocker.isAdvancedPalettePaintingEnabled();
+    return false;
+  }
+
+  // Build a labelled row element.
+  function row(label, value, highlight){
+    const d = document.createElement('div');
+    d.className = 'dbg-row';
+    const l = document.createElement('span');
+    l.className = 'dbg-label';
+    // Use only plain ASCII so no encoding issues arise regardless of charset.
+    l.textContent = label;
+    const v = document.createElement('span');
+    v.className = 'dbg-val' + (highlight ? ' dbg-highlight' : '');
+    v.textContent = value;
+    d.append(l, v);
+    return d;
+  }
+
+  function sep(){
+    const hr = document.createElement('hr');
+    hr.className = 'dbg-sep';
+    return hr;
+  }
+
+  // ── Position tooltip near the pointer, flipping if near an edge ──
+  function positionTip(clientX, clientY){
+    // Measure after content is set (offsetWidth/Height reflect current content).
+    const tw = tip.offsetWidth  || 0;
+    const th = tip.offsetHeight || 0;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    let left = clientX + OFFSET_X;
+    let top  = clientY + OFFSET_Y;
+
+    // Flip horizontally if it would overflow the right edge.
+    if(left + tw > vw - 6) left = clientX - tw - OFFSET_X;
+    // Flip vertically if it would overflow the bottom edge.
+    if(top  + th > vh - 6) top  = clientY - th - OFFSET_Y;
+
+    // Hard-clamp so it stays fully inside the viewport even at extreme corners.
+    left = Math.max(4, Math.min(left, vw - tw - 4));
+    top  = Math.max(4, Math.min(top,  vh - th - 4));
+
+    tip.style.left = left + 'px';
+    tip.style.top  = top  + 'px';
+  }
+
+  // ── Update tooltip content and position ──────────────────────
+  function update(clientX, clientY, canvasX, canvasY){
+    if(!isEnabled()){ hideTip(); return; }
+
+    const cx = Math.floor(canvasX);
+    const cy = Math.floor(canvasY);
+
+    // Out-of-bounds: pointer over canvas-area gutter, not the actual document.
+    const oob = cx < 0 || cy < 0
+      || (typeof CW !== 'undefined' && cx >= CW)
+      || (typeof CH !== 'undefined' && cy >= CH);
+
+    const frag = document.createDocumentFragment();
+
+    // Row 1: canvas coordinates
+    frag.append(row('xy', oob ? 'x:— y:—' : 'x:' + cx + '  y:' + cy));
+
+    if(oob){
+      // Still show the tooltip but with dashes for out-of-bounds values.
+      frag.append(
+        row('rgba', '—'),
+        sep(),
+        row('idx',  '—'),
+        row('id',   '—'),
+        row('name', '—')
+      );
+      tip.innerHTML = '';
+      tip.appendChild(frag);
+      tip.style.display = 'block';
+      positionTip(clientX, clientY);
+      return;
+    }
+
+    // Row 2: artwork RGBA
+    const artd = artworkRGBA(cx, cy);
+    const artStr = artd
+      ? 'r:' + artd[0] + '  g:' + artd[1] + '  b:' + artd[2] + '  a:' + artd[3]
+      : '—';
+    frag.append(row('rgba', artStr));
+
+    frag.append(sep());
+
+    // Rows 3-5: style index data
+    if(typeof window.debugStyleAtPoint !== 'function'){
+      frag.append(
+        row('idx',  'no debugStyleAtPoint'),
+        row('id',   '—'),
+        row('name', '—')
+      );
+    } else {
+      const info = window.debugStyleAtPoint(cx, cy);
+
+      if(!info || info.styleIndex === 0){
+        // Include raw channel info from the style buffer when available.
+        const rawStr = info
+          ? 'r:' + info.r + '  g:' + info.g + '  b:' + info.b + '  a:' + info.a
+          : '—';
+        frag.append(
+          row('raw',  rawStr),
+          row('idx',  '0'),
+          row('id',   'none'),
+          row('name', '—')
+        );
+      } else {
+        // Raw style-buffer channels — non-zero G or B on small indexes signals
+        // color-space corruption (missing willReadFrequently on context).
+        const rawStr = 'r:' + (info.r != null ? info.r : '?')
+          + '  g:' + (info.g != null ? info.g : '?')
+          + '  b:' + (info.b != null ? info.b : '?')
+          + '  a:' + (info.a != null ? info.a : '?');
+        frag.append(row('raw', rawStr));
+        frag.append(row('idx', String(info.styleIndex), /*highlight=*/true));
+
+        if(info.orphaned){
+          frag.append(
+            row('id',   'orphaned'),
+            row('name', '(deleted)')
+          );
+        } else {
+          frag.append(row('id', info.styleId || 'none', /*highlight=*/true));
+          const name = info.styleId ? resolveStyleName(info.styleId) : null;
+          frag.append(row('name', name || '—'));
+        }
+      }
+    }
+
+    // Swap content atomically to avoid flicker.
+    tip.innerHTML = '';
+    tip.appendChild(frag);
+    tip.style.display = 'block';
+
+    // Position after content is in the DOM so offsetWidth/Height are current.
+    positionTip(clientX, clientY);
+  }
+
+  function hideTip(){
+    tip.style.display = 'none';
+  }
+
+  // ── Event wiring ─────────────────────────────────────────────
+  function onPointerMove(e){
+    if(typeof getPos !== 'function'){ hideTip(); return; }
+    try{
+      const p = getPos(e);
+      update(e.clientX, e.clientY, p.x, p.y);
+    }catch(ex){ hideTip(); }
+  }
+
+  function onPointerLeave(){
+    hideTip();
+  }
+
+  // Attach to canvasArea in the capture phase so the tooltip always gets
+  // pointermove events even when other handlers call stopPropagation.
+  function attach(){
+    const area = typeof canvasArea !== 'undefined'
+      ? canvasArea
+      : document.getElementById('canvas-area');
+    if(!area) return;
+    area.addEventListener('pointermove',  onPointerMove,  {capture: true, passive: true});
+    area.addEventListener('pointerleave', onPointerLeave, {capture: true, passive: true});
+  }
+
+  if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', attach);
+  } else {
+    attach();
+  }
+})();
+</script>
 </body>
 </html>

@@ -425,6 +425,34 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 }
 .stat{font-size:10px;color:var(--text2);}
 
+/* ⚠ TEMPORARY: Advanced Palette style-index debug readout — remove before release */
+#stat-style-debug{
+  display:flex;align-items:center;gap:8px;
+  margin-left:auto;          /* push to the right end of the status bar */
+  padding:2px 8px;
+  border:1px dashed rgba(255,200,0,0.55);
+  border-radius:4px;
+  background:rgba(255,200,0,0.07);
+  flex-shrink:0;
+  font-size:10px;
+  color:var(--text2);
+}
+#sdbg-label{
+  font-weight:600;
+  color:rgba(255,200,0,0.9);
+  letter-spacing:.03em;
+  margin-right:2px;
+}
+#sdbg-xy,#sdbg-alpha,#sdbg-index,#sdbg-id,#sdbg-name{
+  font-family:monospace;
+  font-size:10px;
+  color:var(--text2);
+  white-space:nowrap;
+}
+#sdbg-index,#sdbg-id,#sdbg-name{
+  color:rgba(180,220,255,0.9);
+}
+
 /* â”€â”€ CONTEXT MENUS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .ctx-menu{position:fixed;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:4px;z-index:9999;min-width:165px;box-shadow:0 8px 32px rgba(0,0,0,0.5);display:none;}
 .ctx-menu.visible{display:block;}

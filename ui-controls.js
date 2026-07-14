@@ -142,6 +142,9 @@ document.getElementById('modal-canvas-ok').onclick=()=>{
 };
 function applyCanvasResize(nw,nh){
   layers.forEach(l=>{const nf={};Object.keys(l.frames).forEach(fi=>{const oc=document.createElement('canvas');oc.width=nw;oc.height=nh;const octx=oc.getContext('2d');const src=l.frames[fi];const dx=Math.round((nw-src.width)/2);const dy=Math.round((nh-src.height)/2);octx.drawImage(src,dx,dy);nf[fi]=oc;});l.frames=nf;});
+  // Resize style-index buffers to match the new canvas dimensions so pixel
+  // coordinates remain valid. resizeAllStyleFrames is defined in panels.js.
+  if(typeof resizeAllStyleFrames==='function') resizeAllStyleFrames(nw,nh);
   CW=nw;CH=nh;initCanvas();loadFrame(curLayer,curFrame);renderTimeline();fitCanvasToView();
 }
 

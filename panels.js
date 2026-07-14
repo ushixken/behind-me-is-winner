@@ -1,4 +1,4 @@
-// ════════════════════════════════════════════════════════════════
+﻿// ════════════════════════════════════════════════════════════════
 // FLOOD FILL
 // ════════════════════════════════════════════════════════════════
 function floodFill(x,y,fc){
@@ -25,89 +25,245 @@ function floodFill(x,y,fc){
 // LAYER CANVAS
 // ════════════════════════════════════════════════════════════════
 function mkLayerCanvas(){const o=document.createElement('canvas');o.width=CW;o.height=CH;return o;}
-function mkStyleIndexCanvas(){const o=document.createElement('canvas');o.width=CW;o.height=CH;return o;}
+// ── Style index canvas helpers ──────────────────────────────────
+// Style canvases store numeric style indices as RGB pixel values so that
+// every painted pixel can be looked up to find which style painted it.
+// IMPORTANT: these canvases are data buffers, not visual images. They must:
+//   1. Use {willReadFrequently:true} so getImageData is fast and exact.
+//   2. Never be drawn through the normal compositing pipeline (drawImage
+//      can apply color space conversion that corrupts small channel values).
+//   3. Use only per-pixel copy (getImageData/putImageData) for cloning.
+function mkStyleIndexCanvas(){
+  const o=document.createElement('canvas');o.width=CW;o.height=CH;
+  // willReadFrequently: tells the browser this canvas will be read back
+  // often via getImageData — avoids GPU round-trips and ensures pixel
+  // values are stored/returned exactly as written (no premult rounding).
+  // IMPORTANT: the return value must NOT be discarded — the first call to
+  // getContext() on a canvas element permanently fixes the context options.
+  // If we discard the result and a later caller does getContext('2d') without
+  // willReadFrequently, the browser returns a new context that ignores our
+  // flag, opening the door to GPU color-space transforms on readback that
+  // corrupt the small integer RGB index values (e.g. R=2 → R=2,G=1,B=1).
+  // Assign to a variable (even though unused here) so the first getContext()
+  // call establishes willReadFrequently:true as the permanent context mode.
+  // Discarding this return value is the bug that let later getContext('2d')
+  // calls (without the flag) override it and corrupt index readback.
+  const _ctx=o.getContext('2d',{willReadFrequently:true});
+  // Belt-and-suspenders: explicitly disable anything that could transform
+  // pixel values — the canvas is a data buffer, not a visual surface.
+  if(_ctx){
+    _ctx.globalAlpha=1;
+    _ctx.globalCompositeOperation='source-over';
+    _ctx.imageSmoothingEnabled=false;
+  }
+  return o;
+}
+
 function ensureLayerStyleStorage(layer){
   if(!layer) return null;
   if(!layer.styleFrames) layer.styleFrames={};
   if(!layer.styleFrameMeta) layer.styleFrameMeta={};
   return layer;
 }
+
+// Clone meta: use a fresh plain object so the clone is fully independent.
+// Cast numeric-string keys back to Number in indexToStyleId so the lookup
+// in debugStyleAtPoint (meta.indexToStyleId[numericIndex]) always hits.
 function cloneStyleMeta(meta){
   if(!meta) return null;
+  // Re-key indexToStyleId with numeric keys so meta.indexToStyleId[index]
+  // hits regardless of whether index is a number or numeric string.
+  const idxToId={};
+  Object.entries(meta.indexToStyleId||{}).forEach(([k,v])=>{idxToId[Number(k)]=v;});
+  // styleIdToIndex: string-keyed, values must be positive integers.
+  const idToIdx={};
+  Object.entries(meta.styleIdToIndex||{}).forEach(([k,v])=>{
+    const n=Number(v);
+    if(n>0) idToIdx[k]=n;
+  });
   return {
-    indexToStyleId:Object.assign({},meta.indexToStyleId||{}),
-    styleIdToIndex:Object.assign({},meta.styleIdToIndex||{}),
+    indexToStyleId:idxToId,
+    styleIdToIndex:idToIdx,
     nextIndex:Math.max(1,meta.nextIndex||1)
   };
 }
+
+// Clone a style canvas using pixel-level copy only — never drawImage —
+// to avoid any browser color-space or premultiplication transformation
+// that could corrupt the index values stored in the RGB channels.
 function cloneStyleCanvas(src){
   if(!src) return null;
-  const c=mkStyleIndexCanvas();c.getContext('2d').drawImage(src,0,0);return c;
+  const c=mkStyleIndexCanvas();
+  const srcCtx=src.getContext('2d',{willReadFrequently:true});
+  const dstCtx=c.getContext('2d',{willReadFrequently:true});
+  // Copy pixel data directly, bypassing any compositing transform.
+  const imgData=srcCtx.getImageData(0,0,src.width,src.height);
+  dstCtx.putImageData(imgData,0,0);
+  return c;
 }
+
 function getStyleFrameBundle(li,fi){
   const l=layers[li];if(!l) return {canvas:null,meta:null};ensureLayerStyleStorage(l);
   return {canvas:l.styleFrames[fi]||null,meta:cloneStyleMeta(l.styleFrameMeta[fi]||null)};
 }
+
 function restoreStyleFrameBundle(li,fi,bundle){
   const l=layers[li];if(!l) return;ensureLayerStyleStorage(l);
-  if(bundle&&bundle.canvas){l.styleFrames[fi]=cloneStyleCanvas(bundle.canvas);l.styleFrameMeta[fi]=cloneStyleMeta(bundle.meta)||{indexToStyleId:{},styleIdToIndex:{},nextIndex:1};}
-  else{delete l.styleFrames[fi];delete l.styleFrameMeta[fi];}
+  if(bundle&&bundle.canvas){
+    l.styleFrames[fi]=cloneStyleCanvas(bundle.canvas);
+    l.styleFrameMeta[fi]=cloneStyleMeta(bundle.meta)||{indexToStyleId:{},styleIdToIndex:{},nextIndex:1};
+  } else {
+    delete l.styleFrames[fi];delete l.styleFrameMeta[fi];
+  }
 }
+
+// Returns the live {canvas, meta} for (li, fi), creating them if absent.
+// Always returns a reference into the layer's own objects — callers that
+// need a snapshot must clone explicitly.
 function ensureStyleFrame(li=curLayer,fi=curFrame){
   const l=layers[li];if(!l) return null;ensureLayerStyleStorage(l);
   if(!l.styleFrames[fi]) l.styleFrames[fi]=mkStyleIndexCanvas();
   if(!l.styleFrameMeta[fi]) l.styleFrameMeta[fi]={indexToStyleId:{},styleIdToIndex:{},nextIndex:1};
   return {canvas:l.styleFrames[fi],meta:l.styleFrameMeta[fi]};
 }
+
+// Register styleId in the frame's meta and return its numeric index (≥1).
+// Guarantees: the returned index is stored in BOTH meta.styleIdToIndex AND
+// meta.indexToStyleId before returning, so debugStyleAtPoint can resolve it.
 function ensureStyleIndexForFrame(li,fi,styleId){
   const bundle=ensureStyleFrame(li,fi);if(!bundle||!styleId) return 0;
   const meta=bundle.meta;
-  if(meta.styleIdToIndex[styleId]) return meta.styleIdToIndex[styleId];
-  const idx=Math.max(1,meta.nextIndex||1);meta.nextIndex=idx+1;
-  meta.styleIdToIndex[styleId]=idx;meta.indexToStyleId[idx]=styleId;
+  // Use hasOwnProperty so a stored value of 0 (invalid, shouldn't happen)
+  // doesn't mask a needed re-registration; and cast to Number for safety.
+  const existing=meta.styleIdToIndex.hasOwnProperty(styleId)
+    ?Number(meta.styleIdToIndex[styleId]):0;
+  if(existing>0){
+    // Ensure the reverse mapping is always present — it could have been
+    // lost if meta was partially restored from an older snapshot.
+    if(!meta.indexToStyleId.hasOwnProperty(existing)||
+        meta.indexToStyleId[existing]!==styleId){
+      meta.indexToStyleId[Number(existing)]=styleId;
+    }
+    return existing;
+  }
+  // Allocate a new index. Clamp nextIndex to a safe range; if it has been
+  // corrupted to an impossibly large value, reset to the highest existing
+  // index + 1 so we don't waste the first 65 k slots.
+  const maxExisting=Object.keys(meta.indexToStyleId).reduce((m,k)=>Math.max(m,Number(k)),0);
+  let idx=Math.max(1,meta.nextIndex||1,maxExisting+1);
+  meta.nextIndex=idx+1;
+  // Write BOTH directions atomically before returning — this is the
+  // invariant that debugStyleAtPoint depends on.
+  meta.styleIdToIndex[styleId]=idx;
+  meta.indexToStyleId[Number(idx)]=styleId;
+  console.log('[StyleIndex] register styleId='+styleId+' → idx='+idx+' (li='+li+' fi='+fi+')');
   return idx;
 }
+
+// Encode a numeric style index into 3 RGB channels of a pixel at `offset`
+// and set alpha=255 to mark the pixel as "owned". Decoding:
+//   index = data[offset] | (data[offset+1]<<8) | (data[offset+2]<<16)
+// The encoder and decoder use identical little-endian layout.
 function encodeStyleIndexToPixel(data,offset,index){
-  data[offset]=index&255;data[offset+1]=(index>>8)&255;data[offset+2]=(index>>16)&255;data[offset+3]=255;
+  data[offset  ]=index&255;
+  data[offset+1]=(index>>8)&255;
+  data[offset+2]=(index>>16)&255;
+  data[offset+3]=255;
+  // Verify: decode immediately and log if mismatch (development aid).
+  if(typeof _styleEncodeVerify!=='undefined'&&_styleEncodeVerify){
+    const decoded=data[offset]|(data[offset+1]<<8)|(data[offset+2]<<16);
+    if(decoded!==index) console.error('[StyleIndex] encode/decode mismatch: wrote',index,'read',decoded);
+  }
 }
+
 function activeAdvancedStyleIdForPainting(){
   if(typeof window==='undefined') return null;
   if(typeof window.getActiveAdvancedPaletteStyleId==='function') return window.getActiveAdvancedPaletteStyleId();
   if(window.PaletteDocker&&typeof window.PaletteDocker.getActiveAdvancedPaletteStyleId==='function') return window.PaletteDocker.getActiveAdvancedPaletteStyleId();
   return null;
 }
+
 function advancedPalettePaintingEnabled(){
   if(typeof window==='undefined') return false;
   if(typeof window.isAdvancedPalettePaintingEnabled==='function') return !!window.isAdvancedPalettePaintingEnabled();
   return !!(window.PaletteDocker&&typeof window.PaletteDocker.isAdvancedPalettePaintingEnabled==='function'&&window.PaletteDocker.isAdvancedPalettePaintingEnabled());
 }
+
+// Apply style ownership to every opaque pixel in maskCanvas.
+// Both the index registration and the pixel write happen inside a single
+// call so there is no window where meta has an entry but pixels don't, or
+// vice versa.
 function applyStyleMaskFromCanvas(maskCanvas,styleId){
   if(!advancedPalettePaintingEnabled()||!styleId||!maskCanvas) return;
-  const idx=ensureStyleIndexForFrame(curLayer,curFrame,styleId);if(!idx) return;
-  const bundle=ensureStyleFrame(curLayer,curFrame);if(!bundle) return;
-  const mctx=maskCanvas.getContext('2d');const sctx=bundle.canvas.getContext('2d');
+  // Snapshot the target (li, fi) at call time so ensureStyleIndexForFrame
+  // and ensureStyleFrame operate on the same frame even if curFrame changes.
+  const li=curLayer,fi=curFrame;
+  // Register the style and get its index. ensureStyleIndexForFrame also
+  // creates the meta entry, so the index is resolvable immediately.
+  const idx=ensureStyleIndexForFrame(li,fi,styleId);if(!idx) return;
+  const bundle=ensureStyleFrame(li,fi);if(!bundle) return;
+  console.log('[StyleIndex] applyStyleMask styleId='+styleId+' idx='+idx+' li='+li+' fi='+fi);
+  const mctx=maskCanvas.getContext('2d',{willReadFrequently:true});
+  const sctx=bundle.canvas.getContext('2d',{willReadFrequently:true});
   const mask=mctx.getImageData(0,0,CW,CH).data;
   const img=sctx.getImageData(0,0,CW,CH);const out=img.data;
-  for(let i=3;i<mask.length;i+=4){if(mask[i]>0) encodeStyleIndexToPixel(out,i-3,idx);}
+  // Walk by pixel (step 4). For each pixel, i is the R channel offset.
+  for(let i=0;i<mask.length;i+=4){
+    if(mask[i+3]>0) encodeStyleIndexToPixel(out,i,idx);
+  }
   sctx.putImageData(img,0,0);
+  // Verify the round-trip: read back the first non-zero pixel and confirm.
+  _debugVerifyStyleWrite(bundle.canvas,idx,styleId,li,fi);
 }
+
 function applyStyleDiffFromBefore(beforeImage,styleId){
   if(!advancedPalettePaintingEnabled()||!styleId||!beforeImage) return;
+  const li=curLayer,fi=curFrame;
   const after=ctx.getImageData(0,0,CW,CH);const before=beforeImage.data,now=after.data;
-  const idx=ensureStyleIndexForFrame(curLayer,curFrame,styleId);if(!idx) return;
-  const bundle=ensureStyleFrame(curLayer,curFrame);if(!bundle) return;
-  const sctx=bundle.canvas.getContext('2d');const img=sctx.getImageData(0,0,CW,CH);const out=img.data;
+  const idx=ensureStyleIndexForFrame(li,fi,styleId);if(!idx) return;
+  const bundle=ensureStyleFrame(li,fi);if(!bundle) return;
+  console.log('[StyleIndex] applyStyleDiff styleId='+styleId+' idx='+idx+' li='+li+' fi='+fi);
+  const sctx=bundle.canvas.getContext('2d',{willReadFrequently:true});
+  const img=sctx.getImageData(0,0,CW,CH);const out=img.data;
   for(let i=0;i<now.length;i+=4){
     if(now[i]!==before[i]||now[i+1]!==before[i+1]||now[i+2]!==before[i+2]||now[i+3]!==before[i+3]){
-      if(now[i+3]>0) encodeStyleIndexToPixel(out,i,idx); else {out[i]=0;out[i+1]=0;out[i+2]=0;out[i+3]=0;}
+      if(now[i+3]>0) encodeStyleIndexToPixel(out,i,idx);
+      else{out[i]=0;out[i+1]=0;out[i+2]=0;out[i+3]=0;}
     }
   }
   sctx.putImageData(img,0,0);
+  _debugVerifyStyleWrite(bundle.canvas,idx,styleId,li,fi);
+}
+
+// Post-write verification: scan up to the first 4096 pixels to find one that
+// was written with `idx`, decode it, and confirm it resolves back to styleId.
+// Logs clearly if the encode→store→read→decode→resolve chain is broken.
+function _debugVerifyStyleWrite(styleCanvas,idx,styleId,li,fi){
+  try{
+    const sctx=styleCanvas.getContext('2d',{willReadFrequently:true});
+    const d=sctx.getImageData(0,0,Math.min(CW,256),Math.min(CH,16)).data;
+    for(let i=0;i<d.length;i+=4){
+      if(d[i+3]===255){
+        const decoded=d[i]|(d[i+1]<<8)|(d[i+2]<<16);
+        const meta=layers[li]&&layers[li].styleFrameMeta&&layers[li].styleFrameMeta[fi];
+        const resolved=meta&&meta.indexToStyleId[decoded]||null;
+        console.log('[StyleIndex] verify: encoded='+idx+' decoded='+decoded+
+          ' resolved='+(resolved||'NONE')+' expected='+styleId+
+          (decoded!==idx?' ⚠ ENCODE_MISMATCH':'')+(resolved!==styleId?' ⚠ RESOLVE_FAIL':''));
+        return;
+      }
+    }
+    console.log('[StyleIndex] verify: no non-zero pixel found in first scan area (idx='+idx+')');
+  }catch(e){console.error('[StyleIndex] verify error:',e);}
 }
 function clearStyleIndexWhereTransparent(){
   const l=layers[curLayer];if(!l||!l.styleFrames||!l.styleFrames[curFrame]) return;
   const pixels=ctx.getImageData(0,0,CW,CH).data;
-  const sctx=l.styleFrames[curFrame].getContext('2d');const img=sctx.getImageData(0,0,CW,CH);const data=img.data;
+  // willReadFrequently:true is required here — omitting it (using bare
+  // getContext('2d')) can switch the canvas to a GPU-accelerated context
+  // that applies sRGB color transforms on getImageData readback, corrupting
+  // the small integer index values stored in the RGB channels.
+  const sctx=l.styleFrames[curFrame].getContext('2d',{willReadFrequently:true});const img=sctx.getImageData(0,0,CW,CH);const data=img.data;
   let changed=false;
   for(let i=0;i<pixels.length;i+=4){if(pixels[i+3]===0&&data[i+3]!==0){data[i]=0;data[i+1]=0;data[i+2]=0;data[i+3]=0;changed=true;}}
   if(changed) sctx.putImageData(img,0,0);
@@ -118,7 +274,190 @@ window.restoreStyleFrameBundle=restoreStyleFrameBundle;
 window.applyStyleMaskFromCanvas=applyStyleMaskFromCanvas;
 window.applyStyleDiffFromBefore=applyStyleDiffFromBefore;
 window.clearStyleIndexWhereTransparent=clearStyleIndexWhereTransparent;
-window.deleteStyleFrame=deleteStyleFrame;// PERF FIX: recomposite() runs on every animation frame while a stroke is in
+window.deleteStyleFrame=deleteStyleFrame;
+
+// ── Style-index serialization ─────────────────────────────────
+// Converts a layer's styleFrames + styleFrameMeta into a JSON-safe
+// object (canvas → base64 PNG data URL) for project save/export.
+// Returns null if the layer has no style data at all.
+function serializeLayerStyleFrames(layer){
+  if(!layer||!layer.styleFrames) return null;
+  const keys=Object.keys(layer.styleFrames);
+  if(!keys.length) return null;
+  const frames={};
+  keys.forEach(fi=>{
+    const c=layer.styleFrames[fi];
+    if(!c) return;
+    try{ frames[fi]=c.toDataURL('image/png'); }catch(e){}
+  });
+  const meta={};
+  if(layer.styleFrameMeta){
+    Object.keys(layer.styleFrameMeta).forEach(fi=>{
+      if(layer.styleFrameMeta[fi]) meta[fi]=cloneStyleMeta(layer.styleFrameMeta[fi]);
+    });
+  }
+  return {frames,meta};
+}
+
+// Restores a layer's styleFrames + styleFrameMeta from the serialized form
+// produced by serializeLayerStyleFrames(). Safe to call with null/undefined
+// (old projects without style data) — just leaves the layer's style storage empty.
+function deserializeLayerStyleFrames(layer,data){
+  ensureLayerStyleStorage(layer);
+  if(!data||!data.frames) return;
+  const frameKeys=Object.keys(data.frames);
+  if(!frameKeys.length) return;
+  let pending=frameKeys.length;
+  frameKeys.forEach(fi=>{
+    const url=data.frames[fi];
+    if(!url){pending--;return;}
+    const img=new Image();
+    img.onload=()=>{
+      // Draw the serialized PNG into an intermediate canvas to get ImageData,
+      // then copy pixel-by-pixel into the style canvas so no color-space
+      // conversion or premultiplication can corrupt the stored index values.
+      //
+      // IMPORTANT: willReadFrequently:true must be set on the TMP canvas
+      // context BEFORE drawImage. Without it, some browsers apply sRGB
+      // gamma correction during getImageData readback, turning small index
+      // values like R=1 or R=2 (which are near-black in sRGB) into
+      // linearized values that round to 0 or an unexpected integer,
+      // silently destroying index 1, 2, 3, etc. after a save/load cycle.
+      const tmp=document.createElement('canvas');tmp.width=img.width||CW;tmp.height=img.height||CH;
+      const tctx=tmp.getContext('2d',{willReadFrequently:true});
+      // colorSpace:'srgb' is the default, but set it explicitly and disable
+      // imageSmoothingEnabled to ensure no resampling occurs.
+      if(tctx){tctx.imageSmoothingEnabled=false;}
+      tctx.drawImage(img,0,0);
+      const pixelData=tctx.getImageData(0,0,tmp.width,tmp.height);
+      const c=mkStyleIndexCanvas();
+      const sctx=c.getContext('2d',{willReadFrequently:true});
+      sctx.putImageData(pixelData,0,0);
+      layer.styleFrames[fi]=c;
+      if(data.meta&&data.meta[fi]) layer.styleFrameMeta[fi]=cloneStyleMeta(data.meta[fi]);
+      else layer.styleFrameMeta[fi]={indexToStyleId:{},styleIdToIndex:{},nextIndex:1};
+    };
+    img.onerror=()=>{};
+    img.src=url;
+  });
+}
+
+// Resize all existing style-index canvases to match new canvas dimensions
+// nw×nh. Existing pixel data is centered in the new buffer (matching the
+// RGBA frame resize behavior in applyCanvasResize in ui-controls.js).
+// Call this after CW/CH change, before initCanvas().
+function resizeAllStyleFrames(nw,nh){
+  layers.forEach(layer=>{
+    if(!layer.styleFrames) return;
+    Object.keys(layer.styleFrames).forEach(fi=>{
+      const src=layer.styleFrames[fi];if(!src) return;
+      const nc=document.createElement('canvas');nc.width=nw;nc.height=nh;
+      const nctx=nc.getContext('2d',{willReadFrequently:true});
+      const dx=Math.round((nw-src.width)/2);
+      const dy=Math.round((nh-src.height)/2);
+      // Use pixel copy to avoid any color-space transform on index data.
+      const srcCtx=src.getContext('2d',{willReadFrequently:true});
+      const srcData=srcCtx.getImageData(0,0,src.width,src.height);
+      nctx.putImageData(srcData,dx,dy);
+      layer.styleFrames[fi]=nc;
+    });
+  });
+}
+window.resizeAllStyleFrames=resizeAllStyleFrames;
+
+// Mark all pixels belonging to a deleted style as "orphaned" (styleId kept
+// in meta but flagged as deleted) so we don't silently reassign them to
+// another style. The RGBA artwork is untouched — only the meta is updated.
+function markStyleDeleted(styleId){
+  if(!styleId) return;
+  layers.forEach(layer=>{
+    if(!layer.styleFrameMeta) return;
+    Object.keys(layer.styleFrameMeta).forEach(fi=>{
+      const meta=layer.styleFrameMeta[fi];if(!meta) return;
+      const idx=meta.styleIdToIndex&&meta.styleIdToIndex[styleId];
+      if(!idx) return;
+      // Keep the mapping intact but tag the id with a deleted marker so
+      // future lookups can distinguish "no owner" from "orphaned owner".
+      if(meta.indexToStyleId) meta.indexToStyleId[idx]='__deleted__:'+styleId;
+      delete meta.styleIdToIndex[styleId];
+    });
+  });
+}
+window.markStyleDeleted=markStyleDeleted;
+
+// ── Encoding round-trip self-test ─────────────────────────────
+// Verifies that encodeStyleIndexToPixel and the decoder used by
+// debugStyleAtPoint agree on the byte layout for a range of indexes.
+// Call window._styleIndexRoundTripTest() from the browser console.
+// Every result must print OK; any FAIL means encoder/decoder mismatch.
+function _styleIndexRoundTripTest(){
+  const TEST_INDEXES=[1,2,3,255,256,257,65535];
+  let allOk=true;
+  const buf=new Uint8ClampedArray(4);
+  TEST_INDEXES.forEach(idx=>{
+    // Encode exactly as encodeStyleIndexToPixel does.
+    buf[0]=idx&255;
+    buf[1]=(idx>>8)&255;
+    buf[2]=(idx>>16)&255;
+    buf[3]=255;
+    // Decode exactly as debugStyleAtPoint does.
+    const decoded=buf[3]===255?(buf[0]|(buf[1]<<8)|(buf[2]<<16)):0;
+    const ok=decoded===idx;
+    if(!ok) allOk=false;
+    console.log('[StyleIndex] roundtrip idx='+idx+
+      ' → R='+buf[0]+' G='+buf[1]+' B='+buf[2]+' A='+buf[3]+
+      ' → decoded='+decoded+' '+(ok?'OK':'FAIL ⚠'));
+  });
+  console.log('[StyleIndex] round-trip test '+(allOk?'PASSED ✓':'FAILED ✗'));
+  return allOk;
+}
+window._styleIndexRoundTripTest=_styleIndexRoundTripTest;
+// Run immediately on load so any formula mismatch is caught at startup.
+(function(){try{_styleIndexRoundTripTest();}catch(e){console.error('[StyleIndex] round-trip test threw:',e);}})();
+
+// ── Debug helper ──────────────────────────────────────────────
+// Returns the style ID (or null/orphan marker) for the pixel at canvas
+// coordinate (cx, cy) on the given layer+frame (defaults to active).
+// Usage: window.debugStyleAtPoint(x, y)  or
+//        window.debugStyleAtPoint(x, y, layerIndex, frameIndex)
+function debugStyleAtPoint(cx,cy,li,fi){
+  li=(li!=null)?li:curLayer;
+  fi=(fi!=null)?fi:curFrame;
+  const layer=layers[li];
+  if(!layer||!layer.styleFrames||!layer.styleFrames[fi]){
+    return {styleId:null,styleIndex:0,r:0,g:0,b:0,a:0,note:'no style buffer for this layer/frame'};
+  }
+  const meta=layer.styleFrameMeta&&layer.styleFrameMeta[fi];
+  // Use willReadFrequently so the browser returns exact stored values without
+  // any GPU-side color transformation. The style canvas is a data buffer —
+  // pixel values are integer style indices, not visual colors.
+  const sctx=layer.styleFrames[fi].getContext('2d',{willReadFrequently:true});
+  const px=Math.max(0,Math.min(Math.round(cx),CW-1));
+  const py=Math.max(0,Math.min(Math.round(cy),CH-1));
+  const d=sctx.getImageData(px,py,1,1).data;
+  const r=d[0],g=d[1],b=d[2],a=d[3];
+  // Decode: little-endian R|G<<8|B<<16. Alpha must be 255 for a valid entry.
+  // If alpha≠255, the pixel is unowned (either transparent or corrupt).
+  const index=a===255?(r|(g<<8)|(b<<16)):0;
+  // Log the raw channel values so encode/decode mismatches are immediately
+  // visible: expected G=0 B=0 for small indexes — any non-zero G or B here
+  // means color-space corruption (e.g. missing willReadFrequently on context).
+  console.log('[debugStyleAtPoint] px=('+px+','+py+') r:'+r+' g:'+g+' b:'+b+' a:'+a+
+    ' decodedIndex:'+index+
+    (index>0?' resolvedId:'+((meta&&meta.indexToStyleId&&meta.indexToStyleId[Number(index)])||'NONE'):''));
+  if(!index) return {styleId:null,styleIndex:0,r,g,b,a,note:'unassigned'};
+  // Look up with Number(index) so the key coercion matches how entries
+  // were stored by ensureStyleIndexForFrame (which uses indexToStyleId[Number(idx)]).
+  const styleId=(meta&&meta.indexToStyleId&&meta.indexToStyleId[Number(index)])||null;
+  const deleted=styleId&&styleId.startsWith('__deleted__:');
+  return {styleId:deleted?null:styleId,styleIndex:index,r,g,b,a,orphaned:!!deleted,rawId:styleId,
+    note:deleted?'orphaned (style was deleted)':'owned'};
+}
+window.debugStyleAtPoint=debugStyleAtPoint;
+
+// Serialize / deserialize exposed for project-level save/load integration
+window.serializeLayerStyleFrames=serializeLayerStyleFrames;
+window.deserializeLayerStyleFrames=deserializeLayerStyleFrames;// PERF FIX: recomposite() runs on every animation frame while a stroke is in
 // progress (RAF-scheduled from pointermove). Previously, every group-clipped
 // or layer-clipped (stencil) layer caused 1-2 brand-new full-resolution
 // (e.g. 1920×1080) <canvas> elements to be allocated EVERY frame just to

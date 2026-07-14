@@ -805,6 +805,9 @@
     if(idx<0) return;
     advancedStyles.splice(idx,1);
     if(activeAdvancedStyleId===style.id){const next=advancedStyles.slice(idx).concat(advancedStyles.slice(0,idx)).find(s=>!isAdvancedSeparator(s));activeAdvancedStyleId=next?next.id:null;}
+    // Mark pixels owned by this style as orphaned in the style-index buffer.
+    // The RGBA artwork is preserved; only the style ownership meta is updated.
+    if(typeof window.markStyleDeleted==='function') window.markStyleDeleted(style.id);
     render();
     persist();
   }
