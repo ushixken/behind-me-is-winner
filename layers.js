@@ -20,7 +20,7 @@ function deleteLayer(idx){
 }
 function _doDeleteLayer(idx){
   layers.splice(idx,1);
-  if(layers.length===0) layers.push({name:'Layer 1',visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},opacity:1,stencil:'none',clipTo:null,groupId:null});
+  if(layers.length===0) layers.push({name:'Layer 1',visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},styleFrames:{},styleFrameMeta:{},opacity:1,stencil:'none',clipTo:null,groupId:null});
   if(curLayer>=layers.length) curLayer=layers.length-1;
   if(curLayer<0) curLayer=0;
   selectedLayerIndices.clear();
@@ -104,7 +104,7 @@ document.getElementById('del-bulk-ok').onclick=()=>{
   }
   _pendingDeleteAllLayers=false;
   // If every layer was removed, create a fresh blank layer so the project always has at least one.
-  if(layers.length===0) layers.push({name:'Layer 1',visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},opacity:1,stencil:'none',clipTo:null,groupId:null});
+  if(layers.length===0) layers.push({name:'Layer 1',visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},styleFrames:{},styleFrameMeta:{},opacity:1,stencil:'none',clipTo:null,groupId:null});
   if(curLayer>=layers.length) curLayer=layers.length-1;
   if(curLayer<0) curLayer=0;
   selectedLayerIndices.clear();
@@ -128,7 +128,7 @@ document.getElementById('del-group-ok').onclick=()=>{
     // Remove this group, every nested subgroup, and all of their layers
     layers=layers.filter(l=>!(l.groupId&&idSet.has(l.groupId)));
     // If no layers remain, add a blank Layer 1
-    if(layers.length===0) layers.push({name:'Layer 1',visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},opacity:1,stencil:'none',clipTo:null,groupId:null});
+    if(layers.length===0) layers.push({name:'Layer 1',visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},styleFrames:{},styleFrameMeta:{},opacity:1,stencil:'none',clipTo:null,groupId:null});
     if(curLayer>=layers.length) curLayer=Math.max(0,layers.length-1);
     selectedLayerIndices.clear();
     // Stencil/clip always targets the item immediately below in visual order.
@@ -170,14 +170,15 @@ tlBodyEl.addEventListener('drop',e=>{
 // ════════════════════════════════════════════════════════════════
 // COPY / CUT / PASTE / DUPLICATE
 // ════════════════════════════════════════════════════════════════
-function copyFrame(){const k=layers[curLayer].frames[curFrame];if(!k){clipboard=null;return;}clipboard=mkLayerCanvas();clipboard.getContext('2d').drawImage(k,0,0);}
-function cutFrame(){copyFrame();delete layers[curLayer].frames[curFrame];ctx.clearRect(0,0,CW,CH);const h=getHeldKey(curLayer,curFrame);if(h)ctx.drawImage(h,0,0);saveActiveToKey();loadFrame(curLayer,curFrame);renderTimeline();}
-function pasteFrame(){if(!clipboard) return;ensureKey();ctx.clearRect(0,0,CW,CH);ctx.drawImage(clipboard,0,0);saveActiveToKey();recomposite(curLayer,curFrame);}
+function copyFrame(){const k=layers[curLayer].frames[curFrame];if(!k){clipboard=null;styleClipboard=null;return;}clipboard=mkLayerCanvas();clipboard.getContext('2d').drawImage(k,0,0);styleClipboard=(typeof getStyleFrameBundle==='function')?getStyleFrameBundle(curLayer,curFrame):null;}
+function cutFrame(){copyFrame();delete layers[curLayer].frames[curFrame];if(typeof deleteStyleFrame==='function') deleteStyleFrame(curLayer,curFrame);ctx.clearRect(0,0,CW,CH);const h=getHeldKey(curLayer,curFrame);if(h)ctx.drawImage(h,0,0);saveActiveToKey();loadFrame(curLayer,curFrame);renderTimeline();}
+function pasteFrame(){if(!clipboard) return;ensureKey();ctx.clearRect(0,0,CW,CH);ctx.drawImage(clipboard,0,0);if(typeof restoreStyleFrameBundle==='function') restoreStyleFrameBundle(curLayer,curFrame,styleClipboard);saveActiveToKey();recomposite(curLayer,curFrame);}
 function duplicateFrame(){
   const l=layers[curLayer];const k=l.frames[curFrame];const n=curFrame+1;
   if(n>=TOTAL) return;
   const d=mkLayerCanvas();if(k) d.getContext('2d').drawImage(k,0,0);
   l.frames[n]=d;
+  if(typeof getStyleFrameBundle==='function'&&typeof restoreStyleFrameBundle==='function') restoreStyleFrameBundle(curLayer,n,getStyleFrameBundle(curLayer,curFrame));
   // Carry the source frame's mark to the duplicate
   if(!l.frameMeta) l.frameMeta={};
   const srcMeta=l.frameMeta[curFrame];
@@ -215,7 +216,7 @@ document.getElementById('ctx-cut').onclick=()=>{cutFrame();hideAllMenus();};
 document.getElementById('ctx-copy').onclick=()=>{copyFrame();hideAllMenus();};
 document.getElementById('ctx-paste').onclick=()=>{pasteFrame();hideAllMenus();};
 document.getElementById('ctx-duplicate').onclick=()=>{duplicateFrame();hideAllMenus();};
-document.getElementById('ctx-delete').onclick=()=>{delete layers[curLayer].frames[curFrame];ctx.clearRect(0,0,CW,CH);loadFrame(curLayer,curFrame);renderTimeline();hideAllMenus();};
+document.getElementById('ctx-delete').onclick=()=>{delete layers[curLayer].frames[curFrame];if(typeof deleteStyleFrame==='function') deleteStyleFrame(curLayer,curFrame);ctx.clearRect(0,0,CW,CH);loadFrame(curLayer,curFrame);renderTimeline();hideAllMenus();};
 // Layer panel context menu actions
 function _startLayerRename(idx,gid){
   if(gid!=null){
@@ -252,13 +253,19 @@ document.getElementById('layer-ctx-rename').onclick=()=>{hideAllMenus();_startLa
 let _layerObjClipboard=null; // stores a deep copy of a layer object
 
 function _deepCopyLayer(l){
-  const copy={...l,frames:{},frameMeta:{}};
+  const copy={...l,frames:{},frameMeta:{},styleFrames:{},styleFrameMeta:{}};
   Object.entries(l.frames).forEach(([f,src])=>{
     const c=mkLayerCanvas();c.getContext('2d').drawImage(src,0,0);copy.frames[f]=c;
   });
   // Deep-copy per-frame metadata so the duplicate is fully independent
   if(l.frameMeta){
     Object.entries(l.frameMeta).forEach(([f,meta])=>{copy.frameMeta[f]=Object.assign({},meta);});
+  }
+  if(l.styleFrames){
+    Object.entries(l.styleFrames).forEach(([f,src])=>{copy.styleFrames[f]=cloneStyleCanvas(src);});
+  }
+  if(l.styleFrameMeta){
+    Object.entries(l.styleFrameMeta).forEach(([f,meta])=>{copy.styleFrameMeta[f]=cloneStyleMeta(meta);});
   }
   return copy;
 }
@@ -396,7 +403,7 @@ document.getElementById('modal-new-project').addEventListener('click',e=>{if(e.t
 document.getElementById('modal-new-project-ok').onclick=()=>{
   document.getElementById('modal-new-project').classList.remove('visible');
   groups=[];
-  layers=[{name:'Layer 1',visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},opacity:1,stencil:'none',clipTo:null,groupId:null}];
+  layers=[{name:'Layer 1',visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},styleFrames:{},styleFrameMeta:{},opacity:1,stencil:'none',clipTo:null,groupId:null}];
   curLayer=0;curFrame=0;
   undoStack=[];redoStack=[];
   selectedFrames.clear();selectedFrames.add(0);selectedKFs.clear();
@@ -445,7 +452,7 @@ document.getElementById('dd-cut').onclick=()=>{cutFrame();closeAllDropdowns();};
 document.getElementById('dd-copy').onclick=()=>{copyFrame();closeAllDropdowns();};
 document.getElementById('dd-paste').onclick=()=>{pasteFrame();closeAllDropdowns();};
 document.getElementById('dd-duplicate').onclick=()=>{duplicateFrame();closeAllDropdowns();};
-function clearCurrentFrame(){pushUndo();ensureKey();ctx.clearRect(0,0,CW,CH);saveActiveToKey();recomposite(curLayer,curFrame);}
+function clearCurrentFrame(){pushUndo();ensureKey();ctx.clearRect(0,0,CW,CH);if(typeof deleteStyleFrame==='function') deleteStyleFrame(curLayer,curFrame);saveActiveToKey();recomposite(curLayer,curFrame);}
 document.getElementById('dd-clear').onclick=()=>{clearCurrentFrame();closeAllDropdowns();};
 
 // Window menu

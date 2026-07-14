@@ -62,9 +62,11 @@
           if (!layer.frameMeta) layer.frameMeta = {};
           if (layer.frameMeta[f]) layer.frameMeta[nf] = Object.assign({}, layer.frameMeta[f]);
           else delete layer.frameMeta[nf];
+          if (typeof restoreStyleFrameBundle==='function'&&typeof getStyleFrameBundle==='function') restoreStyleFrameBundle(li,nf,getStyleFrameBundle(li,f));
         }
         delete layer.frames[f];
         if (layer.frameMeta) delete layer.frameMeta[f];
+        if (typeof deleteStyleFrame==='function') deleteStyleFrame(li,f);
       }
     });
   }
@@ -87,9 +89,11 @@
           if (!layer.frameMeta) layer.frameMeta = {};
           if (layer.frameMeta[f]) layer.frameMeta[nf] = Object.assign({}, layer.frameMeta[f]);
           else delete layer.frameMeta[nf];
+          if (typeof restoreStyleFrameBundle==='function'&&typeof getStyleFrameBundle==='function') restoreStyleFrameBundle(li,nf,getStyleFrameBundle(li,f));
         }
         delete layer.frames[f];
         if (layer.frameMeta) delete layer.frameMeta[f];
+        if (typeof deleteStyleFrame==='function') deleteStyleFrame(li,f);
       }
     });
   }

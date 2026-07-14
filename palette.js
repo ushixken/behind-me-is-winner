@@ -1,10 +1,11 @@
-(function(){
+﻿(function(){
   const STORE_KEY='animatorPaletteV1';
   const VIEW_KEY='animatorPaletteViewV1';
   const SWATCH_SIZE_MIN=16;
   const SWATCH_SIZE_MAX=64;
   const SWATCH_SIZE_STEP=2;
   const SWATCH_SIZE_DEFAULT=28;
+  const ADVANCED_PALETTE_VERSION=2;
   let palettes=[];
   let activePaletteId=null;
   let swatches=[];
@@ -21,9 +22,45 @@
   let dropdownOpen=false;
   let dropdownFrame=null;
   let toolbarPaletteMode='hidden';
+  let advancedPaletteEnabled=false;
+  let advancedPaletteVersion=0;
+  let advancedStyles=[];
+  let activeAdvancedStyleId=null;
   let popupListenersBound=false;
   let paletteDragState=null;
   const defaultHexes=['#000000','#ffffff','#f23636','#ff9f1c','#ffd23f','#2ec4b6','#3a86ff','#8338ec'];
+  function makeAdvancedStyle(rgba,id,name){
+    const values=Array.isArray(rgba)?rgba:[0,0,0,255];
+    const safeRgba=[0,1,2,3].map(i=>Math.max(0,Math.min(255,Math.round(Number(values[i]??(i===3?255:0))||0))));
+    return {id:id||makeId('style'),type:'style',name:String(name||'').trim()||nextAdvancedStyleName(),rgba:safeRgba,locked:false,visible:true};
+  }
+  function makeAdvancedSeparator(id){return {id:id||makeId('advsep'),type:'separator'};}
+  function isAdvancedSeparator(item){return !!item&&item.type==='separator';}
+  function styleHex(style){const c=style&&Array.isArray(style.rgba)?style.rgba:[0,0,0,255];return rgbaToHex(c[0],c[1],c[2],c[3]);}
+  function sanitizeAdvancedStyles(input){
+    const list=Array.isArray(input)?input:[];
+    return list.map((style,i)=>{
+      if(isAdvancedSeparator(style)) return makeAdvancedSeparator(style.id);
+      const made=makeAdvancedStyle(style&&style.rgba,style&&style.id,style&&style.name||('color_'+(i+1)));
+      made.locked=!!(style&&style.locked);
+      made.visible=style&&style.visible===false?false:true;
+      return made;
+    });
+  }
+  function nextAdvancedStyleName(){
+    let n=1;
+    const names=new Set(advancedStyles.filter(s=>!isAdvancedSeparator(s)).map(s=>String(s.name||'').toLowerCase()));
+    while(names.has(('color_'+n).toLowerCase())) n++;
+    return 'color_'+n;
+  }
+  function activeAdvancedStyle(){return advancedStyles.find(s=>!isAdvancedSeparator(s)&&s.id===activeAdvancedStyleId)||advancedStyles.find(s=>!isAdvancedSeparator(s))||null;}
+  function syncAdvancedRefs(){
+    advancedStyles=sanitizeAdvancedStyles(advancedStyles);
+    if(!advancedStyles.some(s=>!isAdvancedSeparator(s)&&s.id===activeAdvancedStyleId)){
+      const first=advancedStyles.find(s=>!isAdvancedSeparator(s));
+      activeAdvancedStyleId=first?first.id:null;
+    }
+  }
 
   function normalizeHex(hex){
     hex=String(hex||'').trim();
@@ -126,10 +163,18 @@
   function isSwatch(item){return !!item&&item.type!=='separator'&&item.type!=='spacer';}
   function cloneSwatch(swatch){return isSeparator(swatch)?makeSeparator():isSpacer(swatch)?makeSpacer():makeSwatch(swatch.hex,null,swatch&&swatch.name);}
   function defaultSwatches(){return defaultHexes.map(hex=>makeSwatch(hex));}
+  function createDefaultPaletteState(){
+    const palette=makePalette('Palette 1',defaultSwatches());
+    return {version:2,palettes:[palette],activePaletteId:palette.id,advancedPalette:{version:ADVANCED_PALETTE_VERSION,enabled:false,styles:[],activeStyleId:null},view:{swatchSize,scrollTop:0,toolbarPaletteMode:'hidden',advancedPaletteEnabled:false}};
+  }
   function sanitizePaletteItem(item){
-    if(item&&item.type==='separator') return makeSeparator(item.id);
-    if(item&&item.type==='spacer') return makeSpacer(item.id);
-    return makeSwatch(item&&item.hex,item&&item.id,item&&item.name);
+    if(!item||typeof item!=='object') return null;
+    if(item.type==='separator') return makeSeparator(item.id);
+    if(item.type==='spacer') return makeSpacer(item.id);
+    if(item.type&&item.type!=='swatch') return null;
+    if(!item.hex&&!item.rgba) return null;
+    const hex=item.hex||rgbaToHex(item.rgba&&item.rgba[0],item.rgba&&item.rgba[1],item.rgba&&item.rgba[2],item.rgba&&item.rgba[3]);
+    return makeSwatch(hex,item.id,item.name);
   }
   function sanitizeSwatches(input,allowEmpty){
     const list=Array.isArray(input)?input:[];
@@ -191,7 +236,7 @@
   function persistView(){
     const grid=document.getElementById('palette-grid');
     if(grid) savedScrollTop=grid.scrollTop;
-    try{localStorage.setItem(VIEW_KEY,JSON.stringify({swatchSize,scrollTop:savedScrollTop,toolbarPaletteMode}));}catch(e){}
+    try{localStorage.setItem(VIEW_KEY,JSON.stringify({swatchSize,scrollTop:savedScrollTop,toolbarPaletteMode,advancedPaletteEnabled}));}catch(e){}
   }
   function loadView(){
     try{
@@ -199,11 +244,12 @@
       if(view&&Number.isFinite(+view.swatchSize)) swatchSize=clampSwatchSize(+view.swatchSize);
       if(view&&Number.isFinite(+view.scrollTop)) savedScrollTop=Math.max(0,+view.scrollTop);
       toolbarPaletteMode=view&&view.toolbarPaletteMode==='active'?'active':'hidden';
+      advancedPaletteEnabled=!!(view&&view.advancedPaletteEnabled);
     }catch(e){}
   }
   function serialize(){
     rememberSelection();
-    return {version:2,palettes:palettes.map(p=>({id:p.id,name:p.name,swatches:p.swatches.map(exportSwatchData),selectedId:p.selectedId||null})),activePaletteId,view:{swatchSize,scrollTop:savedScrollTop,toolbarPaletteMode}};
+    return {version:2,palettes:palettes.map(p=>({id:p.id,name:p.name,swatches:p.swatches.map(exportSwatchData),selectedId:p.selectedId||null})),activePaletteId,advancedPalette:{version:ADVANCED_PALETTE_VERSION,enabled:advancedPaletteEnabled,styles:advancedStyles,activeStyleId:activeAdvancedStyleId},view:{swatchSize,scrollTop:savedScrollTop,toolbarPaletteMode,advancedPaletteEnabled}};
   }
   function load(data){
     const payload=data&&typeof data==='object'?data:null;
@@ -219,6 +265,14 @@
     if(payload&&payload.view&&Number.isFinite(+payload.view.swatchSize)) swatchSize=clampSwatchSize(+payload.view.swatchSize);
     if(payload&&payload.view&&Number.isFinite(+payload.view.scrollTop)) savedScrollTop=Math.max(0,+payload.view.scrollTop);
     if(payload&&payload.view) toolbarPaletteMode=payload.view.toolbarPaletteMode==='active'?'active':'hidden';
+    const advancedPayload=payload&&payload.advancedPalette;
+    advancedPaletteEnabled=!!(advancedPayload&&advancedPayload.enabled)||(payload&&payload.view&&!!payload.view.advancedPaletteEnabled);
+    advancedPaletteVersion=Number.isFinite(+(advancedPayload&&advancedPayload.version))?+advancedPayload.version:0;
+    advancedStyles=sanitizeAdvancedStyles(advancedPayload&&advancedPayload.styles);
+    activeAdvancedStyleId=advancedPayload&&advancedPayload.activeStyleId;
+    if(advancedPaletteEnabled&&!advancedStyles.length) initializeAdvancedPaletteFromActivePalette();
+    migrateAdvancedPaletteIfNeeded();
+    syncAdvancedRefs();
     restoreScrollPending=true;
     applyViewSettings(false);
     render();
@@ -227,11 +281,13 @@
   function loadPersisted(){
     loadView();
     applyViewSettings(false);
+    let saved=null;
     try{
-      const saved=JSON.parse(localStorage.getItem(STORE_KEY)||'null');
-      if(saved&&(Array.isArray(saved.swatches)||Array.isArray(saved.palettes))){load(saved);return;}
-    }catch(e){}
-    load(null);
+      const raw=localStorage.getItem(STORE_KEY);
+      if(raw) saved=JSON.parse(raw);
+    }catch(e){saved=null;}
+    if(saved&&(Array.isArray(saved.swatches)||Array.isArray(saved.palettes))){load(saved);return;}
+    load(createDefaultPaletteState());
   }
   function setForeground(hex,openPicker){
     const safeHex=normalizeHex(hex);
@@ -584,15 +640,260 @@
       toolbarToggle.classList.toggle('active',toolbarPaletteEnabled());
       toolbarToggle.textContent=(toolbarPaletteEnabled()?'[On] ':'')+'Attach to Toolbar';
     }
+    const advancedToggle=document.getElementById('palette-advanced-toggle');
+    if(advancedToggle){
+      advancedToggle.classList.toggle('active',advancedPaletteEnabled);
+      advancedToggle.textContent='Advanced Palette: '+(advancedPaletteEnabled?'On':'Off');
+    }
     renderPaletteList();
     requestSideMenuPosition();
   }
-  function render(){
+  function setAdvancedPaletteEnabled(enabled){
+    const nextEnabled=!!enabled;
+    if(nextEnabled&&!advancedPaletteEnabled) initializeAdvancedPaletteFromActivePalette();
+    advancedPaletteEnabled=nextEnabled;
+    if(nextEnabled) migrateAdvancedPaletteIfNeeded();
+    syncAdvancedRefs();
+    render();
+    persistView();
+    persist();
+    closeSideMenu();
+  }
+  function toggleAdvancedPalette(){setAdvancedPaletteEnabled(!advancedPaletteEnabled);}
+  function normalPaletteColorCount(){
+    const active=activePalette();
+    return active&&Array.isArray(active.swatches)?active.swatches.filter(isSwatch).length:0;
+  }
+  function isDefaultBlackWhiteAdvancedStyles(styles){
+    const list=Array.isArray(styles)?styles.filter(s=>!isAdvancedSeparator(s)):[];
+    if(list.length!==2||styles.length!==2) return false;
+    const first=list[0],second=list[1];
+    return String(first.name||'').toLowerCase()==='color_1'
+      &&String(second.name||'').toLowerCase()==='color_2'
+      &&styleHex(first).slice(0,7).toLowerCase()==='#000000'
+      &&styleHex(second).slice(0,7).toLowerCase()==='#ffffff';
+  }
+  function shouldMigrateAdvancedPaletteDefaults(){
+    return advancedPaletteVersion<ADVANCED_PALETTE_VERSION
+      &&isDefaultBlackWhiteAdvancedStyles(advancedStyles)
+      &&normalPaletteColorCount()>2;
+  }
+  function initializeAdvancedPaletteFromActivePalette(force){
+    if(advancedStyles.length&&!force) return;
+    const active=activePalette();
+    const source=(active&&Array.isArray(active.swatches)?active.swatches:[]);
+    let colorIndex=1;
+    advancedStyles=source.reduce((items,item)=>{
+      if(isSeparator(item)){items.push(makeAdvancedSeparator());return items;}
+      if(!isSwatch(item)) return items;
+      items.push(makeAdvancedStyle(rgbaArray(item.hex),null,'color_'+colorIndex++));
+      return items;
+    },[]);
+    if(!advancedStyles.some(s=>!isAdvancedSeparator(s))){
+      defaultSwatches().forEach(item=>advancedStyles.push(makeAdvancedStyle(rgbaArray(item.hex),null,'color_'+colorIndex++)));
+    }
+    const first=advancedStyles.find(s=>!isAdvancedSeparator(s));
+    activeAdvancedStyleId=first?first.id:null;
+    advancedPaletteVersion=ADVANCED_PALETTE_VERSION;
+  }
+  function migrateAdvancedPaletteIfNeeded(){
+    if(!advancedStyles.length){
+      advancedPaletteVersion=ADVANCED_PALETTE_VERSION;
+      return false;
+    }
+    if(!shouldMigrateAdvancedPaletteDefaults()){
+      advancedPaletteVersion=Math.max(advancedPaletteVersion||0,ADVANCED_PALETTE_VERSION);
+      return false;
+    }
+    initializeAdvancedPaletteFromActivePalette(true);
+    return true;
+  }
+  function selectAdvancedStyle(id,setBrush){
+    const style=advancedStyles.find(s=>!isAdvancedSeparator(s)&&s.id===id);
+    if(!style) return;
+    activeAdvancedStyleId=style.id;
+    if(setBrush!==false) setForeground(styleHex(style),false);
+    render();
+    persist();
+  }
+  function createAdvancedStyle(){
+    syncAdvancedRefs();
+    const style=makeAdvancedStyle(rgbaArray(currentForegroundHex()),null,nextAdvancedStyleName());
+    advancedStyles.push(style);
+    activeAdvancedStyleId=style.id;
+    setForeground(styleHex(style),false);
+    render();
+    persist();
+  }
+  function findAdvancedStyleById(id){return advancedStyles.find(s=>!isAdvancedSeparator(s)&&s.id===id)||null;}
+  function refreshAdvancedStyleChange(style){
+    if(style&&style.id===activeAdvancedStyleId) setForeground(styleHex(style),false);
+    render();
+    renderToolbarPalette();
+    persist();
+    if(typeof recomposite==='function') recomposite(curLayer,curFrame);
+  }
+  function requestAdvancedStyleRename(style){
+    return new Promise(resolve=>{
+      const existing=document.getElementById('modal-advanced-style-rename');
+      if(existing) existing.remove();
+      const overlay=document.createElement('div');
+      overlay.id='modal-advanced-style-rename';
+      overlay.className='modal-overlay visible';
+      overlay.innerHTML='<div class="modal palette-rename-style-modal" role="dialog" aria-modal="true" aria-labelledby="advanced-style-rename-title"><h2 id="advanced-style-rename-title">Rename Style</h2><div class="modal-row"><label for="advanced-style-rename-input">Style name</label><input id="advanced-style-rename-input" type="text" /></div><div class="modal-actions"><button class="modal-btn" id="advanced-style-rename-cancel" type="button">Cancel</button><button class="modal-btn primary" id="advanced-style-rename-ok" type="button">OK</button></div></div>';
+      document.body.appendChild(overlay);
+      const input=overlay.querySelector('#advanced-style-rename-input');
+      const ok=overlay.querySelector('#advanced-style-rename-ok');
+      const cancel=overlay.querySelector('#advanced-style-rename-cancel');
+      let done=false;
+      const close=value=>{
+        if(done) return;
+        done=true;
+        document.removeEventListener('keydown',onKey,true);
+        overlay.remove();
+        resolve(value);
+      };
+      const submit=()=>{
+        const clean=String(input.value||'').trim();
+        if(!clean){input.value=style.name||'';input.select();return;}
+        close(clean);
+      };
+      const onKey=event=>{
+        if(event.key==='Escape'){event.preventDefault();close(null);}
+        else if(event.key==='Enter'){event.preventDefault();submit();}
+      };
+      ok.addEventListener('click',submit);
+      cancel.addEventListener('click',()=>close(null));
+      overlay.addEventListener('pointerdown',event=>{if(event.target===overlay) close(null);});
+      document.addEventListener('keydown',onKey,true);
+      input.value=style.name||'';
+      requestAnimationFrame(()=>{input.focus();input.select();});
+    });
+  }
+  function editAdvancedStyle(style){
+    const target=findAdvancedStyleById(style&&style.id);
+    if(!target||target.locked) return;
+    showEditColorModal({hex:styleHex(target)},hex=>{
+      const stored=findAdvancedStyleById(target.id);
+      if(!stored||stored.locked) return;
+      stored.rgba=rgbaArray(hex);
+      refreshAdvancedStyleChange(stored);
+    });
+  }
+  async function renameAdvancedStyle(style){
+    const target=findAdvancedStyleById(style&&style.id);
+    if(!target) return;
+    const clean=await requestAdvancedStyleRename(target);
+    if(!clean) return;
+    const stored=findAdvancedStyleById(target.id);
+    if(!stored) return;
+    stored.name=clean;
+    refreshAdvancedStyleChange(stored);
+  }
+  function duplicateAdvancedStyle(style){
+    if(!style) return;
+    const copy=makeAdvancedStyle(style.rgba,null,nextAdvancedStyleName());
+    copy.name=(style.name||'color')+' Copy';
+    advancedStyles.push(copy);
+    activeAdvancedStyleId=copy.id;
+    render();
+    persist();
+  }
+  function deleteAdvancedStyle(style){
+    if(!style||isAdvancedSeparator(style)||advancedStyles.filter(s=>!isAdvancedSeparator(s)).length<=1) return;
+    const idx=advancedStyles.findIndex(s=>s.id===style.id);
+    if(idx<0) return;
+    advancedStyles.splice(idx,1);
+    if(activeAdvancedStyleId===style.id){const next=advancedStyles.slice(idx).concat(advancedStyles.slice(0,idx)).find(s=>!isAdvancedSeparator(s));activeAdvancedStyleId=next?next.id:null;}
+    render();
+    persist();
+  }
+  function toggleAdvancedStyleLock(style){
+    if(!style) return;
+    style.locked=!style.locked;
+    render();
+    persist();
+  }
+  function showAdvancedStyleContextMenu(x,y,style){
+    hideContextMenu();
+    const menu=document.createElement('div');
+    menu.id='palette-context-menu';
+    menu.className='ctx-menu';
+    menu.addEventListener('pointerdown',event=>event.stopPropagation());
+    [
+      menuItem('Edit Style',()=>editAdvancedStyle(style),false,!!style.locked),
+      menuItem('Rename Style',()=>renameAdvancedStyle(style)),
+      menuItem('Duplicate Style',()=>duplicateAdvancedStyle(style)),
+      menuItem('Delete Style',()=>deleteAdvancedStyle(style),true,advancedStyles.filter(s=>!isAdvancedSeparator(s)).length<=1),
+      menuItem('-'),
+      menuItem(style.locked?'Unlock Style':'Lock Style',()=>toggleAdvancedStyleLock(style))
+    ].forEach(item=>menu.appendChild(item));
+    document.body.appendChild(menu);
+    menu.style.left=Math.min(x,window.innerWidth-menu.offsetWidth-8)+'px';
+    menu.style.top=Math.min(y,window.innerHeight-menu.offsetHeight-8)+'px';
+    setTimeout(()=>document.addEventListener('pointerdown',hideContextMenu,{once:true}),0);
+  }
+  function renderAdvancedPalette(grid){
+    syncAdvancedRefs();
+    grid.classList.add('advanced-palette-grid');
+    grid.innerHTML='';
+    advancedStyles.forEach(style=>{
+      if(isAdvancedSeparator(style)){
+        const separator=document.createElement('div');
+        separator.className='palette-style-separator';
+        separator.setAttribute('aria-hidden','true');
+        grid.appendChild(separator);
+        return;
+      }
+      const card=document.createElement('button');
+      card.type='button';
+      card.className='palette-style-card';
+      card.dataset.id=style.id;
+      card.classList.toggle('selected',style.id===activeAdvancedStyleId);
+      card.classList.toggle('locked',!!style.locked);
+      const preview=document.createElement('span');
+      preview.className='palette-style-preview';
+      preview.style.background=displayHex(styleHex(style));
+      const meta=document.createElement('span');
+      meta.className='palette-style-meta';
+      const name=document.createElement('span');
+      name.className='palette-style-name';
+      name.textContent=style.name||style.id;
+      const id=document.createElement('span');
+      id.className='palette-style-id';
+      id.textContent=style.id;
+      meta.append(name,id);
+      const lock=document.createElement('span');
+      lock.className='palette-style-lock';
+      lock.textContent=style.locked?'LOCK':'';
+      card.append(preview,meta,lock);
+      card.addEventListener('click',()=>selectAdvancedStyle(style.id,true));
+      card.addEventListener('contextmenu',event=>{event.preventDefault();event.stopPropagation();activeAdvancedStyleId=style.id;render();showAdvancedStyleContextMenu(event.clientX,event.clientY,style);});
+      grid.appendChild(card);
+    });
+    const add=document.createElement('button');
+    add.type='button';
+    add.className='palette-style-add';
+    add.textContent='+';
+    add.title='Create style';
+    add.addEventListener('click',createAdvancedStyle);
+    grid.appendChild(add);
+  }  function render(){
     const grid=document.getElementById('palette-grid');
     if(!grid) return;
     syncActiveRefs();
     removeEscapedNewlineArtifacts();
     renderPaletteSelector();
+    const body=document.getElementById('palette-body');
+    if(body) body.classList.toggle('advanced-mode',advancedPaletteEnabled);
+    if(advancedPaletteEnabled){
+      renderAdvancedPalette(grid);
+      updateToolbarState();
+      renderToolbarPalette();
+      requestAnimationFrame(()=>checkGridOverflow());
+      return;
+    }
+    grid.classList.remove('advanced-palette-grid');
     const previousScroll=grid.scrollTop;
     grid.innerHTML='';
     swatches.forEach(s=>{
@@ -1010,7 +1311,7 @@
     syncSelectionClasses();
     showEditColorModal(swatch);
   }
-  function showEditColorModal(swatch){
+  function showEditColorModal(swatch,onApply){
     hideEditConfirmBar();
     const existing=document.getElementById('palette-color-modal');
     if(existing) existing.remove();
@@ -1116,7 +1417,7 @@
       syncAll();
     }
     function close(){document.removeEventListener('keydown',onKey);modal.remove();}
-    function ok(){updateSwatchColor(swatch,colorHex());close();}
+    function ok(){if(typeof onApply==='function') onApply(colorHex()); else updateSwatchColor(swatch,colorHex());close();}
     function cancel(){close();}
     function onKey(event){if(event.key==='Escape'){event.preventDefault();cancel();}else if(event.key==='Enter'&&event.target.tagName!=='TEXTAREA'){event.preventDefault();ok();}}
     paintPreview(currentPreview,original);
@@ -1429,8 +1730,8 @@
       // Pointer on a separator — use the group on the correct side of it.
       const r=item.getBoundingClientRect();
       const sepAbove=pointerY<r.top+r.height/2
-        ?groupSeparatorAbove(r.top-1)   // above this sep → group above
-        :item;                            // below this sep → group below
+        ?groupSeparatorAbove(r.top-1)   // above this sep ? group above
+        :item;                            // below this sep ? group below
       return edgeInGroup(sepAbove,pointerX,pointerY)||{el:item,side:'after',mode:'edge'};
     }
 
@@ -1773,6 +2074,7 @@
     const importFile=document.getElementById('palette-import-file');
     const deleteBtn=document.getElementById('palette-delete');
     const toolbarToggle=document.getElementById('palette-toolbar-toggle');
+    const advancedToggle=document.getElementById('palette-advanced-toggle');
     const renameInput=document.getElementById('palette-rename-inline-input');
     const renameOk=document.getElementById('palette-rename-inline-ok');
     const renameCancel=document.getElementById('palette-rename-inline-cancel');
@@ -1792,6 +2094,7 @@
     if(importFile) importFile.addEventListener('change',()=>handleImportFile(importFile.files&&importFile.files[0]));
     if(deleteBtn) deleteBtn.addEventListener('click',deletePalette);
     if(toolbarToggle) toolbarToggle.addEventListener('click',toggleToolbarPalette);
+    if(advancedToggle) advancedToggle.addEventListener('click',toggleAdvancedPalette);
     if(renameOk) renameOk.addEventListener('click',applyInlineRename);
     if(renameCancel) renameCancel.addEventListener('click',()=>{hidePaletteInlinePanels();positionSideMenu();});
     if(renameInput) renameInput.addEventListener('keydown',event=>{if(event.key==='Enter') applyInlineRename(); if(event.key==='Escape'){hidePaletteInlinePanels();positionSideMenu();}});
@@ -1820,6 +2123,10 @@
     applyViewSettings(false);
     bindPalettePopupListeners();
   }
-  window.PaletteDocker={serialize,load,reset(){load(null);},renderCurrentColors:render,refresh:render};
+  function isAdvancedPalettePaintingEnabled(){return !!advancedPaletteEnabled;}
+  function getActiveAdvancedPaletteStyleId(){const style=activeAdvancedStyle();return advancedPaletteEnabled&&style?style.id:null;}
+  window.isAdvancedPalettePaintingEnabled=isAdvancedPalettePaintingEnabled;
+  window.getActiveAdvancedPaletteStyleId=getActiveAdvancedPaletteStyleId;
+  window.PaletteDocker={serialize,load,reset(){load(null);},renderCurrentColors:render,refresh:render,isAdvancedPalettePaintingEnabled,getActiveAdvancedPaletteStyleId};
   document.addEventListener('DOMContentLoaded',()=>{bind();loadPersisted();});
 })();

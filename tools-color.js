@@ -11,7 +11,24 @@ function updateOnion(){
 // ════════════════════════════════════════════════════════════════
 // UNDO / REDO
 // ════════════════════════════════════════════════════════════════
-function pushUndo(){const s=mkLayerCanvas();s.getContext('2d').drawImage(activeC,0,0);undoStack.push({snap:s,frame:curFrame,layer:curLayer});if(undoStack.length>40)undoStack.shift();redoStack=[];}
+function pushUndo(){
+  const s=mkLayerCanvas();s.getContext('2d').drawImage(activeC,0,0);
+  const styleBundle=(typeof getStyleFrameBundle==='function')?getStyleFrameBundle(curLayer,curFrame):null;
+  undoStack.push({snap:s,styleBundle,frame:curFrame,layer:curLayer});
+  if(undoStack.length>40)undoStack.shift();redoStack=[];
+}
+function _currentUndoSnapshot(){
+  const canvas=mkLayerCanvas();canvas.getContext('2d').drawImage(activeC,0,0);
+  const styleBundle=(typeof getStyleFrameBundle==='function')?getStyleFrameBundle(curLayer,curFrame):null;
+  return {snap:canvas,styleBundle,frame:curFrame,layer:curLayer};
+}
+function _restoreUndoSnapshot(action){
+  if(action.layer!==curLayer) switchLayer(action.layer);
+  if(action.frame!==curFrame) curFrame=action.frame;
+  ctx.clearRect(0,0,CW,CH);ctx.drawImage(action.snap,0,0);
+  if(typeof restoreStyleFrameBundle==='function') restoreStyleFrameBundle(action.layer,action.frame,action.styleBundle);
+  saveActiveToKey();recomposite(curLayer,curFrame);renderTimeline();
+}
 function undo(){
   if(!undoStack.length)return;
   const action=undoStack.pop();
@@ -19,9 +36,8 @@ function undo(){
     _restoreFrameMaps(action.before);redoStack.push(action);selectedKFs.clear();
     loadFrame(curLayer,curFrame);recomposite(curLayer,curFrame);renderTimeline();return;
   }
-  const canvas=mkLayerCanvas();canvas.getContext('2d').drawImage(activeC,0,0);
-  redoStack.push({snap:canvas,frame:curFrame,layer:curLayer});
-  ctx.clearRect(0,0,CW,CH);ctx.drawImage(action.snap,0,0);saveActiveToKey();recomposite(curLayer,curFrame);renderTimeline();
+  redoStack.push(_currentUndoSnapshot());
+  _restoreUndoSnapshot(action);
 }
 function redo(){
   if(!redoStack.length)return;
@@ -30,9 +46,8 @@ function redo(){
     _restoreFrameMaps(action.after);undoStack.push(action);selectedKFs.clear();
     loadFrame(curLayer,curFrame);recomposite(curLayer,curFrame);renderTimeline();return;
   }
-  const canvas=mkLayerCanvas();canvas.getContext('2d').drawImage(activeC,0,0);
-  undoStack.push({snap:canvas,frame:curFrame,layer:curLayer});
-  ctx.clearRect(0,0,CW,CH);ctx.drawImage(action.snap,0,0);saveActiveToKey();recomposite(curLayer,curFrame);renderTimeline();
+  undoStack.push(_currentUndoSnapshot());
+  _restoreUndoSnapshot(action);
 }
 const szSlider=document.getElementById('ts-size');
 const szValEl=document.getElementById('ts-size-val');

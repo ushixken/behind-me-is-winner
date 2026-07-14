@@ -25,7 +25,100 @@ function floodFill(x,y,fc){
 // LAYER CANVAS
 // ════════════════════════════════════════════════════════════════
 function mkLayerCanvas(){const o=document.createElement('canvas');o.width=CW;o.height=CH;return o;}
-// PERF FIX: recomposite() runs on every animation frame while a stroke is in
+function mkStyleIndexCanvas(){const o=document.createElement('canvas');o.width=CW;o.height=CH;return o;}
+function ensureLayerStyleStorage(layer){
+  if(!layer) return null;
+  if(!layer.styleFrames) layer.styleFrames={};
+  if(!layer.styleFrameMeta) layer.styleFrameMeta={};
+  return layer;
+}
+function cloneStyleMeta(meta){
+  if(!meta) return null;
+  return {
+    indexToStyleId:Object.assign({},meta.indexToStyleId||{}),
+    styleIdToIndex:Object.assign({},meta.styleIdToIndex||{}),
+    nextIndex:Math.max(1,meta.nextIndex||1)
+  };
+}
+function cloneStyleCanvas(src){
+  if(!src) return null;
+  const c=mkStyleIndexCanvas();c.getContext('2d').drawImage(src,0,0);return c;
+}
+function getStyleFrameBundle(li,fi){
+  const l=layers[li];if(!l) return {canvas:null,meta:null};ensureLayerStyleStorage(l);
+  return {canvas:l.styleFrames[fi]||null,meta:cloneStyleMeta(l.styleFrameMeta[fi]||null)};
+}
+function restoreStyleFrameBundle(li,fi,bundle){
+  const l=layers[li];if(!l) return;ensureLayerStyleStorage(l);
+  if(bundle&&bundle.canvas){l.styleFrames[fi]=cloneStyleCanvas(bundle.canvas);l.styleFrameMeta[fi]=cloneStyleMeta(bundle.meta)||{indexToStyleId:{},styleIdToIndex:{},nextIndex:1};}
+  else{delete l.styleFrames[fi];delete l.styleFrameMeta[fi];}
+}
+function ensureStyleFrame(li=curLayer,fi=curFrame){
+  const l=layers[li];if(!l) return null;ensureLayerStyleStorage(l);
+  if(!l.styleFrames[fi]) l.styleFrames[fi]=mkStyleIndexCanvas();
+  if(!l.styleFrameMeta[fi]) l.styleFrameMeta[fi]={indexToStyleId:{},styleIdToIndex:{},nextIndex:1};
+  return {canvas:l.styleFrames[fi],meta:l.styleFrameMeta[fi]};
+}
+function ensureStyleIndexForFrame(li,fi,styleId){
+  const bundle=ensureStyleFrame(li,fi);if(!bundle||!styleId) return 0;
+  const meta=bundle.meta;
+  if(meta.styleIdToIndex[styleId]) return meta.styleIdToIndex[styleId];
+  const idx=Math.max(1,meta.nextIndex||1);meta.nextIndex=idx+1;
+  meta.styleIdToIndex[styleId]=idx;meta.indexToStyleId[idx]=styleId;
+  return idx;
+}
+function encodeStyleIndexToPixel(data,offset,index){
+  data[offset]=index&255;data[offset+1]=(index>>8)&255;data[offset+2]=(index>>16)&255;data[offset+3]=255;
+}
+function activeAdvancedStyleIdForPainting(){
+  if(typeof window==='undefined') return null;
+  if(typeof window.getActiveAdvancedPaletteStyleId==='function') return window.getActiveAdvancedPaletteStyleId();
+  if(window.PaletteDocker&&typeof window.PaletteDocker.getActiveAdvancedPaletteStyleId==='function') return window.PaletteDocker.getActiveAdvancedPaletteStyleId();
+  return null;
+}
+function advancedPalettePaintingEnabled(){
+  if(typeof window==='undefined') return false;
+  if(typeof window.isAdvancedPalettePaintingEnabled==='function') return !!window.isAdvancedPalettePaintingEnabled();
+  return !!(window.PaletteDocker&&typeof window.PaletteDocker.isAdvancedPalettePaintingEnabled==='function'&&window.PaletteDocker.isAdvancedPalettePaintingEnabled());
+}
+function applyStyleMaskFromCanvas(maskCanvas,styleId){
+  if(!advancedPalettePaintingEnabled()||!styleId||!maskCanvas) return;
+  const idx=ensureStyleIndexForFrame(curLayer,curFrame,styleId);if(!idx) return;
+  const bundle=ensureStyleFrame(curLayer,curFrame);if(!bundle) return;
+  const mctx=maskCanvas.getContext('2d');const sctx=bundle.canvas.getContext('2d');
+  const mask=mctx.getImageData(0,0,CW,CH).data;
+  const img=sctx.getImageData(0,0,CW,CH);const out=img.data;
+  for(let i=3;i<mask.length;i+=4){if(mask[i]>0) encodeStyleIndexToPixel(out,i-3,idx);}
+  sctx.putImageData(img,0,0);
+}
+function applyStyleDiffFromBefore(beforeImage,styleId){
+  if(!advancedPalettePaintingEnabled()||!styleId||!beforeImage) return;
+  const after=ctx.getImageData(0,0,CW,CH);const before=beforeImage.data,now=after.data;
+  const idx=ensureStyleIndexForFrame(curLayer,curFrame,styleId);if(!idx) return;
+  const bundle=ensureStyleFrame(curLayer,curFrame);if(!bundle) return;
+  const sctx=bundle.canvas.getContext('2d');const img=sctx.getImageData(0,0,CW,CH);const out=img.data;
+  for(let i=0;i<now.length;i+=4){
+    if(now[i]!==before[i]||now[i+1]!==before[i+1]||now[i+2]!==before[i+2]||now[i+3]!==before[i+3]){
+      if(now[i+3]>0) encodeStyleIndexToPixel(out,i,idx); else {out[i]=0;out[i+1]=0;out[i+2]=0;out[i+3]=0;}
+    }
+  }
+  sctx.putImageData(img,0,0);
+}
+function clearStyleIndexWhereTransparent(){
+  const l=layers[curLayer];if(!l||!l.styleFrames||!l.styleFrames[curFrame]) return;
+  const pixels=ctx.getImageData(0,0,CW,CH).data;
+  const sctx=l.styleFrames[curFrame].getContext('2d');const img=sctx.getImageData(0,0,CW,CH);const data=img.data;
+  let changed=false;
+  for(let i=0;i<pixels.length;i+=4){if(pixels[i+3]===0&&data[i+3]!==0){data[i]=0;data[i+1]=0;data[i+2]=0;data[i+3]=0;changed=true;}}
+  if(changed) sctx.putImageData(img,0,0);
+}
+function deleteStyleFrame(li,fi){const l=layers[li];if(!l) return;ensureLayerStyleStorage(l);delete l.styleFrames[fi];delete l.styleFrameMeta[fi];}
+window.getStyleFrameBundle=getStyleFrameBundle;
+window.restoreStyleFrameBundle=restoreStyleFrameBundle;
+window.applyStyleMaskFromCanvas=applyStyleMaskFromCanvas;
+window.applyStyleDiffFromBefore=applyStyleDiffFromBefore;
+window.clearStyleIndexWhereTransparent=clearStyleIndexWhereTransparent;
+window.deleteStyleFrame=deleteStyleFrame;// PERF FIX: recomposite() runs on every animation frame while a stroke is in
 // progress (RAF-scheduled from pointermove). Previously, every group-clipped
 // or layer-clipped (stencil) layer caused 1-2 brand-new full-resolution
 // (e.g. 1920×1080) <canvas> elements to be allocated EVERY frame just to

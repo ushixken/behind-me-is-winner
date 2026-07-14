@@ -1,4 +1,4 @@
-// ════════════════════════════════════════════════════════════════
+﻿// ════════════════════════════════════════════════════════════════
 // PLAYBACK
 // ════════════════════════════════════════════════════════════════
 // ════════════════════════════════════════════════════════════════
@@ -91,6 +91,7 @@ function updateFpsSliderColor(){
 document.getElementById('btn-new-key').onclick=()=>{createBlankKey();loadFrame(curLayer,curFrame);};
 function deleteKeyframe(){
   delete layers[curLayer].frames[curFrame];
+  if(typeof deleteStyleFrame==='function') deleteStyleFrame(curLayer,curFrame);
   ctx.clearRect(0,0,CW,CH);const h=getHeldKey(curLayer,curFrame);if(h)ctx.drawImage(h,0,0);
   saveActiveToKey();
   // After deleting, trim any leading blank frames that are no longer needed
@@ -155,6 +156,16 @@ function _insertFramesAtStart(amount){
       const shiftedMeta={};
       Object.keys(l.frameMeta).forEach(f=>{shiftedMeta[+f+amount]=l.frameMeta[f];});
       l.frameMeta=shiftedMeta;
+    }
+    if(l.styleFrames&&Object.keys(l.styleFrames).length){
+      const shiftedStyleFrames={};
+      Object.keys(l.styleFrames).forEach(f=>{shiftedStyleFrames[+f+amount]=l.styleFrames[f];});
+      l.styleFrames=shiftedStyleFrames;
+    }
+    if(l.styleFrameMeta&&Object.keys(l.styleFrameMeta).length){
+      const shiftedStyleMeta={};
+      Object.keys(l.styleFrameMeta).forEach(f=>{shiftedStyleMeta[+f+amount]=l.styleFrameMeta[f];});
+      l.styleFrameMeta=shiftedStyleMeta;
     }
   });
   TOTAL+=amount;
@@ -250,7 +261,9 @@ function _snapshotFrameMaps(layerIndices){
     const l=layers[layerIndex];
     snapshot[layerIndex]={
       frames: Object.assign({},l.frames),
-      frameMeta: _deepCopyFrameMeta(l.frameMeta)
+      frameMeta: _deepCopyFrameMeta(l.frameMeta),
+      styleFrames: Object.assign({},l.styleFrames||{}),
+      styleFrameMeta: _deepCopyStyleFrameMeta(l.styleFrameMeta)
     };
   });
   return snapshot;
@@ -261,6 +274,8 @@ function _restoreFrameMaps(snapshot){
     const s=snapshot[layerIndex];
     l.frames=Object.assign({},s.frames);
     l.frameMeta=_deepCopyFrameMeta(s.frameMeta);
+    l.styleFrames=Object.assign({},s.styleFrames||{});
+    l.styleFrameMeta=_deepCopyStyleFrameMeta(s.styleFrameMeta);
   });
 }
 // Shallow-copy the per-frame meta objects so snapshot entries are independent
@@ -268,6 +283,12 @@ function _deepCopyFrameMeta(meta){
   if(!meta) return {};
   const out={};
   Object.keys(meta).forEach(f=>{out[f]=Object.assign({},meta[f]);});
+  return out;
+}
+function _deepCopyStyleFrameMeta(meta){
+  if(!meta) return {};
+  const out={};
+  Object.keys(meta).forEach(f=>{out[f]=cloneStyleMeta(meta[f]);});
   return out;
 }
 function startKFDrag(li,fi,e){
@@ -280,7 +301,8 @@ function startKFDrag(li,fi,e){
     return {
       layerIndex,frameIndex,
       data:l&&l.frames[frameIndex],
-      meta:(l&&l.frameMeta&&l.frameMeta[frameIndex])?Object.assign({},l.frameMeta[frameIndex]):null
+      meta:(l&&l.frameMeta&&l.frameMeta[frameIndex])?Object.assign({},l.frameMeta[frameIndex]):null,
+      styleBundle:(typeof getStyleFrameBundle==='function')?getStyleFrameBundle(layerIndex,frameIndex):null
     };
   }).filter(item=>item.data);
   const layerIndices=Array.from(new Set(items.map(item=>item.layerIndex)));
@@ -352,6 +374,7 @@ function onKFDragMove(e){
     const li=item.layerIndex,src=item.frameIndex+dragKF.appliedDelta;
     delete layers[li].frames[src];
     if(layers[li].frameMeta) delete layers[li].frameMeta[src];
+    if(typeof deleteStyleFrame==='function') deleteStyleFrame(li,src);
   });
   destinations.forEach(move=>{
     const li=move.item.layerIndex;
@@ -359,6 +382,7 @@ function onKFDragMove(e){
     if(!layers[li].frameMeta) layers[li].frameMeta={};
     if(move.item.meta) layers[li].frameMeta[move.target]=Object.assign({},move.item.meta);
     else delete layers[li].frameMeta[move.target];
+    if(typeof restoreStyleFrameBundle==='function') restoreStyleFrameBundle(li,move.target,move.item.styleBundle);
   });
   dragKF.appliedDelta=delta;
   selectedKFs.clear();
@@ -399,6 +423,16 @@ function _trimLeadingBlanks(){
       const shiftedMeta={};
       Object.keys(l.frameMeta).forEach(f=>{const nf=+f-trimmable;if(nf>=0) shiftedMeta[nf]=l.frameMeta[f];});
       l.frameMeta=shiftedMeta;
+    }
+    if(l.styleFrames&&Object.keys(l.styleFrames).length){
+      const shiftedStyleFrames={};
+      Object.keys(l.styleFrames).forEach(f=>{const nf=+f-trimmable;if(nf>=0) shiftedStyleFrames[nf]=l.styleFrames[f];});
+      l.styleFrames=shiftedStyleFrames;
+    }
+    if(l.styleFrameMeta&&Object.keys(l.styleFrameMeta).length){
+      const shiftedStyleMeta={};
+      Object.keys(l.styleFrameMeta).forEach(f=>{const nf=+f-trimmable;if(nf>=0) shiftedStyleMeta[nf]=l.styleFrameMeta[f];});
+      l.styleFrameMeta=shiftedStyleMeta;
     }
   });
   TOTAL-=trimmable;

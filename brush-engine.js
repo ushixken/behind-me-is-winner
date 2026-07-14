@@ -200,6 +200,10 @@ function _commitStrokeCanvas(){
   ctx.globalCompositeOperation = 'source-over';
   ctx.drawImage(src, 0, 0);
   ctx.restore();
+  if(typeof activeAdvancedStyleIdForPainting==='function'&&typeof applyStyleMaskFromCanvas==='function'){
+    const styleId=activeAdvancedStyleIdForPainting();
+    if(styleId) applyStyleMaskFromCanvas(src,styleId);
+  }
   _strokeCtx.clearRect(0, 0, _strokeCanvas.width, _strokeCanvas.height);
 }
 
@@ -2137,7 +2141,7 @@ function _scheduleRecomposite(){
 function _endStroke(){
   _stopAirbrushSpray();
   _autoHardRoundPrevDab=null;
-  if(drawing){drawing=false;_flushStrokeTail();if(_inStroke){_inStroke=false;_commitStrokeCanvas();}saveActiveToKey();_scheduleRecomposite();}
+  if(drawing){drawing=false;_flushStrokeTail();if(_inStroke){_inStroke=false;_commitStrokeCanvas();}if(tool==='eraser'&&typeof clearStyleIndexWhereTransparent==='function') clearStyleIndexWhereTransparent();saveActiveToKey();_scheduleRecomposite();}
   lineStart=null;
   _pendingDabs.length=0;
   _curveP0=null;_curveP1=null; // discard in-flight curve geometry, no event to flush a tail with
@@ -2638,7 +2642,7 @@ activeC.addEventListener('pointerdown',e=>{
   _rotationPrevValid=false;
   _resetSmoothing(p.x,p.y,e.timeStamp||performance.now());
   _updateVelocity(p.x, p.y, e.timeStamp);
-  if(tool==='fill'){pushUndo();ensureKey();floodFill(p.x,p.y,color);saveActiveToKey();recomposite(curLayer,curFrame);return;}
+  if(tool==='fill'){pushUndo();ensureKey();const styleId=(typeof activeAdvancedStyleIdForPainting==='function'?activeAdvancedStyleIdForPainting():null);const beforeFill=(styleId&&typeof applyStyleDiffFromBefore==='function')?ctx.getImageData(0,0,CW,CH):null;floodFill(p.x,p.y,color);if(beforeFill&&styleId) applyStyleDiffFromBefore(beforeFill,styleId);saveActiveToKey();recomposite(curLayer,curFrame);return;}
   if(tool==='line'){lineStart=p;return;}
   activeC.setPointerCapture(e.pointerId);
   pushUndo();ensureKey();_beginEndTaperCapture();drawing=true;lx=p.x;ly=p.y;
@@ -2706,9 +2710,9 @@ function _pointerEndStroke(e){
     _strokeSegment(lineStart.x,lineStart.y,p.x,p.y,e,currentPressure,currentPressure);
     _flushStrokeTail();
     if(_inStroke){_inStroke=false;_commitStrokeCanvas();}
-    lineStart=null;saveActiveToKey();recomposite(curLayer,curFrame);return;
+    if(tool==='eraser'&&typeof clearStyleIndexWhereTransparent==='function') clearStyleIndexWhereTransparent();lineStart=null;saveActiveToKey();recomposite(curLayer,curFrame);return;
   }
-  if(drawing){drawing=false;_flushCurveTail(e);_flushStrokeTail();if(_inStroke){_inStroke=false;_commitStrokeCanvas();}saveActiveToKey();_scheduleRecomposite();}
+  if(drawing){drawing=false;_flushCurveTail(e);_flushStrokeTail();if(_inStroke){_inStroke=false;_commitStrokeCanvas();}if(tool==='eraser'&&typeof clearStyleIndexWhereTransparent==='function') clearStyleIndexWhereTransparent();saveActiveToKey();_scheduleRecomposite();}
 }
 activeC.addEventListener('pointerup',e=>{
   if(activeC.hasPointerCapture(e.pointerId))activeC.releasePointerCapture(e.pointerId);

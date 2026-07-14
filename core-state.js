@@ -42,7 +42,7 @@ window.brushAAMode='medium';
 // to 'cpu' here, not by default).
 let brushRenderer='gpu';
 try{ brushRenderer=localStorage.getItem('animator_renderer')||'gpu'; }catch(e){}
-let undoStack=[],redoStack=[],clipboard=null;
+let undoStack=[],redoStack=[],clipboard=null,styleClipboard=null;
 const LCOLORS=['#7F77DD','#1D9E75','#EF9F27','#e24b4a','#D4537E','#378ADD'];
 
 // ════════════════════════════════════════════════════════════════
@@ -137,7 +137,7 @@ function setDrawingMark(li, fi, markType) {
 // Layer object shape: {name, visible, onTimeline, color, frames, opacity(0-1), stencil('none'|'inside'|'outside'), clipTo(layerIdx|null), groupId(string|null)}
 // Group object shape: {id, name, visible, collapsed, opacity(0-1), color, parentId(string|null — id of the group this group is nested inside, null = top level)}
 let groups=[];
-let layers=[{name:'Layer 1',visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},opacity:1,stencil:'none',clipTo:null,groupId:null}];
+let layers=[{name:'Layer 1',visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},styleFrames:{},styleFrameMeta:{},opacity:1,stencil:'none',clipTo:null,groupId:null}];
 
 // Zoom / Pan / Rotate — stored in canvas-area coordinate space
 let zoom=1,panX=0,panY=0;
