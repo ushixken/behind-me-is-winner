@@ -25,156 +25,35 @@ function floodFill(x,y,fc){
 // LAYER CANVAS
 // ════════════════════════════════════════════════════════════════
 function mkLayerCanvas(){const o=document.createElement('canvas');o.width=CW;o.height=CH;return o;}
-// ── Style index canvas helpers ──────────────────────────────────
-// Style canvases store numeric style indices as RGB pixel values so that
-// every painted pixel can be looked up to find which style painted it.
-// IMPORTANT: these canvases are data buffers, not visual images. They must:
-//   1. Use {willReadFrequently:true} so getImageData is fast and exact.
-//   2. Never be drawn through the normal compositing pipeline (drawImage
-//      can apply color space conversion that corrupts small channel values).
-//   3. Use only per-pixel copy (getImageData/putImageData) for cloning.
-function mkStyleIndexCanvas(){
-  const o=document.createElement('canvas');o.width=CW;o.height=CH;
-  // willReadFrequently: tells the browser this canvas will be read back
-  // often via getImageData — avoids GPU round-trips and ensures pixel
-  // values are stored/returned exactly as written (no premult rounding).
-  // IMPORTANT: the return value must NOT be discarded — the first call to
-  // getContext() on a canvas element permanently fixes the context options.
-  // If we discard the result and a later caller does getContext('2d') without
-  // willReadFrequently, the browser returns a new context that ignores our
-  // flag, opening the door to GPU color-space transforms on readback that
-  // corrupt the small integer RGB index values (e.g. R=2 → R=2,G=1,B=1).
-  // Assign to a variable (even though unused here) so the first getContext()
-  // call establishes willReadFrequently:true as the permanent context mode.
-  // Discarding this return value is the bug that let later getContext('2d')
-  // calls (without the flag) override it and corrupt index readback.
-  const _ctx=o.getContext('2d',{willReadFrequently:true});
-  // Belt-and-suspenders: explicitly disable anything that could transform
-  // pixel values — the canvas is a data buffer, not a visual surface.
-  if(_ctx){
-    _ctx.globalAlpha=1;
-    _ctx.globalCompositeOperation='source-over';
-    _ctx.imageSmoothingEnabled=false;
-  }
-  return o;
-}
+// ── Smart Raster index canvas helpers ────────────────────────────
+// All Smart Raster logic has moved to smart-raster-layer.js which must be
+// loaded before this file.  The helpers below are thin shims that forward
+// calls to window.SmartRasterLayer so that existing callers in
+// brush-engine.js, palette.js, tools-color.js, layers.js, and ui-controls.js
+// continue to work without any changes.
 
+// Local aliases used only inside panels.js (debugStyleAtPoint, lifecycle
+// test, _deepCopyLayer in layers.js).  Callers outside this file use the
+// window.* shims below.
+function mkStyleIndexCanvas(){return window.SmartRasterLayer._mkIndexCanvas();}
+function cloneStyleCanvas(src){return window.SmartRasterLayer.cloneIndexCanvas(src);}
+function cloneStyleMeta(meta){return window.SmartRasterLayer.cloneMeta(meta);}
+function makeEmptyStyleMeta(){return window.SmartRasterLayer._makeEmptyMeta();}
+
+// ensureLayerStyleStorage: kept for _deepCopyLayer in layers.js which checks
+// that the new field names exist.  Works on both old (styleFrames) and new
+// (indexFrames) shapes so it is safe during any migration window.
 function ensureLayerStyleStorage(layer){
   if(!layer) return null;
-  if(!layer.styleFrames) layer.styleFrames={};
-  if(!layer.styleFrameMeta) layer.styleFrameMeta={};
+  if(!layer.indexFrames)  layer.indexFrames={};
+  if(!layer.indexMeta)    layer.indexMeta={};
   return layer;
 }
 
-// Clone meta: use a fresh plain object so the clone is fully independent.
-// Cast numeric-string keys back to Number in indexToStyleId so the lookup
-// in debugStyleAtPoint (meta.indexToStyleId[numericIndex]) always hits.
-function cloneStyleMeta(meta){
-  if(!meta) return null;
-  // Re-key indexToStyleId with numeric keys so meta.indexToStyleId[index]
-  // hits regardless of whether index is a number or numeric string.
-  const idxToId={};
-  Object.entries(meta.indexToStyleId||{}).forEach(([k,v])=>{idxToId[Number(k)]=v;});
-  // styleIdToIndex: string-keyed, values must be positive integers.
-  const idToIdx={};
-  Object.entries(meta.styleIdToIndex||{}).forEach(([k,v])=>{
-    const n=Number(v);
-    if(n>0) idToIdx[k]=n;
-  });
-  return {
-    indexToStyleId:idxToId,
-    styleIdToIndex:idToIdx,
-    nextIndex:Math.max(1,meta.nextIndex||1)
-  };
-}
-
-// Clone a style canvas using pixel-level copy only — never drawImage —
-// to avoid any browser color-space or premultiplication transformation
-// that could corrupt the index values stored in the RGB channels.
-function cloneStyleCanvas(src){
-  if(!src) return null;
-  const c=mkStyleIndexCanvas();
-  const srcCtx=src.getContext('2d',{willReadFrequently:true});
-  const dstCtx=c.getContext('2d',{willReadFrequently:true});
-  // Copy pixel data directly, bypassing any compositing transform.
-  const imgData=srcCtx.getImageData(0,0,src.width,src.height);
-  dstCtx.putImageData(imgData,0,0);
-  return c;
-}
-
-function getStyleFrameBundle(li,fi){
-  const l=layers[li];if(!l) return {canvas:null,meta:null};ensureLayerStyleStorage(l);
-  return {canvas:l.styleFrames[fi]||null,meta:cloneStyleMeta(l.styleFrameMeta[fi]||null)};
-}
-
-function restoreStyleFrameBundle(li,fi,bundle){
-  const l=layers[li];if(!l) return;ensureLayerStyleStorage(l);
-  if(bundle&&bundle.canvas){
-    l.styleFrames[fi]=cloneStyleCanvas(bundle.canvas);
-    l.styleFrameMeta[fi]=cloneStyleMeta(bundle.meta)||{indexToStyleId:{},styleIdToIndex:{},nextIndex:1};
-  } else {
-    delete l.styleFrames[fi];delete l.styleFrameMeta[fi];
-  }
-}
-
-// Returns the live {canvas, meta} for (li, fi), creating them if absent.
-// Always returns a reference into the layer's own objects — callers that
-// need a snapshot must clone explicitly.
-function ensureStyleFrame(li=curLayer,fi=curFrame){
-  const l=layers[li];if(!l) return null;ensureLayerStyleStorage(l);
-  if(!l.styleFrames[fi]) l.styleFrames[fi]=mkStyleIndexCanvas();
-  if(!l.styleFrameMeta[fi]) l.styleFrameMeta[fi]={indexToStyleId:{},styleIdToIndex:{},nextIndex:1};
-  return {canvas:l.styleFrames[fi],meta:l.styleFrameMeta[fi]};
-}
-
-// Register styleId in the frame's meta and return its numeric index (≥1).
-// Guarantees: the returned index is stored in BOTH meta.styleIdToIndex AND
-// meta.indexToStyleId before returning, so debugStyleAtPoint can resolve it.
-function ensureStyleIndexForFrame(li,fi,styleId){
-  const bundle=ensureStyleFrame(li,fi);if(!bundle||!styleId) return 0;
-  const meta=bundle.meta;
-  // Use hasOwnProperty so a stored value of 0 (invalid, shouldn't happen)
-  // doesn't mask a needed re-registration; and cast to Number for safety.
-  const existing=meta.styleIdToIndex.hasOwnProperty(styleId)
-    ?Number(meta.styleIdToIndex[styleId]):0;
-  if(existing>0){
-    // Ensure the reverse mapping is always present — it could have been
-    // lost if meta was partially restored from an older snapshot.
-    if(!meta.indexToStyleId.hasOwnProperty(existing)||
-        meta.indexToStyleId[existing]!==styleId){
-      meta.indexToStyleId[Number(existing)]=styleId;
-    }
-    return existing;
-  }
-  // Allocate a new index. Clamp nextIndex to a safe range; if it has been
-  // corrupted to an impossibly large value, reset to the highest existing
-  // index + 1 so we don't waste the first 65 k slots.
-  const maxExisting=Object.keys(meta.indexToStyleId).reduce((m,k)=>Math.max(m,Number(k)),0);
-  let idx=Math.max(1,meta.nextIndex||1,maxExisting+1);
-  meta.nextIndex=idx+1;
-  // Write BOTH directions atomically before returning — this is the
-  // invariant that debugStyleAtPoint depends on.
-  meta.styleIdToIndex[styleId]=idx;
-  meta.indexToStyleId[Number(idx)]=styleId;
-  console.log('[StyleIndex] register styleId='+styleId+' → idx='+idx+' (li='+li+' fi='+fi+')');
-  return idx;
-}
-
-// Encode a numeric style index into 3 RGB channels of a pixel at `offset`
-// and set alpha=255 to mark the pixel as "owned". Decoding:
-//   index = data[offset] | (data[offset+1]<<8) | (data[offset+2]<<16)
-// The encoder and decoder use identical little-endian layout.
-function encodeStyleIndexToPixel(data,offset,index){
-  data[offset  ]=index&255;
-  data[offset+1]=(index>>8)&255;
-  data[offset+2]=(index>>16)&255;
-  data[offset+3]=255;
-  // Verify: decode immediately and log if mismatch (development aid).
-  if(typeof _styleEncodeVerify!=='undefined'&&_styleEncodeVerify){
-    const decoded=data[offset]|(data[offset+1]<<8)|(data[offset+2]<<16);
-    if(decoded!==index) console.error('[StyleIndex] encode/decode mismatch: wrote',index,'read',decoded);
-  }
-}
+function resetStyleFrame(li,fi){window.SmartRasterLayer.resetFrame(li,fi);}
+function ensureStyleFrame(li,fi){return window.SmartRasterLayer.ensureFrame(li==null?curLayer:li,fi==null?curFrame:fi);}
+function ensureStyleIndexForFrame(li,fi,styleId){return window.SmartRasterLayer.ensureStyleIndex(li,fi,styleId);}
+function encodeStyleIndexToPixel(data,offset,index){window.SmartRasterLayer._encodePixel(data,offset,index);}
 
 function activeAdvancedStyleIdForPainting(){
   if(typeof window==='undefined') return null;
@@ -189,233 +68,125 @@ function advancedPalettePaintingEnabled(){
   return !!(window.PaletteDocker&&typeof window.PaletteDocker.isAdvancedPalettePaintingEnabled==='function'&&window.PaletteDocker.isAdvancedPalettePaintingEnabled());
 }
 
-// Apply style ownership to every opaque pixel in maskCanvas.
-// Both the index registration and the pixel write happen inside a single
-// call so there is no window where meta has an entry but pixels don't, or
-// vice versa.
+// ── Global shims: old names used by brush-engine.js / palette.js / tools-color.js ──
+
+function renderSmartRasterFrame(li,fi,targetCanvas){
+  if(li==null) li=curLayer;
+  if(fi==null) fi=curFrame;
+  return window.SmartRasterLayer.renderFrame(li,fi,targetCanvas);
+}
+
+function commitSmartRasterBrush(maskCanvas,styleId,strokeOpacity){
+  if(!advancedPalettePaintingEnabled()||!styleId||!maskCanvas) return false;
+  return window.SmartRasterLayer.commitBrushMask(curLayer,curFrame,maskCanvas,styleId,strokeOpacity);
+}
+
+function rerenderAllSmartRasterFrames(){
+  window.SmartRasterLayer.rerenderAll();
+}
+
 function applyStyleMaskFromCanvas(maskCanvas,styleId){
   if(!advancedPalettePaintingEnabled()||!styleId||!maskCanvas) return;
-  // Snapshot the target (li, fi) at call time so ensureStyleIndexForFrame
-  // and ensureStyleFrame operate on the same frame even if curFrame changes.
-  const li=curLayer,fi=curFrame;
-  // Register the style and get its index. ensureStyleIndexForFrame also
-  // creates the meta entry, so the index is resolvable immediately.
-  const idx=ensureStyleIndexForFrame(li,fi,styleId);if(!idx) return;
-  const bundle=ensureStyleFrame(li,fi);if(!bundle) return;
-  console.log('[StyleIndex] applyStyleMask styleId='+styleId+' idx='+idx+' li='+li+' fi='+fi);
-  const mctx=maskCanvas.getContext('2d',{willReadFrequently:true});
-  const sctx=bundle.canvas.getContext('2d',{willReadFrequently:true});
-  const mask=mctx.getImageData(0,0,CW,CH).data;
-  const img=sctx.getImageData(0,0,CW,CH);const out=img.data;
-  // Walk by pixel (step 4). For each pixel, i is the R channel offset.
-  for(let i=0;i<mask.length;i+=4){
-    if(mask[i+3]>0) encodeStyleIndexToPixel(out,i,idx);
-  }
-  sctx.putImageData(img,0,0);
-  // Verify the round-trip: read back the first non-zero pixel and confirm.
-  _debugVerifyStyleWrite(bundle.canvas,idx,styleId,li,fi);
+  window.SmartRasterLayer.applyMask(curLayer,curFrame,maskCanvas,styleId);
 }
 
 function applyStyleDiffFromBefore(beforeImage,styleId){
   if(!advancedPalettePaintingEnabled()||!styleId||!beforeImage) return;
-  const li=curLayer,fi=curFrame;
-  const after=ctx.getImageData(0,0,CW,CH);const before=beforeImage.data,now=after.data;
-  const idx=ensureStyleIndexForFrame(li,fi,styleId);if(!idx) return;
-  const bundle=ensureStyleFrame(li,fi);if(!bundle) return;
-  console.log('[StyleIndex] applyStyleDiff styleId='+styleId+' idx='+idx+' li='+li+' fi='+fi);
-  const sctx=bundle.canvas.getContext('2d',{willReadFrequently:true});
-  const img=sctx.getImageData(0,0,CW,CH);const out=img.data;
-  for(let i=0;i<now.length;i+=4){
-    if(now[i]!==before[i]||now[i+1]!==before[i+1]||now[i+2]!==before[i+2]||now[i+3]!==before[i+3]){
-      if(now[i+3]>0) encodeStyleIndexToPixel(out,i,idx);
-      else{out[i]=0;out[i+1]=0;out[i+2]=0;out[i+3]=0;}
-    }
-  }
-  sctx.putImageData(img,0,0);
-  _debugVerifyStyleWrite(bundle.canvas,idx,styleId,li,fi);
+  window.SmartRasterLayer.applyDiff(curLayer,curFrame,beforeImage,styleId);
 }
 
-// Post-write verification: scan up to the first 4096 pixels to find one that
-// was written with `idx`, decode it, and confirm it resolves back to styleId.
-// Logs clearly if the encode→store→read→decode→resolve chain is broken.
-function _debugVerifyStyleWrite(styleCanvas,idx,styleId,li,fi){
-  try{
-    const sctx=styleCanvas.getContext('2d',{willReadFrequently:true});
-    const d=sctx.getImageData(0,0,Math.min(CW,256),Math.min(CH,16)).data;
-    for(let i=0;i<d.length;i+=4){
-      if(d[i+3]===255){
-        const decoded=d[i]|(d[i+1]<<8)|(d[i+2]<<16);
-        const meta=layers[li]&&layers[li].styleFrameMeta&&layers[li].styleFrameMeta[fi];
-        const resolved=meta&&meta.indexToStyleId[decoded]||null;
-        console.log('[StyleIndex] verify: encoded='+idx+' decoded='+decoded+
-          ' resolved='+(resolved||'NONE')+' expected='+styleId+
-          (decoded!==idx?' ⚠ ENCODE_MISMATCH':'')+(resolved!==styleId?' ⚠ RESOLVE_FAIL':''));
-        return;
-      }
-    }
-    console.log('[StyleIndex] verify: no non-zero pixel found in first scan area (idx='+idx+')');
-  }catch(e){console.error('[StyleIndex] verify error:',e);}
-}
 function clearStyleIndexWhereTransparent(){
-  const l=layers[curLayer];if(!l||!l.styleFrames||!l.styleFrames[curFrame]) return;
-  const pixels=ctx.getImageData(0,0,CW,CH).data;
-  // willReadFrequently:true is required here — omitting it (using bare
-  // getContext('2d')) can switch the canvas to a GPU-accelerated context
-  // that applies sRGB color transforms on getImageData readback, corrupting
-  // the small integer index values stored in the RGB channels.
-  const sctx=l.styleFrames[curFrame].getContext('2d',{willReadFrequently:true});const img=sctx.getImageData(0,0,CW,CH);const data=img.data;
-  let changed=false;
-  for(let i=0;i<pixels.length;i+=4){if(pixels[i+3]===0&&data[i+3]!==0){data[i]=0;data[i+1]=0;data[i+2]=0;data[i+3]=0;changed=true;}}
-  if(changed) sctx.putImageData(img,0,0);
+  window.SmartRasterLayer.clearWhereTransparent(curLayer,curFrame);
 }
-function deleteStyleFrame(li,fi){const l=layers[li];if(!l) return;ensureLayerStyleStorage(l);delete l.styleFrames[fi];delete l.styleFrameMeta[fi];}
-window.getStyleFrameBundle=getStyleFrameBundle;
-window.restoreStyleFrameBundle=restoreStyleFrameBundle;
+
+function deleteStyleFrame(li,fi){window.SmartRasterLayer.resetFrame(li,fi);}
+
+// Serialization: the payload format is unchanged.  The new field names are
+// used internally; the serialized JSON keys ('frames', 'meta') are the same.
+function serializeLayerStyleFrames(layer){
+  return window.SmartRasterLayer.serializeLayer(layer);
+}
+function deserializeLayerStyleFrames(layer,data){
+  window.SmartRasterLayer.deserializeLayer(layer,data);
+}
+
+function resizeAllStyleFrames(nw,nh){
+  window.SmartRasterLayer.resizeAllFrames(nw,nh);
+}
+
+function markStyleDeleted(styleId){
+  window.SmartRasterLayer.markDeleted(styleId);
+}
+
+// ── Publish shims on window so external callers (brush-engine.js, etc.) find them ──
+window.commitSmartRasterBrush=commitSmartRasterBrush;
+window.renderSmartRasterFrame=renderSmartRasterFrame;
+window.rerenderAllSmartRasterFrames=rerenderAllSmartRasterFrames;
+window.getStyleFrameBundle=function(li,fi){return window.SmartRasterLayer.getFrameBundle(li,fi);};
+window.restoreStyleFrameBundle=function(li,fi,bundle){window.SmartRasterLayer.restoreFrameBundle(li,fi,bundle);};
 window.applyStyleMaskFromCanvas=applyStyleMaskFromCanvas;
 window.applyStyleDiffFromBefore=applyStyleDiffFromBefore;
 window.clearStyleIndexWhereTransparent=clearStyleIndexWhereTransparent;
 window.deleteStyleFrame=deleteStyleFrame;
-
-// ── Style-index serialization ─────────────────────────────────
-// Converts a layer's styleFrames + styleFrameMeta into a JSON-safe
-// object (canvas → base64 PNG data URL) for project save/export.
-// Returns null if the layer has no style data at all.
-function serializeLayerStyleFrames(layer){
-  if(!layer||!layer.styleFrames) return null;
-  const keys=Object.keys(layer.styleFrames);
-  if(!keys.length) return null;
-  const frames={};
-  keys.forEach(fi=>{
-    const c=layer.styleFrames[fi];
-    if(!c) return;
-    try{ frames[fi]=c.toDataURL('image/png'); }catch(e){}
-  });
-  const meta={};
-  if(layer.styleFrameMeta){
-    Object.keys(layer.styleFrameMeta).forEach(fi=>{
-      if(layer.styleFrameMeta[fi]) meta[fi]=cloneStyleMeta(layer.styleFrameMeta[fi]);
-    });
-  }
-  return {frames,meta};
-}
-
-// Restores a layer's styleFrames + styleFrameMeta from the serialized form
-// produced by serializeLayerStyleFrames(). Safe to call with null/undefined
-// (old projects without style data) — just leaves the layer's style storage empty.
-function deserializeLayerStyleFrames(layer,data){
-  ensureLayerStyleStorage(layer);
-  if(!data||!data.frames) return;
-  const frameKeys=Object.keys(data.frames);
-  if(!frameKeys.length) return;
-  let pending=frameKeys.length;
-  frameKeys.forEach(fi=>{
-    const url=data.frames[fi];
-    if(!url){pending--;return;}
-    const img=new Image();
-    img.onload=()=>{
-      // Draw the serialized PNG into an intermediate canvas to get ImageData,
-      // then copy pixel-by-pixel into the style canvas so no color-space
-      // conversion or premultiplication can corrupt the stored index values.
-      //
-      // IMPORTANT: willReadFrequently:true must be set on the TMP canvas
-      // context BEFORE drawImage. Without it, some browsers apply sRGB
-      // gamma correction during getImageData readback, turning small index
-      // values like R=1 or R=2 (which are near-black in sRGB) into
-      // linearized values that round to 0 or an unexpected integer,
-      // silently destroying index 1, 2, 3, etc. after a save/load cycle.
-      const tmp=document.createElement('canvas');tmp.width=img.width||CW;tmp.height=img.height||CH;
-      const tctx=tmp.getContext('2d',{willReadFrequently:true});
-      // colorSpace:'srgb' is the default, but set it explicitly and disable
-      // imageSmoothingEnabled to ensure no resampling occurs.
-      if(tctx){tctx.imageSmoothingEnabled=false;}
-      tctx.drawImage(img,0,0);
-      const pixelData=tctx.getImageData(0,0,tmp.width,tmp.height);
-      const c=mkStyleIndexCanvas();
-      const sctx=c.getContext('2d',{willReadFrequently:true});
-      sctx.putImageData(pixelData,0,0);
-      layer.styleFrames[fi]=c;
-      if(data.meta&&data.meta[fi]) layer.styleFrameMeta[fi]=cloneStyleMeta(data.meta[fi]);
-      else layer.styleFrameMeta[fi]={indexToStyleId:{},styleIdToIndex:{},nextIndex:1};
-    };
-    img.onerror=()=>{};
-    img.src=url;
-  });
-}
-
-// Resize all existing style-index canvases to match new canvas dimensions
-// nw×nh. Existing pixel data is centered in the new buffer (matching the
-// RGBA frame resize behavior in applyCanvasResize in ui-controls.js).
-// Call this after CW/CH change, before initCanvas().
-function resizeAllStyleFrames(nw,nh){
-  layers.forEach(layer=>{
-    if(!layer.styleFrames) return;
-    Object.keys(layer.styleFrames).forEach(fi=>{
-      const src=layer.styleFrames[fi];if(!src) return;
-      const nc=document.createElement('canvas');nc.width=nw;nc.height=nh;
-      const nctx=nc.getContext('2d',{willReadFrequently:true});
-      const dx=Math.round((nw-src.width)/2);
-      const dy=Math.round((nh-src.height)/2);
-      // Use pixel copy to avoid any color-space transform on index data.
-      const srcCtx=src.getContext('2d',{willReadFrequently:true});
-      const srcData=srcCtx.getImageData(0,0,src.width,src.height);
-      nctx.putImageData(srcData,dx,dy);
-      layer.styleFrames[fi]=nc;
-    });
-  });
-}
 window.resizeAllStyleFrames=resizeAllStyleFrames;
-
-// Mark all pixels belonging to a deleted style as "orphaned" (styleId kept
-// in meta but flagged as deleted) so we don't silently reassign them to
-// another style. The RGBA artwork is untouched — only the meta is updated.
-function markStyleDeleted(styleId){
-  if(!styleId) return;
-  layers.forEach(layer=>{
-    if(!layer.styleFrameMeta) return;
-    Object.keys(layer.styleFrameMeta).forEach(fi=>{
-      const meta=layer.styleFrameMeta[fi];if(!meta) return;
-      const idx=meta.styleIdToIndex&&meta.styleIdToIndex[styleId];
-      if(!idx) return;
-      // Keep the mapping intact but tag the id with a deleted marker so
-      // future lookups can distinguish "no owner" from "orphaned owner".
-      if(meta.indexToStyleId) meta.indexToStyleId[idx]='__deleted__:'+styleId;
-      delete meta.styleIdToIndex[styleId];
-    });
-  });
-}
 window.markStyleDeleted=markStyleDeleted;
+window.serializeLayerStyleFrames=serializeLayerStyleFrames;
+window.deserializeLayerStyleFrames=deserializeLayerStyleFrames;
 
-// ── Encoding round-trip self-test ─────────────────────────────
-// Verifies that encodeStyleIndexToPixel and the decoder used by
-// debugStyleAtPoint agree on the byte layout for a range of indexes.
+// ── Encoding round-trip self-test (unchanged behaviour) ──────────────────
+// Verifies the little-endian R|G<<8|B<<16 encode/decode round-trip.
 // Call window._styleIndexRoundTripTest() from the browser console.
-// Every result must print OK; any FAIL means encoder/decoder mismatch.
 function _styleIndexRoundTripTest(){
   const TEST_INDEXES=[1,2,3,255,256,257,65535];
   let allOk=true;
   const buf=new Uint8ClampedArray(4);
   TEST_INDEXES.forEach(idx=>{
-    // Encode exactly as encodeStyleIndexToPixel does.
-    buf[0]=idx&255;
-    buf[1]=(idx>>8)&255;
-    buf[2]=(idx>>16)&255;
-    buf[3]=255;
-    // Decode exactly as debugStyleAtPoint does.
+    buf[0]=idx&255;buf[1]=(idx>>8)&255;buf[2]=(idx>>16)&255;buf[3]=255;
     const decoded=buf[3]===255?(buf[0]|(buf[1]<<8)|(buf[2]<<16)):0;
     const ok=decoded===idx;
     if(!ok) allOk=false;
     console.log('[StyleIndex] roundtrip idx='+idx+
-      ' → R='+buf[0]+' G='+buf[1]+' B='+buf[2]+' A='+buf[3]+
-      ' → decoded='+decoded+' '+(ok?'OK':'FAIL ⚠'));
+      ' -> R='+buf[0]+' G='+buf[1]+' B='+buf[2]+' A='+buf[3]+
+      ' -> decoded='+decoded+' '+(ok?'OK':'FAIL'));
   });
-  console.log('[StyleIndex] round-trip test '+(allOk?'PASSED ✓':'FAILED ✗'));
+  console.log('[StyleIndex] round-trip test '+(allOk?'PASSED':'FAILED'));
   return allOk;
 }
 window._styleIndexRoundTripTest=_styleIndexRoundTripTest;
-// Run immediately on load so any formula mismatch is caught at startup.
 (function(){try{_styleIndexRoundTripTest();}catch(e){console.error('[StyleIndex] round-trip test threw:',e);}})();
 
-// ── Debug helper ──────────────────────────────────────────────
+// ── Lifecycle test (uses SmartRasterLayer.ensureStyleIndex / resetFrame) ──
+function _styleIndexClearFrameLifecycleTest(){
+  const li=layers.length,fi=0;
+  const testLayer={name:'Style Test',visible:false,onTimeline:false,color:'transparent',
+    frames:{},frameMeta:{},indexFrames:{},indexMeta:{},opacity:1,stencil:'none',clipTo:null,groupId:null,type:'smart-raster'};
+  layers.push(testLayer);
+  try{
+    const SRL=window.SmartRasterLayer;
+    const orangeId='__test_orange__';
+    const purpleId='__test_purple__';
+    const orangeIdx=SRL.ensureStyleIndex(li,fi,orangeId);
+    if(testLayer.indexMeta[fi].indexToStyleId[orangeIdx]!==orangeId) throw new Error('orange did not resolve');
+    SRL.resetFrame(li,fi);
+    const purpleIdx=SRL.ensureStyleIndex(li,fi,purpleId);
+    if(testLayer.indexMeta[fi].styleIdToIndex[purpleId]!==purpleIdx) throw new Error('purple forward mapping missing');
+    if(testLayer.indexMeta[fi].indexToStyleId[purpleIdx]!==purpleId) throw new Error('purple reverse mapping missing');
+    const orangeIdx2=SRL.ensureStyleIndex(li,fi,orangeId);
+    if(testLayer.indexMeta[fi].indexToStyleId[purpleIdx]!==purpleId) throw new Error('purple mapping was overwritten');
+    if(testLayer.indexMeta[fi].indexToStyleId[orangeIdx2]!==orangeId) throw new Error('orange second mapping missing');
+    if(orangeIdx2===purpleIdx) throw new Error('two live styles share one index');
+    console.log('[StyleIndex] clear-frame lifecycle test PASSED');
+    return true;
+  }catch(e){
+    console.error('[StyleIndex] clear-frame lifecycle test FAILED:',e);
+    return false;
+  }finally{
+    layers.splice(li,1);
+  }
+}
+window._styleIndexClearFrameLifecycleTest=_styleIndexClearFrameLifecycleTest;
+
+// ── Debug helper (reads from layer.indexFrames / layer.indexMeta) ─────────
 // Returns the style ID (or null/orphan marker) for the pixel at canvas
 // coordinate (cx, cy) on the given layer+frame (defaults to active).
 // Usage: window.debugStyleAtPoint(x, y)  or
@@ -424,40 +195,26 @@ function debugStyleAtPoint(cx,cy,li,fi){
   li=(li!=null)?li:curLayer;
   fi=(fi!=null)?fi:curFrame;
   const layer=layers[li];
-  if(!layer||!layer.styleFrames||!layer.styleFrames[fi]){
+  if(!layer||!layer.indexFrames||!layer.indexFrames[fi]){
     return {styleId:null,styleIndex:0,r:0,g:0,b:0,a:0,note:'no style buffer for this layer/frame'};
   }
-  const meta=layer.styleFrameMeta&&layer.styleFrameMeta[fi];
-  // Use willReadFrequently so the browser returns exact stored values without
-  // any GPU-side color transformation. The style canvas is a data buffer —
-  // pixel values are integer style indices, not visual colors.
-  const sctx=layer.styleFrames[fi].getContext('2d',{willReadFrequently:true});
+  const meta=layer.indexMeta&&layer.indexMeta[fi];
+  const sctx=layer.indexFrames[fi].getContext('2d',{willReadFrequently:true,colorSpace:'srgb'});
   const px=Math.max(0,Math.min(Math.round(cx),CW-1));
   const py=Math.max(0,Math.min(Math.round(cy),CH-1));
   const d=sctx.getImageData(px,py,1,1).data;
   const r=d[0],g=d[1],b=d[2],a=d[3];
-  // Decode: little-endian R|G<<8|B<<16. Alpha must be 255 for a valid entry.
-  // If alpha≠255, the pixel is unowned (either transparent or corrupt).
-  const index=a===255?(r|(g<<8)|(b<<16)):0;
-  // Log the raw channel values so encode/decode mismatches are immediately
-  // visible: expected G=0 B=0 for small indexes — any non-zero G or B here
-  // means color-space corruption (e.g. missing willReadFrequently on context).
+  const index=a>0?(r|(g<<8)|(b<<16)):0;
   console.log('[debugStyleAtPoint] px=('+px+','+py+') r:'+r+' g:'+g+' b:'+b+' a:'+a+
     ' decodedIndex:'+index+
     (index>0?' resolvedId:'+((meta&&meta.indexToStyleId&&meta.indexToStyleId[Number(index)])||'NONE'):''));
   if(!index) return {styleId:null,styleIndex:0,r,g,b,a,note:'unassigned'};
-  // Look up with Number(index) so the key coercion matches how entries
-  // were stored by ensureStyleIndexForFrame (which uses indexToStyleId[Number(idx)]).
   const styleId=(meta&&meta.indexToStyleId&&meta.indexToStyleId[Number(index)])||null;
   const deleted=styleId&&styleId.startsWith('__deleted__:');
   return {styleId:deleted?null:styleId,styleIndex:index,r,g,b,a,orphaned:!!deleted,rawId:styleId,
     note:deleted?'orphaned (style was deleted)':'owned'};
 }
-window.debugStyleAtPoint=debugStyleAtPoint;
-
-// Serialize / deserialize exposed for project-level save/load integration
-window.serializeLayerStyleFrames=serializeLayerStyleFrames;
-window.deserializeLayerStyleFrames=deserializeLayerStyleFrames;// PERF FIX: recomposite() runs on every animation frame while a stroke is in
+window.debugStyleAtPoint=debugStyleAtPoint;// PERF FIX: recomposite() runs on every animation frame while a stroke is in
 // progress (RAF-scheduled from pointermove). Previously, every group-clipped
 // or layer-clipped (stencil) layer caused 1-2 brand-new full-resolution
 // (e.g. 1920×1080) <canvas> elements to be allocated EVERY frame just to
@@ -1896,3 +1653,260 @@ const FloatPanels=(function(){
     render,
   };
 })();
+
+// ════════════════════════════════════════════════════════════════
+// UNDO / REDO — SMART RASTER INDEX-FRAME RESTORE PATCH
+//
+// THE BUG (confirmed):
+//   The authoritative Smart Raster buffer that was NOT being restored on
+//   Undo is layer.indexFrames[fi] (the index canvas) and its companion
+//   layer.indexMeta[fi].  The original undo in tools-color.js only
+//   restored layer.frames[fi] (the rendered RGBA bitmap).  The index
+//   canvas still contained Stroke B after Undo, so any subsequent
+//   renderFrame / recomposite / palette change re-painted Stroke B.
+//
+// PREVIOUS PATCH (in this file) FAILURE MODE:
+//   The previous wrapper tried to recover the _srBefore snapshot by
+//   reading it from redoStack[last] after _origUndo ran, assuming the
+//   original undo RE-USED the same entry object on redoStack.
+//   tools-color.js creates a FRESH redo-snapshot object and pushes it;
+//   it does NOT move the popped undoStack entry onto redoStack.
+//   So redoEntry._srBefore was always undefined → _srRestore never ran
+//   → the stale index with Stroke B was never cleared.
+//
+// FIX STRATEGY:
+//   1. pushUndo wrapper: snapshot SR state BEFORE the stroke and attach
+//      it to the undoStack entry as _srBefore.  Also snapshot SR state
+//      AFTER the stroke (captured lazily at undo-time) as _srAfter for
+//      redo symmetry.  Clear redoStack so drawing after Undo can never
+//      replay a discarded stroke.
+//   2. undo wrapper: POP and READ _srBefore from the undoStack entry
+//      BEFORE calling _origUndo (so we have the snapshot even after the
+//      entry is consumed).  Restore index + meta from _srBefore, then
+//      call renderFrame to derive RGBA from the restored index (never
+//      from a stale bitmap copy).  Attach _srAfter to the redo entry
+//      regardless of whether _origUndo recycled or created it.
+//   3. redo wrapper: read _srAfter from the entry BEFORE calling
+//      _origRedo consumes it, then restore after.
+//
+// What is NOT changed:
+//   - brush-engine.js   (no touch)
+//   - palette.js        (no touch)
+//   - the renderer path (recomposite / drawBg — no touch)
+//   - layer UI          (renderLayerPanel — no touch)
+//   - normal Bitmap undo behavior (pass-through when no _srBefore)
+// ════════════════════════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded', function _patchUndoForSmartRaster(){
+
+  // ── Helpers to snapshot / restore Smart Raster data for ONE layer/frame ──
+
+  // Returns a fully independent deep copy of the SR state for layerIndex/frameIndex.
+  // Canvas is pixel-copied (putImageData) to avoid any colour-space transform.
+  // IMPORTANT: indexCanvas is always cloned — never a live reference — so
+  // subsequent strokes cannot mutate the snapshot.
+  function _srSnapshot(layerIndex, frameIndex) {
+    const l = layers[layerIndex];
+    if (!l) return null;
+    const srcCanvas = l.indexFrames && l.indexFrames[frameIndex];
+    const srcMeta   = l.indexMeta   && l.indexMeta[frameIndex];
+    return {
+      layerIndex:  layerIndex,
+      frameIndex:  frameIndex,
+      // Pixel-accurate deep clone of the index canvas (R|G<<8|B<<16 encoding).
+      // This is the authoritative buffer. cloneStyleCanvas uses putImageData
+      // only — never drawImage — to prevent sRGB gamma corruption of small
+      // index values (e.g. R=1 becoming R=0).
+      indexCanvas: srcCanvas ? cloneStyleCanvas(srcCanvas) : null,
+      // Structural deep clone of styleId ↔ numericIndex mappings.
+      indexMeta:   srcMeta   ? cloneStyleMeta(srcMeta)    : null,
+    };
+  }
+
+  // Restores the SR index canvas + meta from `snap` into the live layer,
+  // then re-renders RGBA from the restored index data (never from a stale
+  // bitmap copy).  If this is the currently displayed frame, activeC/ctx
+  // is updated to match.
+  function _srRestore(snap) {
+    if (!snap) return;
+    const l = layers[snap.layerIndex];
+    if (!l) return;
+
+    // ── 1. Restore the authoritative index canvas ──────────────────────
+    if (!l.indexFrames) l.indexFrames = {};
+    if (snap.indexCanvas) {
+      // Deep-clone again on the way out so the snapshot itself stays
+      // immutable and can be used again if redo re-applies it.
+      l.indexFrames[snap.frameIndex] = cloneStyleCanvas(snap.indexCanvas);
+    } else {
+      delete l.indexFrames[snap.frameIndex];
+    }
+
+    // ── 2. Restore the authoritative index metadata ────────────────────
+    if (!l.indexMeta) l.indexMeta = {};
+    if (snap.indexMeta) {
+      l.indexMeta[snap.frameIndex] = cloneStyleMeta(snap.indexMeta);
+    } else {
+      delete l.indexMeta[snap.frameIndex];
+    }
+
+    // ── 3. Re-render RGBA from the restored index data ─────────────────
+    // Derive the RGBA canvas from the now-correct index rather than from
+    // any stored bitmap, so the two authoritative sources stay in sync.
+    // renderFrame writes into activeC when layerIndex===curLayer &&
+    // frameIndex===curFrame, which is exactly what we want.
+    const isCurrentFrame = (snap.layerIndex === curLayer && snap.frameIndex === curFrame);
+    const targetCanvas   = isCurrentFrame
+      ? activeC
+      : (l.frames && l.frames[snap.frameIndex]) || null;
+
+    if (l.indexFrames[snap.frameIndex] && targetCanvas) {
+      // renderFrame reads l.indexFrames[fi] + l.indexMeta[fi] and writes
+      // RGBA pixels onto targetCanvas.
+      if (typeof SmartRasterLayer !== 'undefined' && typeof SmartRasterLayer.renderFrame === 'function') {
+        SmartRasterLayer.renderFrame(snap.layerIndex, snap.frameIndex, targetCanvas);
+      } else if (typeof renderSmartRasterFrame === 'function') {
+        renderSmartRasterFrame(snap.layerIndex, snap.frameIndex, targetCanvas);
+      }
+      // Sync layer.frames[fi] from activeC when it is the current frame,
+      // so saveActiveToKey() and any future loadFrame() are consistent.
+      if (isCurrentFrame && l.frames && l.frames[snap.frameIndex]) {
+        const kctx = l.frames[snap.frameIndex].getContext('2d');
+        kctx.clearRect(0, 0, CW, CH);
+        kctx.drawImage(activeC, 0, 0);
+      }
+    } else if (!l.indexFrames[snap.frameIndex]) {
+      // Index was absent in snapshot → clear the RGBA canvas too.
+      if (isCurrentFrame) {
+        ctx.clearRect(0, 0, CW, CH);
+      }
+      if (targetCanvas && targetCanvas !== activeC) {
+        targetCanvas.getContext('2d').clearRect(0, 0, CW, CH);
+      }
+      if (l.frames) delete l.frames[snap.frameIndex];
+    }
+  }
+
+  // ── Wrap pushUndo ────────────────────────────────────────────────────────
+  // tools-color.js defines pushUndo as a plain function that:
+  //   1. Captures a bitmap snapshot of the current layer/frame into undoStack.
+  //   2. Caps undoStack length.
+  //   BUG: it does NOT clear redoStack — drawing after an undo preserves the
+  //   redo branch so future Redo can replay discarded strokes.
+  //
+  // Our wrapper snapshots SR state (index + meta) BEFORE the stroke starts,
+  // attaches it to the new undoStack entry as _srBefore, and clears redoStack.
+  const _origPushUndo = (typeof pushUndo === 'function') ? pushUndo : null;
+  if (!_origPushUndo) {
+    console.warn('[undo-patch] pushUndo not found; Smart Raster undo patch not applied.');
+    return;
+  }
+
+  window.pushUndo = function pushUndo() {
+    // Capture SR state BEFORE the original runs, matching the timing of
+    // the bitmap snapshot inside it (both are pre-stroke).
+    const srSnap = _srSnapshot(curLayer, curFrame);
+
+    // Run the original to push a new bitmap snapshot onto undoStack.
+    _origPushUndo.apply(this, arguments);
+
+    // ── Clear the redo branch ────────────────────────────────────────────
+    // The original does not clear redoStack.  Any entry left there from a
+    // previous Undo would be replayed by the next Redo, making an undone
+    // stroke reappear on top of new drawing.
+    redoStack = [];
+
+    // ── Attach SR snapshot to the new undo entry ─────────────────────────
+    // The original only captured layer.frames[fi] (the rendered RGBA).
+    // We attach the index canvas + meta snapshot so undo/redo can restore
+    // the authoritative SR state, not just the derived RGBA.
+    if (undoStack.length > 0) {
+      const entry = undoStack[undoStack.length - 1];
+      // Skip entries that manage their own SR data (e.g. timeline-frames).
+      if (entry && entry.type !== 'timeline-frames' && !entry._srBefore) {
+        entry._srBefore = srSnap;
+      }
+    }
+  };
+
+  // ── Wrap undo ────────────────────────────────────────────────────────────
+  // KEY DESIGN DECISION: we read _srBefore from the undoStack entry BEFORE
+  // calling _origUndo, because tools-color.js creates a brand-new fresh
+  // object for redoStack rather than re-pushing the popped entry.  After
+  // _origUndo the entry is gone from undoStack and the new redoStack entry
+  // has no _srBefore — so reading from redoEntry._srBefore (previous
+  // approach) always found undefined and _srRestore never ran.
+  const _origUndo = (typeof undo === 'function') ? undo : null;
+  if (_origUndo) {
+    window.undo = function undo() {
+      // ── Step 1: Read the SR snapshot from the entry we are about to pop ──
+      // Peek at the top of undoStack to get _srBefore BEFORE _origUndo
+      // consumes it.  This is the only reliable way to get our data back.
+      const undoEntry   = undoStack.length > 0 ? undoStack[undoStack.length - 1] : null;
+      const srBefore    = undoEntry ? undoEntry._srBefore : null;
+
+      // Also snapshot current ("after") SR state for redo, before origUndo
+      // alters anything.
+      const srAfter     = (undoEntry && undoEntry.type !== 'timeline-frames')
+                          ? _srSnapshot(curLayer, curFrame)
+                          : null;
+
+      // ── Step 2: Restore the authoritative SR index BEFORE _origUndo ──────
+      // Doing this first means that if _origUndo itself triggers recomposite
+      // or any other render, it will already see the correct (pre-stroke)
+      // index data, never the stale post-stroke state.
+      if (srBefore) {
+        _srRestore(srBefore);
+      }
+
+      // ── Step 3: Run the original (restores RGBA bitmap, updates redoStack) ─
+      _origUndo.apply(this, arguments);
+
+      // ── Step 4: Attach srAfter to whichever redo entry _origUndo pushed ──
+      // We don't care whether it recycled our entry or made a fresh one —
+      // we just tag whatever is now on top of redoStack.
+      if (srAfter) {
+        const redoEntry = redoStack.length > 0 ? redoStack[redoStack.length - 1] : null;
+        if (redoEntry && !redoEntry._srBefore) redoEntry._srBefore = srBefore;
+        if (redoEntry && !redoEntry._srAfter)  redoEntry._srAfter  = srAfter;
+      }
+
+      // ── Step 5: Recomposite so the restored index is visible immediately ──
+      // _srRestore already updated activeC via renderFrame; recomposite
+      // blends all layers into the display canvas.
+      if (srBefore && typeof recomposite === 'function') {
+        recomposite(curLayer, curFrame);
+      }
+    };
+  }
+
+  // ── Wrap redo ────────────────────────────────────────────────────────────
+  // Same pattern: read _srAfter from the redoStack entry BEFORE _origRedo
+  // consumes it, then restore after so we don't depend on object identity.
+  const _origRedo = (typeof redo === 'function') ? redo : null;
+  if (_origRedo) {
+    window.redo = function redo() {
+      // ── Step 1: Read SR snapshot before _origRedo consumes the entry ──
+      const redoEntry = redoStack.length > 0 ? redoStack[redoStack.length - 1] : null;
+      const srAfter   = redoEntry ? redoEntry._srAfter  : null;
+      const srBefore  = redoEntry ? redoEntry._srBefore : null;
+
+      // ── Step 2: Run the original (restores RGBA bitmap, updates undoStack) ─
+      _origRedo.apply(this, arguments);
+
+      // ── Step 3: Restore SR "after" state (re-applies the stroke's index) ──
+      if (srAfter) {
+        _srRestore(srAfter);
+        // Re-tag the new undoStack entry so a subsequent Undo can recover
+        // _srBefore correctly without relying on object identity.
+        const newUndoEntry = undoStack.length > 0 ? undoStack[undoStack.length - 1] : null;
+        if (newUndoEntry && !newUndoEntry._srBefore) newUndoEntry._srBefore = srBefore;
+        if (newUndoEntry && !newUndoEntry._srAfter)  newUndoEntry._srAfter  = srAfter;
+        if (typeof recomposite === 'function') recomposite(curLayer, curFrame);
+      }
+    };
+  }
+
+  // Refresh undo/redo button enabled state if tools-color.js exposes it.
+  if (typeof updateUndoRedoButtons === 'function') updateUndoRedoButtons();
+
+}, {once: true});

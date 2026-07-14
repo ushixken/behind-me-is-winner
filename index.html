@@ -1463,6 +1463,7 @@
 <script src="cursor-prefs.js"></script>
 <script src="brush-size-unit.js"></script>
 <script src="brush-engine.js"></script>
+<script src="smart-raster-layer.js"></script>
 <script src="panels.js"></script>
 <script src="tools-color.js"></script>
 <script src="palette.js"></script>
@@ -1542,18 +1543,15 @@
 
   // ── Helpers ───────────────────────────────────────────────────
 
-  // Resolve a style ID to its display name via PaletteDocker.serialize().
+  // Resolve a style ID to its display name via the live palette lookup.
   function resolveStyleName(styleId){
     if(!styleId || styleId.startsWith('__deleted__:')) return null;
     try{
-      const data = window.PaletteDocker && typeof window.PaletteDocker.serialize === 'function'
-        ? window.PaletteDocker.serialize()
-        : null;
-      if(!data) return null;
-      const styles = data.advancedPalette && data.advancedPalette.styles;
-      if(!Array.isArray(styles)) return null;
-      const match = styles.find(s => s && s.type !== 'separator' && s.id === styleId);
-      return match ? (match.name || null) : null;
+      if(window.PaletteDocker && typeof window.PaletteDocker.findAdvancedStyleById === 'function'){
+        const match = window.PaletteDocker.findAdvancedStyleById(styleId);
+        return match ? (match.name || null) : null;
+      }
+      return null;
     }catch(e){ return null; }
   }
 

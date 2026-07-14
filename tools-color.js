@@ -27,6 +27,9 @@ function _restoreUndoSnapshot(action){
   if(action.frame!==curFrame) curFrame=action.frame;
   ctx.clearRect(0,0,CW,CH);ctx.drawImage(action.snap,0,0);
   if(typeof restoreStyleFrameBundle==='function') restoreStyleFrameBundle(action.layer,action.frame,action.styleBundle);
+  if(action.styleBundle&&action.styleBundle.canvas&&typeof renderSmartRasterFrame==='function'){
+    renderSmartRasterFrame(action.layer,action.frame,activeC);
+  }
   saveActiveToKey();recomposite(curLayer,curFrame);renderTimeline();
 }
 function undo(){

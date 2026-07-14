@@ -157,15 +157,15 @@ function _insertFramesAtStart(amount){
       Object.keys(l.frameMeta).forEach(f=>{shiftedMeta[+f+amount]=l.frameMeta[f];});
       l.frameMeta=shiftedMeta;
     }
-    if(l.styleFrames&&Object.keys(l.styleFrames).length){
-      const shiftedStyleFrames={};
-      Object.keys(l.styleFrames).forEach(f=>{shiftedStyleFrames[+f+amount]=l.styleFrames[f];});
-      l.styleFrames=shiftedStyleFrames;
+    if(l.indexFrames&&Object.keys(l.indexFrames).length){
+      const shiftedIndexFrames={};
+      Object.keys(l.indexFrames).forEach(f=>{shiftedIndexFrames[+f+amount]=l.indexFrames[f];});
+      l.indexFrames=shiftedIndexFrames;
     }
-    if(l.styleFrameMeta&&Object.keys(l.styleFrameMeta).length){
-      const shiftedStyleMeta={};
-      Object.keys(l.styleFrameMeta).forEach(f=>{shiftedStyleMeta[+f+amount]=l.styleFrameMeta[f];});
-      l.styleFrameMeta=shiftedStyleMeta;
+    if(l.indexMeta&&Object.keys(l.indexMeta).length){
+      const shiftedIndexMeta={};
+      Object.keys(l.indexMeta).forEach(f=>{shiftedIndexMeta[+f+amount]=l.indexMeta[f];});
+      l.indexMeta=shiftedIndexMeta;
     }
   });
   TOTAL+=amount;
@@ -259,11 +259,24 @@ function _snapshotFrameMaps(layerIndices){
   const snapshot={};
   layerIndices.forEach(layerIndex=>{
     const l=layers[layerIndex];
+    // Deep-clone every Smart Raster index canvas so the snapshot is a fully
+    // independent copy. Object.assign() alone would only shallow-copy the
+    // canvas references — the live canvases would mutate in place, making
+    // the snapshot useless for undo. cloneStyleCanvas() uses putImageData
+    // (pixel-level copy, no colour-space transform) which is the same safe
+    // clone that SmartRasterLayer uses internally.
+    const indexFramesSnap={};
+    Object.keys(l.indexFrames||{}).forEach(fi=>{
+      const src=l.indexFrames[fi];
+      indexFramesSnap[fi]=src?cloneStyleCanvas(src):null;
+    });
     snapshot[layerIndex]={
       frames: Object.assign({},l.frames),
       frameMeta: _deepCopyFrameMeta(l.frameMeta),
-      styleFrames: Object.assign({},l.styleFrames||{}),
-      styleFrameMeta: _deepCopyStyleFrameMeta(l.styleFrameMeta)
+      // New field names (post-migration). Old styleFrames/styleFrameMeta are
+      // no longer written by smart-raster-layer.js; snapshot only the live fields.
+      indexFrames: indexFramesSnap,
+      indexMeta: _deepCopyStyleFrameMeta(l.indexMeta)
     };
   });
   return snapshot;
@@ -274,8 +287,16 @@ function _restoreFrameMaps(snapshot){
     const s=snapshot[layerIndex];
     l.frames=Object.assign({},s.frames);
     l.frameMeta=_deepCopyFrameMeta(s.frameMeta);
-    l.styleFrames=Object.assign({},s.styleFrames||{});
-    l.styleFrameMeta=_deepCopyStyleFrameMeta(s.styleFrameMeta);
+    // Restore Smart Raster data under the new field names.
+    // Clone again on restore so the same snapshot entry can be
+    // applied for both undo and redo without cross-contamination.
+    const indexFramesRestore={};
+    Object.keys(s.indexFrames||{}).forEach(fi=>{
+      const src=s.indexFrames[fi];
+      indexFramesRestore[fi]=src?cloneStyleCanvas(src):null;
+    });
+    l.indexFrames=indexFramesRestore;
+    l.indexMeta=_deepCopyStyleFrameMeta(s.indexMeta);
   });
 }
 // Shallow-copy the per-frame meta objects so snapshot entries are independent
@@ -424,15 +445,15 @@ function _trimLeadingBlanks(){
       Object.keys(l.frameMeta).forEach(f=>{const nf=+f-trimmable;if(nf>=0) shiftedMeta[nf]=l.frameMeta[f];});
       l.frameMeta=shiftedMeta;
     }
-    if(l.styleFrames&&Object.keys(l.styleFrames).length){
-      const shiftedStyleFrames={};
-      Object.keys(l.styleFrames).forEach(f=>{const nf=+f-trimmable;if(nf>=0) shiftedStyleFrames[nf]=l.styleFrames[f];});
-      l.styleFrames=shiftedStyleFrames;
+    if(l.indexFrames&&Object.keys(l.indexFrames).length){
+      const shiftedIndexFrames={};
+      Object.keys(l.indexFrames).forEach(f=>{const nf=+f-trimmable;if(nf>=0) shiftedIndexFrames[nf]=l.indexFrames[f];});
+      l.indexFrames=shiftedIndexFrames;
     }
-    if(l.styleFrameMeta&&Object.keys(l.styleFrameMeta).length){
-      const shiftedStyleMeta={};
-      Object.keys(l.styleFrameMeta).forEach(f=>{const nf=+f-trimmable;if(nf>=0) shiftedStyleMeta[nf]=l.styleFrameMeta[f];});
-      l.styleFrameMeta=shiftedStyleMeta;
+    if(l.indexMeta&&Object.keys(l.indexMeta).length){
+      const shiftedIndexMeta={};
+      Object.keys(l.indexMeta).forEach(f=>{const nf=+f-trimmable;if(nf>=0) shiftedIndexMeta[nf]=l.indexMeta[f];});
+      l.indexMeta=shiftedIndexMeta;
     }
   });
   TOTAL-=trimmable;
@@ -2386,7 +2407,7 @@ function startAddLayerDrag(downEv){
     }
     if(layerDropTarget.idx!=null){
       saveActiveToKey();
-      const newLayer={name:'Layer '+(layers.length+1),visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},styleFrames:{},styleFrameMeta:{},opacity:1,stencil:'none',clipTo:null,groupId:null};
+      const newLayer={name:'Layer '+(layers.length+1),visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},indexFrames:{},indexMeta:{},opacity:1,stencil:'none',clipTo:null,groupId:null};
       const flatFull=_buildFlatDisplayItemsAll();
       let insertSlot,joinGroupId=null;
       if(layerDropTarget.isGroup&&layerDropTarget.dropMode==='into'){
@@ -2831,7 +2852,7 @@ function showGroupOpacityPopup(grp,cx,cy){
 
 function _doAddLayer(placement){
   saveActiveToKey();
-  const newLayer={name:'Layer '+(layers.length+1),visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},styleFrames:{},styleFrameMeta:{},opacity:1,stencil:'none',clipTo:null,groupId:null};
+  const newLayer={name:'Layer '+(layers.length+1),visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},indexFrames:{},indexMeta:{},opacity:1,stencil:'none',clipTo:null,groupId:null};
   let insertAt=layers.length;
   let targetGroupId=null;
 
@@ -2962,7 +2983,7 @@ function _insertGroupInsideGroup(targetGroupId){
   const id=makeGroupId();
   const name='Group '+(groups.length+1);
   groups.push({id,name,visible:true,collapsed:false,opacity:1,color:'transparent',stencil:'none',clipToGroup:null,parentId:targetGroupId});
-  const newLayer={name:'Layer '+(layers.length+1),visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},styleFrames:{},styleFrameMeta:{},opacity:1,stencil:'none',clipTo:null,groupId:id};
+  const newLayer={name:'Layer '+(layers.length+1),visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},indexFrames:{},indexMeta:{},opacity:1,stencil:'none',clipTo:null,groupId:id};
   let topIdx=-1;
   layers.forEach((l,i)=>{if(l.groupId===targetGroupId&&i>topIdx) topIdx=i;});
   const insertAt=topIdx>=0?topIdx+1:layers.length;

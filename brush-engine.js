@@ -195,14 +195,16 @@ function _commitStrokeCanvas(){
   // region was still pending), so the committed result always matches what
   // the live preview was showing, even if a frame's mask pass got skipped.
   const src = _getTexturedStrokeCanvas(_strokeCanvas, true);
-  ctx.save();
-  ctx.globalAlpha = Math.max(0, Math.min(1, brushOpacity));
-  ctx.globalCompositeOperation = 'source-over';
-  ctx.drawImage(src, 0, 0);
-  ctx.restore();
-  if(typeof activeAdvancedStyleIdForPainting==='function'&&typeof applyStyleMaskFromCanvas==='function'){
-    const styleId=activeAdvancedStyleIdForPainting();
-    if(styleId) applyStyleMaskFromCanvas(src,styleId);
+  const styleId=typeof activeAdvancedStyleIdForPainting==='function'
+    ?activeAdvancedStyleIdForPainting():null;
+  const smartCommitted=tool==='brush'&&styleId&&typeof commitSmartRasterBrush==='function'
+    ?commitSmartRasterBrush(src,styleId,brushOpacity):false;
+  if(!smartCommitted){
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, brushOpacity));
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.drawImage(src, 0, 0);
+    ctx.restore();
   }
   _strokeCtx.clearRect(0, 0, _strokeCanvas.width, _strokeCanvas.height);
 }
@@ -223,6 +225,11 @@ function _commitStrokeCanvas(){
 // unaffected.
 let _strokePreviewCanvas = null;
 let _strokePreviewCtx    = null;
+// Scratch canvas used only inside _getLiveStrokePreview to tint the raw
+// stroke mask with the active Smart Raster palette color.  Kept persistent
+// so we never allocate inside the per-frame preview path.
+let _srPreviewTintCanvas = null;
+let _srPreviewTintCtx    = null;
 function _getLiveStrokePreview(){
   const w = activeC.width, h = activeC.height;
   if(!_strokePreviewCanvas || _strokePreviewCanvas.width !== w || _strokePreviewCanvas.height !== h){
@@ -236,10 +243,77 @@ function _getLiveStrokePreview(){
   _strokePreviewCtx.drawImage(activeC, 0, 0);
   if(_strokeCanvas){
     const src = _getTexturedStrokeCanvas(_strokeCanvas, false);
+
+    // Smart Raster live preview fix:
+    // _commitStrokeCanvas routes through commitSmartRasterBrush which calls
+    // SmartRasterLayer.renderFrame — resolving index -> palette RGBA and
+    // painting the correct style color.  _getLiveStrokePreview previously
+    // just blitted the raw _strokeCanvas, which contains dabs drawn in the
+    // default brush color (black/whatever color is), so the preview showed
+    // the wrong color while drawing even though the committed result was
+    // correct.  We now detect the same Smart Raster condition here and tint
+    // the stroke coverage with the active palette style's RGBA before
+    // compositing into the preview — making the preview match the final
+    // committed render exactly.
+    const styleId = typeof activeAdvancedStyleIdForPainting === 'function'
+      ? activeAdvancedStyleIdForPainting() : null;
+    const isSmartRaster = tool === 'brush' && !!styleId
+      && typeof advancedPalettePaintingEnabled === 'function'
+      && advancedPalettePaintingEnabled();
+
+    let strokeSrc = src; // default: raw stroke canvas (bitmap layers, eraser, etc.)
+
+    if(isSmartRaster){
+      // Resolve the active style's RGBA from the palette once per preview frame.
+      let rgba = null;
+      if(window.PaletteDocker && typeof window.PaletteDocker.findAdvancedStyleById === 'function'){
+        const style = window.PaletteDocker.findAdvancedStyleById(styleId);
+        if(style && Array.isArray(style.rgba)) rgba = style.rgba;
+      }
+
+      if(rgba){
+        // Build (or reuse) the tint scratch canvas.
+        if(!_srPreviewTintCanvas || _srPreviewTintCanvas.width !== w || _srPreviewTintCanvas.height !== h){
+          _srPreviewTintCanvas = document.createElement('canvas');
+          _srPreviewTintCanvas.width  = w;
+          _srPreviewTintCanvas.height = h;
+          _srPreviewTintCtx = _srPreviewTintCanvas.getContext('2d', {willReadFrequently: true});
+        } else {
+          _srPreviewTintCtx.clearRect(0, 0, w, h);
+        }
+
+        // Step 1: flood the tint canvas with a solid rectangle of the palette
+        // color.  Alpha channel of rgba[3] (0-255) scales the fill, matching
+        // the same rgba lookup renderFrame uses.
+        const styleAlpha = rgba[3] == null ? 1 : rgba[3] / 255;
+        _srPreviewTintCtx.save();
+        _srPreviewTintCtx.globalCompositeOperation = 'source-over';
+        _srPreviewTintCtx.fillStyle =
+          'rgba(' + rgba[0] + ',' + rgba[1] + ',' + rgba[2] + ',' + styleAlpha + ')';
+        _srPreviewTintCtx.fillRect(0, 0, w, h);
+        _srPreviewTintCtx.restore();
+
+        // Step 2: mask the solid color fill by the stroke's alpha coverage
+        // (destination-in keeps only the pixels where the stroke canvas is
+        // opaque, so the resulting canvas has the palette color shaped exactly
+        // like the stroke).  brushOpacity is then applied below as globalAlpha
+        // when blitting into the preview, exactly as it is at commit time.
+        _srPreviewTintCtx.save();
+        _srPreviewTintCtx.globalCompositeOperation = 'destination-in';
+        _srPreviewTintCtx.drawImage(src, 0, 0);
+        _srPreviewTintCtx.restore();
+
+        strokeSrc = _srPreviewTintCanvas;
+      }
+      // If palette lookup failed (style not found yet), fall through to the
+      // raw src so the preview is at least visible, even if temporarily the
+      // wrong color — better than a blank preview.
+    }
+
     _strokePreviewCtx.save();
     _strokePreviewCtx.globalAlpha = Math.max(0, Math.min(1, brushOpacity));
     _strokePreviewCtx.globalCompositeOperation = 'source-over';
-    _strokePreviewCtx.drawImage(src, 0, 0);
+    _strokePreviewCtx.drawImage(strokeSrc, 0, 0);
     _strokePreviewCtx.restore();
   }
   return _strokePreviewCanvas;
@@ -2642,7 +2716,7 @@ activeC.addEventListener('pointerdown',e=>{
   _rotationPrevValid=false;
   _resetSmoothing(p.x,p.y,e.timeStamp||performance.now());
   _updateVelocity(p.x, p.y, e.timeStamp);
-  if(tool==='fill'){pushUndo();ensureKey();const styleId=(typeof activeAdvancedStyleIdForPainting==='function'?activeAdvancedStyleIdForPainting():null);const beforeFill=(styleId&&typeof applyStyleDiffFromBefore==='function')?ctx.getImageData(0,0,CW,CH):null;floodFill(p.x,p.y,color);if(beforeFill&&styleId) applyStyleDiffFromBefore(beforeFill,styleId);saveActiveToKey();recomposite(curLayer,curFrame);return;}
+  if(tool==='fill'){pushUndo();ensureKey();floodFill(p.x,p.y,color);saveActiveToKey();recomposite(curLayer,curFrame);return;}
   if(tool==='line'){lineStart=p;return;}
   activeC.setPointerCapture(e.pointerId);
   pushUndo();ensureKey();_beginEndTaperCapture();drawing=true;lx=p.x;ly=p.y;

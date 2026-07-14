@@ -20,7 +20,7 @@ function deleteLayer(idx){
 }
 function _doDeleteLayer(idx){
   layers.splice(idx,1);
-  if(layers.length===0) layers.push({name:'Layer 1',visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},styleFrames:{},styleFrameMeta:{},opacity:1,stencil:'none',clipTo:null,groupId:null});
+  if(layers.length===0) layers.push({name:'Layer 1',visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},indexFrames:{},indexMeta:{},type:'bitmap',opacity:1,stencil:'none',clipTo:null,groupId:null});
   if(curLayer>=layers.length) curLayer=layers.length-1;
   if(curLayer<0) curLayer=0;
   selectedLayerIndices.clear();
@@ -104,7 +104,7 @@ document.getElementById('del-bulk-ok').onclick=()=>{
   }
   _pendingDeleteAllLayers=false;
   // If every layer was removed, create a fresh blank layer so the project always has at least one.
-  if(layers.length===0) layers.push({name:'Layer 1',visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},styleFrames:{},styleFrameMeta:{},opacity:1,stencil:'none',clipTo:null,groupId:null});
+  if(layers.length===0) layers.push({name:'Layer 1',visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},indexFrames:{},indexMeta:{},type:'bitmap',opacity:1,stencil:'none',clipTo:null,groupId:null});
   if(curLayer>=layers.length) curLayer=layers.length-1;
   if(curLayer<0) curLayer=0;
   selectedLayerIndices.clear();
@@ -128,7 +128,7 @@ document.getElementById('del-group-ok').onclick=()=>{
     // Remove this group, every nested subgroup, and all of their layers
     layers=layers.filter(l=>!(l.groupId&&idSet.has(l.groupId)));
     // If no layers remain, add a blank Layer 1
-    if(layers.length===0) layers.push({name:'Layer 1',visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},styleFrames:{},styleFrameMeta:{},opacity:1,stencil:'none',clipTo:null,groupId:null});
+    if(layers.length===0) layers.push({name:'Layer 1',visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},indexFrames:{},indexMeta:{},type:'bitmap',opacity:1,stencil:'none',clipTo:null,groupId:null});
     if(curLayer>=layers.length) curLayer=Math.max(0,layers.length-1);
     selectedLayerIndices.clear();
     // Stencil/clip always targets the item immediately below in visual order.
@@ -253,7 +253,7 @@ document.getElementById('layer-ctx-rename').onclick=()=>{hideAllMenus();_startLa
 let _layerObjClipboard=null; // stores a deep copy of a layer object
 
 function _deepCopyLayer(l){
-  const copy={...l,frames:{},frameMeta:{},styleFrames:{},styleFrameMeta:{}};
+  const copy={...l,frames:{},frameMeta:{},indexFrames:{},indexMeta:{},type:l.type||'bitmap'};
   Object.entries(l.frames).forEach(([f,src])=>{
     const c=mkLayerCanvas();c.getContext('2d').drawImage(src,0,0);copy.frames[f]=c;
   });
@@ -261,11 +261,11 @@ function _deepCopyLayer(l){
   if(l.frameMeta){
     Object.entries(l.frameMeta).forEach(([f,meta])=>{copy.frameMeta[f]=Object.assign({},meta);});
   }
-  if(l.styleFrames){
-    Object.entries(l.styleFrames).forEach(([f,src])=>{copy.styleFrames[f]=cloneStyleCanvas(src);});
+  if(l.indexFrames){
+    Object.entries(l.indexFrames).forEach(([f,src])=>{copy.indexFrames[f]=cloneStyleCanvas(src);});
   }
-  if(l.styleFrameMeta){
-    Object.entries(l.styleFrameMeta).forEach(([f,meta])=>{copy.styleFrameMeta[f]=cloneStyleMeta(meta);});
+  if(l.indexMeta){
+    Object.entries(l.indexMeta).forEach(([f,meta])=>{copy.indexMeta[f]=cloneStyleMeta(meta);});
   }
   return copy;
 }
@@ -403,7 +403,7 @@ document.getElementById('modal-new-project').addEventListener('click',e=>{if(e.t
 document.getElementById('modal-new-project-ok').onclick=()=>{
   document.getElementById('modal-new-project').classList.remove('visible');
   groups=[];
-  layers=[{name:'Layer 1',visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},styleFrames:{},styleFrameMeta:{},opacity:1,stencil:'none',clipTo:null,groupId:null}];
+  layers=[{name:'Layer 1',visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},indexFrames:{},indexMeta:{},type:'bitmap',opacity:1,stencil:'none',clipTo:null,groupId:null}];
   curLayer=0;curFrame=0;
   undoStack=[];redoStack=[];
   selectedFrames.clear();selectedFrames.add(0);selectedKFs.clear();
