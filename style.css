@@ -214,6 +214,7 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;fon
 /* Layer panel bottom buttons */
 #layer-btns{display:flex;gap:2px;padding:4px 5px;border-top:1px solid var(--border);flex-shrink:0;}
 .layer-add-btn{flex:1;padding:5px 3px;border-radius:5px;border:1px dashed var(--border2);background:transparent;color:var(--text2);cursor:pointer;font-size:11px;display:flex;align-items:center;justify-content:center;gap:3px;touch-action:none;}
+#add-smart-raster-btn{flex:1.7;white-space:nowrap;font-size:10px;}
 .layer-add-btn:hover{background:var(--bg3);color:var(--text);}
 /* Layer panel header with opacity/stencil controls */
 #layer-panel-header{display:flex;flex-direction:column;gap:0;border-bottom:1px solid var(--border);flex-shrink:0;}

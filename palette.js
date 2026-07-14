@@ -54,6 +54,7 @@
     return 'color_'+n;
   }
   function activeAdvancedStyle(){return advancedStyles.find(s=>!isAdvancedSeparator(s)&&s.id===activeAdvancedStyleId)||advancedStyles.find(s=>!isAdvancedSeparator(s))||null;}
+  function activeLayerUsesAdvancedPalette(){return !!(layers[curLayer]&&layers[curLayer].type==='smart-raster');}
   function syncAdvancedRefs(){
     advancedStyles=sanitizeAdvancedStyles(advancedStyles);
     if(!advancedStyles.some(s=>!isAdvancedSeparator(s)&&s.id===activeAdvancedStyleId)){
@@ -889,8 +890,10 @@
     removeEscapedNewlineArtifacts();
     renderPaletteSelector();
     const body=document.getElementById('palette-body');
-    if(body) body.classList.toggle('advanced-mode',advancedPaletteEnabled);
-    if(advancedPaletteEnabled){
+    const useAdvanced=activeLayerUsesAdvancedPalette();
+    if(useAdvanced&&!advancedStyles.length) initializeAdvancedPaletteFromActivePalette();
+    if(body) body.classList.toggle('advanced-mode',useAdvanced);
+    if(useAdvanced){
       renderAdvancedPalette(grid);
       updateToolbarState();
       renderToolbarPalette();
@@ -2127,8 +2130,8 @@
     applyViewSettings(false);
     bindPalettePopupListeners();
   }
-  function isAdvancedPalettePaintingEnabled(){return !!advancedPaletteEnabled;}
-  function getActiveAdvancedPaletteStyleId(){const style=activeAdvancedStyle();return advancedPaletteEnabled&&style?style.id:null;}
+  function isAdvancedPalettePaintingEnabled(){return activeLayerUsesAdvancedPalette();}
+  function getActiveAdvancedPaletteStyleId(){const style=activeAdvancedStyle();return activeLayerUsesAdvancedPalette()&&style?style.id:null;}
   window.isAdvancedPalettePaintingEnabled=isAdvancedPalettePaintingEnabled;
   window.getActiveAdvancedPaletteStyleId=getActiveAdvancedPaletteStyleId;
   window.PaletteDocker={serialize,load,reset(){load(null);},renderCurrentColors:render,refresh:render,isAdvancedPalettePaintingEnabled,getActiveAdvancedPaletteStyleId,findAdvancedStyleById};

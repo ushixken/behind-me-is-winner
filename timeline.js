@@ -2402,12 +2402,12 @@ function startAddLayerDrag(downEv){
       // No real drag — behave exactly like a normal click on the Add Layer button
       addLayerDragActive=false;
       layerDropTarget={idx:null,position:'after'};
-      _addLayerBtnClick();
+      _addLayerBtnClick('bitmap');
       return;
     }
     if(layerDropTarget.idx!=null){
       saveActiveToKey();
-      const newLayer={name:'Layer '+(layers.length+1),visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},indexFrames:{},indexMeta:{},opacity:1,stencil:'none',clipTo:null,groupId:null};
+      const newLayer={name:'Layer '+(layers.length+1),visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},indexFrames:{},indexMeta:{},type:'bitmap',opacity:1,stencil:'none',clipTo:null,groupId:null};
       const flatFull=_buildFlatDisplayItemsAll();
       let insertSlot,joinGroupId=null;
       if(layerDropTarget.isGroup&&layerDropTarget.dropMode==='into'){
@@ -2850,9 +2850,10 @@ function showGroupOpacityPopup(grp,cx,cy){
   },0);
 }
 
-function _doAddLayer(placement){
+function _doAddLayer(placement,layerType){
+  const type=layerType==='smart-raster'?'smart-raster':'bitmap';
   saveActiveToKey();
-  const newLayer={name:'Layer '+(layers.length+1),visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},indexFrames:{},indexMeta:{},opacity:1,stencil:'none',clipTo:null,groupId:null};
+  const newLayer={name:'Layer '+(layers.length+1),visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},indexFrames:{},indexMeta:{},type,opacity:1,stencil:'none',clipTo:null,groupId:null};
   let insertAt=layers.length;
   let targetGroupId=null;
 
@@ -2891,16 +2892,19 @@ function _doAddLayer(placement){
   _reanchorAllStencils();
   curLayer=insertAt;selectedLayerIndices.clear();activeGroupId=null;
   loadFrame(curLayer,curFrame);renderLayerPanel();renderTimeline();
+  if(window.PaletteDocker&&typeof window.PaletteDocker.refresh==='function') window.PaletteDocker.refresh();
 }
 
-function _addLayerBtnClick(){
+let _pendingAddLayerType='bitmap';
+function _addLayerBtnClick(layerType){
+  _pendingAddLayerType=layerType==='smart-raster'?'smart-raster':'bitmap';
   if(activeGroupId){
     const grp=groups.find(g=>g.id===activeGroupId);
     document.getElementById('modal-add-layer-placement-msg').textContent='Where do you want to add the new layer relative to "'+( grp?grp.name:'the group')+'"?';
     document.querySelector('input[name="add-layer-placement"][value="inside"]').checked=true;
     document.getElementById('modal-add-layer-placement').classList.add('visible');
   } else {
-    _doAddLayer('outside');
+    _doAddLayer('outside',_pendingAddLayerType);
   }
 }
 // TEMP: drag-to-place disabled for "+ Layer" to isolate whether the drag
@@ -2909,13 +2913,16 @@ function _addLayerBtnClick(){
 // selected, direct add otherwise). Re-enable by restoring the pointerdown
 // listener that calls startAddLayerDrag(e) if drag-to-place is wanted back.
 document.getElementById('add-layer-btn').addEventListener('click',e=>{
-  _addLayerBtnClick();
+  _addLayerBtnClick('bitmap');
+});
+document.getElementById('add-smart-raster-btn').addEventListener('click',()=>{
+  _addLayerBtnClick('smart-raster');
 });
 document.getElementById('modal-add-layer-placement-cancel').onclick=()=>document.getElementById('modal-add-layer-placement').classList.remove('visible');
 document.getElementById('modal-add-layer-placement-ok').onclick=()=>{
   const placement=document.querySelector('input[name="add-layer-placement"]:checked')?.value||'inside';
   document.getElementById('modal-add-layer-placement').classList.remove('visible');
-  _doAddLayer(placement);
+  _doAddLayer(placement,_pendingAddLayerType);
 };
 document.getElementById('modal-add-layer-placement').addEventListener('click',e=>{if(e.target===document.getElementById('modal-add-layer-placement'))document.getElementById('modal-add-layer-placement').classList.remove('visible');});
 
@@ -2983,7 +2990,7 @@ function _insertGroupInsideGroup(targetGroupId){
   const id=makeGroupId();
   const name='Group '+(groups.length+1);
   groups.push({id,name,visible:true,collapsed:false,opacity:1,color:'transparent',stencil:'none',clipToGroup:null,parentId:targetGroupId});
-  const newLayer={name:'Layer '+(layers.length+1),visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},indexFrames:{},indexMeta:{},opacity:1,stencil:'none',clipTo:null,groupId:id};
+  const newLayer={name:'Layer '+(layers.length+1),visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},indexFrames:{},indexMeta:{},type:'bitmap',opacity:1,stencil:'none',clipTo:null,groupId:id};
   let topIdx=-1;
   layers.forEach((l,i)=>{if(l.groupId===targetGroupId&&i>topIdx) topIdx=i;});
   const insertAt=topIdx>=0?topIdx+1:layers.length;

@@ -11,27 +11,73 @@ function updateOnion(){
 // ════════════════════════════════════════════════════════════════
 // UNDO / REDO
 // ════════════════════════════════════════════════════════════════
-function pushUndo(){
-  const s=mkLayerCanvas();s.getContext('2d').drawImage(activeC,0,0);
-  const styleBundle=(typeof getStyleFrameBundle==='function')?getStyleFrameBundle(curLayer,curFrame):null;
-  undoStack.push({snap:s,styleBundle,frame:curFrame,layer:curLayer});
-  if(undoStack.length>40)undoStack.shift();redoStack=[];
-}
 function _currentUndoSnapshot(){
-  const canvas=mkLayerCanvas();canvas.getContext('2d').drawImage(activeC,0,0);
-  const styleBundle=(typeof getStyleFrameBundle==='function')?getStyleFrameBundle(curLayer,curFrame):null;
-  return {snap:canvas,styleBundle,frame:curFrame,layer:curLayer};
+  const layer=layers[curLayer];
+  const layerType=layer&&layer.type==='smart-raster'?'smart-raster':'bitmap';
+  if(layerType==='smart-raster'){
+    const styleBundle=typeof getStyleFrameBundle==='function'?getStyleFrameBundle(curLayer,curFrame):null;
+    return {snap:null,styleBundle,frame:curFrame,layer:curLayer,layerType};
+  }
+  const snap=mkLayerCanvas();
+  snap.getContext('2d').drawImage(activeC,0,0);
+  return {snap,styleBundle:null,frame:curFrame,layer:curLayer,layerType};
 }
-function _restoreUndoSnapshot(action){
+
+function pushUndo(){
+  undoStack.push(_currentUndoSnapshot());
+  if(undoStack.length>40) undoStack.shift();
+  redoStack=[];
+}
+
+function restoreBitmapUndo(action){
   if(action.layer!==curLayer) switchLayer(action.layer);
   if(action.frame!==curFrame) curFrame=action.frame;
-  ctx.clearRect(0,0,CW,CH);ctx.drawImage(action.snap,0,0);
-  if(typeof restoreStyleFrameBundle==='function') restoreStyleFrameBundle(action.layer,action.frame,action.styleBundle);
-  if(action.styleBundle&&action.styleBundle.canvas&&typeof renderSmartRasterFrame==='function'){
-    renderSmartRasterFrame(action.layer,action.frame,activeC);
-  }
-  saveActiveToKey();recomposite(curLayer,curFrame);renderTimeline();
+  const layer=layers[action.layer];
+  if(!layer||!action.snap) return;
+  if(!layer.frames[action.frame]) layer.frames[action.frame]=mkLayerCanvas();
+  ctx.clearRect(0,0,CW,CH);
+  ctx.drawImage(action.snap,0,0);
+  const frameCtx=layer.frames[action.frame].getContext('2d');
+  frameCtx.clearRect(0,0,CW,CH);
+  frameCtx.drawImage(activeC,0,0);
+  recomposite(curLayer,curFrame);
+  renderTimeline();
 }
+
+function restoreSmartRasterUndo(action){
+  if(action.layer!==curLayer) switchLayer(action.layer);
+  if(action.frame!==curFrame) curFrame=action.frame;
+  const layer=layers[action.layer];
+  if(!layer) return;
+  const bundle=action.styleBundle;
+  if(!layer.indexFrames) layer.indexFrames={};
+  if(!layer.indexMeta) layer.indexMeta={};
+  if(bundle&&bundle.canvas&&bundle.meta){
+    layer.indexFrames[action.frame]=SmartRasterLayer.cloneIndexCanvas(bundle.canvas);
+    layer.indexMeta[action.frame]=SmartRasterLayer.cloneMeta(bundle.meta);
+  }else{
+    delete layer.indexFrames[action.frame];
+    delete layer.indexMeta[action.frame];
+  }
+  const rendered=mkLayerCanvas();
+  if(layer.indexFrames[action.frame]){
+    SmartRasterLayer.renderFrame(action.layer,action.frame,rendered);
+  }
+  ctx.clearRect(0,0,CW,CH);
+  ctx.drawImage(rendered,0,0);
+  if(!layer.frames[action.frame]) layer.frames[action.frame]=mkLayerCanvas();
+  const frameCtx=layer.frames[action.frame].getContext('2d');
+  frameCtx.clearRect(0,0,CW,CH);
+  frameCtx.drawImage(rendered,0,0);
+  recomposite(curLayer,curFrame);
+  renderTimeline();
+}
+function _restoreUndoAction(action){
+  const layer=layers[action.layer];
+  if(layer&&layer.type==='smart-raster') restoreSmartRasterUndo(action);
+  else restoreBitmapUndo(action);
+}
+
 function undo(){
   if(!undoStack.length)return;
   const action=undoStack.pop();
@@ -40,7 +86,7 @@ function undo(){
     loadFrame(curLayer,curFrame);recomposite(curLayer,curFrame);renderTimeline();return;
   }
   redoStack.push(_currentUndoSnapshot());
-  _restoreUndoSnapshot(action);
+  _restoreUndoAction(action);
 }
 function redo(){
   if(!redoStack.length)return;
@@ -50,9 +96,8 @@ function redo(){
     loadFrame(curLayer,curFrame);recomposite(curLayer,curFrame);renderTimeline();return;
   }
   undoStack.push(_currentUndoSnapshot());
-  _restoreUndoSnapshot(action);
-}
-const szSlider=document.getElementById('ts-size');
+  _restoreUndoAction(action);
+}const szSlider=document.getElementById('ts-size');
 const szValEl=document.getElementById('ts-size-val');
 // Swap the Brush Presets docker's contents between the Brush Presets body
 // and the Transform body depending on the active tool, instead of opening

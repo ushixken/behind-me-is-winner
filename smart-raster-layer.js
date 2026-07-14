@@ -388,6 +388,7 @@
     if(!data||!data.frames) return;
     var frameKeys=Object.keys(data.frames);
     if(!frameKeys.length) return;
+    layer.type='smart-raster';
     frameKeys.forEach(function(fi){
       var url=data.frames[fi];
       if(!url) return;
@@ -440,13 +441,11 @@
         layer.indexMeta=layer.styleFrameMeta;
         delete layer.styleFrameMeta;
       }
-      // Assign type if not already set.
-      if(!layer.type){
-        // A layer is smart-raster if it has any index frame data.
-        layer.type=(layer.indexFrames&&Object.keys(layer.indexFrames).length>0)
-          ?'smart-raster'
-          :'bitmap';
-      }
+      // Indexed experimental data is authoritative evidence of a Smart Raster
+      // layer, including projects saved before layer.type was introduced.
+      var hasIndexData=!!(layer.indexFrames&&Object.keys(layer.indexFrames).length>0);
+      if(hasIndexData) layer.type='smart-raster';
+      else if(layer.type!=='smart-raster') layer.type='bitmap';
     });
   }
 
