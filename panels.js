@@ -66,8 +66,7 @@ function mkLayerCanvas(){const o=document.createElement('canvas');o.width=CW;o.h
 // brush-engine.js, palette.js, tools-color.js, layers.js, and ui-controls.js
 // continue to work without any changes.
 
-// Local aliases used only inside panels.js (debugStyleAtPoint, lifecycle
-// test, _deepCopyLayer in layers.js).  Callers outside this file use the
+// Local aliases used by callers outside this file through the
 // window.* shims below.
 function mkStyleIndexCanvas(){return window.SmartRasterLayer._mkIndexCanvas();}
 function cloneStyleCanvas(src){return window.SmartRasterLayer.cloneIndexCanvas(src);}
@@ -141,7 +140,7 @@ function serializeLayerStyleFrames(layer){
   return window.SmartRasterLayer.serializeLayer(layer);
 }
 function deserializeLayerStyleFrames(layer,data){
-  window.SmartRasterLayer.deserializeLayer(layer,data);
+  return window.SmartRasterLayer.deserializeLayer(layer,data);
 }
 
 function resizeAllStyleFrames(nw,nh){
@@ -167,73 +166,11 @@ window.markStyleDeleted=markStyleDeleted;
 window.serializeLayerStyleFrames=serializeLayerStyleFrames;
 window.deserializeLayerStyleFrames=deserializeLayerStyleFrames;
 
-// ── Encoding round-trip self-test (unchanged behaviour) ──────────────────
-// Verifies the little-endian R|G<<8|B<<16 encode/decode round-trip.
-// Call window._styleIndexRoundTripTest() from the browser console.
-function _styleIndexRoundTripTest(){
-  const TEST_INDEXES=[1,2,3,255,256,257,65535];
-  let allOk=true;
-  const buf=new Uint8ClampedArray(4);
-  TEST_INDEXES.forEach(idx=>{
-    buf[0]=idx&255;buf[1]=(idx>>8)&255;buf[2]=(idx>>16)&255;buf[3]=255;
-    const decoded=buf[3]===255?(buf[0]|(buf[1]<<8)|(buf[2]<<16)):0;
-    const ok=decoded===idx;
-    if(!ok) allOk=false;
-    console.log('[StyleIndex] roundtrip idx='+idx+
-      ' -> R='+buf[0]+' G='+buf[1]+' B='+buf[2]+' A='+buf[3]+
-      ' -> decoded='+decoded+' '+(ok?'OK':'FAIL'));
-  });
-  console.log('[StyleIndex] round-trip test '+(allOk?'PASSED':'FAILED'));
-  return allOk;
-}
-window._styleIndexRoundTripTest=_styleIndexRoundTripTest;
-(function(){try{_styleIndexRoundTripTest();}catch(e){console.error('[StyleIndex] round-trip test threw:',e);}})();
-
-// ── Lifecycle test (uses SmartRasterLayer.ensureStyleIndex / resetFrame) ──
-function _styleIndexClearFrameLifecycleTest(){
-  const li=layers.length,fi=0;
-  const testLayer={name:'Style Test',visible:false,onTimeline:false,color:'transparent',
-    frames:{},frameMeta:{},indexFrames:{},indexMeta:{},opacity:1,stencil:'none',clipTo:null,groupId:null,type:'smart-raster'};
-  layers.push(testLayer);
-  try{
-    const SRL=window.SmartRasterLayer;
-    const orangeId='__test_orange__';
-    const purpleId='__test_purple__';
-    const orangeIdx=SRL.ensureStyleIndex(li,fi,orangeId);
-    if(testLayer.indexMeta[fi].indexToStyleId[orangeIdx]!==orangeId) throw new Error('orange did not resolve');
-    SRL.resetFrame(li,fi);
-    const purpleIdx=SRL.ensureStyleIndex(li,fi,purpleId);
-    if(testLayer.indexMeta[fi].styleIdToIndex[purpleId]!==purpleIdx) throw new Error('purple forward mapping missing');
-    if(testLayer.indexMeta[fi].indexToStyleId[purpleIdx]!==purpleId) throw new Error('purple reverse mapping missing');
-    const orangeIdx2=SRL.ensureStyleIndex(li,fi,orangeId);
-    if(testLayer.indexMeta[fi].indexToStyleId[purpleIdx]!==purpleId) throw new Error('purple mapping was overwritten');
-    if(testLayer.indexMeta[fi].indexToStyleId[orangeIdx2]!==orangeId) throw new Error('orange second mapping missing');
-    if(orangeIdx2===purpleIdx) throw new Error('two live styles share one index');
-    console.log('[StyleIndex] clear-frame lifecycle test PASSED');
-    return true;
-  }catch(e){
-    console.error('[StyleIndex] clear-frame lifecycle test FAILED:',e);
-    return false;
-  }finally{
-    layers.splice(li,1);
-  }
-}
-window._styleIndexClearFrameLifecycleTest=_styleIndexClearFrameLifecycleTest;
-
-// ── Debug helper (reads from layer.indexFrames / layer.indexMeta) ─────────
-// Returns the style ID (or null/orphan marker) for the pixel at canvas
-// coordinate (cx, cy) on the given layer+frame (defaults to active).
-// Usage: window.debugStyleAtPoint(x, y)  or
-//        window.debugStyleAtPoint(x, y, layerIndex, frameIndex)
-function debugStyleAtPoint(cx,cy,li,fi){
-  li=(li!=null)?li:curLayer;
-  fi=(fi!=null)?fi:curFrame;
-  return window.SmartRasterLayer.debugPixel(cx,cy,li,fi);
-}window.debugStyleAtPoint=debugStyleAtPoint;// PERF FIX: recomposite() runs on every animation frame while a stroke is in
+// PERF FIX: recomposite() runs on every animation frame while a stroke is in
 // progress (RAF-scheduled from pointermove). Previously, every group-clipped
 // or layer-clipped (stencil) layer caused 1-2 brand-new full-resolution
 // (e.g. 1920×1080) <canvas> elements to be allocated EVERY frame just to
-// build a temporary mask/result buffer, then thrown away — serious GC
+// build a mask/result buffer, then thrown away — serious GC
 // churn and allocation cost piling up 60×/sec while drawing, on top of the
 // actual compositing work. Reuse two persistent scratch canvases instead;
 // they're only resized (re-allocated) when the document's canvas size

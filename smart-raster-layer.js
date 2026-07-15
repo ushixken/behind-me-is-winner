@@ -86,26 +86,6 @@
     }
     return {index:data[offset]|(data[offset+1]<<8),coverage:data[offset+2]};
   }
-  // ── Post-write verification (dev aid) ────────────────────────────────────
-  function _debugVerifyWrite(indexCanvas,idx,styleId,li,fi){
-    try{
-      var sctx=indexCanvas.getContext('2d',{willReadFrequently:true,colorSpace:'srgb'});
-      var d=sctx.getImageData(0,0,Math.min(CW,256),Math.min(CH,16)).data;
-      for(var i=0;i<d.length;i+=4){
-        if(d[i+3]>0){
-          var meta=layers[li]&&layers[li].indexMeta&&layers[li].indexMeta[fi];
-          var decoded=_decodePixel(d,i,meta).index;
-          var resolved=meta&&meta.indexToStyleId[decoded]||null;
-          console.log('[StyleIndex] verify: encoded='+idx+' decoded='+decoded+
-            ' resolved='+(resolved||'NONE')+' expected='+styleId+
-            (decoded!==idx?' WARNING ENCODE_MISMATCH':'')+(resolved!==styleId?' WARNING RESOLVE_FAIL':''));
-          return;
-        }
-      }
-      console.log('[StyleIndex] verify: no non-zero pixel found in first scan area (idx='+idx+')');
-    }catch(e){console.error('[StyleIndex] verify error:',e);}
-  }
-
   // ── Public API ────────────────────────────────────────────────────────────
 
   // ensureFrame(li, fi)
@@ -189,7 +169,6 @@
     meta.nextIndex=idx+1;
     meta.styleIdToIndex[styleId]=idx;
     meta.indexToStyleId[Number(idx)]=styleId;
-    console.log('[StyleIndex] register styleId='+styleId+' -> idx='+idx+' (li='+li+' fi='+fi+')');
     return idx;
   }
 
@@ -243,7 +222,6 @@
     var before=beforeImage.data,now=after.data;
     var idx=ensureStyleIndex(li,fi,styleId);if(!idx) return;
     var bundle=ensureFrame(li,fi);if(!bundle) return;
-    console.log('[StyleIndex] applyDiff styleId='+styleId+' idx='+idx+' li='+li+' fi='+fi);
     var sctx=bundle.canvas.getContext('2d',{willReadFrequently:true,colorSpace:'srgb'});
     var img=sctx.getImageData(0,0,CW,CH);var out=img.data;
     for(var i=0;i<now.length;i+=4){
@@ -253,7 +231,7 @@
       }
     }
     sctx.putImageData(img,0,0);
-    _debugVerifyWrite(bundle.canvas,idx,styleId,li,fi);
+
   }
 
   // applyMask(li, fi, maskCanvas, styleId)
@@ -263,7 +241,6 @@
     if(!styleId||!maskCanvas) return;
     var idx=ensureStyleIndex(li,fi,styleId);if(!idx) return;
     var bundle=ensureFrame(li,fi);if(!bundle) return;
-    console.log('[StyleIndex] applyMask styleId='+styleId+' idx='+idx+' li='+li+' fi='+fi);
     var mctx=maskCanvas.getContext('2d',{willReadFrequently:true,colorSpace:'srgb'});
     var sctx=bundle.canvas.getContext('2d',{willReadFrequently:true,colorSpace:'srgb'});
     var mask=mctx.getImageData(0,0,CW,CH).data;
@@ -272,7 +249,7 @@
       if(mask[i+3]>0) _encodePixel(out,i,idx);
     }
     sctx.putImageData(img,0,0);
-    _debugVerifyWrite(bundle.canvas,idx,styleId,li,fi);
+
   }
 
   // clearWhereTransparent(li, fi)
@@ -527,7 +504,7 @@
     markDeleted:         markDeleted,
     serializeLayer:      serializeLayer,
     deserializeLayer:    deserializeLayer,
-    // Internal helpers exposed for panels.js debug functions that still need them.
+
     _mkIndexCanvas:      _mkIndexCanvas,
     _makeEmptyMeta:      _makeEmptyMeta,
     _encodePixel:        _encodePixel,
@@ -536,7 +513,7 @@
 
   window.addEventListener('advanced-palette-style-color-changed',function(event){
     var styleId=event&&event.detail&&event.detail.styleId;
-    if(styleId) rerenderStyle(styleId);
+    if(styleId&&window.SmartRasterLayer&&typeof window.SmartRasterLayer.rerenderStyle==='function') window.SmartRasterLayer.rerenderStyle(styleId);
   });
 
   // Run migration after DOM is ready (layers[] is populated by core-state.js

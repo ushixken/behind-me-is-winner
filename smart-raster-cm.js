@@ -47,16 +47,8 @@
     }
     context.putImageData(image,0,0);return true;
   }
-  function debugCMPixel(x,y,li,fi){
-    if(li==null)li=curLayer;if(fi==null)fi=curFrame;
-    var layer=layers[li],frame=layer&&layer.cmFrames&&layer.cmFrames[fi];
-    if(!frame||x<0||y<0||x>=frame.width||y>=frame.height)return null;
-    var meta=layer.indexMeta&&layer.indexMeta[fi],packed=frame.pixels[y*frame.width+x]>>>0;
-    var inkIndex=getInk(packed),paintIndex=getPaint(packed);
-    return {packed:packed,inkIndex:inkIndex,paintIndex:paintIndex,tone:getTone(packed),inkStyleId:inkIndex===0?null:(meta&&meta.indexToStyleId&&meta.indexToStyleId[inkIndex])||null,paintStyleId:paintIndex===0?null:(meta&&meta.indexToStyleId&&meta.indexToStyleId[paintIndex])||null};
-  }
   function check(pixel,ink,paint,tone){if(getInk(pixel)!==ink||getPaint(pixel)!==paint||getTone(pixel)!==tone)throw new Error('Smart Raster CM packing check failed');}
   check(packCM(0,0,255),0,0,255);check(packCM(1,0,0),1,0,0);check(packCM(4095,4095,255),4095,4095,255);
   window.SmartRasterCM={packCM:packCM,getInk:getInk,getPaint:getPaint,getTone:getTone,ensureFrame:ensureFrame,renderFrame:renderFrame,blankPixel:BLANK_CM};
-  window.debugCMPixel=debugCMPixel;
+
 })();
