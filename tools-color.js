@@ -50,25 +50,13 @@ function restoreSmartRasterUndo(action){
   const layer=layers[action.layer];
   if(!layer) return;
   const bundle=action.styleBundle;
-  if(!layer.indexFrames) layer.indexFrames={};
-  if(!layer.indexMeta) layer.indexMeta={};
-  if(bundle&&bundle.canvas&&bundle.meta){
-    layer.indexFrames[action.frame]=SmartRasterLayer.cloneIndexCanvas(bundle.canvas);
-    layer.indexMeta[action.frame]=SmartRasterLayer.cloneMeta(bundle.meta);
-  }else{
-    delete layer.indexFrames[action.frame];
-    delete layer.indexMeta[action.frame];
-  }
-  const rendered=mkLayerCanvas();
-  if(layer.indexFrames[action.frame]){
-    SmartRasterLayer.renderFrame(action.layer,action.frame,rendered);
-  }
+  SmartRasterLayer.restoreFrameBundle(action.layer,action.frame,bundle);
   ctx.clearRect(0,0,CW,CH);
-  ctx.drawImage(rendered,0,0);
+  if(bundle&&bundle.rgba) ctx.putImageData(bundle.rgba.getContext('2d',{willReadFrequently:true}).getImageData(0,0,CW,CH),0,0);
   if(!layer.frames[action.frame]) layer.frames[action.frame]=mkLayerCanvas();
   const frameCtx=layer.frames[action.frame].getContext('2d');
   frameCtx.clearRect(0,0,CW,CH);
-  frameCtx.drawImage(rendered,0,0);
+  if(bundle&&bundle.rgba) frameCtx.putImageData(bundle.rgba.getContext('2d',{willReadFrequently:true}).getImageData(0,0,CW,CH),0,0);
   recomposite(curLayer,curFrame);
   renderTimeline();
 }

@@ -253,7 +253,7 @@ document.getElementById('layer-ctx-rename').onclick=()=>{hideAllMenus();_startLa
 let _layerObjClipboard=null; // stores a deep copy of a layer object
 
 function _deepCopyLayer(l){
-  const copy={...l,frames:{},frameMeta:{},indexFrames:{},indexMeta:{},type:l.type||'bitmap'};
+  const copy={...l,frames:{},frameMeta:{},indexFrames:{},indexMeta:{},smartStyleFrames:{},type:l.type||'bitmap'};
   Object.entries(l.frames).forEach(([f,src])=>{
     const c=mkLayerCanvas();c.getContext('2d').drawImage(src,0,0);copy.frames[f]=c;
   });
@@ -266,6 +266,11 @@ function _deepCopyLayer(l){
   }
   if(l.indexMeta){
     Object.entries(l.indexMeta).forEach(([f,meta])=>{copy.indexMeta[f]=cloneStyleMeta(meta);});
+  }
+  if(l.smartStyleFrames){
+    Object.entries(l.smartStyleFrames).forEach(([f,frame])=>{
+      copy.smartStyleFrames[f]={width:frame.width,height:frame.height,styleIds:frame.styleIds.slice(),meta:SmartRasterLayer.cloneMeta(frame.meta)};
+    });
   }
   return copy;
 }

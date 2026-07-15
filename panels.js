@@ -3,25 +3,15 @@
 // ════════════════════════════════════════════════════════════════
 function floodFill(x,y,fc){
   const img=ctx.getImageData(0,0,CW,CH),d=img.data;
+  const smartFill=layers[curLayer]&&layers[curLayer].type==='smart-raster'&&advancedPalettePaintingEnabled();
+  const smartFillStyle=smartFill?activeAdvancedStyleIdForPainting():null;
+  const beforeSmartFill=smartFillStyle?{data:d.slice()}:null;
   const px=Math.max(0,Math.min(CW-1,Math.round(x)));
   const py=Math.max(0,Math.min(CH-1,Math.round(y)));
   const i=(py*CW+px)*4;
   const tr=d[i],tg=d[i+1],tb=d[i+2],ta=d[i+3];
   const fr=parseInt(fc.slice(1,3),16),fg=parseInt(fc.slice(3,5),16),fb=parseInt(fc.slice(5,7),16);
   if(tr===fr&&tg===fg&&tb===fb&&ta===255) return;
-  if(layers[curLayer]&&layers[curLayer].type==='smart-raster'){
-    const stack=[[px,py]];
-    while(stack.length){
-      const[cx,cy]=stack.pop();
-      if(cx<0||cx>=CW||cy<0||cy>=CH) continue;
-      const j=(cy*CW+cx)*4;
-      if(d[j]!==tr||d[j+1]!==tg||d[j+2]!==tb||d[j+3]!==ta) continue;
-      d[j]=fr;d[j+1]=fg;d[j+2]=fb;d[j+3]=255;
-      stack.push([cx+1,cy],[cx-1,cy],[cx,cy+1],[cx,cy-1]);
-    }
-    ctx.putImageData(img,0,0);
-    return;
-  }
 
   const pixelCount=CW*CH;
   const visited=new Uint8Array(pixelCount);
@@ -60,6 +50,9 @@ function floodFill(x,y,fc){
     }
   }
   ctx.putImageData(img,0,0);
+  if(beforeSmartFill&&typeof applyStyleDiffFromBefore==='function'){
+    applyStyleDiffFromBefore(beforeSmartFill,smartFillStyle);
+  }
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -235,27 +228,8 @@ window._styleIndexClearFrameLifecycleTest=_styleIndexClearFrameLifecycleTest;
 function debugStyleAtPoint(cx,cy,li,fi){
   li=(li!=null)?li:curLayer;
   fi=(fi!=null)?fi:curFrame;
-  const layer=layers[li];
-  if(!layer||!layer.indexFrames||!layer.indexFrames[fi]){
-    return {styleId:null,styleIndex:0,r:0,g:0,b:0,a:0,note:'no style buffer for this layer/frame'};
-  }
-  const meta=layer.indexMeta&&layer.indexMeta[fi];
-  const sctx=layer.indexFrames[fi].getContext('2d',{willReadFrequently:true,colorSpace:'srgb'});
-  const px=Math.max(0,Math.min(Math.round(cx),CW-1));
-  const py=Math.max(0,Math.min(Math.round(cy),CH-1));
-  const d=sctx.getImageData(px,py,1,1).data;
-  const r=d[0],g=d[1],b=d[2],a=d[3];
-  const index=a>0?(r|(g<<8)|(b<<16)):0;
-  console.log('[debugStyleAtPoint] px=('+px+','+py+') r:'+r+' g:'+g+' b:'+b+' a:'+a+
-    ' decodedIndex:'+index+
-    (index>0?' resolvedId:'+((meta&&meta.indexToStyleId&&meta.indexToStyleId[Number(index)])||'NONE'):''));
-  if(!index) return {styleId:null,styleIndex:0,r,g,b,a,note:'unassigned'};
-  const styleId=(meta&&meta.indexToStyleId&&meta.indexToStyleId[Number(index)])||null;
-  const deleted=styleId&&styleId.startsWith('__deleted__:');
-  return {styleId:deleted?null:styleId,styleIndex:index,r,g,b,a,orphaned:!!deleted,rawId:styleId,
-    note:deleted?'orphaned (style was deleted)':'owned'};
-}
-window.debugStyleAtPoint=debugStyleAtPoint;// PERF FIX: recomposite() runs on every animation frame while a stroke is in
+  return window.SmartRasterLayer.debugPixel(cx,cy,li,fi);
+}window.debugStyleAtPoint=debugStyleAtPoint;// PERF FIX: recomposite() runs on every animation frame while a stroke is in
 // progress (RAF-scheduled from pointermove). Previously, every group-clipped
 // or layer-clipped (stencil) layer caused 1-2 brand-new full-resolution
 // (e.g. 1920×1080) <canvas> elements to be allocated EVERY frame just to

@@ -167,6 +167,11 @@ function _insertFramesAtStart(amount){
       Object.keys(l.indexMeta).forEach(f=>{shiftedIndexMeta[+f+amount]=l.indexMeta[f];});
       l.indexMeta=shiftedIndexMeta;
     }
+    if(l.smartStyleFrames&&Object.keys(l.smartStyleFrames).length){
+      const shiftedSmart={};
+      Object.keys(l.smartStyleFrames).forEach(f=>{shiftedSmart[+f+amount]=l.smartStyleFrames[f];});
+      l.smartStyleFrames=shiftedSmart;
+    }
   });
   TOTAL+=amount;
   rangeStart+=amount;rangeEnd+=amount;
@@ -276,7 +281,8 @@ function _snapshotFrameMaps(layerIndices){
       // New field names (post-migration). Old styleFrames/styleFrameMeta are
       // no longer written by smart-raster-layer.js; snapshot only the live fields.
       indexFrames: indexFramesSnap,
-      indexMeta: _deepCopyStyleFrameMeta(l.indexMeta)
+      indexMeta: _deepCopyStyleFrameMeta(l.indexMeta),
+      smartStyleFrames: _deepCopySmartStyleFrames(l.smartStyleFrames)
     };
   });
   return snapshot;
@@ -297,6 +303,7 @@ function _restoreFrameMaps(snapshot){
     });
     l.indexFrames=indexFramesRestore;
     l.indexMeta=_deepCopyStyleFrameMeta(s.indexMeta);
+    l.smartStyleFrames=_deepCopySmartStyleFrames(s.smartStyleFrames);
   });
 }
 // Shallow-copy the per-frame meta objects so snapshot entries are independent
@@ -310,6 +317,15 @@ function _deepCopyStyleFrameMeta(meta){
   if(!meta) return {};
   const out={};
   Object.keys(meta).forEach(f=>{out[f]=cloneStyleMeta(meta[f]);});
+  return out;
+}
+function _deepCopySmartStyleFrames(frames){
+  if(!frames) return {};
+  const out={};
+  Object.keys(frames).forEach(f=>{
+    const frame=frames[f];
+    out[f]={width:frame.width,height:frame.height,styleIds:frame.styleIds.slice(),meta:SmartRasterLayer.cloneMeta(frame.meta)};
+  });
   return out;
 }
 function startKFDrag(li,fi,e){
@@ -454,6 +470,11 @@ function _trimLeadingBlanks(){
       const shiftedIndexMeta={};
       Object.keys(l.indexMeta).forEach(f=>{const nf=+f-trimmable;if(nf>=0) shiftedIndexMeta[nf]=l.indexMeta[f];});
       l.indexMeta=shiftedIndexMeta;
+    }
+    if(l.smartStyleFrames&&Object.keys(l.smartStyleFrames).length){
+      const shiftedSmart={};
+      Object.keys(l.smartStyleFrames).forEach(f=>{const nf=+f-trimmable;if(nf>=0) shiftedSmart[nf]=l.smartStyleFrames[f];});
+      l.smartStyleFrames=shiftedSmart;
     }
   });
   TOTAL-=trimmable;

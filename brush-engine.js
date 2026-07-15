@@ -204,14 +204,17 @@ function _commitStrokeCanvas(){
   const src = _getTexturedStrokeCanvas(_strokeCanvas, true);
   const styleId=typeof activeAdvancedStyleIdForPainting==='function'
     ?activeAdvancedStyleIdForPainting():null;
-  const smartCommitted=tool==='brush'&&styleId&&typeof commitSmartRasterBrush==='function'
-    ?commitSmartRasterBrush(src,styleId,brushOpacity):false;
-  if(!smartCommitted){
-    ctx.save();
-    ctx.globalAlpha = Math.max(0, Math.min(1, brushOpacity));
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.drawImage(src, 0, 0);
-    ctx.restore();
+  const smartOwnership=tool==='brush'&&styleId&&
+    typeof advancedPalettePaintingEnabled==='function'&&advancedPalettePaintingEnabled()&&
+    layers[curLayer]&&layers[curLayer].type==='smart-raster';
+  const beforeSmart=smartOwnership?ctx.getImageData(0,0,CW,CH):null;
+  ctx.save();
+  ctx.globalAlpha = Math.max(0, Math.min(1, brushOpacity));
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.drawImage(src, 0, 0);
+  ctx.restore();
+  if(smartOwnership&&typeof applyStyleDiffFromBefore==='function'){
+    applyStyleDiffFromBefore(beforeSmart,styleId);
   }
   _strokeCtx.clearRect(0, 0, _strokeCanvas.width, _strokeCanvas.height);
 }
