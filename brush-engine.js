@@ -81,6 +81,13 @@ window.brushTipRoundnessJitter = 0;
 // Completely independent from the tip shape above.
 window.brushTextureCanvas  = null; // HTMLCanvasElement | null
 window.brushTextureVersion = 0;    // integer, incremented on each texture change
+// True only when the active preset has Texture explicitly enabled.
+// Distinct from brushTextureCanvas !== null: a previous preset's canvas may
+// linger in memory after switching to a non-textured brush, so checking
+// the canvas alone is not a reliable "texture is active" test.
+// _getTexturedStrokeCanvas gates on both this flag AND brushTextureCanvas to
+// prevent stale canvas state from masking solid-brush strokes.
+window.brushTextureEnabled = false;
 // 0–1 blend strength for the texture overlay (mirrors ts-texture-strength slider).
 // At 1.0 (100%) the texture grain is fully applied — texture-dark areas lose
 // coverage, texture-bright areas keep it. At 0.0 the stroke is solid/unaffected.
@@ -1509,6 +1516,7 @@ function _maskRegionInPlace(dc, rx, ry, rw, rh, strength){
 // buffer to defer masking to (composite!=='erase' but !_inStroke). Masks
 // immediately, restricted to just this dab's own footprint.
 function _applyTextureToDabDirect(dc, x, y, r, alpha){
+  if(!window.brushTextureEnabled) return;
   if(!window.brushTextureCanvas) return;
   const strength = typeof window.brushTextureStrength !== 'undefined' ? window.brushTextureStrength : 1.0;
   if(strength <= 0) return;
@@ -1553,6 +1561,17 @@ function _ensureTexHelper(w, h, existing, existingCtx){
 }
 
 function _getTexturedStrokeCanvas(srcCanvas, forceFull){
+  // Bypass all texture masking when:
+  //   • brushTextureEnabled is false (preset has Texture turned off), OR
+  //   • brushTextureCanvas is null (no texture image loaded), OR
+  //   • brushTextureStrength is 0 (strength slider is at minimum).
+  // The enabled flag is the critical guard: a canvas may linger from a
+  // previously-loaded textured preset after the user switches to a solid
+  // brush (Hard Round, etc.) without an explicit clearBrushTexture() call.
+  // Without this flag, those stale alpha-zero grain pixels would punch
+  // transparent holes through solid strokes and corrupt Smart Raster
+  // ownership by making `commitBrushMask` receive a mask with gaps.
+  if(!window.brushTextureEnabled) return srcCanvas;
   if(!window.brushTextureCanvas) return srcCanvas;
   const strength = typeof window.brushTextureStrength !== 'undefined' ? window.brushTextureStrength : 1.0;
   if(strength <= 0) return srcCanvas;
@@ -1649,7 +1668,7 @@ function _drawAutoHardRoundSegment(d){
   // more at _commitStrokeCanvas (stroke end) — see _getTexturedStrokeCanvas.
   // Direct-to-ctx dabs (composite!=='erase' but not inside a stroke buffer,
   // a rare path with no stroke canvas to defer to) still mask immediately.
-  if(window.brushTextureCanvas && d.composite!=='erase'){
+  if(window.brushTextureEnabled && window.brushTextureCanvas && d.composite!=='erase'){
     _growTexDirtyRect(d.x,d.y,dirtyRadiusX,dirtyRadiusY);
     if(!_inStroke) _applyTextureToDabDirect(ctx,d.x,d.y,d.r,d.alpha);
   }
@@ -2669,6 +2688,10 @@ window.clearBrushTip=function(){
 };
 window.setBrushTexture=function(canvas){
   window.brushTextureCanvas=canvas||null;
+  // Mark texture as intentionally active only when a real canvas is supplied.
+  // clearBrushTexture() and preset loaders for non-textured brushes must call
+  // this with null (or call clearBrushTexture) to deactivate masking.
+  window.brushTextureEnabled=!!(canvas);
   window.brushTextureVersion=(window.brushTextureVersion||0)+1;
   _texCacheVersion=-1;   // force scaled-canvas rebuild on next dab
   _texPatternVersion=-1; // force pattern rebuild on next dab
@@ -2676,6 +2699,7 @@ window.setBrushTexture=function(canvas){
 };
 window.clearBrushTexture=function(){
   window.setBrushTexture(null);
+  // brushTextureEnabled is set to false inside setBrushTexture(null) above.
 };
 
 //  Pointer latency fix: touch-action

@@ -9,14 +9,55 @@ function floodFill(x,y,fc){
   const tr=d[i],tg=d[i+1],tb=d[i+2],ta=d[i+3];
   const fr=parseInt(fc.slice(1,3),16),fg=parseInt(fc.slice(3,5),16),fb=parseInt(fc.slice(5,7),16);
   if(tr===fr&&tg===fg&&tb===fb&&ta===255) return;
-  const stack=[[px,py]];
-  while(stack.length){
-    const[cx,cy]=stack.pop();
-    if(cx<0||cx>=CW||cy<0||cy>=CH) continue;
+  if(layers[curLayer]&&layers[curLayer].type==='smart-raster'){
+    const stack=[[px,py]];
+    while(stack.length){
+      const[cx,cy]=stack.pop();
+      if(cx<0||cx>=CW||cy<0||cy>=CH) continue;
+      const j=(cy*CW+cx)*4;
+      if(d[j]!==tr||d[j+1]!==tg||d[j+2]!==tb||d[j+3]!==ta) continue;
+      d[j]=fr;d[j+1]=fg;d[j+2]=fb;d[j+3]=255;
+      stack.push([cx+1,cy],[cx-1,cy],[cx,cy+1],[cx,cy-1]);
+    }
+    ctx.putImageData(img,0,0);
+    return;
+  }
+
+  const pixelCount=CW*CH;
+  const visited=new Uint8Array(pixelCount);
+  const queue=new Int32Array(pixelCount);
+  let head=0,tail=0;
+  const start=py*CW+px;
+  visited[start]=1;
+  queue[tail++]=start;
+
+  while(head<tail){
+    const pixel=queue[head++];
+    const cx=pixel%CW;
+    const cy=Math.floor(pixel/CW);
     const j=(cy*CW+cx)*4;
-    if(d[j]!==tr||d[j+1]!==tg||d[j+2]!==tb||d[j+3]!==ta) continue;
+    const matches=ta===0?d[j+3]===0:
+      d[j]===tr&&d[j+1]===tg&&d[j+2]===tb&&d[j+3]===ta;
+    if(!matches) continue;
+
     d[j]=fr;d[j+1]=fg;d[j+2]=fb;d[j+3]=255;
-    stack.push([cx+1,cy],[cx-1,cy],[cx,cy+1],[cx,cy-1]);
+
+    if(cx>0){
+      const left=pixel-1;
+      if(!visited[left]){visited[left]=1;queue[tail++]=left;}
+    }
+    if(cx+1<CW){
+      const right=pixel+1;
+      if(!visited[right]){visited[right]=1;queue[tail++]=right;}
+    }
+    if(cy>0){
+      const up=pixel-CW;
+      if(!visited[up]){visited[up]=1;queue[tail++]=up;}
+    }
+    if(cy+1<CH){
+      const down=pixel+CW;
+      if(!visited[down]){visited[down]=1;queue[tail++]=down;}
+    }
   }
   ctx.putImageData(img,0,0);
 }

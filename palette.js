@@ -727,13 +727,14 @@
     persist();
   }
   function findAdvancedStyleById(id){return advancedStyles.find(s=>!isAdvancedSeparator(s)&&s.id===id)||null;}
-  function refreshAdvancedStyleChange(style){
+  function refreshAdvancedStyleChange(style,colorChanged){
     if(style&&style.id===activeAdvancedStyleId) setForeground(styleHex(style),false);
     render();
     renderToolbarPalette();
     persist();
-    if(typeof window.rerenderAllSmartRasterFrames==='function') window.rerenderAllSmartRasterFrames();
-    else if(typeof recomposite==='function') recomposite(curLayer,curFrame);
+    if(colorChanged){
+      window.dispatchEvent(new CustomEvent('advanced-palette-style-color-changed',{detail:{styleId:style.id}}));
+    }
   }
   function requestAdvancedStyleRename(style){
     return new Promise(resolve=>{
@@ -779,7 +780,7 @@
       const stored=findAdvancedStyleById(target.id);
       if(!stored||stored.locked) return;
       stored.rgba=rgbaArray(hex);
-      refreshAdvancedStyleChange(stored);
+      refreshAdvancedStyleChange(stored,true);
     });
   }
   async function renameAdvancedStyle(style){
@@ -790,7 +791,7 @@
     const stored=findAdvancedStyleById(target.id);
     if(!stored) return;
     stored.name=clean;
-    refreshAdvancedStyleChange(stored);
+    refreshAdvancedStyleChange(stored,false);
   }
   function duplicateAdvancedStyle(style){
     if(!style) return;

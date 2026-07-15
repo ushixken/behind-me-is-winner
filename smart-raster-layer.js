@@ -69,16 +69,23 @@
     return layer;
   }
 
-  // ── Encode a style index into three RGB bytes at `offset` in a Uint8ClampedArray.
-  // alpha=255 marks the pixel as owned.  Little-endian: R=low byte.
-  // Decode: index = R | (G<<8) | (B<<16).  Same encoding as the old code.
-  function _encodePixel(data,offset,index){
+  // Store a 16-bit style index in R/G and coverage in B. Alpha is only an
+  // ownership marker and stays 255, preventing premultiplication data loss.
+  function _encodePixel(data,offset,index,coverage){
     data[offset  ]=index&255;
     data[offset+1]=(index>>8)&255;
-    data[offset+2]=(index>>16)&255;
+    data[offset+2]=coverage==null?255:Math.max(1,Math.min(255,coverage));
     data[offset+3]=255;
   }
 
+  function _decodePixel(data,offset,meta){
+    if(!data[offset+3]) return {index:0,coverage:0};
+    var legacyIndex=data[offset]|(data[offset+1]<<8)|(data[offset+2]<<16);
+    if(meta&&meta.indexToStyleId&&meta.indexToStyleId[legacyIndex]){
+      return {index:legacyIndex,coverage:data[offset+3]};
+    }
+    return {index:data[offset]|(data[offset+1]<<8),coverage:data[offset+2]};
+  }
   // ── Post-write verification (dev aid) ────────────────────────────────────
   function _debugVerifyWrite(indexCanvas,idx,styleId,li,fi){
     try{
@@ -86,8 +93,8 @@
       var d=sctx.getImageData(0,0,Math.min(CW,256),Math.min(CH,16)).data;
       for(var i=0;i<d.length;i+=4){
         if(d[i+3]>0){
-          var decoded=d[i]|(d[i+1]<<8)|(d[i+2]<<16);
           var meta=layers[li]&&layers[li].indexMeta&&layers[li].indexMeta[fi];
+          var decoded=_decodePixel(d,i,meta).index;
           var resolved=meta&&meta.indexToStyleId[decoded]||null;
           console.log('[StyleIndex] verify: encoded='+idx+' decoded='+decoded+
             ' resolved='+(resolved||'NONE')+' expected='+styleId+
@@ -197,17 +204,32 @@
     if(!index||!bundle) return false;
     var mask=maskCanvas.getContext('2d',{willReadFrequently:true}).getImageData(0,0,CW,CH).data;
     var sctx=bundle.canvas.getContext('2d',{willReadFrequently:true,colorSpace:'srgb'});
-    var img=sctx.getImageData(0,0,CW,CH);
-    var smart=img.data;
     var opacity=Math.max(0,Math.min(1,Number(strokeOpacity)));
-    for(var i=0;i<mask.length;i+=4){
-      var incoming=Math.round(mask[i+3]*opacity);
-      if(!incoming) continue;
-      var coverage=Math.min(255,incoming+Math.round(smart[i+3]*(255-incoming)/255));
-      _encodePixel(smart,i,index);
-      smart[i+3]=coverage;
+    if(opacity<=0) return true;
+    var wrote=false;
+    for(var y=0;y<CH;y++){
+      var x=0;
+      while(x<CW){
+        while(x<CW&&mask[(y*CW+x)*4+3]===0) x++;
+        var runStart=x;
+        while(x<CW&&mask[(y*CW+x)*4+3]>0) x++;
+        var runWidth=x-runStart;
+        if(runWidth===0) continue;
+        var img=sctx.getImageData(runStart,y,runWidth,1);
+        var smart=img.data;
+        for(var runX=0;runX<runWidth;runX++){
+          var maskAlpha=mask[(y*CW+runStart+runX)*4+3];
+          var incoming=Math.max(1,Math.round(maskAlpha*opacity));
+          var smartOffset=runX*4;
+          var previous=_decodePixel(smart,smartOffset,bundle.meta).coverage;
+          var coverage=Math.min(255,incoming+Math.round(previous*(255-incoming)/255));
+          _encodePixel(smart,smartOffset,index,coverage);
+        }
+        sctx.putImageData(img,runStart,y);
+        wrote=true;
+      }
     }
-    sctx.putImageData(img,0,0);
+    if(!wrote) return true;
     renderFrame(li,fi,activeC);
     return true;
   }
@@ -287,11 +309,18 @@
     var out=rendered.data;
     var styleCache={};
     for(var i=0;i<smart.length;i+=4){
-      var coverage=smart[i+3];
-      if(!coverage) continue;
-      var index=smart[i]|(smart[i+1]<<8)|(smart[i+2]<<16);
+      var decoded=_decodePixel(smart,i,meta);
+      var coverage=decoded.coverage;
+      if(!coverage){
+        out[i]=0;out[i+1]=0;out[i+2]=0;out[i+3]=0;
+        continue;
+      }
+      var index=decoded.index;
       var styleId=meta.indexToStyleId&&meta.indexToStyleId[index];
-      if(!styleId||styleId.startsWith('__deleted__:')) continue;
+      if(!styleId){
+        continue;
+      }
+      if(styleId.startsWith('__deleted__:')) continue;
       var rgba=styleCache[styleId];
       if(!rgba){
         var style=window.PaletteDocker&&window.PaletteDocker.findAdvancedStyleById(styleId);
@@ -322,6 +351,34 @@
     if(typeof recomposite==='function') recomposite(curLayer,curFrame);
   }
 
+  function rerenderStyle(styleId){
+    if(!styleId) return;
+    var activeAffected=false;
+    var anyAffected=false;
+    layers.forEach(function(layer,li){
+      if(!layer||layer.type!=='smart-raster'||!layer.indexFrames||!layer.indexMeta) return;
+      Object.keys(layer.indexFrames).forEach(function(fi){
+        var meta=layer.indexMeta[fi];
+        if(!meta||!meta.styleIdToIndex||!meta.styleIdToIndex[styleId]) return;
+        var frameIndex=Number(fi);
+        if(!layer.frames) layer.frames={};
+        if(!layer.frames[frameIndex]){
+          var frame=document.createElement('canvas');
+          frame.width=CW;frame.height=CH;
+          layer.frames[frameIndex]=frame;
+        }
+        renderFrame(li,frameIndex,layer.frames[frameIndex]);
+        anyAffected=true;
+        if(li===curLayer&&frameIndex===curFrame){
+          ctx.clearRect(0,0,CW,CH);
+          ctx.drawImage(layer.frames[frameIndex],0,0);
+          activeAffected=true;
+        }
+      });
+    });
+    if(activeAffected&&typeof recomposite==='function') recomposite(curLayer,curFrame);
+    if(anyAffected&&typeof renderTimeline==='function') renderTimeline();
+  }
   // resizeAllFrames(nw, nh)
   // Resizes every index canvas to nw x nh, centring existing content.
   // Call after CW/CH change, before initCanvas().
@@ -465,6 +522,7 @@
     clearWhereTransparent: clearWhereTransparent,
     renderFrame:         renderFrame,
     rerenderAll:         rerenderAll,
+    rerenderStyle:       rerenderStyle,
     resizeAllFrames:     resizeAllFrames,
     markDeleted:         markDeleted,
     serializeLayer:      serializeLayer,
@@ -473,7 +531,13 @@
     _mkIndexCanvas:      _mkIndexCanvas,
     _makeEmptyMeta:      _makeEmptyMeta,
     _encodePixel:        _encodePixel,
+    _decodePixel:        _decodePixel,
   };
+
+  window.addEventListener('advanced-palette-style-color-changed',function(event){
+    var styleId=event&&event.detail&&event.detail.styleId;
+    if(styleId) rerenderStyle(styleId);
+  });
 
   // Run migration after DOM is ready (layers[] is populated by core-state.js
   // which runs before this file).
