@@ -30,6 +30,9 @@
   let popupListenersBound=false;
   let paletteDragState=null;
   let toolbarSubmenuOpen=false;
+  let isSyncingColorPanel=false;
+  let advancedColorFrame=null;
+  const pendingAdvancedColorStyleIds=new Set();
   const defaultHexes=['#000000','#ffffff','#f23636','#ff9f1c','#ffd23f','#2ec4b6','#3a86ff','#8338ec'];
   function makeAdvancedStyle(rgba,id,name){
     const values=Array.isArray(rgba)?rgba:[0,0,0,255];
@@ -190,9 +193,21 @@
     while(names.has(('Palette '+n).toLowerCase())) n++;
     return 'Palette '+n;
   }
-  function uniquePaletteName(name,excludeId){
-    const root=String(name||'Palette').trim()||'Palette';
-    const names=new Set(palettes.filter(p=>p.id!==excludeId).map(p=>String(p.name||'').toLowerCase()));
+  function defaultAdvancedPaletteName(name){
+    const normalName=String(name||'').trim();
+    const generated=/^Palette\s+(\d+)$/i.exec(normalName);
+    return generated?'Advanced Palette '+generated[1]:(normalName||'Advanced Palette 1');
+  }
+  function paletteNameForMode(palette,mode){
+    if(!palette) return mode==='advanced'?'Advanced Palette':'Palette';
+    return mode==='advanced'?palette.advancedName:palette.name;
+  }
+  function activePaletteMode(){return activeLayerUsesAdvancedPalette()?'advanced':'normal';}
+  function uniquePaletteName(name,excludeId,mode){
+    const advanced=mode==='advanced';
+    const fallback=advanced?'Advanced Palette':'Palette';
+    const root=String(name||fallback).trim()||fallback;
+    const names=new Set(palettes.filter(p=>p.id!==excludeId).map(p=>String(paletteNameForMode(p,advanced?'advanced':'normal')||'').toLowerCase()));
     if(!names.has(root.toLowerCase())) return root;
     let n=2;
     let candidate=root+' '+n;
@@ -216,10 +231,12 @@
     while(names.has(candidate.toLowerCase())) candidate=root+' Copy '+n++;
     return candidate;
   }
-  function makePalette(name,swatchList,id,selection,allowEmpty){
+  function makePalette(name,swatchList,id,selection,allowEmpty,advancedName){
     const cleanSwatches=sanitizeSwatches(swatchList,!!allowEmpty);
     const selected=selection&&cleanSwatches.some(s=>s.id===selection)?selection:(cleanSwatches[0]?cleanSwatches[0].id:null);
-    return {id:id||makeId('palette'),name:String(name||'').trim()||nextPaletteName(),swatches:cleanSwatches,selectedId:selected};
+    const normalName=String(name||'').trim()||nextPaletteName();
+    const storedAdvancedName=String(advancedName||'').trim()||defaultAdvancedPaletteName(normalName);
+    return {id:id||makeId('palette'),name:normalName,advancedName:storedAdvancedName,swatches:cleanSwatches,selectedId:selected};
   }
   function activePalette(){return palettes.find(p=>p.id===activePaletteId)||palettes[0]||null;}
   function rememberSelection(){const active=activePalette();if(active) active.selectedId=selectedId;}
@@ -253,12 +270,12 @@
   }
   function serialize(){
     rememberSelection();
-    return {version:2,palettes:palettes.map(p=>({id:p.id,name:p.name,swatches:p.swatches.map(exportSwatchData),selectedId:p.selectedId||null})),activePaletteId,advancedPalette:{version:ADVANCED_PALETTE_VERSION,enabled:advancedPaletteEnabled,styles:advancedStyles,activeStyleId:activeAdvancedStyleId},view:{swatchSize,scrollTop:savedScrollTop,toolbarPaletteAttachment:toolbarPaletteAttachment?Object.assign({},toolbarPaletteAttachment):null,toolbarPaletteVisible,advancedPaletteEnabled}};
+    return {version:2,palettes:palettes.map(p=>({id:p.id,name:p.name,advancedName:p.advancedName,swatches:p.swatches.map(exportSwatchData),selectedId:p.selectedId||null})),activePaletteId,advancedPalette:{version:ADVANCED_PALETTE_VERSION,enabled:advancedPaletteEnabled,styles:advancedStyles,activeStyleId:activeAdvancedStyleId},view:{swatchSize,scrollTop:savedScrollTop,toolbarPaletteAttachment:toolbarPaletteAttachment?Object.assign({},toolbarPaletteAttachment):null,toolbarPaletteVisible,advancedPaletteEnabled}};
   }
   function load(data){
     const payload=data&&typeof data==='object'?data:null;
     if(payload&&Array.isArray(payload.palettes)){
-      palettes=payload.palettes.map((p,i)=>makePalette(p&&p.name||('Palette '+(i+1)),p&&p.swatches,p&&p.id,p&&p.selectedId,true)).filter(Boolean);
+      palettes=payload.palettes.map((p,i)=>makePalette(p&&p.name||('Palette '+(i+1)),p&&p.swatches,p&&p.id,p&&p.selectedId,true,p&&p.advancedName)).filter(Boolean);
       if(!palettes.length) palettes=[makePalette('Palette 1',defaultSwatches())];
       activePaletteId=palettes.some(p=>p.id===payload.activePaletteId)?payload.activePaletteId:palettes[0].id;
     }else{
@@ -298,7 +315,11 @@
   function setForeground(hex,openPicker){
     const safeHex=normalizeHex(hex);
     if(isTransparentHex(safeHex)) return;
-    if(typeof window.setForegroundColorFromPalette==='function') window.setForegroundColorFromPalette(safeHex,!!openPicker);
+    if(typeof window.setForegroundColorFromPalette==='function'){
+      const wasSyncing=isSyncingColorPanel;
+      isSyncingColorPanel=true;
+      try{window.setForegroundColorFromPalette(safeHex,!!openPicker);}finally{isSyncingColorPanel=wasSyncing;}
+    }
     else {
       color=displayHex(safeHex);
       const input=document.getElementById('color-input');
@@ -454,11 +475,6 @@
   function sideMenu(){return document.getElementById('palette-side-menu');}
   function toolbarPaletteSubmenu(){return document.getElementById('palette-toolbar-submenu');}
   function toolbarPaletteTrigger(){return document.getElementById('palette-toolbar-toggle');}
-  function advancedPaletteDisplayName(palette,index){
-    const name=String(palette&&palette.name||'').trim();
-    const generated=/^Palette\s+(\d+)$/i.exec(name);
-    return generated?'Advanced Palette '+generated[1]:(name||'Advanced Palette '+(index+1));
-  }
   function setToolbarPaletteAttachment(paletteId,mode){
     if(!palettes.some(p=>p.id===paletteId)||(mode!=='normal'&&mode!=='advanced')) return;
     toolbarPaletteAttachment={paletteId:paletteId,mode:mode};
@@ -510,9 +526,9 @@
     });
     addSeparator();
     addHeading('Advanced Palettes');
-    palettes.forEach((palette,index)=>{
+    palettes.forEach(palette=>{
       const on=toolbarPaletteEnabled()&&toolbarPaletteAttachment.paletteId===palette.id&&toolbarPaletteAttachment.mode==='advanced';
-      addButton(advancedPaletteDisplayName(palette,index),()=>setToolbarPaletteAttachment(palette.id,'advanced'),on);
+      addButton(palette.advancedName,()=>setToolbarPaletteAttachment(palette.id,'advanced'),on);
     });
   }
   function positionToolbarPaletteSubmenu(){
@@ -672,18 +688,20 @@
     const list=paletteDropdown();
     if(!list) return;
     list.innerHTML='';
+    const mode=activePaletteMode();
     palettes.forEach(p=>{
+      const paletteName=paletteNameForMode(p,mode);
       const item=document.createElement('div');
       item.className='palette-list-item';
       item.dataset.id=p.id;
-      item.title=p.name;
+      item.title=paletteName;
       item.classList.toggle('active',p.id===activePaletteId);
       const grip=document.createElement('span');
       grip.className='palette-list-grip';
       grip.textContent='::';
       const name=document.createElement('span');
       name.className='palette-list-name';
-      name.textContent=p.name;
+      name.textContent=paletteName;
       item.append(grip,name);
       item.addEventListener('pointerdown',event=>beginPaletteListPointer(event,p.id,item));
       list.appendChild(item);
@@ -759,11 +777,13 @@
     const active=activePalette();
     const display=activeDisplay();
     const nameEl=document.getElementById('palette-active-name');
+    const mode=activePaletteMode();
+    const activeName=paletteNameForMode(active,mode);
     if(display){
-      display.title=active?active.name:'';
-      display.setAttribute('aria-label',active?('Active palette: '+active.name):'Active palette');
+      display.title=active?activeName:'';
+      display.setAttribute('aria-label',active?('Active palette: '+activeName):'Active palette');
     }
-    if(nameEl) nameEl.textContent=active?active.name:'Palette';
+    if(nameEl) nameEl.textContent=activeName;
     const del=document.getElementById('palette-delete');
     if(del) del.disabled=palettes.length<=1;
     const toolbarToggle=document.getElementById('palette-toolbar-toggle');
@@ -839,11 +859,16 @@
     initializeAdvancedPaletteFromActivePalette(true);
     return true;
   }
+  function syncAdvancedStyleToColorPanel(style){
+    if(!style) return;
+    isSyncingColorPanel=true;
+    try{setForeground(styleHex(style),false);}finally{isSyncingColorPanel=false;}
+  }
   function selectAdvancedStyle(id,setBrush){
     const style=advancedStyles.find(s=>!isAdvancedSeparator(s)&&s.id===id);
     if(!style) return;
     activeAdvancedStyleId=style.id;
-    if(setBrush!==false) setForeground(styleHex(style),false);
+    if(setBrush!==false) syncAdvancedStyleToColorPanel(style);
     render();
     persist();
   }
@@ -858,13 +883,36 @@
   }
   function findAdvancedStyleById(id){return advancedStyles.find(s=>!isAdvancedSeparator(s)&&s.id===id)||null;}
   function refreshAdvancedStyleChange(style,colorChanged){
-    if(style&&style.id===activeAdvancedStyleId) setForeground(styleHex(style),false);
+    if(style&&style.id===activeAdvancedStyleId) syncAdvancedStyleToColorPanel(style);
     render();
     renderToolbarPalette();
     persist();
     if(colorChanged){
       window.dispatchEvent(new CustomEvent('advanced-palette-style-color-changed',{detail:{styleId:style.id}}));
     }
+  }
+  function queueAdvancedStyleColorChange(styleId){
+    pendingAdvancedColorStyleIds.add(styleId);
+    if(advancedColorFrame!==null) return;
+    advancedColorFrame=requestAnimationFrame(()=>{
+      advancedColorFrame=null;
+      const styleIds=Array.from(pendingAdvancedColorStyleIds);
+      pendingAdvancedColorStyleIds.clear();
+      render();
+      persist();
+      styleIds.forEach(id=>window.dispatchEvent(new CustomEvent('advanced-palette-style-color-changed',{detail:{styleId:id}})));
+    });
+  }
+  function updateActiveAdvancedStyleFromColorPanel(hex){
+    if(isSyncingColorPanel||!activeLayerUsesAdvancedPalette()||!activeAdvancedStyleId) return false;
+    const style=findAdvancedStyleById(activeAdvancedStyleId);
+    if(!style||style.locked) return false;
+    const rgba=hexToRgba(hex);
+    const alpha=Array.isArray(style.rgba)?style.rgba[3]:255;
+    if(style.rgba[0]===rgba.r&&style.rgba[1]===rgba.g&&style.rgba[2]===rgba.b) return true;
+    style.rgba=[rgba.r,rgba.g,rgba.b,alpha];
+    queueAdvancedStyleColorChange(style.id);
+    return true;
   }
   function requestAdvancedStyleRename(style){
     return new Promise(resolve=>{
@@ -1153,7 +1201,7 @@
     const confirm=document.getElementById('palette-delete-confirm');
     if(confirm) confirm.classList.add('hidden');
     box.classList.remove('hidden');
-    input.value=active.name;
+    input.value=paletteNameForMode(active,activePaletteMode());
     requestAnimationFrame(()=>{input.focus();input.select();positionSideMenu();});
   }
   function applyInlineRename(){
@@ -1162,7 +1210,9 @@
     if(!active||!input) return;
     const clean=String(input.value||'').trim();
     if(!clean){input.focus();return;}
-    active.name=uniquePaletteName(clean,active.id);
+    const mode=activePaletteMode();
+    if(mode==='advanced') active.advancedName=uniquePaletteName(clean,active.id,mode);
+    else active.name=uniquePaletteName(clean,active.id,mode);
     hidePaletteInlinePanels();
     renderPaletteSelector();
     persist();
@@ -1176,7 +1226,7 @@
     if(!active||!box) return;
     const rename=document.getElementById('palette-rename-inline');
     if(rename) rename.classList.add('hidden');
-    if(text) text.textContent='Delete "'+active.name+'"?';
+    if(text) text.textContent='Delete "'+paletteNameForMode(active,activePaletteMode())+'"?';
     box.classList.remove('hidden');
     requestAnimationFrame(()=>positionSideMenu());
   }
@@ -1225,7 +1275,7 @@
     const copiedSwatches=source.map(cloneSwatch);
     const selectedIndex=source.findIndex(s=>s.id===active.selectedId);
     const copiedSelected=selectedIndex>=0&&copiedSwatches[selectedIndex]?copiedSwatches[selectedIndex].id:null;
-    const copy=makePalette(uniqueCopyName(active.name),copiedSwatches,null,copiedSelected,true);
+    const copy=makePalette(uniqueCopyName(active.name),copiedSwatches,null,copiedSelected,true,uniquePaletteName(active.advancedName+' Copy',null,'advanced'));
     palettes.push(copy);
     activePaletteId=copy.id;
     restoreScrollPending=true;
@@ -1263,11 +1313,11 @@
   function activePaletteExportData(){
     const active=activePalette();
     if(!active) return null;
-    return {version:1,name:active.name,swatches:(active.swatches||[]).map(exportSwatchData)};
+    return {version:1,name:active.name,advancedName:active.advancedName,swatches:(active.swatches||[]).map(exportSwatchData)};
   }
   function allPalettesExportData(){
     rememberSelection();
-    return {version:1,palettes:palettes.map(p=>({id:p.id,name:p.name,swatches:(p.swatches||[]).map(exportSwatchData),selectedId:p.selectedId||null})),activePaletteId};
+    return {version:1,palettes:palettes.map(p=>({id:p.id,name:p.name,advancedName:p.advancedName,swatches:(p.swatches||[]).map(exportSwatchData),selectedId:p.selectedId||null})),activePaletteId};
   }
   function exportActivePaletteJson(){
     const active=activePalette();
@@ -1301,7 +1351,7 @@
     if(!hex) return null;
     return makeSwatch(hex,null,item.name);
   }
-  function paletteFromImport(name,swatchItems,selectedImportId){
+  function paletteFromImport(name,swatchItems,selectedImportId,advancedName){
     const source=Array.isArray(swatchItems)?swatchItems:[];
     const swatchList=[];
     let selectedIndex=-1;
@@ -1313,7 +1363,7 @@
     });
     if(!swatchList.length) return null;
     const selected=selectedIndex>=0&&swatchList[selectedIndex]?swatchList[selectedIndex].id:null;
-    return makePalette(uniqueImportedPaletteName(name),swatchList,null,selected,true);
+    return makePalette(uniqueImportedPaletteName(name),swatchList,null,selected,true,advancedName);
   }
   function parsePaletteJson(text){
     let data;
@@ -1322,7 +1372,7 @@
     if(Array.isArray(data.palettes)){
       const imported=[];
       data.palettes.forEach((p,i)=>{
-        const palette=paletteFromImport(p&&p.name||('Palette '+(i+1)),p&&p.swatches,p&&p.selectedId);
+        const palette=paletteFromImport(p&&p.name||('Palette '+(i+1)),p&&p.swatches,p&&p.selectedId,p&&p.advancedName);
         if(!palette) return;
         if(p&&p.id===data.activePaletteId) imported.activeId=palette.id;
         imported.push(palette);
@@ -1331,7 +1381,7 @@
       if(!imported.activeId) imported.activeId=imported[0].id;
       return imported;
     }
-    const one=paletteFromImport(data.name||'Imported Palette',data.swatches,data.selectedId);
+    const one=paletteFromImport(data.name||'Imported Palette',data.swatches,data.selectedId,data.advancedName);
     if(!one) throw new Error('No colors were found in this palette file.');
     return [one];
   }
@@ -2267,6 +2317,6 @@
   function getActiveAdvancedPaletteStyleId(){const style=activeAdvancedStyle();return activeLayerUsesAdvancedPalette()&&style?style.id:null;}
   window.isAdvancedPalettePaintingEnabled=isAdvancedPalettePaintingEnabled;
   window.getActiveAdvancedPaletteStyleId=getActiveAdvancedPaletteStyleId;
-  window.PaletteDocker={serialize,load,reset(){load(null);},renderCurrentColors:render,refresh:render,isAdvancedPalettePaintingEnabled,getActiveAdvancedPaletteStyleId,findAdvancedStyleById};
+  window.PaletteDocker={serialize,load,reset(){load(null);},renderCurrentColors:render,refresh:render,isAdvancedPalettePaintingEnabled,getActiveAdvancedPaletteStyleId,findAdvancedStyleById,updateActiveAdvancedStyleFromColorPanel};
   document.addEventListener('DOMContentLoaded',()=>{bind();loadPersisted();});
 })();

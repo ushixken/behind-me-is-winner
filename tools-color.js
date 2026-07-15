@@ -1,4 +1,4 @@
-// ════════════════════════════════════════════════════════════════
+﻿// ════════════════════════════════════════════════════════════════
 // ONION SKIN
 // ════════════════════════════════════════════════════════════════
 function updateOnion(){
@@ -560,6 +560,7 @@ function _applyColorLive(hex){
   } else {bgDrawColor=hex;}
   refreshColorSwatches();
   syncColorPanelSwatches();
+  if(colorTarget==='fg'&&window.PaletteDocker&&typeof window.PaletteDocker.updateActiveAdvancedStyleFromColorPanel==='function') window.PaletteDocker.updateActiveAdvancedStyleFromColorPanel(hex);
 }
 function syncColorPanelSwatches(){
   cpSwFg.style.background=tool==='eraser'?'':color;
