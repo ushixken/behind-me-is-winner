@@ -429,7 +429,7 @@
         <button id="palette-new" type="button">New Palette</button>
         <button id="palette-rename" type="button">Rename Palette</button>
         <div class="palette-menu-sep" role="separator"></div>
-        <button id="palette-toolbar-toggle" type="button">Attach to Toolbar</button>
+        <button id="palette-toolbar-toggle" type="button" aria-haspopup="true" aria-expanded="false">Attach to Toolbar &gt;</button>
         <div class="palette-menu-sep" role="separator"></div>
         <button id="palette-duplicate" type="button">Duplicate</button>
         <div class="palette-menu-sep" role="separator"></div>
@@ -440,6 +440,7 @@
         <div class="palette-menu-sep" role="separator"></div>
         <button id="palette-delete" class="danger" type="button">Delete Palette</button>
       </div>
+      <div id="palette-toolbar-submenu" class="palette-toolbar-submenu hidden" aria-label="Attach to Toolbar"></div>
       <div id="palette-import-warning" class="palette-import-warning hidden" role="status"></div>
       <div id="palette-rename-inline" class="palette-inline-editor hidden">
         <input id="palette-rename-inline-input" type="text" aria-label="Palette name" />

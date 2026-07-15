@@ -21,13 +21,15 @@
   let sideMenuFrame=null;
   let dropdownOpen=false;
   let dropdownFrame=null;
-  let toolbarPaletteMode='hidden';
+  let toolbarPaletteAttachment=null;
+  let toolbarPaletteVisible=false;
   let advancedPaletteEnabled=false;
   let advancedPaletteVersion=0;
   let advancedStyles=[];
   let activeAdvancedStyleId=null;
   let popupListenersBound=false;
   let paletteDragState=null;
+  let toolbarSubmenuOpen=false;
   const defaultHexes=['#000000','#ffffff','#f23636','#ff9f1c','#ffd23f','#2ec4b6','#3a86ff','#8338ec'];
   function makeAdvancedStyle(rgba,id,name){
     const values=Array.isArray(rgba)?rgba:[0,0,0,255];
@@ -166,7 +168,7 @@
   function defaultSwatches(){return defaultHexes.map(hex=>makeSwatch(hex));}
   function createDefaultPaletteState(){
     const palette=makePalette('Palette 1',defaultSwatches());
-    return {version:2,palettes:[palette],activePaletteId:palette.id,advancedPalette:{version:ADVANCED_PALETTE_VERSION,enabled:false,styles:[],activeStyleId:null},view:{swatchSize,scrollTop:0,toolbarPaletteMode:'hidden',advancedPaletteEnabled:false}};
+    return {version:2,palettes:[palette],activePaletteId:palette.id,advancedPalette:{version:ADVANCED_PALETTE_VERSION,enabled:false,styles:[],activeStyleId:null},view:{swatchSize,scrollTop:0,toolbarPaletteAttachment:null,toolbarPaletteVisible:false,advancedPaletteEnabled:false}};
   }
   function sanitizePaletteItem(item){
     if(!item||typeof item!=='object') return null;
@@ -237,20 +239,21 @@
   function persistView(){
     const grid=document.getElementById('palette-grid');
     if(grid) savedScrollTop=grid.scrollTop;
-    try{localStorage.setItem(VIEW_KEY,JSON.stringify({swatchSize,scrollTop:savedScrollTop,toolbarPaletteMode,advancedPaletteEnabled}));}catch(e){}
+    try{localStorage.setItem(VIEW_KEY,JSON.stringify({swatchSize,scrollTop:savedScrollTop,toolbarPaletteAttachment:toolbarPaletteAttachment?Object.assign({},toolbarPaletteAttachment):null,toolbarPaletteVisible,advancedPaletteEnabled}));}catch(e){}
   }
   function loadView(){
     try{
       const view=JSON.parse(localStorage.getItem(VIEW_KEY)||'null');
       if(view&&Number.isFinite(+view.swatchSize)) swatchSize=clampSwatchSize(+view.swatchSize);
       if(view&&Number.isFinite(+view.scrollTop)) savedScrollTop=Math.max(0,+view.scrollTop);
-      toolbarPaletteMode=view&&view.toolbarPaletteMode==='active'?'active':'hidden';
+      toolbarPaletteAttachment=view&&view.toolbarPaletteAttachment?Object.assign({},view.toolbarPaletteAttachment):null;
+      toolbarPaletteVisible=!!(toolbarPaletteAttachment&&(view&&Object.prototype.hasOwnProperty.call(view,'toolbarPaletteVisible')?view.toolbarPaletteVisible:true));
       advancedPaletteEnabled=!!(view&&view.advancedPaletteEnabled);
     }catch(e){}
   }
   function serialize(){
     rememberSelection();
-    return {version:2,palettes:palettes.map(p=>({id:p.id,name:p.name,swatches:p.swatches.map(exportSwatchData),selectedId:p.selectedId||null})),activePaletteId,advancedPalette:{version:ADVANCED_PALETTE_VERSION,enabled:advancedPaletteEnabled,styles:advancedStyles,activeStyleId:activeAdvancedStyleId},view:{swatchSize,scrollTop:savedScrollTop,toolbarPaletteMode,advancedPaletteEnabled}};
+    return {version:2,palettes:palettes.map(p=>({id:p.id,name:p.name,swatches:p.swatches.map(exportSwatchData),selectedId:p.selectedId||null})),activePaletteId,advancedPalette:{version:ADVANCED_PALETTE_VERSION,enabled:advancedPaletteEnabled,styles:advancedStyles,activeStyleId:activeAdvancedStyleId},view:{swatchSize,scrollTop:savedScrollTop,toolbarPaletteAttachment:toolbarPaletteAttachment?Object.assign({},toolbarPaletteAttachment):null,toolbarPaletteVisible,advancedPaletteEnabled}};
   }
   function load(data){
     const payload=data&&typeof data==='object'?data:null;
@@ -265,7 +268,9 @@
     syncActiveRefs();
     if(payload&&payload.view&&Number.isFinite(+payload.view.swatchSize)) swatchSize=clampSwatchSize(+payload.view.swatchSize);
     if(payload&&payload.view&&Number.isFinite(+payload.view.scrollTop)) savedScrollTop=Math.max(0,+payload.view.scrollTop);
-    if(payload&&payload.view) toolbarPaletteMode=payload.view.toolbarPaletteMode==='active'?'active':'hidden';
+    if(payload&&payload.view&&Object.prototype.hasOwnProperty.call(payload.view,'toolbarPaletteAttachment')) toolbarPaletteAttachment=payload.view.toolbarPaletteAttachment?Object.assign({},payload.view.toolbarPaletteAttachment):null;
+    if(payload&&payload.view&&Object.prototype.hasOwnProperty.call(payload.view,'toolbarPaletteVisible')) toolbarPaletteVisible=!!(payload.view.toolbarPaletteVisible&&toolbarPaletteAttachment);
+    else if(payload&&payload.view&&Object.prototype.hasOwnProperty.call(payload.view,'toolbarPaletteAttachment')) toolbarPaletteVisible=!!toolbarPaletteAttachment;
     const advancedPayload=payload&&payload.advancedPalette;
     advancedPaletteEnabled=!!(advancedPayload&&advancedPayload.enabled)||(payload&&payload.view&&!!payload.view.advancedPaletteEnabled);
     advancedPaletteVersion=Number.isFinite(+(advancedPayload&&advancedPayload.version))?+advancedPayload.version:0;
@@ -339,7 +344,10 @@
     restoreScrollPending=false;
     requestAnimationFrame(()=>{grid.scrollTop=savedScrollTop;ensureSelectedVisible();});
   }
-  function toolbarPaletteEnabled(){return toolbarPaletteMode==='active';}
+  function toolbarPaletteEnabled(){return !!(toolbarPaletteVisible&&toolbarPaletteAttachment&&palettes.some(p=>p.id===toolbarPaletteAttachment.paletteId)&&(toolbarPaletteAttachment.mode==='normal'||toolbarPaletteAttachment.mode==='advanced'));}
+  function currentPaletteDockerMode(){const body=document.getElementById('palette-body');return body&&body.classList.contains('advanced-mode')?'advanced':'normal';}
+  function currentToolbarPaletteAttachment(){return {paletteId:activePaletteId,mode:currentPaletteDockerMode()};}
+  function currentPaletteIsAttached(){const current=currentToolbarPaletteAttachment();return toolbarPaletteEnabled()&&toolbarPaletteAttachment.paletteId===current.paletteId&&toolbarPaletteAttachment.mode===current.mode;}
   function syncToolbarSelection(){}
   function renderToolbarPalette(){
     const wrap=document.getElementById('toolbar-palette-wrap');
@@ -348,8 +356,40 @@
     wrap.classList.toggle('hidden',!toolbarPaletteEnabled());
     strip.innerHTML='';
     if(!toolbarPaletteEnabled()) return;
-    const active=activePalette();
-    const items=active&&Array.isArray(active.swatches)?active.swatches:[];
+    if(toolbarPaletteAttachment.mode==='advanced'){
+      syncAdvancedRefs();
+      advancedStyles.forEach(style=>{
+        if(isAdvancedSeparator(style)){
+          const gap=document.createElement('span');
+          gap.className='toolbar-palette-separator';
+          gap.setAttribute('aria-hidden','true');
+          strip.appendChild(gap);
+          return;
+        }
+        if(style.visible===false) return;
+        const hex=styleHex(style);
+        const btn=document.createElement('button');
+        btn.type='button';
+        btn.className='toolbar-palette-swatch';
+        btn.dataset.styleId=style.id;
+        btn.title=style.name||style.id;
+        btn.setAttribute('aria-label','Set style '+(style.name||style.id));
+        if(isTransparentHex(hex)) btn.classList.add('transparent');
+        else {
+          btn.style.background=displayHex(hex);
+          const c=hexToRgba(hex);
+          if(c.r<=24&&c.g<=24&&c.b<=24) btn.classList.add('dark-color');
+        }
+        btn.addEventListener('click',event=>{
+          event.preventDefault();
+          selectAdvancedStyle(style.id,true);
+        });
+        strip.appendChild(btn);
+      });
+      return;
+    }
+    const attached=palettes.find(p=>p.id===toolbarPaletteAttachment.paletteId)||null;
+    const items=attached&&Array.isArray(attached.swatches)?attached.swatches:[];
     items.forEach(item=>{
       if(isSeparator(item)){
         const gap=document.createElement('span');
@@ -373,18 +413,13 @@
       }
       btn.addEventListener('click',event=>{
         event.preventDefault();
-        activatePaletteSwatch(item.id,{select:true,setForeground:true});
+        attached.selectedId=item.id;
+        if(attached.id===activePaletteId){selectedId=item.id;syncSelectionClasses();}
+        setForeground(item.hex,false);
+        persist();
       });
       strip.appendChild(btn);
     });
-  }
-  function toggleToolbarPalette(){
-    toolbarPaletteMode=toolbarPaletteEnabled()?'hidden':'active';
-    renderPaletteSelector();
-    renderToolbarPalette();
-    persistView();
-    persist();
-    closeSideMenu();
   }
   function selectedSwatch(){const item=swatches.find(s=>s.id===selectedId)||null;return isSwatch(item)?item:null;}
   function selectedItem(){return swatches.find(s=>s.id===selectedId)||null;}
@@ -417,6 +452,99 @@
     render();
   }
   function sideMenu(){return document.getElementById('palette-side-menu');}
+  function toolbarPaletteSubmenu(){return document.getElementById('palette-toolbar-submenu');}
+  function toolbarPaletteTrigger(){return document.getElementById('palette-toolbar-toggle');}
+  function advancedPaletteDisplayName(palette,index){
+    const name=String(palette&&palette.name||'').trim();
+    const generated=/^Palette\s+(\d+)$/i.exec(name);
+    return generated?'Advanced Palette '+generated[1]:(name||'Advanced Palette '+(index+1));
+  }
+  function setToolbarPaletteAttachment(paletteId,mode){
+    if(!palettes.some(p=>p.id===paletteId)||(mode!=='normal'&&mode!=='advanced')) return;
+    toolbarPaletteAttachment={paletteId:paletteId,mode:mode};
+    toolbarPaletteVisible=true;
+    renderToolbarPalette();
+    renderPaletteSelector();
+    persistView();
+    persist();
+    closeSideMenu();
+  }
+  function hideToolbarPalette(){
+    toolbarPaletteVisible=false;
+    renderToolbarPalette();
+    renderPaletteSelector();
+    persistView();
+    persist();
+    closeSideMenu();
+  }
+  function renderToolbarPaletteSubmenu(){
+    const submenu=toolbarPaletteSubmenu();
+    if(!submenu) return;
+    submenu.innerHTML='';
+    const addButton=(label,onClick,on)=>{
+      const button=document.createElement('button');
+      button.type='button';
+      button.textContent=(on?'[On] ':'')+label;
+      button.classList.toggle('active',!!on);
+      button.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();onClick();});
+      submenu.appendChild(button);
+    };
+    const addSeparator=()=>{
+      const separator=document.createElement('div');
+      separator.className='palette-menu-sep';
+      separator.setAttribute('role','separator');
+      submenu.appendChild(separator);
+    };
+    const addHeading=label=>{
+      const heading=document.createElement('div');
+      heading.className='palette-toolbar-heading';
+      heading.textContent=label;
+      submenu.appendChild(heading);
+    };
+    addButton('Off / Hide Toolbar Palette',hideToolbarPalette,!toolbarPaletteEnabled());
+    addSeparator();
+    addHeading('Normal Palettes');
+    palettes.forEach(palette=>{
+      const on=toolbarPaletteEnabled()&&toolbarPaletteAttachment.paletteId===palette.id&&toolbarPaletteAttachment.mode==='normal';
+      addButton(palette.name,()=>setToolbarPaletteAttachment(palette.id,'normal'),on);
+    });
+    addSeparator();
+    addHeading('Advanced Palettes');
+    palettes.forEach((palette,index)=>{
+      const on=toolbarPaletteEnabled()&&toolbarPaletteAttachment.paletteId===palette.id&&toolbarPaletteAttachment.mode==='advanced';
+      addButton(advancedPaletteDisplayName(palette,index),()=>setToolbarPaletteAttachment(palette.id,'advanced'),on);
+    });
+  }
+  function positionToolbarPaletteSubmenu(){
+    if(!toolbarSubmenuOpen) return;
+    const submenu=toolbarPaletteSubmenu();
+    const button=toolbarPaletteTrigger();
+    const menu=sideMenu();
+    if(!submenu||!button||!menu) return;
+    const menuRect=menu.getBoundingClientRect();
+    const buttonRect=button.getBoundingClientRect();
+    const desired=buttonRect.top-menuRect.top;
+    const maxTop=Math.max(0,window.innerHeight-menuRect.top-submenu.offsetHeight-6);
+    submenu.style.top=Math.max(0,Math.min(desired,maxTop))+'px';
+  }
+  function openToolbarPaletteSubmenu(){
+    const submenu=toolbarPaletteSubmenu();
+    const button=toolbarPaletteTrigger();
+    if(!submenu) return;
+    toolbarSubmenuOpen=true;
+    renderToolbarPaletteSubmenu();
+    submenu.classList.remove('hidden');
+    if(button){button.classList.add('active');button.setAttribute('aria-expanded','true');}
+    positionToolbarPaletteSubmenu();
+  }
+  function closeToolbarPaletteSubmenu(){
+    const submenu=toolbarPaletteSubmenu();
+    const button=toolbarPaletteTrigger();
+    toolbarSubmenuOpen=false;
+    if(submenu) submenu.classList.add('hidden');
+    if(button){button.classList.remove('active');button.setAttribute('aria-expanded','false');}
+  }
+  function toggleToolbarPaletteSubmenu(){toolbarSubmenuOpen?closeToolbarPaletteSubmenu():openToolbarPaletteSubmenu();}
   function paletteDropdown(){return document.getElementById('palette-dropdown');}
   function settingsButton(){return document.getElementById('palette-settings');}
   function activeDisplay(){return document.getElementById('palette-active-display');}
@@ -475,6 +603,7 @@
     menu.style.left=left+'px';
     menu.style.top=top+'px';
     menu.classList.toggle('left',useLeft);
+    positionToolbarPaletteSubmenu();
   }
   function requestSideMenuPosition(){
     if(!sideMenuOpen||sideMenuFrame) return;
@@ -497,6 +626,7 @@
     sideMenuOpen=false;
     if(sideMenuFrame){cancelAnimationFrame(sideMenuFrame);sideMenuFrame=null;}
     if(menu) menu.classList.add('hidden');
+    closeToolbarPaletteSubmenu();
     hidePaletteInlinePanels();
     if(button){button.classList.remove('active');button.setAttribute('aria-expanded','false');}
   }
@@ -638,8 +768,8 @@
     if(del) del.disabled=palettes.length<=1;
     const toolbarToggle=document.getElementById('palette-toolbar-toggle');
     if(toolbarToggle){
-      toolbarToggle.classList.toggle('active',toolbarPaletteEnabled());
-      toolbarToggle.textContent=(toolbarPaletteEnabled()?'[On] ':'')+'Attach to Toolbar';
+      toolbarToggle.classList.toggle('active',toolbarSubmenuOpen);
+      toolbarToggle.textContent='Attach to Toolbar >';
     }
     const advancedToggle=document.getElementById('palette-advanced-toggle');
     if(advancedToggle){
@@ -1055,6 +1185,7 @@
     const active=activePalette();
     if(!active) return;
     const idx=palettes.findIndex(p=>p.id===active.id);
+    if(toolbarPaletteAttachment&&toolbarPaletteAttachment.paletteId===active.id){toolbarPaletteAttachment=null;toolbarPaletteVisible=false;}
     palettes.splice(idx,1);
     activePaletteId=palettes[Math.min(idx,palettes.length-1)].id;
     hidePaletteInlinePanels();
@@ -1062,6 +1193,7 @@
     hideContextMenu();
     hideEditConfirmBar();
     render();
+    persistView();
     persist();
     closeSideMenu();
   }
@@ -2101,7 +2233,7 @@
     if(exportAllBtn) exportAllBtn.addEventListener('click',exportAllPalettesJson);
     if(importFile) importFile.addEventListener('change',()=>handleImportFile(importFile.files&&importFile.files[0]));
     if(deleteBtn) deleteBtn.addEventListener('click',deletePalette);
-    if(toolbarToggle) toolbarToggle.addEventListener('click',toggleToolbarPalette);
+    if(toolbarToggle) toolbarToggle.addEventListener('click',event=>{event.stopPropagation();toggleToolbarPaletteSubmenu();});
     if(advancedToggle) advancedToggle.addEventListener('click',toggleAdvancedPalette);
     if(renameOk) renameOk.addEventListener('click',applyInlineRename);
     if(renameCancel) renameCancel.addEventListener('click',()=>{hidePaletteInlinePanels();positionSideMenu();});
