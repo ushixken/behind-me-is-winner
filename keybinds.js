@@ -3,15 +3,22 @@
 // Edited via Settings ▸ Keybinds. Persisted to localStorage.
 // ════════════════════════════════════════════════════════════════
 const KEYBIND_STORE_KEY='keybinds_v1';
+const KEYBIND_IS_MAC=/Mac|iPhone|iPad|iPod/.test(navigator.platform||'');
 
 const KEYBIND_DEFAULTS={
   undo:        {label:'Undo',               key:'z',          ctrl:true,  shift:false, alt:false},
   redo:        {label:'Redo',               key:'y',          ctrl:true,  shift:false, alt:false},
-  copyFrame:   {label:'Copy Frame',         key:'c',          ctrl:true,  shift:false, alt:false},
-  cutFrame:    {label:'Cut Frame',          key:'x',          ctrl:true,  shift:false, alt:false},
-  pasteFrame:  {label:'Paste Frame',        key:'v',          ctrl:true,  shift:false, alt:false},
+  copyFrame:   {label:'Copy Frame',         key:'c',          ctrl:true,  shift:false, alt:true},
+  cutFrame:    {label:'Cut Frame',          key:'x',          ctrl:true,  shift:false, alt:true},
+  pasteFrame:  {label:'Paste Frame',        key:'v',          ctrl:true,  shift:false, alt:true},
+  duplicateFrame:{label:'Duplicate Frame',  key:'d',          ctrl:true,  shift:false, alt:true},
   pasteImage:  {label:'Paste Image',        key:'v',          ctrl:true,  shift:true,  alt:false},
-  clearFrame:  {label:'Clear Frame',        key:'Delete',     ctrl:false, shift:false, alt:false},
+  clearFrame:  {label:'Clear Frame',        key:'w',          ctrl:false, shift:false, alt:false},
+  copyLayer:   {label:'Copy Layer',          key:'c',          ctrl:true,  shift:false, alt:false},
+  cutLayer:    {label:'Cut Layer',           key:'x',          ctrl:true,  shift:false, alt:false},
+  pasteLayer:  {label:'Paste Layer',         key:'v',          ctrl:true,  shift:false, alt:false},
+  duplicateLayer:{label:'Duplicate Layer',   key:'d',          ctrl:true,  shift:false, alt:false},
+  deleteLayer: {label:'Delete Layer',        key:'Delete',     ctrl:false, shift:false, alt:false},
   toolBrush:   {label:'Brush Tool',         key:'b',          ctrl:false, shift:false, alt:false},
   toolEraser:  {label:'Eraser Tool',        key:'e',          ctrl:false, shift:false, alt:false},
   toolFill:    {label:'Fill Tool',          key:'f',          ctrl:false, shift:false, alt:false},
@@ -33,13 +40,33 @@ const KEYBIND_DEFAULTS={
   decreaseExposure: {label:'Decrease Exposure', key:'2', ctrl:false, shift:false, alt:false},
 };
 
+// Migrate only untouched clipboard defaults from the previous layout.
+// Any binding that differs from these exact legacy combinations is custom
+// and remains authoritative.
+const LEGACY_CLIPBOARD_DEFAULTS={
+  copyFrame:{key:'c',ctrl:true,shift:false,alt:false},
+  cutFrame:{key:'x',ctrl:true,shift:false,alt:false},
+  pasteFrame:{key:'v',ctrl:true,shift:false,alt:false},
+  clearFrame:{key:'Delete',ctrl:false,shift:false,alt:false},
+  copyLayer:{key:'c',ctrl:true,shift:false,alt:true},
+  cutLayer:{key:'x',ctrl:true,shift:false,alt:true},
+  pasteLayer:{key:'v',ctrl:true,shift:false,alt:true},
+  duplicateLayer:{key:'d',ctrl:true,shift:false,alt:true},
+  deleteLayer:{key:'Backspace',ctrl:true,shift:false,alt:true}
+};
+function _matchesStoredBind(binding,expected){
+  return !!binding&&binding.key===expected.key&&
+    !!binding.ctrl===expected.ctrl&&!!binding.shift===expected.shift&&!!binding.alt===expected.alt;
+}
+
 let keybinds={};
 
 // Grouping only — purely cosmetic for the Settings ▸ Keybinds list, doesn't
 // affect matchBind/storage/rebinding at all. Order here = display order.
 const KEYBIND_CATEGORIES=[
   {name:'History',        actions:['undo','redo']},
-  {name:'Clipboard',      actions:['copyFrame','cutFrame','pasteFrame','pasteImage','clearFrame']},
+  {name:'Frame Clipboard', actions:['copyFrame','cutFrame','pasteFrame','duplicateFrame','clearFrame']},
+  {name:'Layer Clipboard', actions:['copyLayer','cutLayer','pasteLayer','duplicateLayer','deleteLayer']},
   {name:'Tools',          actions:['toolBrush','toolEraser','toolFill','toolLine','toolTransform','brushResize']},
   {name:'Frames & Keyframes', actions:['newFrame','delKeyframe','nextFrame','prevFrame','flipperBypass','increaseExposure','decreaseExposure']},
   {name:'View',           actions:['zoomIn','zoomOut','zoomReset','rotateReset']},
@@ -52,9 +79,14 @@ function loadKeybinds(){
     const raw=localStorage.getItem(KEYBIND_STORE_KEY);
     if(raw){
       const saved=JSON.parse(raw);
+      let migrated=false;
       for(const action in saved){
-        if(keybinds[action]) Object.assign(keybinds[action],saved[action]);
+        if(!keybinds[action])continue;
+        const legacy=LEGACY_CLIPBOARD_DEFAULTS[action];
+        if(legacy&&_matchesStoredBind(saved[action],legacy)){migrated=true;continue;}
+        Object.assign(keybinds[action],saved[action]);
       }
+      if(migrated)saveKeybinds();
     }
   }catch(e){}
 }
@@ -84,10 +116,10 @@ function matchBind(e,action){
   // When the flipper bypass hold is active, its modifier key (e.g. Shift)
   // should be transparent — don't let it break other keybinds that don't
   // require that modifier. Strip it from the event's effective modifiers.
-  let ctrlHeld=!!e.ctrlKey, shiftHeld=!!e.shiftKey, altHeld=!!e.altKey;
+  let ctrlHeld=KEYBIND_IS_MAC?!!e.metaKey:!!e.ctrlKey, shiftHeld=!!e.shiftKey, altHeld=!!e.altKey;
   if(action!=='flipperBypass' && window._flipperBypassHeld){
     const bypassKey=(keybinds['flipperBypass']||{}).key||'';
-    const rawCtrl=!!e.ctrlKey, rawShift=!!e.shiftKey, rawAlt=!!e.altKey;
+    const rawCtrl=KEYBIND_IS_MAC?!!e.metaKey:!!e.ctrlKey, rawShift=!!e.shiftKey, rawAlt=!!e.altKey;
     const bypassModRaw =
       bypassKey==='Shift'?rawShift : bypassKey==='Control'?rawCtrl : bypassKey==='Alt'?rawAlt : false;
     if(bypassModRaw){
@@ -121,7 +153,7 @@ function matchBind(e,action){
 
 function formatBind(b){
   const parts=[];
-  if(b.ctrl) parts.push('Ctrl');
+  if(b.ctrl) parts.push(KEYBIND_IS_MAC?'Cmd':'Ctrl');
   if(b.shift) parts.push('Shift');
   if(b.alt) parts.push('Alt');
   let k=b.key;
@@ -257,7 +289,7 @@ function startRebind(action,btn){
     e.preventDefault();e.stopPropagation();
     if(e.key==='Escape'){ cancelRebind(); renderKeybindsList(); return; }
     if(['Control','Shift','Alt','Meta'].includes(e.key)) return; // wait for a real key
-    const combo={key:e.key,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey};
+    const combo={key:e.key,ctrl:KEYBIND_IS_MAC?e.metaKey:e.ctrlKey,shift:e.shiftKey,alt:e.altKey};
     const conflict=findBindConflict(action,combo);
     cancelRebind();
     if(conflict){
@@ -304,8 +336,8 @@ function cancelRebind(){
 
 // Keep the static menu-bar shortcut labels (Edit menu, etc.) in sync
 const KEYBIND_MENU_LABELS={
-  undo:'dd-undo', redo:'dd-redo', cutFrame:'dd-cut', copyFrame:'dd-copy',
-  pasteFrame:'dd-paste', pasteImage:'dd-paste-image', clearFrame:'dd-clear',
+  undo:'dd-undo', redo:'dd-redo', cutLayer:'dd-cut', copyLayer:'dd-copy',
+  pasteLayer:'dd-paste', duplicateLayer:'dd-duplicate', pasteImage:'dd-paste-image', clearFrame:'dd-clear',
   rotateReset:'dd-reset-rotation'
 };
 function syncKeybindMenuLabels(){

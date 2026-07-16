@@ -215,11 +215,24 @@ document.addEventListener('keydown',e=>{
   if(e.target.tagName==='INPUT'&&e.target.type!=='checkbox') return;
   if(matchBind(e,'undo')){e.preventDefault();undo();return;}
   if(matchBind(e,'redo')){e.preventDefault();redo();return;}
-  if(matchBind(e,'copyFrame')){e.preventDefault();copyFrame();return;}
-  if(matchBind(e,'cutFrame')){e.preventDefault();cutFrame();return;}
-  if(matchBind(e,'pasteImage')){e.preventDefault();if(typeof pasteImageFromClipboard==='function')pasteImageFromClipboard();return;}
-  if(matchBind(e,'pasteFrame')){e.preventDefault();pasteFrame();return;}
-  if(matchBind(e,'clearFrame')){e.preventDefault();clearCurrentFrame();return;}
+  const shortcutTarget=e.target instanceof Element?e.target:null;
+  const clipboardShortcutBlocked=!!(
+    (shortcutTarget&&(shortcutTarget.isContentEditable||shortcutTarget.closest('input,textarea,[contenteditable="true"]')))||
+    document.querySelector('.modal-overlay.visible')
+  );
+  if(!clipboardShortcutBlocked){
+    if(matchBind(e,'copyFrame')){e.preventDefault();copyFrame();return;}
+    if(matchBind(e,'cutFrame')){e.preventDefault();cutFrame();return;}
+    if(matchBind(e,'pasteImage')){e.preventDefault();if(typeof pasteImageFromClipboard==='function')pasteImageFromClipboard();return;}
+    if(matchBind(e,'pasteFrame')){e.preventDefault();pasteFrame();return;}
+    if(matchBind(e,'duplicateFrame')){e.preventDefault();duplicateFrame();return;}
+    if(matchBind(e,'clearFrame')){e.preventDefault();clearCurrentFrame();return;}
+    if(matchBind(e,'copyLayer')){e.preventDefault();copyLayer(curLayer);return;}
+    if(matchBind(e,'cutLayer')){e.preventDefault();cutLayer(curLayer);return;}
+    if(matchBind(e,'pasteLayer')){e.preventDefault();pasteLayer(curLayer);return;}
+    if(matchBind(e,'duplicateLayer')){e.preventDefault();duplicateLayer(curLayer);return;}
+    if(matchBind(e,'deleteLayer')){e.preventDefault();deleteLayer(curLayer);return;}
+  }
   const toolMap={toolBrush:['brush','Brush'],toolEraser:['eraser','Eraser'],toolFill:['fill','Fill'],toolLine:['line','Line'],toolTransform:['transform','Transform']};
   for(const action in toolMap){ if(matchBind(e,action)){ e.preventDefault(); setTool(...toolMap[action]); break; } }
   if(matchBind(e,'newFrame')){createBlankKey();loadFrame(curLayer,curFrame);}

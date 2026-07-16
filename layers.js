@@ -368,13 +368,13 @@ function _deepCopyLayer(l){
   return copy;
 }
 
-document.getElementById('layer-ctx-copy-layer').onclick=()=>{
-  const l=layers[_layerCtxTargetIdx];if(!l){hideAllMenus();return;}
-  _layerObjClipboard=_deepCopyLayer(l);
-  hideAllMenus();
-};
-function _cutLayerFromContext(idx){
-  const layer=layers[idx];if(!layer)return;
+function copyLayer(idx){
+  const layer=layers[idx];if(!layer)return false;
+  _layerObjClipboard=_deepCopyLayer(layer);
+  return true;
+}
+function cutLayer(idx){
+  const layer=layers[idx];if(!layer)return false;
   const wasOnlyLayer=layers.length===1;
   const snapshot=_deepCopyLayer(layer);
   _layerObjClipboard=_deepCopyLayer(layer);
@@ -382,42 +382,42 @@ function _cutLayerFromContext(idx){
   if(undoStack.length>40)undoStack.shift();
   redoStack=[];
   _doDeleteLayer(idx);
+  return true;
 }
-document.getElementById('layer-ctx-cut-layer').onclick=()=>{
-  const idx=_layerCtxTargetIdx;
-  hideAllMenus();
-  _cutLayerFromContext(idx);
-};
-document.getElementById('layer-ctx-paste-layer').onclick=()=>{
-  if(!_layerObjClipboard){hideAllMenus();return;}
+function pasteLayer(targetIdx){
+  if(!_layerObjClipboard)return false;
   const copy=_deepCopyLayer(_layerObjClipboard);
   copy.name=_layerObjClipboard.name+' Copy';
   copy.groupId=null; // paste at top level
-  const insertAt=(_layerCtxTargetIdx!=null?_layerCtxTargetIdx:curLayer)+1;
+  const insertAt=(targetIdx!=null?targetIdx:curLayer)+1;
   layers.splice(insertAt,0,copy);
   curLayer=insertAt;
   selectedLayerIndices.clear();
   loadFrame(curLayer,curFrame);renderLayerPanel();renderTimeline();
-  hideAllMenus();
-};
-document.getElementById('layer-ctx-duplicate-layer').onclick=()=>{
-  const idx=_layerCtxTargetIdx;const l=layers[idx];if(!l){hideAllMenus();return;}
-  const copy=_deepCopyLayer(l);
-  copy.name=l.name+' Copy';
+  return true;
+}
+function duplicateLayer(idx){
+  const layer=layers[idx];if(!layer)return false;
+  const copy=_deepCopyLayer(layer);
+  copy.name=layer.name+' Copy';
   layers.splice(idx+1,0,copy);
   curLayer=idx+1;
   selectedLayerIndices.clear();
-  if(l.type==='smart-raster'){
+  if(layer.type==='smart-raster'){
     undoStack.push({type:'smart-raster-duplicate-layer',index:idx+1,sourceIndex:idx,layerSnapshot:_deepCopyLayer(copy)});
     if(undoStack.length>40)undoStack.shift();
     redoStack=[];
   }
   loadFrame(curLayer,curFrame);renderLayerPanel();renderTimeline();
-  hideAllMenus();
-};
+  return true;
+}
+document.getElementById('layer-ctx-copy-layer').onclick=()=>{copyLayer(_layerCtxTargetIdx);hideAllMenus();};
+document.getElementById('layer-ctx-cut-layer').onclick=()=>{cutLayer(_layerCtxTargetIdx);hideAllMenus();};
+document.getElementById('layer-ctx-paste-layer').onclick=()=>{pasteLayer(_layerCtxTargetIdx);hideAllMenus();};
+document.getElementById('layer-ctx-duplicate-layer').onclick=()=>{duplicateLayer(_layerCtxTargetIdx);hideAllMenus();};
 document.getElementById('layer-ctx-delete-layer').onclick=()=>{
   hideAllMenus();
-  if(_layerCtxTargetIdx!=null) deleteLayer(_layerCtxTargetIdx);
+  if(_layerCtxTargetIdx!=null)deleteLayer(_layerCtxTargetIdx);
 };
 
 // ── Group-level operations (Copy / Paste / Duplicate / Delete group)
@@ -561,10 +561,10 @@ document.getElementById('dd-export').onclick=async()=>{
 // Edit menu
 document.getElementById('dd-undo').onclick=()=>{undo();closeAllDropdowns();};
 document.getElementById('dd-redo').onclick=()=>{redo();closeAllDropdowns();};
-document.getElementById('dd-cut').onclick=()=>{cutFrame();closeAllDropdowns();};
-document.getElementById('dd-copy').onclick=()=>{copyFrame();closeAllDropdowns();};
-document.getElementById('dd-paste').onclick=()=>{pasteFrame();closeAllDropdowns();};
-document.getElementById('dd-duplicate').onclick=()=>{duplicateFrame();closeAllDropdowns();};
+document.getElementById('dd-cut').onclick=()=>{cutLayer(curLayer);closeAllDropdowns();};
+document.getElementById('dd-copy').onclick=()=>{copyLayer(curLayer);closeAllDropdowns();};
+document.getElementById('dd-paste').onclick=()=>{pasteLayer(curLayer);closeAllDropdowns();};
+document.getElementById('dd-duplicate').onclick=()=>{duplicateLayer(curLayer);closeAllDropdowns();};
 function clearCurrentFrame(){pushUndo();ensureKey();ctx.clearRect(0,0,CW,CH);if(typeof deleteStyleFrame==='function') deleteStyleFrame(curLayer,curFrame);saveActiveToKey();recomposite(curLayer,curFrame);}
 document.getElementById('dd-clear').onclick=()=>{clearCurrentFrame();closeAllDropdowns();};
 
