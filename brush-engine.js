@@ -1247,6 +1247,7 @@ function _dabAliased(x,y,r,rgb,alpha,composite){
 // so each frame's recomposite only has to touch the region that changed
 // THIS frame, not the whole stroke's bounding box.
 let _frameDirty = null; // {minX,minY,maxX,maxY} in canvas pixel space, or null
+let _strokeDirty = null; // full affected bounds retained until the stroke commits
 function _growDirtyRect(x,y,radiusX,radiusY=radiusX){
   // Pad beyond the raw dab radius: AA feather can extend slightly past r,
   // and CPU-mode stamps add a couple more px of margin (see _buildAAStamp's
@@ -1261,6 +1262,27 @@ function _growDirtyRect(x,y,radiusX,radiusY=radiusX){
     if(minY<_frameDirty.minY)_frameDirty.minY=minY;
     if(maxX>_frameDirty.maxX)_frameDirty.maxX=maxX;
     if(maxY>_frameDirty.maxY)_frameDirty.maxY=maxY;
+  }
+  if(!_strokeDirty){
+    _strokeDirty={minX,minY,maxX,maxY};
+  } else {
+    if(minX<_strokeDirty.minX)_strokeDirty.minX=minX;
+    if(minY<_strokeDirty.minY)_strokeDirty.minY=minY;
+    if(maxX>_strokeDirty.maxX)_strokeDirty.maxX=maxX;
+    if(maxY>_strokeDirty.maxY)_strokeDirty.maxY=maxY;
+  }
+}
+function _consumeStrokeDirtyRect(){
+  const r=_strokeDirty;_strokeDirty=null;
+  if(!r)return null;
+  const x=Math.max(0,Math.floor(r.minX)),y=Math.max(0,Math.floor(r.minY));
+  const ex=Math.min(activeC.width,Math.ceil(r.maxX)),ey=Math.min(activeC.height,Math.ceil(r.maxY));
+  return ex>x&&ey>y?{x,y,w:ex-x,h:ey-y}:null;
+}
+function _cleanupErasedSmartOwnership(){
+  const rect=_consumeStrokeDirtyRect();
+  if(tool==='eraser'&&rect&&layers[curLayer]&&layers[curLayer].type==='smart-raster'&&typeof clearStyleIndexWhereTransparent==='function'){
+    clearStyleIndexWhereTransparent(rect);
   }
 }
 //  Texture dirty-rect tracking (separate accumulator/consumer from the
@@ -2237,7 +2259,7 @@ function _scheduleRecomposite(){
 function _endStroke(){
   _stopAirbrushSpray();
   _autoHardRoundPrevDab=null;
-  if(drawing){drawing=false;_flushStrokeTail();if(_inStroke){_inStroke=false;_commitStrokeCanvas();}if(tool==='eraser'&&typeof clearStyleIndexWhereTransparent==='function') clearStyleIndexWhereTransparent();saveActiveToKey();_scheduleRecomposite();}
+  if(drawing){drawing=false;_flushStrokeTail();if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_cleanupErasedSmartOwnership();saveActiveToKey();_scheduleRecomposite();}
   lineStart=null;
   _pendingDabs.length=0;
   _curveP0=null;_curveP1=null; // discard in-flight curve geometry, no event to flush a tail with
@@ -2736,6 +2758,7 @@ activeC.addEventListener('pointerdown',e=>{
   _strokeDistSoFar = 0; // reset start-of-stroke taper
   _pendingDabs.length = 0; // discard any unflushed tail from a previous stroke
   _frameDirty = null; // discard any stale accumulation from a previous/aborted stroke
+  _strokeDirty = null; // begin affected-pixel tracking for this complete stroke
   _strokeVelocity = 0; // reset velocity
   _lastMoveTime = 0;
   _strokeSegCarryOver = 0; // reset inter-segment dab carry-over
@@ -2811,9 +2834,9 @@ function _pointerEndStroke(e){
     _strokeSegment(lineStart.x,lineStart.y,p.x,p.y,e,currentPressure,currentPressure);
     _flushStrokeTail();
     if(_inStroke){_inStroke=false;_commitStrokeCanvas();}
-    if(tool==='eraser'&&typeof clearStyleIndexWhereTransparent==='function') clearStyleIndexWhereTransparent();lineStart=null;saveActiveToKey();recomposite(curLayer,curFrame);return;
+    _cleanupErasedSmartOwnership();lineStart=null;saveActiveToKey();recomposite(curLayer,curFrame);return;
   }
-  if(drawing){drawing=false;_flushCurveTail(e);_flushStrokeTail();if(_inStroke){_inStroke=false;_commitStrokeCanvas();}if(tool==='eraser'&&typeof clearStyleIndexWhereTransparent==='function') clearStyleIndexWhereTransparent();saveActiveToKey();_scheduleRecomposite();}
+  if(drawing){drawing=false;_flushCurveTail(e);_flushStrokeTail();if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_cleanupErasedSmartOwnership();saveActiveToKey();_scheduleRecomposite();}
 }
 activeC.addEventListener('pointerup',e=>{
   if(activeC.hasPointerCapture(e.pointerId))activeC.releasePointerCapture(e.pointerId);

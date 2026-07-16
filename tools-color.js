@@ -49,14 +49,7 @@ function restoreSmartRasterUndo(action){
   if(action.frame!==curFrame) curFrame=action.frame;
   const layer=layers[action.layer];
   if(!layer) return;
-  const bundle=action.styleBundle;
-  SmartRasterLayer.restoreFrameBundle(action.layer,action.frame,bundle);
-  ctx.clearRect(0,0,CW,CH);
-  if(bundle&&bundle.rgba) ctx.putImageData(bundle.rgba.getContext('2d',{willReadFrequently:true}).getImageData(0,0,CW,CH),0,0);
-  if(!layer.frames[action.frame]) layer.frames[action.frame]=mkLayerCanvas();
-  const frameCtx=layer.frames[action.frame].getContext('2d');
-  frameCtx.clearRect(0,0,CW,CH);
-  if(bundle&&bundle.rgba) frameCtx.putImageData(bundle.rgba.getContext('2d',{willReadFrequently:true}).getImageData(0,0,CW,CH),0,0);
+  SmartRasterLayer.restoreFrameBundle(action.layer,action.frame,action.styleBundle);
   recomposite(curLayer,curFrame);
   renderTimeline();
 }
@@ -606,6 +599,15 @@ window.setForegroundColorFromPalette=function(hex,openPicker){
 };
 
 // ── Slider / number input interaction ──
+function _advancedHistoryRgba(){
+  return window.PaletteDocker&&typeof window.PaletteDocker.getActiveAdvancedStyleColorForHistory==='function'
+    ?window.PaletteDocker.getActiveAdvancedStyleColorForHistory():null;
+}
+function _sameHistoryRgba(a,b){return !!(a&&b&&a.length===4&&b.length===4&&a.every((value,index)=>value===b[index]));}
+function _recordAdvancedHistoryAfter(start){
+  const finalRgba=_advancedHistoryRgba();
+  if(start&&finalRgba&&!_sameHistoryRgba(start,finalRgba)&&window.AdvancedColorHistory) window.AdvancedColorHistory.record(finalRgba);
+}
 function onSliderChange(){
   let rgb;
   if(cpMode==='rgb'){rgb=[+cpS1.value,+cpS2.value,+cpS3.value];}
@@ -617,10 +619,22 @@ function onSliderChange(){
 function onNumberChange(){cpS1.value=cpN1.value;cpS2.value=cpN2.value;cpS3.value=cpN3.value;onSliderChange();}
 [cpS1,cpS2,cpS3].forEach(s=>s.addEventListener('input',onSliderChange));
 [cpN1,cpN2,cpN3].forEach(n=>n.addEventListener('change',onNumberChange));
+const _colorControlStarts=new WeakMap();
+[cpS1,cpS2,cpS3,cpN1,cpN2,cpN3].forEach(input=>{
+  const begin=()=>{const rgba=_advancedHistoryRgba();if(rgba)_colorControlStarts.set(input,rgba);else _colorControlStarts.delete(input);};
+  const commit=()=>{if(!_colorControlStarts.has(input))return;const start=_colorControlStarts.get(input);_colorControlStarts.delete(input);_recordAdvancedHistoryAfter(start);};
+  input.addEventListener('focus',begin);
+  input.addEventListener('pointerdown',begin);
+  input.addEventListener('change',commit);
+  if(input.type==='number'){
+    input.addEventListener('keydown',event=>{if(event.key==='Enter'&&input.checkValidity()){onNumberChange();commit();}});
+    input.addEventListener('blur',()=>{if(input.checkValidity())commit();else _colorControlStarts.delete(input);});
+  }else input.addEventListener('pointerup',commit);
+});
 
 // ── Wheel / inner interaction ──
 (function(){
-  let wheelDown=false,sqDown=false;
+  let wheelDown=false,sqDown=false,historyStart=null;
   function hitWheel(e){
     const rect=cpWheelCanvas.getBoundingClientRect();
     const x=e.clientX-rect.left-WHEEL_R,y=e.clientY-rect.top-WHEEL_R;
@@ -680,18 +694,21 @@ function onNumberChange(){cpS1.value=cpN1.value;cpS2.value=cpN2.value;cpS3.value
   // Capture auto-releases on pointerup — pen-tablet hover after lifting is ignored.
   function onWheelMove(e){if(wheelDown)hitWheel(e);else if(sqDown)hitInner(e);_showPickCursor(e);}
   function onWheelUp(e){
+    const shouldCommit=e.type!=='pointercancel';
     wheelDown=false;sqDown=false;_hidePickCursor();
+    if(shouldCommit)_recordAdvancedHistoryAfter(historyStart);historyStart=null;
     cpWheelCanvas.removeEventListener('pointermove',onWheelMove);
     cpWheelCanvas.removeEventListener('pointerup',onWheelUp);
     cpWheelCanvas.removeEventListener('pointercancel',onWheelUp);
   }
   cpWheelCanvas.addEventListener('pointerdown',e=>{
     e.preventDefault();
-    if(hitWheel(e)){wheelDown=true;}
+    const start=_advancedHistoryRgba();
+    if(hitWheel(e)){wheelDown=true;historyStart=start;}
     else{
       const sqRect=cpSqCanvas.getBoundingClientRect();
       if(e.clientX>=sqRect.left&&e.clientX<=sqRect.right&&e.clientY>=sqRect.top&&e.clientY<=sqRect.bottom){
-        sqDown=true;hitInner(e);
+        sqDown=true;historyStart=start;hitInner(e);
       } else {
         return;
       }
@@ -704,13 +721,15 @@ function onNumberChange(){cpS1.value=cpN1.value;cpS2.value=cpN2.value;cpS3.value
   });
   function onSqMove(e){if(sqDown)hitInner(e);_showPickCursor(e);}
   function onSqUp(e){
+    const shouldCommit=e.type!=='pointercancel';
     sqDown=false;_hidePickCursor();
+    if(shouldCommit)_recordAdvancedHistoryAfter(historyStart);historyStart=null;
     cpSqCanvas.removeEventListener('pointermove',onSqMove);
     cpSqCanvas.removeEventListener('pointerup',onSqUp);
     cpSqCanvas.removeEventListener('pointercancel',onSqUp);
   }
   cpSqCanvas.addEventListener('pointerdown',e=>{
-    e.preventDefault();sqDown=true;hitInner(e);
+    e.preventDefault();historyStart=_advancedHistoryRgba();sqDown=true;hitInner(e);
     _showPickCursor(e);
     cpSqCanvas.setPointerCapture(e.pointerId);
     cpSqCanvas.addEventListener('pointermove',onSqMove);

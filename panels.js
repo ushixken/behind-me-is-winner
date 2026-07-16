@@ -128,8 +128,8 @@ function applyStyleDiffFromBefore(beforeImage,styleId){
   window.SmartRasterLayer.applyDiff(curLayer,curFrame,beforeImage,styleId);
 }
 
-function clearStyleIndexWhereTransparent(){
-  window.SmartRasterLayer.clearWhereTransparent(curLayer,curFrame);
+function clearStyleIndexWhereTransparent(rect){
+  window.SmartRasterLayer.clearWhereTransparent(curLayer,curFrame,rect);
 }
 
 function deleteStyleFrame(li,fi){window.SmartRasterLayer.resetFrame(li,fi);}

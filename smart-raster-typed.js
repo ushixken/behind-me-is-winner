@@ -56,10 +56,16 @@
     }
     return changed;
   }
-  function clearWhereTransparent(li,fi){
+  function clearWhereTransparent(li,fi,rect){
     var frame=ensureFrame(li,fi),canvas=artworkCanvas(li,fi);if(!frame||!canvas)return;
-    var rgba=canvas.getContext('2d',{willReadFrequently:true}).getImageData(0,0,CW,CH).data;
-    for(var p=0,o=3;p<frame.styleIds.length;p++,o+=4)if(rgba[o]===0)frame.styleIds[p]=0;
+    var x=rect?Math.max(0,Math.floor(rect.x)):0,y=rect?Math.max(0,Math.floor(rect.y)):0;
+    var ex=rect?Math.min(CW,Math.ceil(rect.x+rect.w)):CW,ey=rect?Math.min(CH,Math.ceil(rect.y+rect.h)):CH;
+    var width=ex-x,height=ey-y;if(width<=0||height<=0)return;
+    var rgba=canvas.getContext('2d',{willReadFrequently:true}).getImageData(x,y,width,height).data;
+    for(var row=0;row<height;row++)for(var col=0;col<width;col++){
+      var local=(row*width+col)*4,offset=(y+row)*CW+x+col;
+      if(rgba[local+3]===0)frame.styleIds[offset]=0;
+    }
   }
   function recolorFrame(layer,li,fi,styleId,rgba){
     var frame=layer.smartStyleFrames&&layer.smartStyleFrames[fi];if(!frame)return false;
@@ -101,8 +107,33 @@
   function restoreFrameBundle(li,fi,bundle){
     var layer=layers[li];if(!layer)return;
     if(!layer.smartStyleFrames)layer.smartStyleFrames={};
-    if(bundle&&bundle.styleIds&&bundle.meta)layer.smartStyleFrames[fi]={width:bundle.width,height:bundle.height,styleIds:bundle.styleIds.slice(),meta:cloneMeta(bundle.meta)};
-    else delete layer.smartStyleFrames[fi];
+    var frame=null;
+    if(bundle&&bundle.styleIds&&bundle.meta){
+      frame={width:bundle.width,height:bundle.height,styleIds:bundle.styleIds.slice(),meta:cloneMeta(bundle.meta)};
+      layer.smartStyleFrames[fi]=frame;
+    } else delete layer.smartStyleFrames[fi];
+    if(!bundle||!bundle.rgba)return;
+    var width=bundle.width||CW,height=bundle.height||CH;
+    var source=bundle.rgba.getContext('2d',{willReadFrequently:true});
+    var image=source.getImageData(0,0,width,height),data=image.data;
+    var palette=window.PaletteDocker;
+    var colors=Object.create(null);
+    for(var p=0,o=0;frame&&p<frame.styleIds.length;p++,o+=4){
+      var index=frame.styleIds[p];if(index===0||data[o+3]===0)continue;
+      var styleId=frame.meta.indexToStyleId[index];if(!styleId)continue;
+      var rgba=colors[styleId];
+      if(rgba===undefined){
+        var style=palette&&typeof palette.findAdvancedStyleById==='function'?palette.findAdvancedStyleById(styleId):null;
+        rgba=style&&Array.isArray(style.rgba)?style.rgba:null;colors[styleId]=rgba;
+      }
+      if(!rgba)continue;
+      data[o]=rgba[0];data[o+1]=rgba[1];data[o+2]=rgba[2];
+    }
+    if(!layer.frames)layer.frames={};
+    var stored=layer.frames[fi];
+    if(!stored){stored=document.createElement('canvas');stored.width=width;stored.height=height;layer.frames[fi]=stored;}
+    stored.getContext('2d').putImageData(image,0,0);
+    if(li===curLayer&&Number(fi)===curFrame)activeC.getContext('2d').putImageData(image,0,0);
   }
   function resetFrame(li,fi){var layer=layers[li];if(layer&&layer.smartStyleFrames)delete layer.smartStyleFrames[fi];}
   function resizeAllFrames(nw,nh){

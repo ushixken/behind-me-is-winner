@@ -1,6 +1,8 @@
 ﻿(function(){
   const STORE_KEY='animatorPaletteV1';
   const VIEW_KEY='animatorPaletteViewV1';
+  const ADVANCED_COLOR_HISTORY_KEY='animatorAdvancedPaletteColorHistoryV1';
+  const ADVANCED_COLOR_HISTORY_LIMIT=24;
   const SWATCH_SIZE_MIN=16;
   const SWATCH_SIZE_MAX=64;
   const SWATCH_SIZE_STEP=2;
@@ -27,6 +29,9 @@
   let advancedPaletteVersion=0;
   let advancedStyles=[];
   let activeAdvancedStyleId=null;
+  let advancedColorPanelStyleId=null;
+  let advancedColorPanelPaletteId=null;
+  const advancedColorHistorySubscribers=new Set();
   let popupListenersBound=false;
   let paletteDragState=null;
   let toolbarSubmenuOpen=false;
@@ -239,6 +244,33 @@
     return {id:id||makeId('palette'),name:normalName,advancedName:storedAdvancedName,swatches:cleanSwatches,selectedId:selected};
   }
   function activePalette(){return palettes.find(p=>p.id===activePaletteId)||palettes[0]||null;}
+  function loadAdvancedColorHistories(){
+    try{const saved=JSON.parse(localStorage.getItem(ADVANCED_COLOR_HISTORY_KEY)||'{}');return saved&&typeof saved==='object'&&!Array.isArray(saved)?saved:{};}catch(e){return {};}
+  }
+  function advancedColorHistory(paletteId){
+    const histories=loadAdvancedColorHistories();
+    return Array.isArray(histories[paletteId])?histories[paletteId].filter(isValidHex).map(normalizeHex).slice(0,ADVANCED_COLOR_HISTORY_LIMIT):[];
+  }
+  function pushAdvancedColorHistory(paletteId,hex){
+    const clean=normalizeHex(hex);if(!paletteId||!isValidHex(clean))return false;
+    const histories=loadAdvancedColorHistories();
+    const history=Array.isArray(histories[paletteId])?histories[paletteId].filter(isValidHex).map(normalizeHex):[];
+    if(history[0]===clean)return false;
+    const duplicate=history.indexOf(clean);if(duplicate>=0)history.splice(duplicate,1);
+    history.unshift(clean);histories[paletteId]=history.slice(0,ADVANCED_COLOR_HISTORY_LIMIT);
+    try{localStorage.setItem(ADVANCED_COLOR_HISTORY_KEY,JSON.stringify(histories));}catch(e){}
+    advancedColorHistorySubscribers.forEach(callback=>{try{callback(histories[paletteId].slice());}catch(e){}});
+    return true;
+  }
+  const AdvancedColorHistory={
+    record(rgba){
+      const hex=Array.isArray(rgba)?rgbaToHex(rgba[0],rgba[1],rgba[2],rgba[3]):normalizeHex(rgba);
+      return pushAdvancedColorHistory(advancedColorPanelPaletteId||activePaletteId,hex);
+    },
+    getAll(){return advancedColorHistory(advancedColorPanelPaletteId||activePaletteId).slice();},
+    subscribe(callback){if(typeof callback!=='function')return()=>{};advancedColorHistorySubscribers.add(callback);return()=>advancedColorHistorySubscribers.delete(callback);}
+  };
+  window.AdvancedColorHistory=AdvancedColorHistory;
   function rememberSelection(){const active=activePalette();if(active) active.selectedId=selectedId;}
   function syncActiveRefs(){
     let active=activePalette();
@@ -403,7 +435,7 @@
         }
         btn.addEventListener('click',event=>{
           event.preventDefault();
-          selectAdvancedStyle(style.id,true);
+          selectAdvancedStyle(style.id,true,toolbarPaletteAttachment.paletteId);
         });
         strip.appendChild(btn);
       });
@@ -435,6 +467,8 @@
       btn.addEventListener('click',event=>{
         event.preventDefault();
         attached.selectedId=item.id;
+        advancedColorPanelStyleId=null;
+        advancedColorPanelPaletteId=null;
         if(attached.id===activePaletteId){selectedId=item.id;syncSelectionClasses();}
         setForeground(item.hex,false);
         persist();
@@ -468,6 +502,8 @@
     persist();
   }
   function selectSwatch(swatch,applyColor){
+    advancedColorPanelStyleId=null;
+    advancedColorPanelPaletteId=null;
     if(!swatch) return;
     activatePaletteSwatch(swatch.id,{select:true,setForeground:!!applyColor});
     render();
@@ -864,10 +900,12 @@
     isSyncingColorPanel=true;
     try{setForeground(styleHex(style),false);}finally{isSyncingColorPanel=false;}
   }
-  function selectAdvancedStyle(id,setBrush){
+  function selectAdvancedStyle(id,setBrush,paletteId){
     const style=advancedStyles.find(s=>!isAdvancedSeparator(s)&&s.id===id);
     if(!style) return;
     activeAdvancedStyleId=style.id;
+    advancedColorPanelStyleId=style.id;
+    advancedColorPanelPaletteId=paletteId||activePaletteId;
     if(setBrush!==false) syncAdvancedStyleToColorPanel(style);
     render();
     persist();
@@ -877,6 +915,8 @@
     const style=makeAdvancedStyle(rgbaArray(currentForegroundHex()),null,nextAdvancedStyleName());
     advancedStyles.push(style);
     activeAdvancedStyleId=style.id;
+    advancedColorPanelStyleId=style.id;
+    advancedColorPanelPaletteId=activePaletteId;
     setForeground(styleHex(style),false);
     render();
     persist();
@@ -1052,7 +1092,7 @@
       lock.textContent=style.locked?'LOCK':'';
       card.append(preview,meta,lock);
       card.addEventListener('click',()=>selectAdvancedStyle(style.id,true));
-      card.addEventListener('contextmenu',event=>{event.preventDefault();event.stopPropagation();activeAdvancedStyleId=style.id;render();showAdvancedStyleContextMenu(event.clientX,event.clientY,style);});
+      card.addEventListener('contextmenu',event=>{event.preventDefault();event.stopPropagation();activeAdvancedStyleId=style.id;advancedColorPanelStyleId=style.id;advancedColorPanelPaletteId=activePaletteId;render();showAdvancedStyleContextMenu(event.clientX,event.clientY,style);});
       grid.appendChild(card);
     });
     const add=document.createElement('button');
@@ -1506,13 +1546,14 @@
     const existing=document.getElementById('palette-color-modal');
     if(existing) existing.remove();
     const original=normalizeHex(swatch.hex);
+    const isAdvancedEdit=typeof onApply==='function';
     const start=hexToRgba(original);
     let alpha=Math.round((Number.isFinite(+start.a)?start.a:1)*255);
     let hsv=rgbToHsv(start.r,start.g,start.b);
     let mode='RGB';
     const modal=document.createElement('div');
     modal.id='palette-color-modal';
-    modal.innerHTML='<div class="palette-color-dialog wheel" role="dialog" aria-modal="true" aria-label="Edit color" tabindex="-1"><div class="palette-color-title"><span>Edit Color</span><button type="button" class="palette-color-close" aria-label="Cancel">&times;</button></div><div class="palette-color-body"><div class="palette-color-picker-column"><div class="palette-color-previews"><div><span>Current</span><div class="palette-color-preview current"></div></div><div><span>New</span><div class="palette-color-preview next"></div></div></div><div class="palette-wheel-wrap"><div class="palette-hue-wheel"><div class="palette-hue-cursor"></div><div class="palette-inner-sv"><div class="palette-sv-cursor"></div></div></div></div></div><div class="palette-color-control-column"><div class="palette-mode-tabs"><button type="button" data-mode="RGB">RGB</button><button type="button" data-mode="HSV">HSV</button><button type="button" data-mode="HSL">HSL</button><button type="button" data-mode="HEX">HEX</button></div><div class="palette-mode-fields"></div></div></div><div class="palette-color-actions"><button type="button" class="palette-color-ok">OK</button><button type="button" class="palette-color-cancel">Cancel</button></div></div>';
+    modal.innerHTML='<div class="palette-color-dialog wheel" role="dialog" aria-modal="true" aria-label="Edit color" tabindex="-1"><div class="palette-color-title"><span>Edit Color</span><button type="button" class="palette-color-close" aria-label="Cancel">&times;</button></div><div class="palette-color-body"><div class="palette-color-picker-column"><div class="palette-color-previews"><div><span>Current</span><div class="palette-color-preview current"></div></div><div><span>New</span><div class="palette-color-preview next"></div></div></div><div class="palette-wheel-wrap"><div class="palette-hue-wheel"><div class="palette-hue-cursor"></div><div class="palette-inner-sv"><div class="palette-sv-cursor"></div></div></div></div></div><div class="palette-color-control-column"><div class="palette-mode-tabs"><button type="button" data-mode="RGB">RGB</button><button type="button" data-mode="HSV">HSV</button><button type="button" data-mode="HSL">HSL</button><button type="button" data-mode="HEX">HEX</button></div><div class="palette-mode-fields"></div></div></div><div class="palette-color-history" hidden><div class="palette-color-history-title">Color History</div><div class="palette-color-history-swatches"></div></div><div class="palette-color-actions"><button type="button" class="palette-color-ok">OK</button><button type="button" class="palette-color-cancel">Cancel</button></div></div>';
     document.body.appendChild(modal);
     const dialog=modal.querySelector('.palette-color-dialog');
     const wheel=modal.querySelector('.palette-hue-wheel');
@@ -1522,7 +1563,9 @@
     const fields=modal.querySelector('.palette-mode-fields');
     const currentPreview=modal.querySelector('.palette-color-preview.current');
     const nextPreview=modal.querySelector('.palette-color-preview.next');
-    let dragging='';
+    const historySection=modal.querySelector('.palette-color-history');
+    const historySwatches=modal.querySelector('.palette-color-history-swatches');
+    let dragging='',dragStartHex='';
     function currentRgb(){return hsvToRgb(hsv.h,hsv.s,hsv.v);}
     function colorHex(){const rgb=currentRgb();return rgbaToHex(rgb.r,rgb.g,rgb.b,alpha);}
     function paintPreview(el,hex){if(isTransparentHex(hex)) el.classList.add('transparent');else el.classList.remove('transparent');el.style.background=isTransparentHex(hex)?'':displayHex(hex);}
@@ -1592,6 +1635,22 @@
       svCursor.style.left=(hsv.s*100)+'%';
       svCursor.style.top=((1-hsv.v)*100)+'%';
     }
+    function renderColorHistory(){
+      if(!isAdvancedEdit){historySection.hidden=true;return;}
+      historySection.hidden=false;historySwatches.innerHTML='';
+      AdvancedColorHistory.getAll().forEach(hex=>{
+        const button=document.createElement('button');button.type='button';button.className='palette-color-history-swatch';button.title=hex.toUpperCase();
+        if(isTransparentHex(hex))button.classList.add('transparent');else button.style.background=displayHex(hex);
+        button.addEventListener('click',()=>{setFromHex(hex);onApply(colorHex());});
+        historySwatches.appendChild(button);
+      });
+    }
+    function finalizeHistory(startHex){
+      if(!isAdvancedEdit)return;
+      const finalHex=normalizeHex(colorHex());
+      if(startHex&&normalizeHex(startHex)===finalHex)return;
+      AdvancedColorHistory.record(rgbaArray(finalHex));
+    }
     function syncAll(){paintPreview(nextPreview,colorHex());syncWheel();renderFields();}
     function setHueFromEvent(event){
       const rect=wheel.getBoundingClientRect();
@@ -1606,23 +1665,26 @@
       hsv.v=1-Math.max(0,Math.min(1,(event.clientY-rect.top)/rect.height));
       syncAll();
     }
-    function close(){document.removeEventListener('keydown',onKey);modal.remove();}
-    function ok(){if(typeof onApply==='function') onApply(colorHex()); else updateSwatchColor(swatch,colorHex());close();}
+    const unsubscribeHistory=isAdvancedEdit?AdvancedColorHistory.subscribe(renderColorHistory):()=>{};
+    function close(){unsubscribeHistory();document.removeEventListener('keydown',onKey);modal.remove();}
+    function ok(){finalizeHistory('');if(typeof onApply==='function') onApply(colorHex()); else updateSwatchColor(swatch,colorHex());close();}
     function cancel(){close();}
     function onKey(event){if(event.key==='Escape'){event.preventDefault();cancel();}else if(event.key==='Enter'&&event.target.tagName!=='TEXTAREA'){event.preventDefault();ok();}}
     paintPreview(currentPreview,original);
     paintPreview(nextPreview,original);
     renderFields();
+    renderColorHistory();
     requestAnimationFrame(syncWheel);
     modal.querySelectorAll('.palette-mode-tabs button').forEach(btn=>btn.addEventListener('click',()=>{mode=btn.dataset.mode;renderFields();}));
-    wheel.addEventListener('pointerdown',event=>{if(event.target.closest('.palette-inner-sv')) return;dragging='hue';wheel.setPointerCapture(event.pointerId);setHueFromEvent(event);});
+    wheel.addEventListener('pointerdown',event=>{if(event.target.closest('.palette-inner-sv')) return;dragStartHex=colorHex();dragging='hue';wheel.setPointerCapture(event.pointerId);setHueFromEvent(event);});
     wheel.addEventListener('pointermove',event=>{if(dragging==='hue') setHueFromEvent(event);});
-    wheel.addEventListener('pointerup',event=>{if(dragging==='hue'){dragging='';try{wheel.releasePointerCapture(event.pointerId);}catch(e){}}});
+    wheel.addEventListener('pointerup',event=>{if(dragging==='hue'){dragging='';finalizeHistory(dragStartHex);dragStartHex='';try{wheel.releasePointerCapture(event.pointerId);}catch(e){}}});
     wheel.addEventListener('pointercancel',()=>{dragging='';});
-    sv.addEventListener('pointerdown',event=>{event.stopPropagation();dragging='sv';sv.setPointerCapture(event.pointerId);setSvFromEvent(event);});
+    sv.addEventListener('pointerdown',event=>{event.stopPropagation();dragStartHex=colorHex();dragging='sv';sv.setPointerCapture(event.pointerId);setSvFromEvent(event);});
     sv.addEventListener('pointermove',event=>{if(dragging==='sv') setSvFromEvent(event);});
-    sv.addEventListener('pointerup',event=>{if(dragging==='sv'){dragging='';try{sv.releasePointerCapture(event.pointerId);}catch(e){}}});
+    sv.addEventListener('pointerup',event=>{if(dragging==='sv'){dragging='';finalizeHistory(dragStartHex);dragStartHex='';try{sv.releasePointerCapture(event.pointerId);}catch(e){}}});
     sv.addEventListener('pointercancel',()=>{dragging='';});
+    fields.addEventListener('change',()=>finalizeHistory(''));
     modal.querySelector('.palette-color-ok').addEventListener('click',ok);
     modal.querySelector('.palette-color-cancel').addEventListener('click',cancel);
     modal.querySelector('.palette-color-close').addEventListener('click',cancel);
@@ -2317,6 +2379,10 @@
   function getActiveAdvancedPaletteStyleId(){const style=activeAdvancedStyle();return activeLayerUsesAdvancedPalette()&&style?style.id:null;}
   window.isAdvancedPalettePaintingEnabled=isAdvancedPalettePaintingEnabled;
   window.getActiveAdvancedPaletteStyleId=getActiveAdvancedPaletteStyleId;
-  window.PaletteDocker={serialize,load,reset(){load(null);},renderCurrentColors:render,refresh:render,isAdvancedPalettePaintingEnabled,getActiveAdvancedPaletteStyleId,findAdvancedStyleById,updateActiveAdvancedStyleFromColorPanel};
+  function getActiveAdvancedStyleColorForHistory(){
+    const style=advancedColorPanelStyleId&&advancedColorPanelStyleId===activeAdvancedStyleId?findAdvancedStyleById(activeAdvancedStyleId):null;
+    return style&&!style.locked&&Array.isArray(style.rgba)?style.rgba.slice():null;
+  }
+  window.PaletteDocker={serialize,load,reset(){load(null);},renderCurrentColors:render,refresh:render,isAdvancedPalettePaintingEnabled,getActiveAdvancedPaletteStyleId,getActiveAdvancedStyleColorForHistory,findAdvancedStyleById,updateActiveAdvancedStyleFromColorPanel};
   document.addEventListener('DOMContentLoaded',()=>{bind();loadPersisted();});
 })();
