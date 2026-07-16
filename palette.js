@@ -1,6 +1,8 @@
 ﻿(function(){
   const STORE_KEY='animatorPaletteV1';
   const VIEW_KEY='animatorPaletteViewV1';
+  const NORMAL_SWATCH_SIZE_KEY='palette.normalSwatchSize';
+  const ADVANCED_SWATCH_SIZE_KEY='palette.advancedSwatchSize';
   const ADVANCED_COLOR_HISTORY_KEY='animatorAdvancedPaletteColorHistoryV1';
   const ADVANCED_COLOR_HISTORY_LIMIT=24;
   const SWATCH_SIZE_MIN=16;
@@ -17,6 +19,7 @@
   let advancedStyleDrag=null;
   let advancedStyleSuppressClick=false;
   let swatchSize=SWATCH_SIZE_DEFAULT;
+  let advancedPaletteSwatchSize=SWATCH_SIZE_DEFAULT;
   let savedScrollTop=0;
   let restoreScrollPending=false;
   let scrollSaveTimer=null;
@@ -179,7 +182,7 @@
   function defaultSwatches(){return defaultHexes.map(hex=>makeSwatch(hex));}
   function createDefaultPaletteState(){
     const palette=makePalette('Palette 1',defaultSwatches());
-    return {version:2,palettes:[palette],activePaletteId:palette.id,advancedPalette:{version:ADVANCED_PALETTE_VERSION,enabled:false,styles:[],activeStyleId:null},view:{swatchSize,scrollTop:0,toolbarPaletteAttachment:null,toolbarPaletteVisible:false,advancedPaletteEnabled:false}};
+    return {version:2,palettes:[palette],activePaletteId:palette.id,advancedPalette:{version:ADVANCED_PALETTE_VERSION,enabled:false,styles:[],activeStyleId:null},view:{normalPaletteSwatchSize:swatchSize,advancedPaletteSwatchSize,scrollTop:0,toolbarPaletteAttachment:null,toolbarPaletteVisible:false,advancedPaletteEnabled:false}};
   }
   function sanitizePaletteItem(item){
     if(!item||typeof item!=='object') return null;
@@ -291,21 +294,37 @@
   function persistView(){
     const grid=document.getElementById('palette-grid');
     if(grid) savedScrollTop=grid.scrollTop;
-    try{localStorage.setItem(VIEW_KEY,JSON.stringify({swatchSize,scrollTop:savedScrollTop,toolbarPaletteAttachment:toolbarPaletteAttachment?Object.assign({},toolbarPaletteAttachment):null,toolbarPaletteVisible,advancedPaletteEnabled}));}catch(e){}
+    try{
+      localStorage.setItem(NORMAL_SWATCH_SIZE_KEY,String(swatchSize));
+      localStorage.setItem(ADVANCED_SWATCH_SIZE_KEY,String(advancedPaletteSwatchSize));
+      localStorage.setItem(VIEW_KEY,JSON.stringify({normalPaletteSwatchSize:swatchSize,advancedPaletteSwatchSize,scrollTop:savedScrollTop,toolbarPaletteAttachment:toolbarPaletteAttachment?Object.assign({},toolbarPaletteAttachment):null,toolbarPaletteVisible,advancedPaletteEnabled}));
+    }catch(e){}
   }
   function loadView(){
     try{
       const view=JSON.parse(localStorage.getItem(VIEW_KEY)||'null');
-      if(view&&Number.isFinite(+view.swatchSize)) swatchSize=clampSwatchSize(+view.swatchSize);
+      const storedNormal=localStorage.getItem(NORMAL_SWATCH_SIZE_KEY);
+      const storedAdvanced=localStorage.getItem(ADVANCED_SWATCH_SIZE_KEY);
+      const hasStoredNormal=Number.isFinite(+storedNormal);
+      const hasViewNormal=view&&Number.isFinite(+view.normalPaletteSwatchSize);
+      if(hasStoredNormal) swatchSize=clampSwatchSize(+storedNormal);
+      else if(hasViewNormal) swatchSize=clampSwatchSize(+view.normalPaletteSwatchSize);
+      else if(view&&Number.isFinite(+view.swatchSize)) swatchSize=clampSwatchSize(+view.swatchSize);
+      if(Number.isFinite(+storedAdvanced)) advancedPaletteSwatchSize=clampSwatchSize(+storedAdvanced);
+      else if(view&&Number.isFinite(+view.advancedPaletteSwatchSize)) advancedPaletteSwatchSize=clampSwatchSize(+view.advancedPaletteSwatchSize);
       if(view&&Number.isFinite(+view.scrollTop)) savedScrollTop=Math.max(0,+view.scrollTop);
       toolbarPaletteAttachment=view&&view.toolbarPaletteAttachment?Object.assign({},view.toolbarPaletteAttachment):null;
       toolbarPaletteVisible=!!(toolbarPaletteAttachment&&(view&&Object.prototype.hasOwnProperty.call(view,'toolbarPaletteVisible')?view.toolbarPaletteVisible:true));
       advancedPaletteEnabled=!!(view&&view.advancedPaletteEnabled);
+      try{
+        localStorage.setItem(NORMAL_SWATCH_SIZE_KEY,String(swatchSize));
+        localStorage.setItem(ADVANCED_SWATCH_SIZE_KEY,String(advancedPaletteSwatchSize));
+      }catch(e){}
     }catch(e){}
   }
   function serialize(){
     rememberSelection();
-    return {version:2,palettes:palettes.map(p=>({id:p.id,name:p.name,advancedName:p.advancedName,swatches:p.swatches.map(exportSwatchData),selectedId:p.selectedId||null})),activePaletteId,advancedPalette:{version:ADVANCED_PALETTE_VERSION,enabled:advancedPaletteEnabled,styles:advancedStyles,activeStyleId:activeAdvancedStyleId},view:{swatchSize,scrollTop:savedScrollTop,toolbarPaletteAttachment:toolbarPaletteAttachment?Object.assign({},toolbarPaletteAttachment):null,toolbarPaletteVisible,advancedPaletteEnabled}};
+    return {version:2,palettes:palettes.map(p=>({id:p.id,name:p.name,advancedName:p.advancedName,swatches:p.swatches.map(exportSwatchData),selectedId:p.selectedId||null})),activePaletteId,advancedPalette:{version:ADVANCED_PALETTE_VERSION,enabled:advancedPaletteEnabled,styles:advancedStyles,activeStyleId:activeAdvancedStyleId},view:{normalPaletteSwatchSize:swatchSize,advancedPaletteSwatchSize,scrollTop:savedScrollTop,toolbarPaletteAttachment:toolbarPaletteAttachment?Object.assign({},toolbarPaletteAttachment):null,toolbarPaletteVisible,advancedPaletteEnabled}};
   }
   function load(data){
     const payload=data&&typeof data==='object'?data:null;
@@ -318,7 +337,11 @@
       activePaletteId=palettes[0].id;
     }
     syncActiveRefs();
-    if(payload&&payload.view&&Number.isFinite(+payload.view.swatchSize)) swatchSize=clampSwatchSize(+payload.view.swatchSize);
+    if(payload&&payload.view){
+      if(Number.isFinite(+payload.view.normalPaletteSwatchSize)) swatchSize=clampSwatchSize(+payload.view.normalPaletteSwatchSize);
+      else if(Number.isFinite(+payload.view.swatchSize)) swatchSize=clampSwatchSize(+payload.view.swatchSize);
+      if(Number.isFinite(+payload.view.advancedPaletteSwatchSize)) advancedPaletteSwatchSize=clampSwatchSize(+payload.view.advancedPaletteSwatchSize);
+    }
     if(payload&&payload.view&&Number.isFinite(+payload.view.scrollTop)) savedScrollTop=Math.max(0,+payload.view.scrollTop);
     if(payload&&payload.view&&Object.prototype.hasOwnProperty.call(payload.view,'toolbarPaletteAttachment')) toolbarPaletteAttachment=payload.view.toolbarPaletteAttachment?Object.assign({},payload.view.toolbarPaletteAttachment):null;
     if(payload&&payload.view&&Object.prototype.hasOwnProperty.call(payload.view,'toolbarPaletteVisible')) toolbarPaletteVisible=!!(payload.view.toolbarPaletteVisible&&toolbarPaletteAttachment);
@@ -368,25 +391,38 @@
     const stepped=Math.round(numeric/SWATCH_SIZE_STEP)*SWATCH_SIZE_STEP;
     return Math.max(SWATCH_SIZE_MIN,Math.min(SWATCH_SIZE_MAX,stepped));
   }
+  function activePaletteSwatchSize(){return activePaletteMode()==='advanced'?advancedPaletteSwatchSize:swatchSize;}
   function applyViewSettings(keepSelectedVisible){
     swatchSize=clampSwatchSize(swatchSize);
+    advancedPaletteSwatchSize=clampSwatchSize(advancedPaletteSwatchSize);
+    const activeSize=activePaletteSwatchSize();
     const body=document.getElementById('palette-body');
-    if(body) body.style.setProperty('--palette-swatch-size',swatchSize+'px');
+    if(body){
+      body.style.setProperty('--normal-palette-swatch-size',swatchSize+'px');
+      body.style.setProperty('--advanced-palette-swatch-size',advancedPaletteSwatchSize+'px');
+    }
     const slider=document.getElementById('palette-size-slider');
     const value=document.getElementById('palette-size-value');
-    if(slider) slider.value=String(swatchSize);
-    if(value) value.textContent=swatchSize+' px';
+    if(slider) slider.value=String(activeSize);
+    if(value) value.textContent=activeSize+' px';
     if(keepSelectedVisible) requestAnimationFrame(()=>ensureSelectedVisible());
   }
   function setSwatchSize(nextSize,keepSelectedVisible){
     const clamped=clampSwatchSize(nextSize);
-    if(clamped===swatchSize) return;
-    swatchSize=clamped;
+    const advanced=activePaletteMode()==='advanced';
+    if(advanced){
+      if(clamped===advancedPaletteSwatchSize) return;
+      advancedPaletteSwatchSize=clamped;
+    }else{
+      if(clamped===swatchSize) return;
+      swatchSize=clamped;
+    }
     applyViewSettings(keepSelectedVisible!==false);
+    render();
     persistView();
     persist();
   }
-  function stepSwatchSize(delta){setSwatchSize(swatchSize+(delta*SWATCH_SIZE_STEP),true);}
+  function stepSwatchSize(delta){setSwatchSize(activePaletteSwatchSize()+(delta*SWATCH_SIZE_STEP),true);}
   function ensureSelectedVisible(){
     const grid=document.getElementById('palette-grid');
     if(!grid||!selectedId) return;
@@ -1221,6 +1257,7 @@
     const useAdvanced=activeLayerUsesAdvancedPalette();
     if(useAdvanced&&!advancedStyles.length) initializeAdvancedPaletteFromActivePalette();
     if(body) body.classList.toggle('advanced-mode',useAdvanced);
+    applyViewSettings(false);
     if(useAdvanced){
       renderAdvancedPalette(grid);
       updateToolbarState();
