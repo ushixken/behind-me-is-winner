@@ -1128,6 +1128,17 @@
   }
   function advancedStyleDropTarget(clientX,clientY){
     const grid=document.getElementById('palette-grid'),state=advancedStyleDrag;if(!grid||!state)return null;
+    const gridRect=grid.getBoundingClientRect();
+    const rowGap=parseFloat(getComputedStyle(grid).rowGap||getComputedStyle(grid).gap)||0;
+    const separators=Array.from(grid.querySelectorAll('.palette-style-separator')).filter(separator=>separator.dataset.id!==state.id&&separator.getClientRects().length);
+    for(const separator of separators){
+      const rect=separator.getBoundingClientRect();
+      if(clientX>=gridRect.left&&clientX<=gridRect.right&&clientY>=rect.top-rowGap&&clientY<=rect.bottom+rowGap){
+        const sourceIndex=advancedStyles.findIndex(item=>item&&item.id===state.id);
+        const targetIndex=advancedStyles.findIndex(item=>item&&item.id===separator.dataset.id);
+        return {id:separator.dataset.id,side:sourceIndex>=0&&targetIndex>=0&&sourceIndex<targetIndex?'after':'before'};
+      }
+    }
     const cards=Array.from(grid.querySelectorAll('.palette-style-card,.palette-style-separator')).filter(card=>card.dataset.id!==state.id&&card.getClientRects().length);
     if(!cards.length)return null;
     let nearest=null,nearestDistance=Infinity;
