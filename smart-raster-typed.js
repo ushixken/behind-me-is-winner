@@ -67,10 +67,15 @@
       if(rgba[local+3]===0)frame.styleIds[offset]=0;
     }
   }
+  function heldArtworkFrameIndex(layer,fi){
+    if(!layer||!layer.frames)return -1;
+    for(var frameIndex=fi;frameIndex>=0;frameIndex--)if(layer.frames[frameIndex])return frameIndex;
+    return -1;
+  }
   function recolorFrame(layer,li,fi,styleId,rgba){
     var frame=layer.smartStyleFrames&&layer.smartStyleFrames[fi];if(!frame)return false;
     var index=Number(frame.meta.styleIdToIndex[styleId])||0;if(!index)return false;
-    var frameIndex=Number(fi),isActive=li===curLayer&&frameIndex===curFrame;
+    var frameIndex=Number(fi),activeFrame=li===curLayer?heldArtworkFrameIndex(layer,curFrame):-1,isActive=li===curLayer&&frameIndex===activeFrame;
     var stored=layer.frames&&layer.frames[frameIndex],source=isActive?activeC:stored;if(!source)return false;
     var sourceContext=source.getContext('2d',{willReadFrequently:true});
     var image=sourceContext.getImageData(0,0,frame.width,frame.height),data=image.data;
@@ -90,9 +95,10 @@
   }  function rerenderStyle(styleId){
     var style=window.PaletteDocker&&window.PaletteDocker.findAdvancedStyleById(styleId);if(!style||!Array.isArray(style.rgba))return;
     var activeChanged=false,any=false;
-    layers.forEach(function(layer,li){if(layer.type!=='smart-raster'||!layer.smartStyleFrames)return;Object.keys(layer.smartStyleFrames).forEach(function(fi){if(recolorFrame(layer,li,fi,styleId,style.rgba)){any=true;if(li===curLayer&&Number(fi)===curFrame)activeChanged=true;}});});
+    var activeFrame=heldArtworkFrameIndex(layers[curLayer],curFrame);
+    layers.forEach(function(layer,li){if(layer.type!=='smart-raster'||!layer.smartStyleFrames)return;Object.keys(layer.smartStyleFrames).forEach(function(fi){if(recolorFrame(layer,li,fi,styleId,style.rgba)){any=true;if(li===curLayer&&Number(fi)===activeFrame)activeChanged=true;}});});
     if(activeChanged&&typeof saveActiveToKey==='function')saveActiveToKey();
-    if(activeChanged&&typeof recomposite==='function')recomposite(curLayer,curFrame);
+    if(any&&typeof recomposite==='function')recomposite(curLayer,curFrame);
     if(any&&typeof renderTimeline==='function')renderTimeline();
   }
   function rerenderAll(){
