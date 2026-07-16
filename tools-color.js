@@ -59,9 +59,39 @@ function _restoreUndoAction(action){
   else restoreBitmapUndo(action);
 }
 
+function _showSmartRasterDuplicateFrame(action,slot,frameIndex){
+  if(action.layer!==curLayer)switchLayer(action.layer);
+  _restoreSmartRasterFrameSlot(action.layer,action.targetFrame,slot);
+  curFrame=frameIndex;
+  loadFrame(curLayer,curFrame);
+  recomposite(curLayer,curFrame);
+  renderTimeline();
+}
+function _undoSmartRasterDuplicateLayer(action){
+  if(action.index>=0&&action.index<layers.length)layers.splice(action.index,1);
+  curLayer=Math.max(0,Math.min(action.sourceIndex,layers.length-1));
+  selectedLayerIndices.clear();
+  loadFrame(curLayer,curFrame);
+  renderLayerPanel();renderTimeline();recomposite(curLayer,curFrame);
+}
+function _redoSmartRasterDuplicateLayer(action){
+  layers.splice(Math.min(action.index,layers.length),0,_deepCopyLayer(action.layerSnapshot));
+  curLayer=Math.min(action.index,layers.length-1);
+  selectedLayerIndices.clear();
+  loadFrame(curLayer,curFrame);
+  renderLayerPanel();renderTimeline();recomposite(curLayer,curFrame);
+}
 function undo(){
   if(!undoStack.length)return;
   const action=undoStack.pop();
+  if(action.type==='smart-raster-duplicate-frame'){
+    _showSmartRasterDuplicateFrame(action,action.before,action.sourceFrame);
+    redoStack.push(action);return;
+  }
+  if(action.type==='smart-raster-duplicate-layer'){
+    _undoSmartRasterDuplicateLayer(action);
+    redoStack.push(action);return;
+  }
   if(action.type==='timeline-frames'){
     _restoreFrameMaps(action.before);redoStack.push(action);selectedKFs.clear();
     loadFrame(curLayer,curFrame);recomposite(curLayer,curFrame);renderTimeline();return;
@@ -72,6 +102,14 @@ function undo(){
 function redo(){
   if(!redoStack.length)return;
   const action=redoStack.pop();
+  if(action.type==='smart-raster-duplicate-frame'){
+    _showSmartRasterDuplicateFrame(action,action.after,action.targetFrame);
+    undoStack.push(action);return;
+  }
+  if(action.type==='smart-raster-duplicate-layer'){
+    _redoSmartRasterDuplicateLayer(action);
+    undoStack.push(action);return;
+  }
   if(action.type==='timeline-frames'){
     _restoreFrameMaps(action.after);undoStack.push(action);selectedKFs.clear();
     loadFrame(curLayer,curFrame);recomposite(curLayer,curFrame);renderTimeline();return;

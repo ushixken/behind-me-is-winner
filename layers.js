@@ -173,9 +173,36 @@ tlBodyEl.addEventListener('drop',e=>{
 function copyFrame(){const k=layers[curLayer].frames[curFrame];if(!k){clipboard=null;styleClipboard=null;return;}clipboard=mkLayerCanvas();clipboard.getContext('2d').drawImage(k,0,0);styleClipboard=(typeof getStyleFrameBundle==='function')?getStyleFrameBundle(curLayer,curFrame):null;}
 function cutFrame(){copyFrame();delete layers[curLayer].frames[curFrame];if(typeof deleteStyleFrame==='function') deleteStyleFrame(curLayer,curFrame);ctx.clearRect(0,0,CW,CH);const h=getHeldKey(curLayer,curFrame);if(h)ctx.drawImage(h,0,0);saveActiveToKey();loadFrame(curLayer,curFrame);renderTimeline();}
 function pasteFrame(){if(!clipboard) return;ensureKey();ctx.clearRect(0,0,CW,CH);ctx.drawImage(clipboard,0,0);if(typeof restoreStyleFrameBundle==='function') restoreStyleFrameBundle(curLayer,curFrame,styleClipboard);saveActiveToKey();recomposite(curLayer,curFrame);}
+function _captureSmartRasterFrameSlot(li,fi){
+  const l=layers[li];
+  const hasArtwork=!!(l&&l.frames&&Object.prototype.hasOwnProperty.call(l.frames,fi));
+  const hasOwnership=!!(l&&l.smartStyleFrames&&Object.prototype.hasOwnProperty.call(l.smartStyleFrames,fi));
+  return {
+    hasArtwork,
+    hasOwnership,
+    bundle:(hasArtwork||hasOwnership)&&typeof getStyleFrameBundle==='function'?getStyleFrameBundle(li,fi):null,
+    frameMeta:l&&l.frameMeta&&l.frameMeta[fi]?Object.assign({},l.frameMeta[fi]):null
+  };
+}
+function _restoreSmartRasterFrameSlot(li,fi,slot){
+  const l=layers[li];if(!l)return;
+  if(slot&&(slot.hasArtwork||slot.hasOwnership)){
+    restoreStyleFrameBundle(li,fi,slot.bundle);
+    if(!slot.hasArtwork&&l.frames)delete l.frames[fi];
+  }else{
+    if(l.frames)delete l.frames[fi];
+    if(typeof deleteStyleFrame==='function')deleteStyleFrame(li,fi);
+  }
+  if(!l.frameMeta)l.frameMeta={};
+  if(slot&&slot.frameMeta)l.frameMeta[fi]=Object.assign({},slot.frameMeta);
+  else delete l.frameMeta[fi];
+}
 function duplicateFrame(){
   const l=layers[curLayer];const k=l.frames[curFrame];const n=curFrame+1;
   if(n>=TOTAL) return;
+  const isSmartRaster=l.type==='smart-raster';
+  const beforeSlot=isSmartRaster?_captureSmartRasterFrameSlot(curLayer,n):null;
+  const sourceFrame=curFrame,layerIndex=curLayer;
   const d=mkLayerCanvas();if(k) d.getContext('2d').drawImage(k,0,0);
   l.frames[n]=d;
   if(typeof getStyleFrameBundle==='function'&&typeof restoreStyleFrameBundle==='function') restoreStyleFrameBundle(curLayer,n,getStyleFrameBundle(curLayer,curFrame));
@@ -184,6 +211,11 @@ function duplicateFrame(){
   const srcMeta=l.frameMeta[curFrame];
   if(srcMeta&&srcMeta.markType) l.frameMeta[n]=Object.assign({},srcMeta);
   else delete l.frameMeta[n]; // clear any pre-existing mark at destination
+  if(isSmartRaster){
+    undoStack.push({type:'smart-raster-duplicate-frame',layer:layerIndex,sourceFrame,targetFrame:n,before:beforeSlot,after:_captureSmartRasterFrameSlot(layerIndex,n)});
+    if(undoStack.length>40)undoStack.shift();
+    redoStack=[];
+  }
   goToFrame(n);renderTimeline();
 }
 
@@ -255,7 +287,12 @@ let _layerObjClipboard=null; // stores a deep copy of a layer object
 function _deepCopyLayer(l){
   const copy={...l,frames:{},frameMeta:{},indexFrames:{},indexMeta:{},smartStyleFrames:{},type:l.type||'bitmap'};
   Object.entries(l.frames).forEach(([f,src])=>{
-    const c=mkLayerCanvas();c.getContext('2d').drawImage(src,0,0);copy.frames[f]=c;
+    const c=mkLayerCanvas();
+    if(l.type==='smart-raster'){
+      const source=src.getContext('2d',{willReadFrequently:true});
+      c.getContext('2d').putImageData(source.getImageData(0,0,src.width,src.height),0,0);
+    }else c.getContext('2d').drawImage(src,0,0);
+    copy.frames[f]=c;
   });
   // Deep-copy per-frame metadata so the duplicate is fully independent
   if(l.frameMeta){
@@ -305,6 +342,11 @@ document.getElementById('layer-ctx-duplicate-layer').onclick=()=>{
   layers.splice(idx+1,0,copy);
   curLayer=idx+1;
   selectedLayerIndices.clear();
+  if(l.type==='smart-raster'){
+    undoStack.push({type:'smart-raster-duplicate-layer',index:idx+1,sourceIndex:idx,layerSnapshot:_deepCopyLayer(copy)});
+    if(undoStack.length>40)undoStack.shift();
+    redoStack=[];
+  }
   loadFrame(curLayer,curFrame);renderLayerPanel();renderTimeline();
   hideAllMenus();
 };
