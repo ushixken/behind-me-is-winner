@@ -170,9 +170,65 @@ tlBodyEl.addEventListener('drop',e=>{
 // ════════════════════════════════════════════════════════════════
 // COPY / CUT / PASTE / DUPLICATE
 // ════════════════════════════════════════════════════════════════
-function copyFrame(){const k=layers[curLayer].frames[curFrame];if(!k){clipboard=null;styleClipboard=null;return;}clipboard=mkLayerCanvas();clipboard.getContext('2d').drawImage(k,0,0);styleClipboard=(typeof getStyleFrameBundle==='function')?getStyleFrameBundle(curLayer,curFrame):null;}
-function cutFrame(){copyFrame();delete layers[curLayer].frames[curFrame];if(typeof deleteStyleFrame==='function') deleteStyleFrame(curLayer,curFrame);ctx.clearRect(0,0,CW,CH);const h=getHeldKey(curLayer,curFrame);if(h)ctx.drawImage(h,0,0);saveActiveToKey();loadFrame(curLayer,curFrame);renderTimeline();}
-function pasteFrame(){if(!clipboard) return;ensureKey();ctx.clearRect(0,0,CW,CH);ctx.drawImage(clipboard,0,0);if(typeof restoreStyleFrameBundle==='function') restoreStyleFrameBundle(curLayer,curFrame,styleClipboard);saveActiveToKey();recomposite(curLayer,curFrame);}
+function copyFrame(){
+  const layer=layers[curLayer],k=layer.frames[curFrame];
+  if(!k){clipboard=null;styleClipboard=null;return;}
+  clipboard=mkLayerCanvas();
+  clipboard.getContext('2d').drawImage(k,0,0);
+  styleClipboard=layer.type==='smart-raster'&&typeof getStyleFrameBundle==='function'
+    ?getStyleFrameBundle(curLayer,curFrame):null;
+}
+function cutFrame(){
+  copyFrame();
+  const layer=layers[curLayer];
+  if(layer.type==='smart-raster')pushUndo();
+  delete layer.frames[curFrame];
+  if(typeof deleteStyleFrame==='function')deleteStyleFrame(curLayer,curFrame);
+  ctx.clearRect(0,0,CW,CH);
+  const h=getHeldKey(curLayer,curFrame);if(h)ctx.drawImage(h,0,0);
+  saveActiveToKey();loadFrame(curLayer,curFrame);renderTimeline();
+}
+function _pasteSmartRasterClipboardOwnership(li,fi,rgbaCanvas,payload,dx,dy){
+  const layer=layers[li];
+  if(!layer||layer.type!=='smart-raster'||!rgbaCanvas||!window.SmartRasterLayer)return;
+  dx=dx||0;dy=dy||0;
+  const destination=SmartRasterLayer.ensureFrame(li,fi);
+  if(!destination)return;
+  const width=rgbaCanvas.width,height=rgbaCanvas.height;
+  const rgba=rgbaCanvas.getContext('2d',{willReadFrequently:true}).getImageData(0,0,width,height).data;
+  const sourceIds=payload&&payload.styleIds instanceof Uint16Array?payload.styleIds:null;
+  const sourceMeta=payload&&payload.meta;
+  const sourceWidth=payload&&payload.width||width;
+  const sourceHeight=payload&&payload.height||height;
+  const maxX=Math.min(width,sourceWidth),maxY=Math.min(height,sourceHeight);
+  const remapped=Object.create(null);
+  for(let y=0;y<maxY;y++)for(let x=0;x<maxX;x++){
+    const sourceOffset=y*width+x;
+    if(rgba[sourceOffset*4+3]===0)continue;
+    const nx=x+dx,ny=y+dy;
+    if(nx<0||nx>=destination.width||ny<0||ny>=destination.height)continue;
+    let destinationIndex=0;
+    if(sourceIds&&sourceMeta){
+      const sourceIndex=sourceIds[y*sourceWidth+x]||0;
+      const stableStyleId=sourceIndex&&sourceMeta.indexToStyleId&&sourceMeta.indexToStyleId[sourceIndex];
+      if(stableStyleId){
+        if(remapped[stableStyleId]===undefined)remapped[stableStyleId]=SmartRasterLayer.ensureStyleIndex(li,fi,stableStyleId);
+        destinationIndex=remapped[stableStyleId]||0;
+      }
+    }
+    destination.styleIds[ny*destination.width+nx]=destinationIndex;
+  }
+}
+function pasteFrame(){
+  if(!clipboard)return;
+  const layer=layers[curLayer],isSmartRaster=layer.type==='smart-raster';
+  if(isSmartRaster)pushUndo();
+  ensureKey();
+  ctx.clearRect(0,0,CW,CH);
+  ctx.drawImage(clipboard,0,0);
+  if(isSmartRaster)_pasteSmartRasterClipboardOwnership(curLayer,curFrame,clipboard,styleClipboard,0,0);
+  saveActiveToKey();recomposite(curLayer,curFrame);
+}
 function _captureSmartRasterFrameSlot(li,fi){
   const l=layers[li];
   const hasArtwork=!!(l&&l.frames&&Object.prototype.hasOwnProperty.call(l.frames,fi));
@@ -317,11 +373,20 @@ document.getElementById('layer-ctx-copy-layer').onclick=()=>{
   _layerObjClipboard=_deepCopyLayer(l);
   hideAllMenus();
 };
+function _cutLayerFromContext(idx){
+  const layer=layers[idx];if(!layer)return;
+  const wasOnlyLayer=layers.length===1;
+  const snapshot=_deepCopyLayer(layer);
+  _layerObjClipboard=_deepCopyLayer(layer);
+  undoStack.push({type:'layer-cut',index:idx,layerSnapshot:snapshot,wasOnlyLayer});
+  if(undoStack.length>40)undoStack.shift();
+  redoStack=[];
+  _doDeleteLayer(idx);
+}
 document.getElementById('layer-ctx-cut-layer').onclick=()=>{
-  const idx=_layerCtxTargetIdx;const l=layers[idx];if(!l){hideAllMenus();return;}
-  _layerObjClipboard=_deepCopyLayer(l);
+  const idx=_layerCtxTargetIdx;
   hideAllMenus();
-  deleteLayer(idx);
+  _cutLayerFromContext(idx);
 };
 document.getElementById('layer-ctx-paste-layer').onclick=()=>{
   if(!_layerObjClipboard){hideAllMenus();return;}

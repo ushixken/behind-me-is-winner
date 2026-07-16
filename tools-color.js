@@ -81,9 +81,26 @@ function _redoSmartRasterDuplicateLayer(action){
   loadFrame(curLayer,curFrame);
   renderLayerPanel();renderTimeline();recomposite(curLayer,curFrame);
 }
+function _undoLayerCut(action){
+  if(action.wasOnlyLayer&&layers.length===1)layers.splice(0,1);
+  const index=Math.max(0,Math.min(action.index,layers.length));
+  layers.splice(index,0,_deepCopyLayer(action.layerSnapshot));
+  curLayer=index;
+  selectedLayerIndices.clear();
+  _reanchorAllStencils();
+  loadFrame(curLayer,curFrame);renderLayerPanel();renderTimeline();recomposite(curLayer,curFrame);
+}
+function _redoLayerCut(action){
+  const index=Math.max(0,Math.min(action.index,layers.length-1));
+  _doDeleteLayer(index);
+}
 function undo(){
   if(!undoStack.length)return;
   const action=undoStack.pop();
+  if(action.type==='layer-cut'){
+    _undoLayerCut(action);
+    redoStack.push(action);return;
+  }
   if(action.type==='smart-raster-duplicate-frame'){
     _showSmartRasterDuplicateFrame(action,action.before,action.sourceFrame);
     redoStack.push(action);return;
@@ -102,6 +119,10 @@ function undo(){
 function redo(){
   if(!redoStack.length)return;
   const action=redoStack.pop();
+  if(action.type==='layer-cut'){
+    _redoLayerCut(action);
+    undoStack.push(action);return;
+  }
   if(action.type==='smart-raster-duplicate-frame'){
     _showSmartRasterDuplicateFrame(action,action.after,action.targetFrame);
     undoStack.push(action);return;
