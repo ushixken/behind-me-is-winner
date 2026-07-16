@@ -1052,6 +1052,23 @@
     render();
     persist();
   }
+  function deleteAdvancedSeparator(separator){
+    if(!isAdvancedSeparator(separator)) return;
+    const idx=advancedStyles.findIndex(item=>isAdvancedSeparator(item)&&item.id===separator.id);
+    if(idx<0) return;
+    advancedStyles.splice(idx,1);
+    render();
+    persist();
+  }
+  function moveAdvancedItemToEdge(item,toEnd){
+    if(!item) return;
+    const idx=advancedStyles.findIndex(entry=>entry&&entry.id===item.id&&entry.type===item.type);
+    if(idx<0) return;
+    const moved=advancedStyles.splice(idx,1)[0];
+    advancedStyles.splice(toEnd?advancedStyles.length:0,0,moved);
+    render();
+    persist();
+  }
   function deleteAdvancedStyle(style){
     if(!style||isAdvancedSeparator(style)||advancedStyles.filter(s=>!isAdvancedSeparator(s)).length<=1) return;
     const idx=advancedStyles.findIndex(s=>s.id===style.id);
@@ -1089,12 +1106,29 @@
     menu.style.top=Math.min(y,window.innerHeight-menu.offsetHeight-8)+'px';
     setTimeout(()=>document.addEventListener('pointerdown',hideContextMenu,{once:true}),0);
   }
+  function showAdvancedSeparatorContextMenu(x,y,separator){
+    hideContextMenu();
+    const menu=document.createElement('div');
+    menu.id='palette-context-menu';
+    menu.className='ctx-menu';
+    menu.addEventListener('pointerdown',event=>event.stopPropagation());
+    [
+      menuItem('Delete Separator',()=>deleteAdvancedSeparator(separator),true),
+      menuItem('-'),
+      menuItem('Move to Top',()=>moveAdvancedItemToEdge(separator,false)),
+      menuItem('Move to Bottom',()=>moveAdvancedItemToEdge(separator,true))
+    ].forEach(item=>menu.appendChild(item));
+    document.body.appendChild(menu);
+    menu.style.left=Math.min(x,window.innerWidth-menu.offsetWidth-8)+'px';
+    menu.style.top=Math.min(y,window.innerHeight-menu.offsetHeight-8)+'px';
+    setTimeout(()=>document.addEventListener('pointerdown',hideContextMenu,{once:true}),0);
+  }
   function clearAdvancedStyleInsert(){
-    document.querySelectorAll('.palette-style-card.advanced-insert-before,.palette-style-card.advanced-insert-after').forEach(card=>card.classList.remove('advanced-insert-before','advanced-insert-after'));
+    document.querySelectorAll('.palette-style-card.advanced-insert-before,.palette-style-card.advanced-insert-after,.palette-style-separator.advanced-insert-before,.palette-style-separator.advanced-insert-after').forEach(card=>card.classList.remove('advanced-insert-before','advanced-insert-after'));
   }
   function advancedStyleDropTarget(clientX,clientY){
     const grid=document.getElementById('palette-grid'),state=advancedStyleDrag;if(!grid||!state)return null;
-    const cards=Array.from(grid.querySelectorAll('.palette-style-card')).filter(card=>card.dataset.id!==state.id&&card.getClientRects().length);
+    const cards=Array.from(grid.querySelectorAll('.palette-style-card,.palette-style-separator')).filter(card=>card.dataset.id!==state.id&&card.getClientRects().length);
     if(!cards.length)return null;
     let nearest=null,nearestDistance=Infinity;
     cards.forEach(card=>{
@@ -1146,7 +1180,7 @@
       if(rect&&Math.abs(event.clientY-(rect.top+rect.height/2))<2) target.side=state.target.side;
     }
     state.target=target;clearAdvancedStyleInsert();
-    const card=grid.querySelector('.palette-style-card[data-id="'+CSS.escape(target.id)+'"]');if(card)card.classList.add('advanced-insert-'+target.side);
+    const card=grid.querySelector('[data-id="'+CSS.escape(target.id)+'"]');if(card)card.classList.add('advanced-insert-'+target.side);
   }
   function finishAdvancedStyleDrag(event,cancelled){
     const state=advancedStyleDrag;if(!state||(event&&event.pointerId!==state.pointerId))return;
@@ -1158,11 +1192,11 @@
     if(state.captured&&state.source.hasPointerCapture&&state.source.hasPointerCapture(state.pointerId)){try{state.source.releasePointerCapture(state.pointerId);}catch(e){}}
     if(state.active){document.documentElement.style.userSelect=state.oldUserSelect;document.documentElement.style.cursor=state.oldCursor;}
     if(state.active&&!cancelled&&state.target){
-      const from=advancedStyles.findIndex(item=>!isAdvancedSeparator(item)&&item.id===state.id);
-      const over=advancedStyles.findIndex(item=>!isAdvancedSeparator(item)&&item.id===state.target.id);
+      const from=advancedStyles.findIndex(item=>item&&item.id===state.id);
+      const over=advancedStyles.findIndex(item=>item&&item.id===state.target.id);
       if(from>=0&&over>=0){
         const moved=advancedStyles.splice(from,1)[0];
-        let to=advancedStyles.findIndex(item=>!isAdvancedSeparator(item)&&item.id===state.target.id);
+        let to=advancedStyles.findIndex(item=>item&&item.id===state.target.id);
         if(state.target.side==='after')to++;
         advancedStyles.splice(Math.max(0,to),0,moved);
         render();persist();
@@ -1192,8 +1226,13 @@
     advancedStyles.forEach(style=>{
       if(isAdvancedSeparator(style)){
         const separator=document.createElement('div');
-        separator.className='palette-style-separator';
-        separator.setAttribute('aria-hidden','true');
+        separator.className='palette-style-separator advanced-palette-separator';
+        separator.dataset.id=style.id;
+        separator.setAttribute('role','separator');
+        separator.title='Separator';
+        separator.addEventListener('pointerdown',event=>beginAdvancedStyleDrag(event,style,separator));
+        separator.addEventListener('dragstart',event=>event.preventDefault());
+        separator.addEventListener('contextmenu',event=>{event.preventDefault();event.stopPropagation();if(advancedStyleDrag)finishAdvancedStyleDrag(null,true);showAdvancedSeparatorContextMenu(event.clientX,event.clientY,style);});
         grid.appendChild(separator);
         return;
       }
@@ -1944,7 +1983,16 @@
     persist();
   }
   function addTransparentSwatch(){insertItemAfterSelection(makeSwatch('#00000000'));}
-  function addSeparator(){insertItemAfterSelection(makeSeparator());}
+  function addAdvancedSeparator(){
+    const idx=activeAdvancedStyleId?advancedStyles.findIndex(item=>!isAdvancedSeparator(item)&&item.id===activeAdvancedStyleId):-1;
+    advancedStyles.splice(idx>=0?idx+1:advancedStyles.length,0,makeAdvancedSeparator());
+    render();
+    persist();
+  }
+  function addSeparator(){
+    if(activePaletteMode()==='advanced') addAdvancedSeparator();
+    else insertItemAfterSelection(makeSeparator());
+  }
   function applyCurrentColorToSelected(){
     const swatch=selectedSwatch();
     if(!swatch) return;
