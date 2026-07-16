@@ -14,6 +14,8 @@
   let selectedId=null;
   let dragState=null;
   let suppressClick=false;
+  let advancedStyleDrag=null;
+  let advancedStyleSuppressClick=false;
   let swatchSize=SWATCH_SIZE_DEFAULT;
   let savedScrollTop=0;
   let restoreScrollPending=false;
@@ -1057,6 +1059,91 @@
     menu.style.top=Math.min(y,window.innerHeight-menu.offsetHeight-8)+'px';
     setTimeout(()=>document.addEventListener('pointerdown',hideContextMenu,{once:true}),0);
   }
+  function clearAdvancedStyleInsert(){
+    document.querySelectorAll('.palette-style-card.advanced-insert-before,.palette-style-card.advanced-insert-after').forEach(card=>card.classList.remove('advanced-insert-before','advanced-insert-after'));
+  }
+  function advancedStyleDropTarget(clientX,clientY){
+    const grid=document.getElementById('palette-grid'),state=advancedStyleDrag;if(!grid||!state)return null;
+    const cards=Array.from(grid.querySelectorAll('.palette-style-card')).filter(card=>card.dataset.id!==state.id&&card.getClientRects().length);
+    if(!cards.length)return null;
+    let nearest=null,nearestDistance=Infinity;
+    cards.forEach(card=>{
+      const rect=card.getBoundingClientRect();
+      const dx=clientX<rect.left?rect.left-clientX:clientX>rect.right?clientX-rect.right:0;
+      const dy=clientY<rect.top?rect.top-clientY:clientY>rect.bottom?clientY-rect.bottom:0;
+      const distance=Math.hypot(dx,dy);
+      if(distance<nearestDistance){nearestDistance=distance;nearest=card;}
+    });
+    if(!nearest)return null;
+    const rect=nearest.getBoundingClientRect();
+    return {id:nearest.dataset.id,side:clientY<rect.top+rect.height/2?'before':'after'};
+  }
+  function updateAdvancedStyleDrag(event){
+    const state=advancedStyleDrag;if(!state||event.pointerId!==state.pointerId)return;
+    // Always preventDefault() immediately on every pointermove, BEFORE the
+    // activation-distance check (mirrors Normal Palette's onDragMove). Pen
+    // input needs this on the earliest movement or the browser's native
+    // gesture handling can claim the pointer sequence and fire a
+    // pointercancel before the drag ever activates.
+    event.preventDefault();
+    state.lastMove={clientX:event.clientX,clientY:event.clientY};
+    if(state.rafPending)return;
+    state.rafPending=true;
+    requestAnimationFrame(processAdvancedStyleDragMove);
+  }
+  function processAdvancedStyleDragMove(){
+    const state=advancedStyleDrag;if(!state||!state.lastMove)return;
+    state.rafPending=false;
+    const event=state.lastMove;
+    const distance=Math.hypot(event.clientX-state.startX,event.clientY-state.startY);
+    if(!state.active){
+      if(distance<5)return;
+      state.active=true;advancedStyleSuppressClick=true;state.source.classList.add('dragging');
+      state.oldUserSelect=document.documentElement.style.userSelect||'';state.oldCursor=document.documentElement.style.cursor||'';
+      document.documentElement.style.userSelect='none';document.documentElement.style.cursor='grabbing';
+      try{state.source.setPointerCapture(state.pointerId);state.captured=true;}catch(e){}
+    }
+    const target=advancedStyleDropTarget(event.clientX,event.clientY);if(!target)return;
+    state.target=target;clearAdvancedStyleInsert();
+    const card=document.querySelector('.palette-style-card[data-id="'+CSS.escape(target.id)+'"]');if(card)card.classList.add('advanced-insert-'+target.side);
+  }
+  function finishAdvancedStyleDrag(event,cancelled){
+    const state=advancedStyleDrag;if(!state||(event&&event.pointerId!==state.pointerId))return;
+    advancedStyleDrag=null;
+    document.removeEventListener('pointermove',updateAdvancedStyleDrag);
+    document.removeEventListener('pointerup',onAdvancedStylePointerUp);
+    document.removeEventListener('pointercancel',onAdvancedStylePointerCancel);
+    state.source.classList.remove('dragging');clearAdvancedStyleInsert();
+    if(state.captured&&state.source.hasPointerCapture&&state.source.hasPointerCapture(state.pointerId)){try{state.source.releasePointerCapture(state.pointerId);}catch(e){}}
+    if(state.active){document.documentElement.style.userSelect=state.oldUserSelect;document.documentElement.style.cursor=state.oldCursor;}
+    if(state.active&&!cancelled&&state.target){
+      const from=advancedStyles.findIndex(item=>!isAdvancedSeparator(item)&&item.id===state.id);
+      const over=advancedStyles.findIndex(item=>!isAdvancedSeparator(item)&&item.id===state.target.id);
+      if(from>=0&&over>=0){
+        const moved=advancedStyles.splice(from,1)[0];
+        let to=advancedStyles.findIndex(item=>!isAdvancedSeparator(item)&&item.id===state.target.id);
+        if(state.target.side==='after')to++;
+        advancedStyles.splice(Math.max(0,to),0,moved);
+        render();persist();
+      }
+    }
+    if(state.active)setTimeout(()=>{advancedStyleSuppressClick=false;},0);
+  }
+  function onAdvancedStylePointerUp(event){finishAdvancedStyleDrag(event,false);}
+  function onAdvancedStylePointerCancel(event){finishAdvancedStyleDrag(event,true);}
+  function beginAdvancedStyleDrag(event,style,card){
+    if(event.isPrimary===false||event.target.closest('input'))return;
+    if((event.pointerType||'mouse')==='mouse'&&event.button!==0)return;
+    if(advancedStyleDrag)finishAdvancedStyleDrag(null,true);
+    advancedStyleDrag={id:style.id,pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,source:card,active:false,captured:false,target:null,rafPending:false,lastMove:null};
+    document.addEventListener('pointermove',updateAdvancedStyleDrag,{passive:false});
+    document.addEventListener('pointerup',onAdvancedStylePointerUp);
+    document.addEventListener('pointercancel',onAdvancedStylePointerCancel);
+  }
+  // Safety net only (not a normal end-of-drag path): if the window loses
+  // focus entirely mid-drag (alt-tab, OS gesture, etc.) with no pointerup/
+  // pointercancel ever arriving, force-cancel so state can't get stuck.
+  window.addEventListener('blur',()=>{ if(advancedStyleDrag) finishAdvancedStyleDrag(null,true); });
   function renderAdvancedPalette(grid){
     syncAdvancedRefs();
     grid.classList.add('advanced-palette-grid');
@@ -1091,8 +1178,20 @@
       lock.className='palette-style-lock';
       lock.textContent=style.locked?'LOCK':'';
       card.append(preview,meta,lock);
-      card.addEventListener('click',()=>selectAdvancedStyle(style.id,true));
-      card.addEventListener('contextmenu',event=>{event.preventDefault();event.stopPropagation();activeAdvancedStyleId=style.id;advancedColorPanelStyleId=style.id;advancedColorPanelPaletteId=activePaletteId;render();showAdvancedStyleContextMenu(event.clientX,event.clientY,style);});
+      card.addEventListener('pointerdown',event=>beginAdvancedStyleDrag(event,style,card));
+      card.addEventListener('dragstart',event=>event.preventDefault());
+      // NOTE: deliberately no 'lostpointercapture' abort handler here. Pen/
+      // stylus drivers can transiently drop and re-acquire pointer capture
+      // mid-stroke (pressure-curve dips, digitizer sample batching, Windows
+      // Ink contact reporting, etc.) even while the pen is still actively
+      // dragging. Treating that as a hard-cancel — which this handler used
+      // to do — silently killed every pen-driven reorder before pointerup
+      // ever fired. Normal Palette's swatch drag has no such listener and
+      // relies solely on document-level pointerup/pointercancel to end a
+      // drag, which is reliable for both mouse and pen; Advanced Palette now
+      // matches that.
+      card.addEventListener('click',event=>{if(advancedStyleSuppressClick){event.preventDefault();return;}selectAdvancedStyle(style.id,true);});
+      card.addEventListener('contextmenu',event=>{event.preventDefault();event.stopPropagation();if(advancedStyleDrag)finishAdvancedStyleDrag(null,true);activeAdvancedStyleId=style.id;advancedColorPanelStyleId=style.id;advancedColorPanelPaletteId=activePaletteId;render();showAdvancedStyleContextMenu(event.clientX,event.clientY,style);});
       grid.appendChild(card);
     });
     const add=document.createElement('button');
