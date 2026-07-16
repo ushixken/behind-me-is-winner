@@ -587,7 +587,7 @@ function syncColorPanelInputs(){
   setFromHex(currentEditColor());
   syncColorPanelSwatches();
 }
-window.setForegroundColorFromPalette=function(hex,openPicker){
+window.setForegroundColorFromPalette=function(hex,openPicker,skipPaletteRender){
   colorTarget='fg';
   setFromHex(hex);
   if(openPicker){
@@ -595,7 +595,7 @@ window.setForegroundColorFromPalette=function(hex,openPicker){
     if(typeof FloatPanels!=='undefined'&&FloatPanels.setVisible) FloatPanels.setVisible('color',true);
     if(panel&&typeof FloatPanels!=='undefined'&&FloatPanels.bringToFront) FloatPanels.bringToFront(panel);
   }
-  if(window.PaletteDocker&&typeof window.PaletteDocker.renderCurrentColors==='function') window.PaletteDocker.renderCurrentColors();
+  if(!skipPaletteRender&&window.PaletteDocker&&typeof window.PaletteDocker.renderCurrentColors==='function') window.PaletteDocker.renderCurrentColors();
 };
 
 // ── Slider / number input interaction ──

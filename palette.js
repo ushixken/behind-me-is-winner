@@ -39,6 +39,7 @@
   let toolbarSubmenuOpen=false;
   let isSyncingColorPanel=false;
   let advancedColorFrame=null;
+  let advancedSelectionPersistTimer=null;
   const pendingAdvancedColorStyleIds=new Set();
   const defaultHexes=['#000000','#ffffff','#f23636','#ff9f1c','#ffd23f','#2ec4b6','#3a86ff','#8338ec'];
   function makeAdvancedStyle(rgba,id,name){
@@ -346,13 +347,13 @@
     if(saved&&(Array.isArray(saved.swatches)||Array.isArray(saved.palettes))){load(saved);return;}
     load(createDefaultPaletteState());
   }
-  function setForeground(hex,openPicker){
+  function setForeground(hex,openPicker,skipPaletteRender){
     const safeHex=normalizeHex(hex);
     if(isTransparentHex(safeHex)) return;
     if(typeof window.setForegroundColorFromPalette==='function'){
       const wasSyncing=isSyncingColorPanel;
       isSyncingColorPanel=true;
-      try{window.setForegroundColorFromPalette(safeHex,!!openPicker);}finally{isSyncingColorPanel=wasSyncing;}
+      try{window.setForegroundColorFromPalette(safeHex,!!openPicker,!!skipPaletteRender);}finally{isSyncingColorPanel=wasSyncing;}
     }
     else {
       color=displayHex(safeHex);
@@ -437,7 +438,7 @@
         }
         btn.addEventListener('click',event=>{
           event.preventDefault();
-          selectAdvancedStyle(style.id,true,toolbarPaletteAttachment.paletteId);
+          selectStyle(style.id,true,toolbarPaletteAttachment.paletteId);
         });
         strip.appendChild(btn);
       });
@@ -900,17 +901,29 @@
   function syncAdvancedStyleToColorPanel(style){
     if(!style) return;
     isSyncingColorPanel=true;
-    try{setForeground(styleHex(style),false);}finally{isSyncingColorPanel=false;}
+    try{setForeground(styleHex(style),false,true);}finally{isSyncingColorPanel=false;}
   }
-  function selectAdvancedStyle(id,setBrush,paletteId){
+  function scheduleAdvancedSelectionPersist(){
+    if(advancedSelectionPersistTimer!==null) clearTimeout(advancedSelectionPersistTimer);
+    advancedSelectionPersistTimer=setTimeout(()=>{
+      advancedSelectionPersistTimer=null;
+      persist();
+    },120);
+  }
+  function selectStyle(id,setBrush,paletteId){
     const style=advancedStyles.find(s=>!isAdvancedSeparator(s)&&s.id===id);
     if(!style) return;
+    const selectionChanged=activeAdvancedStyleId!==style.id;
+    const grid=document.getElementById('palette-grid');
+    const previous=grid&&grid.querySelector('.palette-style-card.selected');
+    const next=grid&&grid.querySelector('.palette-style-card[data-id="'+CSS.escape(style.id)+'"]');
     activeAdvancedStyleId=style.id;
     advancedColorPanelStyleId=style.id;
     advancedColorPanelPaletteId=paletteId||activePaletteId;
+    if(previous&&previous!==next) previous.classList.remove('selected');
+    if(next) next.classList.add('selected');
     if(setBrush!==false) syncAdvancedStyleToColorPanel(style);
-    render();
-    persist();
+    if(selectionChanged) scheduleAdvancedSelectionPersist();
   }
   function createAdvancedStyle(){
     syncAdvancedRefs();
@@ -956,42 +969,32 @@
     queueAdvancedStyleColorChange(style.id);
     return true;
   }
-  function requestAdvancedStyleRename(style){
-    return new Promise(resolve=>{
-      const existing=document.getElementById('modal-advanced-style-rename');
-      if(existing) existing.remove();
-      const overlay=document.createElement('div');
-      overlay.id='modal-advanced-style-rename';
-      overlay.className='modal-overlay visible';
-      overlay.innerHTML='<div class="modal palette-rename-style-modal" role="dialog" aria-modal="true" aria-labelledby="advanced-style-rename-title"><h2 id="advanced-style-rename-title">Rename Style</h2><div class="modal-row"><label for="advanced-style-rename-input">Style name</label><input id="advanced-style-rename-input" type="text" /></div><div class="modal-actions"><button class="modal-btn" id="advanced-style-rename-cancel" type="button">Cancel</button><button class="modal-btn primary" id="advanced-style-rename-ok" type="button">OK</button></div></div>';
-      document.body.appendChild(overlay);
-      const input=overlay.querySelector('#advanced-style-rename-input');
-      const ok=overlay.querySelector('#advanced-style-rename-ok');
-      const cancel=overlay.querySelector('#advanced-style-rename-cancel');
-      let done=false;
-      const close=value=>{
-        if(done) return;
-        done=true;
-        document.removeEventListener('keydown',onKey,true);
-        overlay.remove();
-        resolve(value);
-      };
-      const submit=()=>{
-        const clean=String(input.value||'').trim();
-        if(!clean){input.value=style.name||'';input.select();return;}
-        close(clean);
-      };
-      const onKey=event=>{
-        if(event.key==='Escape'){event.preventDefault();close(null);}
-        else if(event.key==='Enter'){event.preventDefault();submit();}
-      };
-      ok.addEventListener('click',submit);
-      cancel.addEventListener('click',()=>close(null));
-      overlay.addEventListener('pointerdown',event=>{if(event.target===overlay) close(null);});
-      document.addEventListener('keydown',onKey,true);
-      input.value=style.name||'';
-      requestAnimationFrame(()=>{input.focus();input.select();});
+  function startInlineAdvancedStyleRename(style){
+    const target=findAdvancedStyleById(style&&style.id);if(!target)return;
+    const grid=document.getElementById('palette-grid');
+    const card=grid&&grid.querySelector('.palette-style-card[data-id="'+CSS.escape(target.id)+'"]');
+    const label=card&&card.querySelector('.palette-style-name');if(!card||!label)return;
+    const previous=target.name||'';
+    const input=document.createElement('input');input.type='text';input.className='palette-style-name-input';input.value=previous;
+    label.replaceWith(input);card.classList.add('renaming');
+    let done=false;
+    const finish=commit=>{
+      if(done)return;done=true;document.removeEventListener('pointerdown',onOutside,true);
+      const clean=String(input.value||'').trim();
+      if(commit&&clean)target.name=clean;
+      render();
+      if(commit&&clean&&clean!==previous)persist();
+    };
+    const onOutside=event=>{if(!input.contains(event.target))finish(true);};
+    input.addEventListener('pointerdown',event=>event.stopPropagation());
+    input.addEventListener('click',event=>event.stopPropagation());
+    input.addEventListener('dblclick',event=>event.stopPropagation());
+    input.addEventListener('keydown',event=>{
+      if(event.key==='Enter'){event.preventDefault();event.stopPropagation();finish(true);}
+      else if(event.key==='Escape'){event.preventDefault();event.stopPropagation();finish(false);}
     });
+    input.addEventListener('blur',()=>finish(true),{once:true});
+    requestAnimationFrame(()=>{if(done)return;document.addEventListener('pointerdown',onOutside,true);input.focus();input.select();});
   }
   function editAdvancedStyle(style){
     const target=findAdvancedStyleById(style&&style.id);
@@ -1003,16 +1006,7 @@
       refreshAdvancedStyleChange(stored,true);
     });
   }
-  async function renameAdvancedStyle(style){
-    const target=findAdvancedStyleById(style&&style.id);
-    if(!target) return;
-    const clean=await requestAdvancedStyleRename(target);
-    if(!clean) return;
-    const stored=findAdvancedStyleById(target.id);
-    if(!stored) return;
-    stored.name=clean;
-    refreshAdvancedStyleChange(stored,false);
-  }
+  function renameAdvancedStyle(style){startInlineAdvancedStyleRename(style);}
   function duplicateAdvancedStyle(style){
     if(!style) return;
     const copy=makeAdvancedStyle(style.rgba,null,nextAdvancedStyleName());
@@ -1103,9 +1097,20 @@
       document.documentElement.style.userSelect='none';document.documentElement.style.cursor='grabbing';
       try{state.source.setPointerCapture(state.pointerId);state.captured=true;}catch(e){}
     }
-    const target=advancedStyleDropTarget(event.clientX,event.clientY);if(!target)return;
+    const grid=document.getElementById('palette-grid');
+    const gridRect=grid&&grid.getBoundingClientRect();
+    if(!gridRect||event.clientX<gridRect.left||event.clientX>gridRect.right||event.clientY<gridRect.top||event.clientY>gridRect.bottom){
+      clearAdvancedStyleInsert();
+      return;
+    }
+    const target=advancedStyleDropTarget(event.clientX,event.clientY);if(!target){clearAdvancedStyleInsert();return;}
+    if(state.target&&state.target.id===target.id&&state.target.side!==target.side){
+      const targetCard=grid.querySelector('.palette-style-card[data-id="'+CSS.escape(target.id)+'"]');
+      const rect=targetCard&&targetCard.getBoundingClientRect();
+      if(rect&&Math.abs(event.clientY-(rect.top+rect.height/2))<2) target.side=state.target.side;
+    }
     state.target=target;clearAdvancedStyleInsert();
-    const card=document.querySelector('.palette-style-card[data-id="'+CSS.escape(target.id)+'"]');if(card)card.classList.add('advanced-insert-'+target.side);
+    const card=grid.querySelector('.palette-style-card[data-id="'+CSS.escape(target.id)+'"]');if(card)card.classList.add('advanced-insert-'+target.side);
   }
   function finishAdvancedStyleDrag(event,cancelled){
     const state=advancedStyleDrag;if(!state||(event&&event.pointerId!==state.pointerId))return;
@@ -1170,10 +1175,7 @@
       const name=document.createElement('span');
       name.className='palette-style-name';
       name.textContent=style.name||style.id;
-      const id=document.createElement('span');
-      id.className='palette-style-id';
-      id.textContent=style.id;
-      meta.append(name,id);
+      meta.append(name);
       const lock=document.createElement('span');
       lock.className='palette-style-lock';
       lock.textContent=style.locked?'LOCK':'';
@@ -1190,7 +1192,15 @@
       // relies solely on document-level pointerup/pointercancel to end a
       // drag, which is reliable for both mouse and pen; Advanced Palette now
       // matches that.
-      card.addEventListener('click',event=>{if(advancedStyleSuppressClick){event.preventDefault();return;}selectAdvancedStyle(style.id,true);});
+      card.addEventListener('click',event=>{
+        if(advancedStyleSuppressClick){event.preventDefault();return;}
+        if(event.target.closest('.palette-style-name-input'))return;
+        selectStyle(style.id,true);
+      });
+      name.addEventListener('dblclick',event=>{
+        event.preventDefault();event.stopPropagation();
+        startInlineAdvancedStyleRename(style);
+      });
       card.addEventListener('contextmenu',event=>{event.preventDefault();event.stopPropagation();if(advancedStyleDrag)finishAdvancedStyleDrag(null,true);activeAdvancedStyleId=style.id;advancedColorPanelStyleId=style.id;advancedColorPanelPaletteId=activePaletteId;render();showAdvancedStyleContextMenu(event.clientX,event.clientY,style);});
       grid.appendChild(card);
     });
