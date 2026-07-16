@@ -20,7 +20,7 @@ function deleteLayer(idx){
 }
 function _doDeleteLayer(idx){
   layers.splice(idx,1);
-  if(layers.length===0) layers.push({name:'Layer 1',visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},indexFrames:{},indexMeta:{},type:'bitmap',opacity:1,stencil:'none',clipTo:null,groupId:null});
+  if(layers.length===0) layers.push(makeBlankLayer('bitmap'));
   if(curLayer>=layers.length) curLayer=layers.length-1;
   if(curLayer<0) curLayer=0;
   selectedLayerIndices.clear();
@@ -104,7 +104,7 @@ document.getElementById('del-bulk-ok').onclick=()=>{
   }
   _pendingDeleteAllLayers=false;
   // If every layer was removed, create a fresh blank layer so the project always has at least one.
-  if(layers.length===0) layers.push({name:'Layer 1',visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},indexFrames:{},indexMeta:{},type:'bitmap',opacity:1,stencil:'none',clipTo:null,groupId:null});
+  if(layers.length===0) layers.push(makeBlankLayer('bitmap'));
   if(curLayer>=layers.length) curLayer=layers.length-1;
   if(curLayer<0) curLayer=0;
   selectedLayerIndices.clear();
@@ -127,8 +127,8 @@ document.getElementById('del-group-ok').onclick=()=>{
   if(mode==='with-children'){
     // Remove this group, every nested subgroup, and all of their layers
     layers=layers.filter(l=>!(l.groupId&&idSet.has(l.groupId)));
-    // If no layers remain, add a blank Layer 1
-    if(layers.length===0) layers.push({name:'Layer 1',visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},indexFrames:{},indexMeta:{},type:'bitmap',opacity:1,stencil:'none',clipTo:null,groupId:null});
+    // If no layers remain, add a blank raster layer
+    if(layers.length===0) layers.push(makeBlankLayer('bitmap'));
     if(curLayer>=layers.length) curLayer=Math.max(0,layers.length-1);
     selectedLayerIndices.clear();
     // Stencil/clip always targets the item immediately below in visual order.
@@ -408,7 +408,8 @@ document.getElementById('modal-new-project').addEventListener('click',e=>{if(e.t
 document.getElementById('modal-new-project-ok').onclick=()=>{
   document.getElementById('modal-new-project').classList.remove('visible');
   groups=[];
-  layers=[{name:'Layer 1',visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},indexFrames:{},indexMeta:{},type:'bitmap',opacity:1,stencil:'none',clipTo:null,groupId:null}];
+  layers=[];
+  layers.push(makeBlankLayer('bitmap'));
   curLayer=0;curFrame=0;
   undoStack=[];redoStack=[];
   selectedFrames.clear();selectedFrames.add(0);selectedKFs.clear();

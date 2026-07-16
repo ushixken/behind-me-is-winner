@@ -2428,7 +2428,7 @@ function startAddLayerDrag(downEv){
     }
     if(layerDropTarget.idx!=null){
       saveActiveToKey();
-      const newLayer={name:'Layer '+(layers.length+1),visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},indexFrames:{},indexMeta:{},type:'bitmap',opacity:1,stencil:'none',clipTo:null,groupId:null};
+      const newLayer=makeBlankLayer('bitmap');
       const flatFull=_buildFlatDisplayItemsAll();
       let insertSlot,joinGroupId=null;
       if(layerDropTarget.isGroup&&layerDropTarget.dropMode==='into'){
@@ -2874,7 +2874,7 @@ function showGroupOpacityPopup(grp,cx,cy){
 function _doAddLayer(placement,layerType){
   const type=layerType==='smart-raster'?'smart-raster':'bitmap';
   saveActiveToKey();
-  const newLayer={name:'Layer '+(layers.length+1),visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},indexFrames:{},indexMeta:{},type,opacity:1,stencil:'none',clipTo:null,groupId:null};
+  const newLayer=makeBlankLayer(type);
   let insertAt=layers.length;
   let targetGroupId=null;
 
@@ -3011,7 +3011,7 @@ function _insertGroupInsideGroup(targetGroupId){
   const id=makeGroupId();
   const name='Group '+(groups.length+1);
   groups.push({id,name,visible:true,collapsed:false,opacity:1,color:'transparent',stencil:'none',clipToGroup:null,parentId:targetGroupId});
-  const newLayer={name:'Layer '+(layers.length+1),visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},indexFrames:{},indexMeta:{},type:'bitmap',opacity:1,stencil:'none',clipTo:null,groupId:id};
+  const newLayer=makeBlankLayer('bitmap',{groupId:id});
   let topIdx=-1;
   layers.forEach((l,i)=>{if(l.groupId===targetGroupId&&i>topIdx) topIdx=i;});
   const insertAt=topIdx>=0?topIdx+1:layers.length;

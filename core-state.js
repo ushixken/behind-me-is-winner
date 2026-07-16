@@ -137,6 +137,30 @@ function setDrawingMark(li, fi, markType) {
 // Layer object shape: {name, visible, onTimeline, color, frames, opacity(0-1), stencil('none'|'inside'|'outside'), clipTo(layerIdx|null), groupId(string|null)}
 // Group object shape: {id, name, visible, collapsed, opacity(0-1), color, parentId(string|null — id of the group this group is nested inside, null = top level)}
 let groups=[];
+function defaultLayerNameForType(layerType){
+  const type=layerType==='smart-raster'?'smart-raster':'bitmap';
+  const label=type==='smart-raster'?'Smart Raster Layer':'Layer';
+  const count=layers.filter(l=>(l.type||'bitmap')===type).length;
+  return label+' '+(count+1);
+}
+function makeBlankLayer(layerType,extra){
+  const type=layerType==='smart-raster'?'smart-raster':'bitmap';
+  return Object.assign({
+    name:defaultLayerNameForType(type),
+    visible:true,
+    onTimeline:true,
+    color:'transparent',
+    frames:{},
+    frameMeta:{},
+    indexFrames:{},
+    indexMeta:{},
+    type,
+    opacity:1,
+    stencil:'none',
+    clipTo:null,
+    groupId:null
+  },extra||{});
+}
 let layers=[{name:'Layer 1',visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},indexFrames:{},indexMeta:{},type:'bitmap',opacity:1,stencil:'none',clipTo:null,groupId:null}];
 
 // Zoom / Pan / Rotate — stored in canvas-area coordinate space
