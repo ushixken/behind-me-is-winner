@@ -792,6 +792,12 @@ const FloatPanels=(function(){
         if(dockSize.tools!==fitH){ dockSize.tools=fitH; renderSide(side); return; }
       }
     }
+    // Exterior gutters use viewport coordinates, so reposition every column
+    // handle after this side's widths and offsets have settled.
+    dockOrder[side].forEach(key=>{
+      const panel=panelByKey(key);
+      if(panel) _syncDockResizeHandle(panel);
+    });
   }
 
   function applyDock(panel,side,atIndex){
@@ -1086,11 +1092,11 @@ const FloatPanels=(function(){
     else if(typeof centerCanvas==='function') requestAnimationFrame(centerCanvas);
   }
 
-  // ── Docked-state resize (single inner-edge handle, one per panel) ─
+  // ── Docked-state resize (one exterior gutter per dock column) ──
   // Writes ONLY to dockSize[key] — never reads offsetWidth/Height back
   // to decide the next frame's size, so repeated drags can't drift.
   function bindDockResize(panel,rh){
-    let resizing=false,startPx=0,startSize=0,side=null,hostKey=null;
+    let resizing=false,startPx=0,startSize=0,side=null,hostKey=null,activePointerId=null;
     rh.addEventListener('pointerdown',e=>{
       e.preventDefault();e.stopPropagation();
       const ownKey=panel.dataset.panel;
@@ -1101,7 +1107,8 @@ const FloatPanels=(function(){
       hostKey=_splitHostOf(ownKey)||ownKey;
       side=['left','right','top','bottom'].find(s=>dockOrder[s].includes(hostKey));
       if(!side) return;
-      resizing=true;rh.setPointerCapture(e.pointerId);rh.classList.add('dragging');
+      resizing=true;activePointerId=e.pointerId;
+      rh.setPointerCapture(e.pointerId);rh.classList.add('dragging');
       startPx=(side==='left'||side==='right')?e.clientX:e.clientY;
       startSize=dockSize[hostKey];
     });
@@ -1117,11 +1124,16 @@ const FloatPanels=(function(){
     });
     function endResize(){
       if(!resizing) return;
-      resizing=false;rh.classList.remove('dragging');
+      const pointerId=activePointerId;
+      resizing=false;activePointerId=null;rh.classList.remove('dragging');
+      if(pointerId!=null&&rh.hasPointerCapture&&rh.hasPointerCapture(pointerId)){
+        rh.releasePointerCapture(pointerId);
+      }
       _saveLayout();
     }
     rh.addEventListener('pointerup',endResize);
     rh.addEventListener('pointercancel',endResize);
+    rh.addEventListener('lostpointercapture',endResize);
     // Safety net: if pointer capture gets stolen or released elsewhere
     // (e.g. by another drag's global pointer relay, such as the timeline
     // scrubber) the handle's own pointerup may never fire, leaving
@@ -1205,14 +1217,29 @@ const FloatPanels=(function(){
     const rh=panel._dockResizeEl;
     if(!rh) return;
     const key=panel.dataset.panel;
-    // Show dock resize handle for both host panels AND split children — the
-    // child's handle now resolves to the host's dockSize at drag time (see
-    // bindDockResize), so dragging the child's inner edge resizes the whole
-    // shared column, exactly like dragging the host's edge does.
-    const isDocked=panelMode[key]==='docked'&&!hiddenState[key];
-    rh.style.display=isDocked?'block':'none';
-  }
+    const hostKey=_stackHostOf(key);
+    const side=_dockSideOf(hostKey);
+    // A stack owns exactly one column-width gutter. Split children must not
+    // create overlapping resize strips beside their individual scrollbars.
+    const isSharedHost=key===hostKey&&panelMode[key]==='docked'&&!hiddenState[key]&&!!side;
+    if(!isSharedHost){ rh.style.display='none'; return; }
 
+    const car=canvasArea.getBoundingClientRect();
+    let left,top,width,height,cursor;
+    if(side==='left'||side==='right'){
+      const layout=_stackLayout(hostKey);
+      top=car.top;height=car.height;width=6;cursor='col-resize';
+      // Keep the complete hit area on the workspace side of the boundary.
+      if(side==='left') left=Math.ceil(layout?layout.right:panel.getBoundingClientRect().right);
+      else left=Math.floor(layout?layout.left:panel.getBoundingClientRect().left)-width;
+    }else{
+      const rect=panel.getBoundingClientRect();
+      left=rect.left;width=rect.width;height=6;cursor='row-resize';
+      top=side==='top'?Math.ceil(rect.bottom):Math.floor(rect.top)-height;
+    }
+    rh.dataset.dockSide=side;
+    rh.style.cssText=`display:block;position:fixed;left:${left}px;top:${top}px;width:${width}px;height:${height}px;cursor:${cursor};z-index:9999;background:transparent;touch-action:none;`;
+  }
   // ── Split resize handles (between a host and each child in a vertical stack) ──
   // Each handle is a fixed-positioned element that sits at the seam between
   // the host panel and a child. It's stored on the child: child._splitResizeEl
@@ -1487,7 +1514,9 @@ const FloatPanels=(function(){
       const rh=document.createElement('div');
       rh.className='fp-dock-resize';
       rh.style.display='none';
-      panel.appendChild(rh);
+      // Top-level placement prevents the resize gutter from covering panel
+      // content or being clipped by a scrolling panel body.
+      document.body.appendChild(rh);
       panel._dockResizeEl=rh;
       bindDockResize(panel,rh);
       bindFloatingResize(panel);

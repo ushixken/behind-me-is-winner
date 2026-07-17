@@ -636,27 +636,27 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 .fp-float-resize-bottom::after{left:0;right:0;bottom:0;height:2px;}
 .fp-float-resize.dragging::after{opacity:1;}
 
-/* â”€â”€ DOCK RESIZE HANDLE (inner edge of a docked panel) â”€â”€â”€ */
-/* Each handle sits flush against the inner (canvas-facing) edge of its panel,
-   fully inside the panel bounds so no overflow/clipping issues.
-   z-index:9999 ensures it is above the canvas layers. */
+/* External dock-column resize gutter. The complete hit area is outside the
+   panel DOM, leaving headers, controls, content, and scrollbars untouched. */
 .fp-dock-resize{
-  position:absolute;z-index:9999;background:transparent;
+  position:fixed;z-index:9999;background:transparent;
   touch-action:none;-ms-touch-action:none;
 }
-.dock-left > .fp-dock-resize{
-  top:0;right:0;width:8px;height:100%;cursor:ew-resize;
+.fp-dock-resize::after{
+  content:"";position:absolute;background:var(--border2);pointer-events:none;
 }
-.dock-right > .fp-dock-resize{
-  top:0;left:0;width:8px;height:100%;cursor:ew-resize;
+.fp-dock-resize[data-dock-side="left"]::after{
+  left:0;top:0;bottom:0;width:1px;
 }
-.dock-top > .fp-dock-resize{
-  left:0;bottom:0;width:100%;height:8px;cursor:ns-resize;
+.fp-dock-resize[data-dock-side="right"]::after{
+  right:0;top:0;bottom:0;width:1px;
 }
-.dock-bottom > .fp-dock-resize{
-  left:0;top:0;width:100%;height:8px;cursor:ns-resize;
+.fp-dock-resize[data-dock-side="top"]::after{
+  left:0;right:0;top:0;height:1px;
 }
-
+.fp-dock-resize[data-dock-side="bottom"]::after{
+  left:0;right:0;bottom:0;height:1px;
+}
 /* Tools panel contents */
 #tools-panel-body{display:flex;flex-direction:row;flex-wrap:wrap;gap:3px;padding:4px;align-content:flex-start;}
 #tools-panel-body .tbtn{flex:0 0 30px;width:30px;height:30px;justify-content:center;padding:0;}
