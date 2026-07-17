@@ -2,11 +2,16 @@
   'use strict';
   const STORAGE_KEY='animate.toolGroups.v1';
   const DRAWER_STORAGE_KEY='animate.toolGroupDrawers.v1';
+  const SELECTION_SETTINGS_STORAGE_KEY='animate.selectionToolSettings.v1';
   const groups=new Map();
   let activeGroupId=null,activating=false;
   let saved={},drawerSaved={};
+  let selectionSettingsSaved={};
+  let magicWandAdvancedOpen=false;
   try{saved=JSON.parse(localStorage.getItem(STORAGE_KEY)||'{}')||{};}catch(_){saved={};}
   try{drawerSaved=JSON.parse(localStorage.getItem(DRAWER_STORAGE_KEY)||'{}')||{};}catch(_){drawerSaved={};}
+  try{selectionSettingsSaved=JSON.parse(localStorage.getItem(SELECTION_SETTINGS_STORAGE_KEY)||'{}')||{};}catch(_){selectionSettingsSaved={};}
+  try{magicWandAdvancedOpen=localStorage.getItem('animate.magicWandAdvancedExpanded.v1')==='true';}catch(_){magicWandAdvancedOpen=false;}
 
   function registerGroup(definition){
     if(!definition||!definition.id||!Array.isArray(definition.subTools))throw new Error('Invalid tool group');
@@ -64,7 +69,7 @@
   function renderGeneric(group){
     const body=ensureGenericBody();if(!body)return;const list=body.querySelector('.tool-group-list');list.replaceChildren();
     const duplicateHeader=body.querySelector('.tool-group-actions');if(duplicateHeader)duplicateHeader.remove();
-    const optionsContent=body.querySelector('.tool-options-drawer-content');if(optionsContent)optionsContent.replaceChildren();
+    const optionsContent=body.querySelector('.tool-options-drawer-content');if(optionsContent&&group.id!=='selection')optionsContent.replaceChildren();
     let currentSection=null;
     group.subTools.forEach(subTool=>{
       if(subTool.section&&subTool.section!==currentSection){currentSection=subTool.section;const header=document.createElement('div');header.className='tool-group-section-header';header.textContent=currentSection;list.appendChild(header);}
@@ -107,6 +112,7 @@
     const group=getGroup(groupId),subTool=getSubTool(group,subToolId);if(!group||!subToolIsAvailable(subTool))return false;
     if(groupId==='selection'&&subTool.id!=='style-select')group.lastValidSubToolId=subTool.id;
     activeGroupId=groupId;group.activeSubToolId=subTool.id;persist();
+    if(groupId==='selection')restoreSelectionToolContext(subTool);
     activating=true;try{if(typeof subTool.activate==='function')subTool.activate(options||{});}finally{activating=false;}
     // setTool() still contains the legacy Brush/Transform body switch. Run
     // the registry's authoritative switch afterwards so exactly one dock
@@ -137,38 +143,76 @@
     body.appendChild(section);
   }
 
-  function renderSelectionOptions(body,group,activeSubTool){
-    const layout=document.createElement('div');layout.className='tool-group-inline-options selection-options-layout';
-    const scopeSection=document.createElement('section');scopeSection.className='selection-option-section';
-    const scopeLabel=document.createElement('div');scopeLabel.className='selection-option-label';scopeLabel.textContent='Selection Scope';scopeSection.appendChild(scopeLabel);
-    const segments=document.createElement('div');segments.className='ts-pill-row selection-scope-segments';segments.setAttribute('role','group');segments.setAttribute('aria-label','Selection Scope');
-    [['all','All'],['inside','Inside'],['outside','Outside']].forEach(([mode,text])=>{const button=document.createElement('button');button.type='button';button.className='ts-pill';button.textContent=text;const active=(window.SelectionScope?SelectionScope.get():'all')===mode;button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));button.onclick=()=>{if(window.SelectionScope)SelectionScope.set(mode);segments.querySelectorAll('.ts-pill').forEach(item=>{const selected=item===button;item.classList.toggle('active',selected);item.setAttribute('aria-pressed',String(selected));});};segments.appendChild(button);});
-    scopeSection.appendChild(segments);layout.appendChild(scopeSection);
-    if(activeSubTool&&activeSubTool.id==='magic-wand'&&window.MagicWandSelection){
-      const settings=MagicWandSelection.getSettings(),wandSection=document.createElement('section');wandSection.className='selection-option-section magic-wand-option-section';
-      const heading=document.createElement('div');heading.className='selection-options-subheading';heading.textContent='Magic Wand Options';wandSection.appendChild(heading);
-      function controlGroup(){const group=document.createElement('div');group.className='magic-wand-control-group';wandSection.appendChild(group);return group;}
-      function selectField(parent,labelText,key,items,tooltip){const field=document.createElement('label');field.className='selection-option-field';field.title=tooltip;const label=document.createElement('span');label.className='selection-option-label';label.textContent=labelText;const select=document.createElement('select');select.className='ts-select magic-wand-select';select.title=tooltip;items.forEach(([value,text])=>{const option=document.createElement('option');option.value=value;option.textContent=text;select.appendChild(option);});select.value=settings[key];select.onchange=()=>MagicWandSelection.updateSettings({[key]:select.value});field.append(label,select);parent.appendChild(field);}
-      function rangeField(parent,labelText,key,min,max,id,tooltip){const field=document.createElement('div');field.className='selection-option-field';field.title=tooltip;const label=document.createElement('label');label.className='selection-option-label';label.textContent=labelText;label.htmlFor=id;label.title=tooltip;const controls=document.createElement('div');controls.className='magic-wand-range-controls';const range=document.createElement('input');range.type='range';range.className='ts-range';range.min=min;range.max=max;range.step=1;range.value=settings[key];range.id=id;range.title=tooltip;const value=document.createElement('output');value.className='ts-num magic-wand-range-value';value.setAttribute('for',id);value.textContent=settings[key];range.oninput=()=>{value.textContent=range.value;MagicWandSelection.updateSettings({[key]:+range.value});};controls.append(range,value);field.append(label,controls);parent.appendChild(field);}
-      function checkbox(parent,labelText,key,tooltip,disabled,status){const row=document.createElement('label');row.className='magic-wand-checkbox-row'+(disabled?' disabled':'');row.title=tooltip||'';const input=document.createElement('input');input.type='checkbox';input.className='ts-check';input.checked=!!settings[key];input.disabled=!!disabled;input.onchange=()=>MagicWandSelection.updateSettings({[key]:input.checked});const text=document.createElement('span');text.textContent=labelText;row.append(input,text);if(status){const badge=document.createElement('span');badge.className='magic-wand-option-status';badge.textContent=status;row.appendChild(badge);}parent.appendChild(row);}
-      const combineGroup=controlGroup();
-      selectField(combineGroup,'Selection Combine','combine',[['replace','Replace'],['add','Add'],['subtract','Subtract'],['intersect','Intersect']],'How this selection is merged with the current selection.');
-      const colorGroup=controlGroup();
-      rangeField(colorGroup,'Color Range','tolerance',0,255,'magic-wand-color-range','Higher values include more similar colors.');
-      checkbox(colorGroup,'Connected Region Only','contiguous','Only selects pixels connected to the clicked area.');
-      const edgeGroup=controlGroup();
-      rangeField(edgeGroup,'Edge Expansion','edgeExpansion',-20,20,'magic-wand-edge-expansion','Expands or contracts the resulting selection after it is created.');
-      checkbox(edgeGroup,'Gap Bridging','gapBridging','Treats small openings in line art as closed while searching.');
-      rangeField(edgeGroup,'Gap Width','gapWidth',1,10,'magic-wand-gap-width','Maximum opening size that Gap Bridging will ignore.');
-      const sampleGroup=controlGroup();
-      selectField(sampleGroup,'Sampling Source','sample',[['current','Current Layer'],['all','All Visible Layers']],'Choose which layers are sampled when creating the selection.');
-      checkbox(sampleGroup,'Include Transparency','includeAlpha','Includes transparency when comparing colors.');
-      checkbox(sampleGroup,'Smooth Boundary','antiAlias','Creates smoother selection edges.');
-      checkbox(sampleGroup,'Sample Referenced Layers','referencedLayers','Reference layers are not available yet.',true,'Coming Soon');layout.appendChild(wandSection);
-    }
-    body.appendChild(layout);
+  function selectionSettingsFor(subTool){
+    const definition=subTool&&subTool.selectionSettings,defaults=definition&&definition.defaults||{},savedState=selectionSettingsSaved[subTool&&subTool.id]||{};
+    return Object.assign({},defaults,savedState);
   }
-
+  function updateSelectionSetting(subTool,key,value){
+    if(!subTool||!subTool.selectionSettings)return;
+    const next=Object.assign({},selectionSettingsSaved[subTool.id]||{}, {[key]:value});selectionSettingsSaved[subTool.id]=next;
+    try{localStorage.setItem(SELECTION_SETTINGS_STORAGE_KEY,JSON.stringify(selectionSettingsSaved));}catch(_){}
+  }
+  function restoreSelectionToolContext(subTool){
+    if(!subTool||!subTool.selectionSettings||!subTool.selectionSettings.defaults||!Object.prototype.hasOwnProperty.call(subTool.selectionSettings.defaults,'scope'))return;
+    const state=selectionSettingsFor(subTool);if(window.SelectionScope)SelectionScope.set(state.scope||'all');
+  }
+  function selectionModeForEvent(toolId,event){
+    const group=getGroup('selection'),subTool=getSubTool(group,toolId);
+    if((event.shiftKey||event.altKey)&&window.PixelSelection)return PixelSelection.modeFromEvent(event);
+    const state=selectionSettingsFor(subTool);return ['replace','add','subtract','intersect'].includes(state.combine)?state.combine:'replace';
+  }
+  function ensureSelectionOptionsHost(body){
+    let layout=body.querySelector('.selection-options-layout');
+    if(!layout){layout=document.createElement('div');layout.className='tool-group-inline-options selection-options-layout';body.replaceChildren(layout);}
+    let host=layout.querySelector('.selection-tool-settings-host');
+    if(!host){host=document.createElement('div');host.className='selection-tool-settings-host';layout.appendChild(host);}
+    host.replaceChildren();return host;
+  }
+  function makeSelectionSelect(parent,labelText,value,items,onChange,tooltip){
+    const field=document.createElement('label');field.className='selection-option-field';field.title=tooltip||'';const label=document.createElement('span');label.className='selection-option-label';label.textContent=labelText;const select=document.createElement('select');select.className='ts-select magic-wand-select';select.title=tooltip||'';items.forEach(([itemValue,text])=>{const option=document.createElement('option');option.value=itemValue;option.textContent=text;select.appendChild(option);});select.value=value;select.onchange=()=>onChange(select.value);if(labelText)field.appendChild(label);field.appendChild(select);parent.appendChild(field);return select;
+  }
+  function renderAreaSelectionSettings(host,subTool){
+    const state=selectionSettingsFor(subTool),section=document.createElement('section');section.className='selection-option-section selection-tool-option-section';
+    const heading=document.createElement('div');heading.className='selection-options-subheading';heading.textContent=subTool.name;section.appendChild(heading);
+    const controls=document.createElement('div');controls.className='magic-wand-control-group selection-tool-control-group';section.appendChild(controls);
+    makeSelectionSelect(controls,'Selection Combine',state.combine,[['replace','Replace'],['add','Add'],['subtract','Subtract'],['intersect','Intersect']],value=>updateSelectionSetting(subTool,'combine',value),'How this selection is merged with the current selection.');
+    const scopeLabel=document.createElement('div');scopeLabel.className='selection-option-label';scopeLabel.textContent='Selection Scope';controls.appendChild(scopeLabel);
+    const segments=document.createElement('div');segments.className='ts-pill-row selection-scope-segments';segments.setAttribute('role','group');segments.setAttribute('aria-label',subTool.name+' Selection Scope');
+    [['all','All'],['inside','Inside'],['outside','Outside']].forEach(([mode,text])=>{const button=document.createElement('button');button.type='button';button.className='ts-pill';button.textContent=text;const active=state.scope===mode;button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));button.onclick=()=>{updateSelectionSetting(subTool,'scope',mode);if(window.SelectionScope)SelectionScope.set(mode);segments.querySelectorAll('.ts-pill').forEach(item=>{const selected=item===button;item.classList.toggle('active',selected);item.setAttribute('aria-pressed',String(selected));});};segments.appendChild(button);});
+    controls.appendChild(segments);host.appendChild(section);
+  }
+  function renderMagicWandSettings(host){
+    if(!window.MagicWandSelection)return;
+    const settings=MagicWandSelection.getSettings(),wandSection=document.createElement('section');wandSection.className='selection-option-section magic-wand-option-section';
+    const heading=document.createElement('div');heading.className='selection-options-subheading';heading.textContent='Magic Wand';wandSection.appendChild(heading);
+    function controlGroup(parent,className){const control=document.createElement('div');control.className='magic-wand-control-group'+(className?' '+className:'');parent.appendChild(control);return control;}
+    function selectField(parent,labelText,key,items,tooltip){const select=makeSelectionSelect(parent,labelText,settings[key],items,value=>MagicWandSelection.updateSettings({[key]:value}),tooltip);if(!labelText)select.parentElement.classList.add('magic-wand-combine-field');}
+    function rangeField(parent,labelText,key,min,max,id,tooltip){const field=document.createElement('div');field.className='selection-option-field';field.title=tooltip;const label=document.createElement('label');label.className='selection-option-label';label.textContent=labelText;label.htmlFor=id;label.title=tooltip;const controls=document.createElement('div');controls.className='magic-wand-range-controls';const range=document.createElement('input');range.type='range';range.className='ts-range';range.min=min;range.max=max;range.step=1;range.value=settings[key];range.id=id;range.title=tooltip;const value=document.createElement('output');value.className='ts-num magic-wand-range-value';value.setAttribute('for',id);value.textContent=settings[key];range.oninput=()=>{value.textContent=range.value;MagicWandSelection.updateSettings({[key]:+range.value});};controls.append(range,value);field.append(label,controls);parent.appendChild(field);}
+    function checkbox(parent,labelText,key,tooltip,disabled,status,displayChecked){const row=document.createElement('label');row.className='magic-wand-checkbox-row'+(disabled?' disabled':'');row.title=tooltip||'';const input=document.createElement('input');input.type='checkbox';input.className='ts-check';input.checked=displayChecked===undefined?!!settings[key]:!!displayChecked;input.disabled=!!disabled;input.onchange=()=>MagicWandSelection.updateSettings({[key]:input.checked});const text=document.createElement('span');text.textContent=labelText;row.append(input,text);if(status){const badge=document.createElement('span');badge.className='magic-wand-option-status';badge.textContent=status;row.appendChild(badge);}parent.appendChild(row);}
+    const basic=controlGroup(wandSection,'magic-wand-basic');
+    selectField(basic,'','combine',[['add','Add'],['replace','Replace'],['subtract','Subtract'],['intersect','Intersect']],'How this selection is merged with the current selection.');
+    rangeField(basic,'Tolerance','tolerance',0,255,'magic-wand-tolerance','Higher values include more similar colors.');
+    checkbox(basic,'Connected Region Only','contiguous','Only selects pixels connected to the clicked area.');
+    selectField(basic,'Sample From','sample',[['current','Current Layer'],['all','All Visible Layers']],'Choose which layers are sampled when creating the selection.');
+    const advancedKey='animate.magicWandAdvancedExpanded.v1';
+    const toggle=document.createElement('button');toggle.type='button';toggle.className='magic-wand-advanced-toggle';toggle.setAttribute('aria-expanded',String(magicWandAdvancedOpen));const chevron=document.createElement('span');chevron.className='magic-wand-advanced-chevron';chevron.textContent='▶';const toggleText=document.createElement('span');toggleText.textContent='Advanced';toggle.append(chevron,toggleText);wandSection.appendChild(toggle);
+    const advancedInner=controlGroup(wandSection,'magic-wand-advanced magic-wand-advanced-inner');advancedInner.hidden=!magicWandAdvancedOpen;
+    rangeField(advancedInner,'Expand Selection','edgeExpansion',-20,20,'magic-wand-expand-selection','Expands or contracts the resulting selection after it is created.');
+    checkbox(advancedInner,'Close Small Gaps','gapBridging','Treats small openings in line art as closed while searching.');
+    rangeField(advancedInner,'Maximum Gap Size','gapWidth',1,10,'magic-wand-maximum-gap','Maximum opening size that Gap Bridging will ignore.');
+    checkbox(advancedInner,'Use Transparency','includeAlpha','Includes transparency when comparing colors.');
+    checkbox(advancedInner,'Anti-aliased Edge','antiAlias','Creates smoother selection edges.');
+    checkbox(advancedInner,'Sample Referenced Layers','referencedLayers','Reference layers are not available yet.',true,'Coming Soon',true);
+    toggle.onclick=()=>{magicWandAdvancedOpen=!magicWandAdvancedOpen;advancedInner.hidden=!magicWandAdvancedOpen;toggle.setAttribute('aria-expanded',String(magicWandAdvancedOpen));try{localStorage.setItem(advancedKey,String(magicWandAdvancedOpen));}catch(_){}if(magicWandAdvancedOpen)requestAnimationFrame(()=>{const scroller=toggle.closest('.tool-options-drawer-content');if(!scroller)return;const contentBottom=advancedInner.getBoundingClientRect().bottom,visibleBottom=scroller.getBoundingClientRect().bottom;if(contentBottom>visibleBottom)toggle.scrollIntoView({block:'nearest'});});};host.appendChild(wandSection);
+  }
+  function renderSelectionInfo(host,subTool){
+    const message=document.createElement('div');message.className='tool-options-message selection-tool-options-message';message.textContent=subTool.settingsDescription||'No additional options';host.appendChild(message);
+  }
+  function renderSelectionOptions(body,group,activeSubTool){
+    const host=ensureSelectionOptionsHost(body),definition=activeSubTool&&activeSubTool.selectionSettings;
+    if(definition&&typeof definition.renderer==='function')definition.renderer(host,activeSubTool,group);
+    else renderSelectionInfo(host,activeSubTool||{});
+  }
   function presetSubTools(groupId){
     const source=window._brushPresets?[].concat(_brushPresets.BRUSH_PRESETS||[],_brushPresets.customPresets||[]):[];
     const seen=new Set();return source.filter(preset=>preset&&preset.id&&!seen.has(preset.id)&&seen.add(preset.id)).map(preset=>({
@@ -186,11 +230,11 @@
   registerGroup({id:'brush',name:'Brush',shortcutActionId:'toolBrush',icon:'B',defaultSubToolId:'brush:hard-round',subTools:presetSubTools('brush')});
   registerGroup({id:'eraser',name:'Eraser',shortcutActionId:'toolEraser',icon:'E',defaultSubToolId:'eraser:hard-round',subTools:presetSubTools('eraser')});
   const selectionGroup=registerGroup({id:'selection',name:'Selection',shortcutActionId:'toolSelection',icon:'S',panelRenderer:renderSelectionOptions,defaultSubToolId:'style-select',subTools:[
-    {id:'rectangle-select',name:'Rectangle Select',icon:'R',section:'Selection Area',activate:toolActivation('rectangle-select','Rectangle Select'),settingsDescription:'Drag a rectangular selection. Shift adds, Alt subtracts, and Shift+Alt intersects.'},
-    {id:'lasso-select',name:'Lasso Select',icon:'L',section:'Selection Area',activate:toolActivation('lasso','Lasso Select'),settingsDescription:'Drag a freehand closed selection. Shift adds, Alt subtracts, and Shift+Alt intersects.'},
-    {id:'ellipse-select',name:'Ellipse Select',icon:'O',section:'Selection Area',activate:toolActivation('ellipse-select','Ellipse Select'),settingsDescription:'Drag an elliptical selection. Shift constrains a circle; selection modifiers still control add, subtract, and intersect.'},Object.assign(placeholder('polyline-select','Polyline Select','P'),{section:'Selection Area'}),
-    {id:'magic-wand',name:'Magic Wand',icon:'W',section:'Smart Selection',cursor:'crosshair',activate:toolActivation('magic-wand','Magic Wand')},
-    {id:'style-select',name:'Style Select',icon:'S',section:'Smart Selection',isAvailable:activeLayerSupportsStyleSelect,unavailableLabel:'Smart Raster Only',activate:toolActivation('selection','Style Select'),settingsDescription:'Use the configured Select Linked Pixels modifier on a Smart Raster swatch or canvas pixel.'},
+    {id:'rectangle-select',name:'Rectangle Select',icon:'R',section:'Selection Area',selectionSettings:{defaults:{combine:'replace',scope:'all'},renderer:renderAreaSelectionSettings},activate:toolActivation('rectangle-select','Rectangle Select'),settingsDescription:'Drag a rectangular selection. Shift adds, Alt subtracts, and Shift+Alt intersects.'},
+    {id:'lasso-select',name:'Lasso Select',icon:'L',section:'Selection Area',selectionSettings:{defaults:{combine:'replace',scope:'all'},renderer:renderAreaSelectionSettings},activate:toolActivation('lasso','Lasso Select'),settingsDescription:'Drag a freehand closed selection. Shift adds, Alt subtracts, and Shift+Alt intersects.'},
+    {id:'ellipse-select',name:'Ellipse Select',icon:'O',section:'Selection Area',selectionSettings:{defaults:{combine:'replace',scope:'all'},renderer:renderAreaSelectionSettings},activate:toolActivation('ellipse-select','Ellipse Select'),settingsDescription:'Drag an elliptical selection. Shift constrains a circle; selection modifiers still control add, subtract, and intersect.'},Object.assign(placeholder('polyline-select','Polyline Select','P'),{section:'Selection Area'}),
+    {id:'magic-wand',name:'Magic Wand',icon:'W',section:'Smart Selection',cursor:'crosshair',selectionSettings:{renderer:renderMagicWandSettings},activate:toolActivation('magic-wand','Magic Wand')},
+    {id:'style-select',name:'Style Select',icon:'S',section:'Smart Selection',selectionSettings:{renderer:renderSelectionInfo},isAvailable:activeLayerSupportsStyleSelect,unavailableLabel:'Smart Raster Only',activate:toolActivation('selection','Style Select'),settingsDescription:'Use the configured Select Linked Pixels modifier on a Smart Raster swatch or canvas pixel.'},
     Object.assign(placeholder('selection-pen','Selection Pen','P'),{section:'Selection Painting'}),Object.assign(placeholder('erase-selection','Erase Selection','E'),{section:'Selection Painting'})
   ]});selectionGroup.lastValidSubToolId='lasso-select';
   registerGroup({id:'fill',name:'Fill',shortcutActionId:'toolFill',icon:'F',defaultSubToolId:'bucket-fill',subTools:[
@@ -212,7 +256,12 @@
   window.addEventListener('active-artwork-changed',refreshSelectionAvailability);
   window.addEventListener('project-loaded',refreshSelectionAvailability);
   window.addEventListener('layer-type-changed',refreshSelectionAvailability);
-  const initial=({brush:'brush',eraser:'eraser',fill:'fill',line:'line',lasso:'selection','rectangle-select':'selection','ellipse-select':'selection',selection:'selection',transform:'transform'})[typeof tool!=='undefined'?tool:'brush']||'brush';activeGroupId=initial;syncPanel(getGroup(initial));syncActiveButtons();refreshSelectionAvailability();
+  const initial=({brush:'brush',eraser:'eraser',fill:'fill',line:'line',lasso:'selection','rectangle-select':'selection','ellipse-select':'selection',selection:'selection',transform:'transform'})[typeof tool!=='undefined'?tool:'brush']||'brush';activeGroupId=initial;if(initial==='selection')restoreSelectionToolContext(getSubTool(selectionGroup,selectionGroup.activeSubToolId));syncPanel(getGroup(initial));syncActiveButtons();refreshSelectionAvailability();
+  window.SelectionToolSettings={
+    get(toolId){return selectionSettingsFor(getSubTool(selectionGroup,toolId));},
+    set(toolId,key,value){const subTool=getSubTool(selectionGroup,toolId);if(subTool)updateSelectionSetting(subTool,key,value);},
+    modeFromEvent:selectionModeForEvent
+  };
   window.ToolGroups={registerGroup,getGroup,getGroups:()=>Array.from(groups.values()),activateGroup,activateSubTool,get activeGroupId(){return activeGroupId;}};
   window.dispatchEvent(new CustomEvent('tool-groups-ready'));
 })();

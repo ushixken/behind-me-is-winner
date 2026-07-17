@@ -29,7 +29,7 @@
   function pointerDown(event){
     if(tool!=='rectangle-select'||activeGroupId||panning||spaceHeld)return;
     if(event.pointerType==='mouse'?event.button!==0:(!(event.buttons&1)&&event.pointerType!=='touch'))return;
-    event.preventDefault();event.stopImmediatePropagation();ensurePreview();preview.style.display='block';active=true;pointerId=event.pointerId;start=current=getPos(event);startClient={x:event.clientX,y:event.clientY};mode=window.PixelSelection?PixelSelection.modeFromEvent(event):'replace';previousBounds=null;activeC.setPointerCapture(event.pointerId);schedulePreview();
+    event.preventDefault();event.stopImmediatePropagation();ensurePreview();preview.style.display='block';active=true;pointerId=event.pointerId;start=current=getPos(event);startClient={x:event.clientX,y:event.clientY};mode=window.SelectionToolSettings?SelectionToolSettings.modeFromEvent('rectangle-select',event):(window.PixelSelection?PixelSelection.modeFromEvent(event):'replace');previousBounds=null;activeC.setPointerCapture(event.pointerId);schedulePreview();
   }
   function pointerMove(event){if(!active||event.pointerId!==pointerId)return;event.preventDefault();event.stopImmediatePropagation();current=getPos(event);schedulePreview();}
   function pointerEnd(event){

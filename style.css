@@ -1685,9 +1685,10 @@ body.tool-options-resizing{cursor:ns-resize!important;user-select:none!important
 .selection-scope-segments{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));width:100%;min-width:0;gap:4px;flex-wrap:nowrap;}
 .selection-scope-segments .ts-pill{width:100%;min-width:0;height:24px;padding:3px 4px;border-radius:4px;overflow:hidden;text-align:center;text-overflow:ellipsis;}
 .magic-wand-option-section{gap:0;}
-.magic-wand-option-section>.selection-options-subheading{padding-top:8px;padding-bottom:7px;}
+.magic-wand-option-section>.selection-options-subheading{padding:0 0 6px;border-top:0;}
 .magic-wand-control-group{display:flex;flex-direction:column;width:100%;min-width:0;gap:6px;padding:7px 0;border-top:1px solid var(--border2);box-sizing:border-box;}
 .magic-wand-option-section>.selection-options-subheading+.magic-wand-control-group{padding-top:0;border-top:0;}
+.magic-wand-combine-field{gap:0;}
 .magic-wand-control-group .selection-option-field{gap:4px;}
 .magic-wand-range-controls{display:grid;grid-template-columns:minmax(0,1fr) 38px;align-items:center;width:100%;min-width:0;gap:7px;}
 .magic-wand-range-controls .ts-range{width:100%;}
@@ -1697,6 +1698,14 @@ body.tool-options-resizing{cursor:ns-resize!important;user-select:none!important
 .magic-wand-checkbox-row .ts-check{flex:0 0 auto;}
 .magic-wand-checkbox-row.disabled{cursor:default;opacity:.52;}
 .magic-wand-option-status{min-width:0;margin-left:auto;color:var(--text3);font-size:8px;white-space:nowrap;}
+.magic-wand-advanced-toggle{display:flex;align-items:center;width:100%;min-width:0;height:26px;gap:6px;padding:0 2px;border:0;border-top:1px solid var(--border2);background:transparent;color:var(--text2);font:600 10px/1 system-ui,sans-serif;text-align:left;cursor:pointer;box-sizing:border-box;}
+.magic-wand-advanced-toggle:hover{color:var(--text);background:var(--bg3);}
+.magic-wand-advanced-toggle:focus-visible{outline:1px solid var(--accent);outline-offset:-1px;}
+.magic-wand-advanced-chevron{display:inline-block;width:10px;font-size:8px;transition:transform .16s ease;}
+.magic-wand-advanced-toggle[aria-expanded="true"] .magic-wand-advanced-chevron{transform:rotate(90deg);}
+.magic-wand-advanced{display:flex;width:100%;min-width:0;overflow:visible;}
+.magic-wand-advanced[hidden]{display:none!important;}
+.magic-wand-advanced-inner{padding-top:7px;padding-bottom:0;border-top:0;}
 .tool-group-option-row{display:grid;grid-template-columns:70px minmax(0,1fr) 34px;align-items:center;gap:6px;min-width:0;font-size:10px;color:var(--text2);}
 .tool-group-option-row input[type="range"]{width:100%;min-width:0;}
 .tool-group-option-row.compact{display:flex;min-height:22px;color:var(--text);}

@@ -2,14 +2,14 @@
   'use strict';
 
   var STORAGE_KEY='animate.magicWand.v1';
-  var settings={tolerance:0,contiguous:true,combine:'replace',edgeExpansion:0,gapBridging:false,gapWidth:1,sample:'current',includeAlpha:true,antiAlias:false};
+  var settings={tolerance:0,contiguous:true,combine:'add',edgeExpansion:0,gapBridging:false,gapWidth:1,sample:'current',includeAlpha:true,antiAlias:false};
   var operationToken=0,workVisited=null,workQueue=null,workA=null,workB=null;
   try{
     var saved=JSON.parse(localStorage.getItem(STORAGE_KEY)||'null');
     if(saved){
       settings.tolerance=clampNumber(saved.tolerance,0,255,0);
       settings.contiguous=saved.contiguous!==false;
-      settings.combine=['replace','add','subtract','intersect'].indexOf(saved.combine)>=0?saved.combine:'replace';
+      settings.combine=['add','replace','subtract','intersect'].indexOf(saved.combine)>=0?saved.combine:'add';
       settings.edgeExpansion=clampNumber(saved.edgeExpansion,-20,20,0);
       settings.gapBridging=!!saved.gapBridging;
       settings.gapWidth=clampNumber(saved.gapWidth,1,10,1);
@@ -20,7 +20,7 @@
   }catch(_){}
 
   function clampNumber(value,min,max,fallback){value=Number(value);if(!isFinite(value))value=fallback;return Math.max(min,Math.min(max,Math.round(value)));}
-  function normalizeSettings(){settings.tolerance=clampNumber(settings.tolerance,0,255,0);settings.edgeExpansion=clampNumber(settings.edgeExpansion,-20,20,0);settings.gapWidth=clampNumber(settings.gapWidth,1,10,1);settings.sample=settings.sample==='all'?'all':'current';if(['replace','add','subtract','intersect'].indexOf(settings.combine)<0)settings.combine='replace';}
+  function normalizeSettings(){settings.tolerance=clampNumber(settings.tolerance,0,255,0);settings.edgeExpansion=clampNumber(settings.edgeExpansion,-20,20,0);settings.gapWidth=clampNumber(settings.gapWidth,1,10,1);settings.sample=settings.sample==='all'?'all':'current';if(['add','replace','subtract','intersect'].indexOf(settings.combine)<0)settings.combine='add';}
   function persist(){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(settings));}catch(_){}}
   function update(values){Object.assign(settings,values||{});normalizeSettings();persist();window.dispatchEvent(new CustomEvent('magic-wand-settings-changed'));}
   function sampleImage(){

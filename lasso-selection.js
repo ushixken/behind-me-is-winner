@@ -50,7 +50,7 @@
     if(tool!=='lasso'||activeGroupId||panning||spaceHeld)return;
     if(event.pointerType==='mouse'?event.button!==0:(!(event.buttons&1)&&event.pointerType!=='touch'))return;
     event.preventDefault();event.stopImmediatePropagation();ensurePreview();preview.style.display='block';
-    active=true;pointerId=event.pointerId;points=[getPos(event)];mode=window.PixelSelection?PixelSelection.modeFromEvent(event):'replace';previousBounds=null;
+    active=true;pointerId=event.pointerId;points=[getPos(event)];mode=window.SelectionToolSettings?SelectionToolSettings.modeFromEvent('lasso-select',event):(window.PixelSelection?PixelSelection.modeFromEvent(event):'replace');previousBounds=null;
     activeC.setPointerCapture(event.pointerId);schedulePreview();
   }
   function pointerMove(event){
