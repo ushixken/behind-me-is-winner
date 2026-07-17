@@ -144,6 +144,27 @@
     }
   }
 
+
+  function selectionModeFromEvent(event,binding){
+    binding=binding||{};
+    var extraShift=!!event.shiftKey&&!binding.shift,extraAlt=!!event.altKey&&!binding.alt;
+    return extraShift&&extraAlt?'intersect':extraShift?'add':extraAlt?'subtract':'replace';
+  }
+
+  function applyCanonicalMask(incoming,width,height,mode,source){
+    if(!(incoming instanceof Uint8Array||incoming instanceof Uint8ClampedArray)||incoming.length!==width*height)return false;
+    var incomingCount=0;for(var p=0;p<incoming.length;p++)if(incoming[p]===255)incomingCount++;
+    if(!incomingCount)return false;
+    var layer=layers[curLayer],targetFrame=layer&&layer.type==='smart-raster'?heldFrameIndex(layer,curFrame):curFrame;
+    if(selectionLayerIndex!==curLayer)selectionMask=null;
+    if(selectionMask&&selectionLayerIndex===curLayer)targetFrame=selectionFrameIndex;
+    selectionWidth=width;selectionHeight=height;selectionLayerIndex=curLayer;selectionFrameIndex=targetFrame;
+    combineMask(incoming,mode||'replace');var selectedCount=rebuildMaskCanvasAndBounds();
+    overlayVisible=true;if(selectedCount)scheduleOverlayRender();else renderSelection();
+    window.dispatchEvent(new CustomEvent('pixel-selection-changed',{detail:{active:selectedCount>0,mode:mode||'replace',source:source||'selection-tool',matchedPixelCount:selectedCount,mask:selectionMask.slice(),maskCanvas:maskCanvas,bounds:selectionBounds&&Object.assign({},selectionBounds),width:width,height:height,layerIndex:curLayer,frameIndex:targetFrame}}));
+    return true;
+  }
+
   function selectLinkedPixels(styleId,event,source){
     var layer=layers[curLayer];
     if(!layer||layer.type!=='smart-raster'||!styleId)return false;
@@ -159,8 +180,7 @@
       }
     }
     var binding=keybinds.selectLinkedPixels||{};
-    var extraShift=!!event.shiftKey&&!binding.shift,extraAlt=!!event.altKey&&!binding.alt;
-    var mode=extraShift&&extraAlt?'intersect':extraShift?'add':extraAlt?'subtract':'replace';
+    var mode=selectionModeFromEvent(event,binding);
     // An unused style is not an empty geometric selection operation. Leave
     // the canonical selection untouched in every mode.
     if(!incomingCount)return true;
@@ -243,6 +263,7 @@
   function setOverlayVisible(visible){overlayVisible=!!visible;if(overlayVisible)scheduleOverlayRender();else if(overlay)overlay.style.display='none';}
 
   document.addEventListener('keydown',function(event){
+    if(window.LassoSelection&&LassoSelection.isActive())return;
     if(!selectionActive)return;var transformActive=typeof tfActive!=='undefined'&&tfActive;
     var target=event.target instanceof Element?event.target:null;
     if(target&&(target.isContentEditable||target.closest('input,textarea,[contenteditable="true"]')))return;
@@ -257,6 +278,6 @@
   if(typeof ResizeObserver!=='undefined')new ResizeObserver(scheduleOverlayRender).observe(canvasArea);
   document.addEventListener('visibilitychange',function(){if(!document.hidden)scheduleOverlayRender();});
 
-  window.PixelSelection={isActive:function(){return selectionActive;},getState:function(){return window.pixelSelectionState;},clear:clearSelection,deleteSelected:deleteSelectedPixels,setOverlayVisible:setOverlayVisible};
+  window.PixelSelection={isActive:function(){return selectionActive;},getState:function(){return window.pixelSelectionState;},applyMask:applyCanonicalMask,modeFromEvent:selectionModeFromEvent,clear:clearSelection,deleteSelected:deleteSelectedPixels,setOverlayVisible:setOverlayVisible};
   window.LinkedPixelSelection={handleStylePointer:handleStylePointer,selectStyle:selectLinkedPixels,replaceSelectedWithStyle:replaceSelectedWithStyle,getMask:function(){return selectionMask?selectionMask.slice():null;},getMaskCanvas:function(){return maskCanvas;},getBounds:function(){return selectionBounds&&Object.assign({},selectionBounds);},clear:clearSelection};
 })();

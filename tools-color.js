@@ -159,6 +159,7 @@ function setTool(t,lbl){
   // move/scale/rotate into the layer (baking it into the active canvas)
   // before the new tool takes over.
   if(tool==='transform'&&t!=='transform'&&typeof commitTransformTool==='function') commitTransformTool();
+  if(tool==='lasso'&&t!=='lasso'&&window.LassoSelection) LassoSelection.cancel();
   tool=t;
   _syncBrushPresetsDocker(t);
   document.querySelectorAll('.tbtn').forEach(b=>b.classList.remove('active'));
@@ -189,6 +190,7 @@ document.getElementById('tp-btn-brush').onclick=()=>setTool('brush','Brush');
 document.getElementById('tp-btn-eraser').onclick=()=>setTool('eraser','Eraser');
 document.getElementById('tp-btn-fill').onclick=()=>setTool('fill','Fill');
 document.getElementById('tp-btn-line').onclick=()=>setTool('line','Line');
+document.getElementById('tp-btn-lasso').onclick=()=>setTool('lasso','Lasso Select');
 document.getElementById('tp-btn-transform').onclick=()=>setTool('transform','Transform');
 
 // ════════════════════════════════════════════════════════════════
