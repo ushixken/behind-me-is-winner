@@ -91,7 +91,7 @@ let tfGroupId=null;
 let tfMemberIdx=null;    // layer indices belonging to the active group (group mode only)
 let tfMembers=null;      // [{li, base}] pristine per-layer content snapshots (group mode only)
 let tfSnapshot=null;     // pristine copy of activeC content when the tool was entered (single-layer mode)
-let tfSmartMove=null;      // independent typed ownership snapshot for Smart Raster translation
+let tfSmartMove=null;      // independent typed ownership snapshot for Smart Raster Free Transform
 let tfBox=null;          // {x,y,w,h} axis-aligned bbox of the artwork, in original canvas coords
 let tfState=null;        // {tx,ty,scale,rotation} — cumulative transform applied to tfBox's center
 let tfDrag=null;         // current drag mode: 'move' | 'scale' | 'rotate' | 'pivot' | null
@@ -293,31 +293,114 @@ function _tfCaptureSmartMove(li,fi,bounds){
   };
 }
 
-function _tfCommitSmartTranslation(){
+function _tfCommitSmartFreeTransform(){
   if(!tfSmartMove)return;
   const source=tfSmartMove;
   const layer=layers[source.layer];
   if(!layer||layer.type!=='smart-raster')return;
-  const dx=Math.round(tfState.tx),dy=Math.round(tfState.ty);
-  const movedIds=new Uint16Array(source.width*source.height);
-  const rgba=tfSnapshot.getContext('2d',{willReadFrequently:true}).getImageData(0,0,source.width,source.height).data;
-  const x0=Math.max(0,Math.floor(source.bounds.x));
-  const y0=Math.max(0,Math.floor(source.bounds.y));
-  const x1=Math.min(source.width,Math.ceil(source.bounds.x+source.bounds.w));
-  const y1=Math.min(source.height,Math.ceil(source.bounds.y+source.bounds.h));
-  for(let y=y0;y<y1;y++)for(let x=x0;x<x1;x++){
-    const sourceOffset=y*source.width+x;
-    const styleIndex=source.styleIds[sourceOffset];
-    if(styleIndex===0||rgba[sourceOffset*4+3]===0)continue;
-    const nx=x+dx,ny=y+dy;
-    if(nx<0||nx>=source.width||ny<0||ny>=source.height)continue;
-    movedIds[ny*source.width+nx]=styleIndex;
+
+  // RGBA is already rendered into activeC by _tfRedraw() with this matrix:
+  // destination = transformed center + rotation * scale * (source - box center).
+  // Walk destination pixels and apply its exact inverse, sampling ownership
+  // with nearest-neighbor so style indexes remain integers.
+  const outputIds=new Uint16Array(source.width*source.height);
+  const outputRgba=ctx.getImageData(0,0,source.width,source.height).data;
+  const sourceRgba=tfSnapshot.getContext('2d',{willReadFrequently:true})
+    .getImageData(0,0,source.width,source.height).data;
+  const boxCenterX=tfBox.x+tfBox.w/2,boxCenterY=tfBox.y+tfBox.h/2;
+  const center=_tfCenter(tfState);
+  const scale=tfState.scale||1;
+  const radians=tfState.rotation*Math.PI/180;
+  const cosR=Math.cos(radians),sinR=Math.sin(radians);
+
+  const transformedCorners=[
+    {x:tfBox.x,y:tfBox.y},
+    {x:tfBox.x+tfBox.w,y:tfBox.y},
+    {x:tfBox.x+tfBox.w,y:tfBox.y+tfBox.h},
+    {x:tfBox.x,y:tfBox.y+tfBox.h}
+  ].map(point=>{
+    const dx=(point.x-boxCenterX)*scale,dy=(point.y-boxCenterY)*scale;
+    return {x:center.x+dx*cosR-dy*sinR,y:center.y+dx*sinR+dy*cosR};
+  });
+  const minX=Math.max(0,Math.floor(Math.min(...transformedCorners.map(p=>p.x)))-2);
+  const minY=Math.max(0,Math.floor(Math.min(...transformedCorners.map(p=>p.y)))-2);
+  const maxX=Math.min(source.width,Math.ceil(Math.max(...transformedCorners.map(p=>p.x)))+2);
+  const maxY=Math.min(source.height,Math.ceil(Math.max(...transformedCorners.map(p=>p.y)))+2);
+
+  for(let y=minY;y<maxY;y++)for(let x=minX;x<maxX;x++){
+    const destinationOffset=y*source.width+x;
+    if(outputRgba[destinationOffset*4+3]===0)continue;
+    const worldX=x+0.5-center.x,worldY=y+0.5-center.y;
+    const localX=(worldX*cosR+worldY*sinR)/scale+boxCenterX;
+    const localY=(-worldX*sinR+worldY*cosR)/scale+boxCenterY;
+    if(localX<tfBox.x||localX>=tfBox.x+tfBox.w||localY<tfBox.y||localY>=tfBox.y+tfBox.h)continue;
+    const sourceX=Math.floor(localX),sourceY=Math.floor(localY);
+    if(sourceX<0||sourceX>=source.width||sourceY<0||sourceY>=source.height)continue;
+    const sourceOffset=sourceY*source.width+sourceX;
+    if(sourceRgba[sourceOffset*4+3]===0)continue;
+    outputIds[destinationOffset]=source.styleIds[sourceOffset]||0;
   }
+
   if(!layer.smartStyleFrames)layer.smartStyleFrames={};
   layer.smartStyleFrames[source.frame]={
     width:source.width,
     height:source.height,
-    styleIds:movedIds,
+    styleIds:outputIds,
+    meta:SmartRasterLayer.cloneMeta(source.meta)
+  };
+}
+
+function _tfInvertHomography(H){
+  const a=H.a,b=H.b,c=H.c,d=H.d,e=H.e,f=H.f,g=H.g,h=H.h,i=1;
+  const A=e*i-f*h,B=c*h-b*i,C=b*f-c*e;
+  const D=f*g-d*i,E=a*i-c*g,F=c*d-a*f;
+  const G=d*h-e*g,Hc=b*g-a*h,I=a*e-b*d;
+  const determinant=a*A+b*D+c*G;
+  if(Math.abs(determinant)<1e-10)return null;
+  const inv=1/determinant;
+  return {a:A*inv,b:B*inv,c:C*inv,d:D*inv,e:E*inv,f:F*inv,g:G*inv,h:Hc*inv,i:I*inv};
+}
+
+function _tfCommitSmartPerspectiveTransform(){
+  if(!tfSmartMove||!tfCorners)return;
+  const source=tfSmartMove;
+  const layer=layers[source.layer];
+  if(!layer||layer.type!=='smart-raster')return;
+  const homography=_tfQuadH(tfCorners[0],tfCorners[1],tfCorners[2],tfCorners[3]);
+  const inverse=_tfInvertHomography(homography);
+  if(!inverse)return;
+
+  const outputIds=new Uint16Array(source.width*source.height);
+  const outputRgba=ctx.getImageData(0,0,source.width,source.height).data;
+  const sourceRgba=tfSnapshot.getContext('2d',{willReadFrequently:true})
+    .getImageData(0,0,source.width,source.height).data;
+  const minX=Math.max(0,Math.floor(Math.min(...tfCorners.map(p=>p.x)))-2);
+  const minY=Math.max(0,Math.floor(Math.min(...tfCorners.map(p=>p.y)))-2);
+  const maxX=Math.min(source.width,Math.ceil(Math.max(...tfCorners.map(p=>p.x)))+2);
+  const maxY=Math.min(source.height,Math.ceil(Math.max(...tfCorners.map(p=>p.y)))+2);
+
+  for(let y=minY;y<maxY;y++)for(let x=minX;x<maxX;x++){
+    const destinationOffset=y*source.width+x;
+    if(outputRgba[destinationOffset*4+3]===0)continue;
+    const px=x+0.5,py=y+0.5;
+    const denominator=inverse.g*px+inverse.h*py+inverse.i;
+    if(Math.abs(denominator)<1e-10)continue;
+    const u=(inverse.a*px+inverse.b*py+inverse.c)/denominator;
+    const v=(inverse.d*px+inverse.e*py+inverse.f)/denominator;
+    if(u<0||u>=1||v<0||v>=1)continue;
+    const sourceX=Math.floor(source.bounds.x+u*source.bounds.w);
+    const sourceY=Math.floor(source.bounds.y+v*source.bounds.h);
+    if(sourceX<0||sourceX>=source.width||sourceY<0||sourceY>=source.height)continue;
+    const sourceOffset=sourceY*source.width+sourceX;
+    if(sourceRgba[sourceOffset*4+3]===0)continue;
+    outputIds[destinationOffset]=source.styleIds[sourceOffset]||0;
+  }
+
+  if(!layer.smartStyleFrames)layer.smartStyleFrames={};
+  layer.smartStyleFrames[source.frame]={
+    width:source.width,
+    height:source.height,
+    styleIds:outputIds,
     meta:SmartRasterLayer.cloneMeta(source.meta)
   };
 }
@@ -431,7 +514,8 @@ function commitTransformTool(){
     ctx.drawImage(out,0,0);
   }
 
-  _tfCommitSmartTranslation();
+  if(tfPerspective)_tfCommitSmartPerspectiveTransform();
+  else _tfCommitSmartFreeTransform();
   saveActiveToKey();
   recomposite(curLayer,curFrame);
   renderTimeline();
@@ -637,10 +721,6 @@ function _tfPolyEdgeMidpoints(poly){
 }
 
 function _tfHitTest(p){
-  if(tfSmartMove){
-    const left=tfBox.x+tfState.tx,top=tfBox.y+tfState.ty;
-    return p.x>=left&&p.x<=left+tfBox.w&&p.y>=top&&p.y<=top+tfBox.h?{mode:'move'}:null;
-  }
   const hitR=TF_HANDLE_R/zoom+4/zoom;
   if(tfPivot){
     const pivP=_tfPivotWorld();
@@ -846,8 +926,8 @@ transformC.addEventListener('pointermove',e=>{
   if(tfDrag==='move'){
     const nextX=tfDragInfo.startState.tx+(p.x-tfDragInfo.startP.x);
     const nextY=tfDragInfo.startState.ty+(p.y-tfDragInfo.startP.y);
-    tfState.tx=tfSmartMove?Math.round(nextX):nextX;
-    tfState.ty=tfSmartMove?Math.round(nextY):nextY;
+    tfState.tx=nextX;
+    tfState.ty=nextY;
   }else if(tfDrag==='scale'){
     const d=_tfDist(p.x,p.y,tfDragInfo.startCenter.x,tfDragInfo.startCenter.y);
     const ratio=tfDragInfo.startDist>1?d/tfDragInfo.startDist:1;
@@ -964,9 +1044,10 @@ function _tfSyncToggleUI(){
 // corner drag) without leaving the transform tool — same snapshot/box,
 // same commit/cancel flow, just a different interaction+render path.
 function _tfSetPerspective(on){
-  if(!tfActive||on===tfPerspective||(on&&tfSmartMove)) return;
+  if(!tfActive||on===tfPerspective) return;
   if(on){
     tfCorners=_tfFreeCorners().map(p=>({x:p.x,y:p.y}));
+    if(tfSmartMove)tfSmartMove.sourceCorners=tfCorners.map(p=>({x:p.x,y:p.y}));
   } else {
     tfCorners=null;
   }
