@@ -8,6 +8,7 @@
   var selectionLayerIndex=-1,selectionFrameIndex=-1;
   var overlay=null,maskCanvas=null,overlayVisible=true;
   var overlayRaf=0;
+  var antsEpoch=(typeof performance!=='undefined'&&performance.now)?performance.now():Date.now();
   var overlayOffsetX=0,overlayOffsetY=0;
   var transformPreviewSegments=null,transformPreviewPath=null;
   var selectionScopeMode='all',selectionScopeCanvas=null,selectionScopeContext=null;
@@ -113,23 +114,32 @@
     overlay.style.display=overlayVisible?'block':'none';
     var drawSegments=transformPreviewSegments||contourSegments,drawPath=transformPreviewSegments?transformPreviewPath:contourPath;
     if(!overlayVisible||!selectionActive||!drawSegments.length)return;
-    c.strokeStyle='#7f77dd';c.lineCap='butt';c.lineJoin='miter';
+    var now=(typeof performance!=='undefined'&&performance.now)?performance.now():Date.now();
+    var dashOffset=-((now-antsEpoch)*0.024); // device pixels per millisecond
+    c.lineCap='butt';c.lineJoin='miter';
+    function strokeScreenSpace(scale){
+      scale=Math.max(0.0001,scale);
+      c.setLineDash([]);c.lineDashOffset=0;c.strokeStyle='rgba(18,18,24,.9)';c.lineWidth=3/(dpr*scale);c.stroke(drawPath);
+      c.setLineDash([4/(dpr*scale),4/(dpr*scale)]);c.lineDashOffset=dashOffset/(dpr*scale);c.strokeStyle='#9b91ff';c.lineWidth=1/(dpr*scale);c.stroke(drawPath);
+    }
     if(drawPath){
       var pivot=getNavPivot(),fx=flipX?-1:1,fy=flipY?-1:1;
       c.setTransform(dpr,0,0,dpr,0.5,0.5);
       c.translate(pivot.cx,pivot.cy);c.scale(fx,fy);c.translate(-pivot.cx,-pivot.cy);
       c.translate(panX,panY);c.rotate(rotation*Math.PI/180);c.scale(zoom,zoom);
       c.translate(overlayOffsetX,overlayOffsetY);
-      c.lineWidth=1/(dpr*Math.max(0.0001,zoom));c.stroke(drawPath);
+      strokeScreenSpace(Math.abs(zoom));
     }else{
-      c.setTransform(dpr,0,0,dpr,0,0);c.lineWidth=1/dpr;c.beginPath();
+      c.setTransform(dpr,0,0,dpr,0.5,0.5);c.beginPath();
       for(var i=0;i<drawSegments.length;i+=4){
         var a=canvasToViewport(drawSegments[i]+overlayOffsetX,drawSegments[i+1]+overlayOffsetY);
         var b=canvasToViewport(drawSegments[i+2]+overlayOffsetX,drawSegments[i+3]+overlayOffsetY);
         c.moveTo(a.x,a.y);c.lineTo(b.x,b.y);
       }
-      c.stroke();
+      c.setLineDash([]);c.lineDashOffset=0;c.strokeStyle='rgba(18,18,24,.9)';c.lineWidth=3/dpr;c.stroke();
+      c.setLineDash([4/dpr,4/dpr]);c.lineDashOffset=dashOffset/dpr;c.strokeStyle='#9b91ff';c.lineWidth=1/dpr;c.stroke();
     }
+    if(!document.hidden&&overlayVisible&&selectionActive)overlayRaf=requestAnimationFrame(renderSelection);
   }
 
   function scheduleOverlayRender(){

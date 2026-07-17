@@ -12,7 +12,7 @@
       settings.combine=['replace','add','subtract','intersect'].indexOf(saved.combine)>=0?saved.combine:'replace';
       settings.edgeExpansion=clampNumber(saved.edgeExpansion,-20,20,0);
       settings.gapBridging=!!saved.gapBridging;
-      settings.gapWidth=clampNumber(saved.gapWidth,1,5,1);
+      settings.gapWidth=clampNumber(saved.gapWidth,1,10,1);
       settings.sample=saved.sample==='all'?'all':'current';
       settings.includeAlpha=saved.includeAlpha!==false;
       settings.antiAlias=!!saved.antiAlias;
@@ -20,7 +20,7 @@
   }catch(_){}
 
   function clampNumber(value,min,max,fallback){value=Number(value);if(!isFinite(value))value=fallback;return Math.max(min,Math.min(max,Math.round(value)));}
-  function normalizeSettings(){settings.tolerance=clampNumber(settings.tolerance,0,255,0);settings.edgeExpansion=clampNumber(settings.edgeExpansion,-20,20,0);settings.gapWidth=clampNumber(settings.gapWidth,1,5,1);settings.sample=settings.sample==='all'?'all':'current';if(['replace','add','subtract','intersect'].indexOf(settings.combine)<0)settings.combine='replace';}
+  function normalizeSettings(){settings.tolerance=clampNumber(settings.tolerance,0,255,0);settings.edgeExpansion=clampNumber(settings.edgeExpansion,-20,20,0);settings.gapWidth=clampNumber(settings.gapWidth,1,10,1);settings.sample=settings.sample==='all'?'all':'current';if(['replace','add','subtract','intersect'].indexOf(settings.combine)<0)settings.combine='replace';}
   function persist(){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(settings));}catch(_){}}
   function update(values){Object.assign(settings,values||{});normalizeSettings();persist();window.dispatchEvent(new CustomEvent('magic-wand-settings-changed'));}
   function sampleImage(){
