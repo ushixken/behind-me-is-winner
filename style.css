@@ -1665,8 +1665,19 @@ body.tool-options-resizing{cursor:ns-resize!important;user-select:none!important
 
 .tool-group-inline-options{display:flex;flex-direction:column;gap:7px;flex:0 0 auto;}
 .tool-options-label{color:var(--text2);font-size:10px;}
-.selection-scope-segments{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));width:100%;flex-wrap:nowrap;}
-.selection-scope-segments .ts-pill{min-width:0;width:100%;padding:4px 3px;border-radius:4px;text-align:center;}
+.selection-options-layout{width:100%;min-width:0;padding:2px 3px;gap:13px;box-sizing:border-box;overflow-x:hidden;}
+.selection-option-section,.selection-option-field{display:flex;flex-direction:column;width:100%;min-width:0;gap:8px;box-sizing:border-box;}
+.selection-option-label{min-width:0;color:var(--text2);font-size:10px;line-height:1.2;}
+.selection-options-subheading{padding-top:11px;border-top:1px solid var(--border2);color:var(--text2);font-size:9px;font-weight:700;line-height:1.2;letter-spacing:.06em;text-transform:uppercase;}
+.selection-scope-segments{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));width:100%;min-width:0;gap:4px;flex-wrap:nowrap;}
+.selection-scope-segments .ts-pill{width:100%;min-width:0;height:24px;padding:3px 4px;border-radius:4px;overflow:hidden;text-align:center;text-overflow:ellipsis;}
+.magic-wand-option-section{gap:8px;}
+.magic-wand-tolerance-controls{display:grid;grid-template-columns:minmax(0,1fr) 38px;align-items:center;width:100%;min-width:0;gap:8px;}
+.magic-wand-tolerance-controls .ts-range{width:100%;}
+.magic-wand-tolerance-value{display:flex;align-items:center;justify-content:flex-end;width:38px;height:24px;min-width:0;box-sizing:border-box;}
+.magic-wand-sample-select{width:100%;min-width:0;height:24px;text-align:left;box-sizing:border-box;}
+.magic-wand-checkbox-row{display:flex;align-items:center;width:100%;min-width:0;height:24px;gap:8px;color:var(--text);font-size:10px;cursor:pointer;box-sizing:border-box;}
+.magic-wand-checkbox-row .ts-check{flex:0 0 auto;}
 .tool-group-option-row{display:grid;grid-template-columns:70px minmax(0,1fr) 34px;align-items:center;gap:6px;min-width:0;font-size:10px;color:var(--text2);}
 .tool-group-option-row input[type="range"]{width:100%;min-width:0;}
 .tool-group-option-row.compact{display:flex;min-height:22px;color:var(--text);}
