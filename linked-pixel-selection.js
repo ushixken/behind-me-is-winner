@@ -265,6 +265,7 @@
   document.addEventListener('keydown',function(event){
     if(window.LassoSelection&&LassoSelection.isActive())return;
     if(window.RectangleSelection&&RectangleSelection.isActive())return;
+    if(window.EllipseSelection&&EllipseSelection.isActive())return;
     if(!selectionActive)return;var transformActive=typeof tfActive!=='undefined'&&tfActive;
     var target=event.target instanceof Element?event.target:null;
     if(target&&(target.isContentEditable||target.closest('input,textarea,[contenteditable="true"]')))return;

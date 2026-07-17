@@ -156,7 +156,7 @@
   const selectionGroup=registerGroup({id:'selection',name:'Selection',shortcutActionId:'toolSelection',icon:'S',defaultSubToolId:'style-select',subTools:[
     {id:'rectangle-select',name:'Rectangle Select',icon:'R',section:'Selection Area',activate:toolActivation('rectangle-select','Rectangle Select'),settingsDescription:'Drag a rectangular selection. Shift adds, Alt subtracts, and Shift+Alt intersects.'},
     {id:'lasso-select',name:'Lasso Select',icon:'L',section:'Selection Area',activate:toolActivation('lasso','Lasso Select'),settingsDescription:'Drag a freehand closed selection. Shift adds, Alt subtracts, and Shift+Alt intersects.'},
-    Object.assign(placeholder('ellipse-select','Ellipse Select','O'),{section:'Selection Area'}),Object.assign(placeholder('polyline-select','Polyline Select','P'),{section:'Selection Area'}),
+    {id:'ellipse-select',name:'Ellipse Select',icon:'O',section:'Selection Area',activate:toolActivation('ellipse-select','Ellipse Select'),settingsDescription:'Drag an elliptical selection. Shift constrains a circle; selection modifiers still control add, subtract, and intersect.'},Object.assign(placeholder('polyline-select','Polyline Select','P'),{section:'Selection Area'}),
     Object.assign(placeholder('magic-wand','Magic Wand','W'),{section:'Smart Selection'}),
     {id:'style-select',name:'Style Select',icon:'S',section:'Smart Selection',isAvailable:activeLayerSupportsStyleSelect,unavailableLabel:'Smart Raster Only',activate:toolActivation('selection','Style Select'),settingsDescription:'Use the configured Select Linked Pixels modifier on a Smart Raster swatch or canvas pixel.'},
     Object.assign(placeholder('selection-pen','Selection Pen','P'),{section:'Selection Painting'}),Object.assign(placeholder('erase-selection','Erase Selection','E'),{section:'Selection Painting'})
@@ -176,11 +176,11 @@
   const free=document.getElementById('transform-mode-free'),perspective=document.getElementById('transform-mode-perspective');
   if(free)free.onclick=()=>activateSubTool('transform','free-transform');if(perspective)perspective.onclick=()=>activateSubTool('transform','perspective-transform');
   const grid=document.getElementById('brush-preset-grid');if(grid)grid.addEventListener('click',event=>{const item=event.target.closest('.bp-item');if(!item)return;const group=getGroup(tool==='eraser'?'eraser':'brush');if(group){const subTool=ensurePresetSubTool(group,item.dataset.presetId);group.activeSubToolId=subTool.id;persist();renderSettings();}});
-  window.addEventListener('tool-changed',event=>{if(activating)return;const map={brush:'brush',eraser:'eraser',fill:'fill',line:'line',lasso:'selection','rectangle-select':'selection',selection:'selection',transform:'transform'},id=map[event.detail&&event.detail.tool];if(id){activeGroupId=id;syncPanel(getGroup(id));syncActiveButtons();renderSettings();}});
+  window.addEventListener('tool-changed',event=>{if(activating)return;const map={brush:'brush',eraser:'eraser',fill:'fill',line:'line',lasso:'selection','rectangle-select':'selection','ellipse-select':'selection',selection:'selection',transform:'transform'},id=map[event.detail&&event.detail.tool];if(id){activeGroupId=id;syncPanel(getGroup(id));syncActiveButtons();renderSettings();}});
   window.addEventListener('active-artwork-changed',refreshSelectionAvailability);
   window.addEventListener('project-loaded',refreshSelectionAvailability);
   window.addEventListener('layer-type-changed',refreshSelectionAvailability);
-  const initial=({brush:'brush',eraser:'eraser',fill:'fill',line:'line',lasso:'selection','rectangle-select':'selection',selection:'selection',transform:'transform'})[typeof tool!=='undefined'?tool:'brush']||'brush';activeGroupId=initial;syncPanel(getGroup(initial));syncActiveButtons();refreshSelectionAvailability();
+  const initial=({brush:'brush',eraser:'eraser',fill:'fill',line:'line',lasso:'selection','rectangle-select':'selection','ellipse-select':'selection',selection:'selection',transform:'transform'})[typeof tool!=='undefined'?tool:'brush']||'brush';activeGroupId=initial;syncPanel(getGroup(initial));syncActiveButtons();refreshSelectionAvailability();
   window.ToolGroups={registerGroup,getGroup,getGroups:()=>Array.from(groups.values()),activateGroup,activateSubTool,get activeGroupId(){return activeGroupId;}};
   window.dispatchEvent(new CustomEvent('tool-groups-ready'));
 })();
