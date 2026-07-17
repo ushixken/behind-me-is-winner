@@ -1623,6 +1623,7 @@ input.size-val-input{
 .tool-group-subtool-icon{display:grid;place-items:center;width:20px;height:20px;flex:0 0 20px;border-radius:3px;background:var(--bg3);font-size:10px;font-weight:700;}
 .tool-group-subtool-label{min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:11px;white-space:nowrap;}
 .tool-group-coming-soon{justify-self:end;font-size:8px;color:var(--text2);white-space:nowrap;}
+.tool-group-section-header{padding:8px 4px 3px;margin-top:2px;border-bottom:1px solid var(--border2);color:var(--text2);font-size:9px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;}
 .tool-group-settings{padding:14px;overflow:auto;color:var(--text);}
 .tool-group-settings h3{margin:0 0 8px;font-size:14px;}
 .tool-group-settings p{margin:0;color:var(--text2);font-size:11px;line-height:1.5;}

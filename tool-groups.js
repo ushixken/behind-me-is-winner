@@ -19,6 +19,13 @@
   function persist(){const state={};groups.forEach(group=>state[group.id]=group.activeSubToolId);localStorage.setItem(STORAGE_KEY,JSON.stringify(state));}
   function getGroup(id){return groups.get(id)||null;}
   function getSubTool(group,id){return group&&group.subTools.find(item=>item.id===id)||null;}
+  function activeLayerSupportsStyleSelect(){const layer=layers[curLayer];return !!(layer&&layer.type==='smart-raster');}
+  function subToolIsAvailable(subTool){return !!(subTool&&subTool.status==='implemented'&&(!subTool.isAvailable||subTool.isAvailable()));}
+  function selectionFallback(group){
+    const remembered=getSubTool(group,group.lastValidSubToolId);if(subToolIsAvailable(remembered))return remembered;
+    const rectangle=getSubTool(group,'rectangle-select');if(subToolIsAvailable(rectangle))return rectangle;
+    return group.subTools.find(item=>item.id!=='style-select'&&subToolIsAvailable(item))||null;
+  }
   function ensureGenericBody(){
     const shell=document.getElementById('brush-presets-panel'),wrap=shell&&shell.querySelector('.fp-body-wrap');if(!wrap)return null;
     let body=wrap.querySelector('.fp-body[data-body="tool-group"]');if(body)return body;
@@ -34,12 +41,14 @@
     const body=ensureGenericBody();if(!body)return;const list=body.querySelector('.tool-group-list');list.replaceChildren();
     body.querySelector('.tool-group-caption').textContent=group.panelCaption||group.name+' Sub Tools';
     body.querySelectorAll('.tool-group-inline-options').forEach(element=>element.remove());
+    let currentSection=null;
     group.subTools.forEach(subTool=>{
+      if(subTool.section&&subTool.section!==currentSection){currentSection=subTool.section;const header=document.createElement('div');header.className='tool-group-section-header';header.textContent=currentSection;list.appendChild(header);}
       const button=document.createElement('button');button.type='button';button.className='tool-group-subtool';button.dataset.subToolId=subTool.id;
-      button.classList.toggle('active',subTool.id===group.activeSubToolId);button.disabled=subTool.status!=='implemented';
+      const available=subToolIsAvailable(subTool);button.classList.toggle('active',subTool.id===group.activeSubToolId&&available);button.disabled=!available;
       const icon=document.createElement('span');icon.className='tool-group-subtool-icon';icon.textContent=subTool.icon||group.icon||'';
       const label=document.createElement('span');label.className='tool-group-subtool-label';label.textContent=subTool.name;
-      button.append(icon,label);if(button.disabled){const soon=document.createElement('span');soon.className='tool-group-coming-soon';soon.textContent='Coming Soon';button.appendChild(soon);}
+      button.append(icon,label);if(button.disabled){const soon=document.createElement('span');soon.className='tool-group-coming-soon';soon.textContent=subTool.status==='implemented'?(subTool.unavailableLabel||'Unavailable'):'Coming Soon';button.appendChild(soon);}
       button.onclick=()=>activateSubTool(group.id,subTool.id);list.appendChild(button);
     });
     if(typeof group.panelRenderer==='function')group.panelRenderer(body,group);
@@ -64,7 +73,8 @@
   }
   function openSettings(){renderSettings();const modal=document.getElementById('tool-settings-modal-overlay');if(modal)modal.classList.add('visible');}
   function activateSubTool(groupId,subToolId,options){
-    const group=getGroup(groupId),subTool=getSubTool(group,subToolId);if(!group||!subTool||subTool.status!=='implemented')return false;
+    const group=getGroup(groupId),subTool=getSubTool(group,subToolId);if(!group||!subToolIsAvailable(subTool))return false;
+    if(groupId==='selection'&&subTool.id!=='style-select')group.lastValidSubToolId=subTool.id;
     activeGroupId=groupId;group.activeSubToolId=subTool.id;persist();
     activating=true;try{if(typeof subTool.activate==='function')subTool.activate(options||{});}finally{activating=false;}
     // setTool() still contains the legacy Brush/Transform body switch. Run
@@ -72,7 +82,15 @@
     // body remains active for Fill and Selection as well.
     syncPanel(group);renderSettings();syncActiveButtons();return true;
   }
-  function activateGroup(groupId){const group=getGroup(groupId);return !!group&&activateSubTool(groupId,group.activeSubToolId,{fromGroup:true});}
+  function activateGroup(groupId){const group=getGroup(groupId);if(!group)return false;let subTool=getSubTool(group,group.activeSubToolId);if(!subToolIsAvailable(subTool)&&groupId==='selection')subTool=selectionFallback(group);return !!subTool&&activateSubTool(groupId,subTool.id,{fromGroup:true});}
+  function refreshSelectionAvailability(){
+    const group=getGroup('selection');if(!group)return;
+    const current=getSubTool(group,group.activeSubToolId);
+    if(activeGroupId==='selection'&&!subToolIsAvailable(current)){
+      const fallback=selectionFallback(group);if(fallback){activateSubTool('selection',fallback.id,{contextFallback:true});return;}
+    }
+    if(activeGroupId==='selection'){renderGeneric(group);setBody('tool-group');renderSettings();}
+  }
   function syncActiveButtons(){document.querySelectorAll('[data-tool-group-id]').forEach(button=>button.classList.toggle('active',button.dataset.toolGroupId===activeGroupId));}
   function bindMainButton(id,groupId){const button=document.getElementById(id);if(!button)return;button.dataset.toolGroupId=groupId;button.onclick=()=>activateGroup(groupId);}
   function toolActivation(toolId,label,after){return()=>{setTool(toolId,label);if(after)after();};}
@@ -105,11 +123,14 @@
 
   registerGroup({id:'brush',name:'Brush',icon:'B',defaultSubToolId:'brush:hard-round',subTools:presetSubTools('brush')});
   registerGroup({id:'eraser',name:'Eraser',icon:'E',defaultSubToolId:'eraser:hard-round',subTools:presetSubTools('eraser')});
-  registerGroup({id:'selection',name:'Selection',icon:'S',defaultSubToolId:'select-linked',subTools:[
-    {id:'select-linked',name:'Select by Style',icon:'S',activate:toolActivation('selection','Select by Style'),settingsDescription:'Use the configured Select Linked Pixels modifier on a Smart Raster swatch or canvas pixel.'},
-    placeholder('rectangle-select','Rectangle Select','R'),{id:'lasso-select',name:'Lasso Select',icon:'L',activate:toolActivation('lasso','Lasso Select'),settingsDescription:'Drag a freehand closed selection. Shift adds, Alt subtracts, and Shift+Alt intersects.'},
-    placeholder('ellipse-select','Ellipse Select','O'),placeholder('polyline-select','Polyline Select','P'),placeholder('magic-wand','Magic Wand','W'),placeholder('selection-pen','Selection Pen','P'),placeholder('erase-selection','Erase Selection','E')
-  ]});
+  const selectionGroup=registerGroup({id:'selection',name:'Selection',icon:'S',defaultSubToolId:'style-select',subTools:[
+    Object.assign(placeholder('rectangle-select','Rectangle Select','R'),{section:'Selection Area'}),
+    {id:'lasso-select',name:'Lasso Select',icon:'L',section:'Selection Area',activate:toolActivation('lasso','Lasso Select'),settingsDescription:'Drag a freehand closed selection. Shift adds, Alt subtracts, and Shift+Alt intersects.'},
+    Object.assign(placeholder('ellipse-select','Ellipse Select','O'),{section:'Selection Area'}),Object.assign(placeholder('polyline-select','Polyline Select','P'),{section:'Selection Area'}),
+    Object.assign(placeholder('magic-wand','Magic Wand','W'),{section:'Smart Selection'}),
+    {id:'style-select',name:'Style Select',icon:'S',section:'Smart Selection',isAvailable:activeLayerSupportsStyleSelect,unavailableLabel:'Smart Raster Only',activate:toolActivation('selection','Style Select'),settingsDescription:'Use the configured Select Linked Pixels modifier on a Smart Raster swatch or canvas pixel.'},
+    Object.assign(placeholder('selection-pen','Selection Pen','P'),{section:'Selection Painting'}),Object.assign(placeholder('erase-selection','Erase Selection','E'),{section:'Selection Painting'})
+  ]});selectionGroup.lastValidSubToolId='lasso-select';
   registerGroup({id:'fill',name:'Fill',icon:'F',defaultSubToolId:'bucket-fill',subTools:[
     {id:'bucket-fill',name:'Bucket Fill',icon:'F',activate:toolActivation('fill','Fill')},placeholder('lasso-fill','Lasso Fill','L'),placeholder('rectangle-fill','Rectangle Fill','R'),placeholder('ellipse-fill','Ellipse Fill','O'),placeholder('polyline-fill','Polyline Fill','P'),placeholder('enclose-fill','Enclose and Fill','E'),placeholder('refer-other-layers','Refer Other Layers','A')
   ]});
@@ -126,6 +147,9 @@
   if(free)free.onclick=()=>activateSubTool('transform','free-transform');if(perspective)perspective.onclick=()=>activateSubTool('transform','perspective-transform');
   const grid=document.getElementById('brush-preset-grid');if(grid)grid.addEventListener('click',event=>{const item=event.target.closest('.bp-item');if(!item)return;const group=getGroup(tool==='eraser'?'eraser':'brush');if(group){const subTool=ensurePresetSubTool(group,item.dataset.presetId);group.activeSubToolId=subTool.id;persist();renderSettings();}});
   window.addEventListener('tool-changed',event=>{if(activating)return;const map={brush:'brush',eraser:'eraser',fill:'fill',line:'line',lasso:'selection',selection:'selection',transform:'transform'},id=map[event.detail&&event.detail.tool];if(id){activeGroupId=id;syncPanel(getGroup(id));syncActiveButtons();renderSettings();}});
-  const initial=({brush:'brush',eraser:'eraser',fill:'fill',line:'line',lasso:'selection',selection:'selection',transform:'transform'})[typeof tool!=='undefined'?tool:'brush']||'brush';activeGroupId=initial;syncPanel(getGroup(initial));syncActiveButtons();
+  window.addEventListener('active-artwork-changed',refreshSelectionAvailability);
+  window.addEventListener('project-loaded',refreshSelectionAvailability);
+  window.addEventListener('layer-type-changed',refreshSelectionAvailability);
+  const initial=({brush:'brush',eraser:'eraser',fill:'fill',line:'line',lasso:'selection',selection:'selection',transform:'transform'})[typeof tool!=='undefined'?tool:'brush']||'brush';activeGroupId=initial;syncPanel(getGroup(initial));syncActiveButtons();refreshSelectionAvailability();
   window.ToolGroups={registerGroup,getGroup,activateGroup,activateSubTool,get activeGroupId(){return activeGroupId;}};
 })();
