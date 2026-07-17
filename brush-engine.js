@@ -207,14 +207,15 @@ function _commitStrokeCanvas(){
   const smartOwnership=tool==='brush'&&styleId&&
     typeof advancedPalettePaintingEnabled==='function'&&advancedPalettePaintingEnabled()&&
     layers[curLayer]&&layers[curLayer].type==='smart-raster';
-  const beforeSmart=smartOwnership?ctx.getImageData(0,0,CW,CH):null;
+  const ownershipDirtyRect=smartOwnership?_consumeStrokeDirtyRect():null;
+  const ownershipBefore=smartOwnership?(ownershipDirtyRect?ctx.getImageData(ownershipDirtyRect.x,ownershipDirtyRect.y,ownershipDirtyRect.w,ownershipDirtyRect.h):ctx.getImageData(0,0,CW,CH)):null;
   ctx.save();
   ctx.globalAlpha = Math.max(0, Math.min(1, brushOpacity));
   ctx.globalCompositeOperation = 'source-over';
   ctx.drawImage(src, 0, 0);
   ctx.restore();
-  if(smartOwnership&&typeof applyStyleDiffFromBefore==='function'){
-    applyStyleDiffFromBefore(beforeSmart,styleId);
+  if(smartOwnership&&typeof commitSmartRasterBrush==='function'){
+    commitSmartRasterBrush(src,styleId,brushOpacity,ownershipDirtyRect,ownershipBefore);
   }
   _strokeCtx.clearRect(0, 0, _strokeCanvas.width, _strokeCanvas.height);
 }

@@ -19,6 +19,7 @@ const KEYBIND_DEFAULTS={
   pasteLayer:  {label:'Paste Layer',         key:'v',          ctrl:true,  shift:false, alt:false},
   duplicateLayer:{label:'Duplicate Layer',   key:'d',          ctrl:true,  shift:false, alt:false},
   deleteLayer: {label:'Delete Layer',        key:'Delete',     ctrl:false, shift:false, alt:false},
+  selectLinkedPixels:{label:'Select Linked Pixels',key:'Click',ctrl:true,shift:false,alt:false,pointer:true},
   toolBrush:   {label:'Brush Tool',         key:'b',          ctrl:false, shift:false, alt:false},
   toolEraser:  {label:'Eraser Tool',        key:'e',          ctrl:false, shift:false, alt:false},
   toolFill:    {label:'Fill Tool',          key:'f',          ctrl:false, shift:false, alt:false},
@@ -67,6 +68,7 @@ const KEYBIND_CATEGORIES=[
   {name:'History',        actions:['undo','redo']},
   {name:'Frame Clipboard', actions:['copyFrame','cutFrame','pasteFrame','duplicateFrame','clearFrame']},
   {name:'Layer Clipboard', actions:['copyLayer','cutLayer','pasteLayer','duplicateLayer','deleteLayer']},
+  {name:'Selection',      actions:['selectLinkedPixels']},
   {name:'Tools',          actions:['toolBrush','toolEraser','toolFill','toolLine','toolTransform','brushResize']},
   {name:'Frames & Keyframes', actions:['newFrame','delKeyframe','nextFrame','prevFrame','flipperBypass','increaseExposure','decreaseExposure']},
   {name:'View',           actions:['zoomIn','zoomOut','zoomReset','rotateReset']},
@@ -148,6 +150,19 @@ function matchBind(e,action){
   if(!!b.ctrl!==ctrlHeld) return false;
   if(!!b.shift!==shiftHeld) return false;
   if(!!b.alt!==altHeld) return false;
+  return true;
+}
+
+// Pointer actions share the shortcut store and modifier configuration. Shift
+// and Alt can additionally select add/subtract/intersect modes at click time.
+function matchPointerBind(e,action,allowSelectionModes){
+  const b=keybinds[action];
+  if(!b||b.key!=='Click'||e.button!==0)return false;
+  const ctrlHeld=KEYBIND_IS_MAC?!!e.metaKey:!!e.ctrlKey;
+  if(!!b.ctrl!==ctrlHeld)return false;
+  if(b.shift&&!e.shiftKey)return false;
+  if(b.alt&&!e.altKey)return false;
+  if(!allowSelectionModes&&((!!b.shift!==!!e.shiftKey)||(!!b.alt!==!!e.altKey)))return false;
   return true;
 }
 
@@ -279,16 +294,19 @@ function renderKeybindsList(){
 }
 
 let _rebindListener=null;
+let _rebindPointerListener=null;
 
 function startRebind(action,btn){
   cancelRebind();
   const prevText=btn.textContent;
-  btn.textContent='Press a key…';
+  const pointerAction=!!keybinds[action].pointer;
+  btn.textContent=pointerAction?'Press modifiers + click\u2026':'Press a key\u2026';
   btn.classList.add('primary');
   _rebindListener=(e)=>{
     e.preventDefault();e.stopPropagation();
     if(e.key==='Escape'){ cancelRebind(); renderKeybindsList(); return; }
     if(['Control','Shift','Alt','Meta'].includes(e.key)) return; // wait for a real key
+    if(pointerAction)return; // pointer actions are rebound with modifiers + click
     const combo={key:e.key,ctrl:KEYBIND_IS_MAC?e.metaKey:e.ctrlKey,shift:e.shiftKey,alt:e.altKey};
     const conflict=findBindConflict(action,combo);
     cancelRebind();
@@ -309,6 +327,19 @@ function startRebind(action,btn){
     syncKeybindMenuLabels();
   };
   window.addEventListener('keydown',_rebindListener,{capture:true});
+  if(pointerAction){
+    _rebindPointerListener=(e)=>{
+      if(e.button!==0)return;
+      e.preventDefault();e.stopPropagation();
+      const combo={key:'Click',ctrl:KEYBIND_IS_MAC?e.metaKey:e.ctrlKey,shift:e.shiftKey,alt:e.altKey,pointer:true};
+      const conflict=findBindConflict(action,combo);
+      cancelRebind();
+      const apply=()=>{keybinds[action]=Object.assign({},keybinds[action],combo);saveKeybinds();renderKeybindsList();syncKeybindMenuLabels();};
+      if(conflict)showKeybindConflict(combo,keybinds[conflict].label,keybinds[action].label,apply,renderKeybindsList);
+      else apply();
+    };
+    window.addEventListener('pointerdown',_rebindPointerListener,{capture:true});
+  }
 }
 
 // Modal shown when a chosen key combo conflicts with an existing bind.
@@ -331,7 +362,9 @@ function showKeybindConflict(combo,conflictLabel,actionLabel,onSwap,onCancel){
 }
 function cancelRebind(){
   if(_rebindListener) window.removeEventListener('keydown',_rebindListener,{capture:true});
+  if(_rebindPointerListener) window.removeEventListener('pointerdown',_rebindPointerListener,{capture:true});
   _rebindListener=null;
+  _rebindPointerListener=null;
 }
 
 // Keep the static menu-bar shortcut labels (Edit menu, etc.) in sync

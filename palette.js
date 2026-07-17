@@ -472,8 +472,12 @@
           const c=hexToRgba(hex);
           if(c.r<=24&&c.g<=24&&c.b<=24) btn.classList.add('dark-color');
         }
+        btn.addEventListener('pointerdown',event=>{
+          if(window.LinkedPixelSelection&&window.LinkedPixelSelection.handleStylePointer(event,style.id))btn._linkedSelectionClick=true;
+        });
         btn.addEventListener('click',event=>{
           event.preventDefault();
+          if(btn._linkedSelectionClick){btn._linkedSelectionClick=false;return;}
           selectStyle(style.id,true,toolbarPaletteAttachment.paletteId);
         });
         strip.appendChild(btn);
@@ -1266,7 +1270,10 @@
       lock.className='palette-style-lock';
       lock.textContent=style.locked?'LOCK':'';
       card.append(preview,meta,lock);
-      card.addEventListener('pointerdown',event=>beginAdvancedStyleDrag(event,style,card));
+      card.addEventListener('pointerdown',event=>{
+        if(window.LinkedPixelSelection&&window.LinkedPixelSelection.handleStylePointer(event,style.id)){advancedStyleSuppressClick=true;return;}
+        beginAdvancedStyleDrag(event,style,card);
+      });
       card.addEventListener('dragstart',event=>event.preventDefault());
       // NOTE: deliberately no 'lostpointercapture' abort handler here. Pen/
       // stylus drivers can transiently drop and re-acquire pointer capture
@@ -1279,7 +1286,7 @@
       // drag, which is reliable for both mouse and pen; Advanced Palette now
       // matches that.
       card.addEventListener('click',event=>{
-        if(advancedStyleSuppressClick){event.preventDefault();return;}
+        if(advancedStyleSuppressClick){event.preventDefault();advancedStyleSuppressClick=false;return;}
         if(event.target.closest('.palette-style-name-input'))return;
         selectStyle(style.id,true);
       });

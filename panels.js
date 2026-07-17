@@ -109,9 +109,9 @@ function renderSmartRasterFrame(li,fi,targetCanvas){
   return window.SmartRasterLayer.renderFrame(li,fi,targetCanvas);
 }
 
-function commitSmartRasterBrush(maskCanvas,styleId,strokeOpacity){
+function commitSmartRasterBrush(maskCanvas,styleId,strokeOpacity,dirtyRect,beforeImage){
   if(!advancedPalettePaintingEnabled()||!styleId||!maskCanvas) return false;
-  return window.SmartRasterLayer.commitBrushMask(curLayer,curFrame,maskCanvas,styleId,strokeOpacity);
+  return window.SmartRasterLayer.commitBrushMask(curLayer,curFrame,maskCanvas,styleId,strokeOpacity,dirtyRect,beforeImage);
 }
 
 function rerenderAllSmartRasterFrames(){
@@ -237,6 +237,7 @@ function loadFrame(li,fi){
   recomposite(li,fi);updateOnion();updatePlayhead();
   document.getElementById('frame-info').textContent=frameLabel(fi)+' / '+frameLabel(TOTAL-1);
   updateStatus();
+  window.dispatchEvent(new CustomEvent('active-artwork-changed',{detail:{layerIndex:li,frameIndex:fi}}));
 }
 // PERF: recomposite() now accepts an optional `dirtyRect` ({x,y,w,h} in
 // canvas pixel space). When provided, the expensive per-layer compositing

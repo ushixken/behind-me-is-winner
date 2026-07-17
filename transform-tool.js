@@ -92,6 +92,12 @@ let tfMemberIdx=null;    // layer indices belonging to the active group (group m
 let tfMembers=null;      // [{li, base}] pristine per-layer content snapshots (group mode only)
 let tfSnapshot=null;     // pristine copy of activeC content when the tool was entered (single-layer mode)
 let tfSmartMove=null;      // independent typed ownership snapshot for Smart Raster Free Transform
+let tfPixelSelection=null; // canonical selected source/background split, when a pixel selection is active
+let tfRasterPerspectivePreview=null; // bounds-sized immutable RGBA source for normal Raster final rasterization
+let tfPerspectiveFastPreview=null; // reusable half-size, fully covered inverse-mapped drag preview
+let tfPerspectivePreviewRaf=0;
+let tfPerspectivePreviewFast=false;
+let tfPerspectivePreviewExact=false;
 let tfBox=null;          // {x,y,w,h} axis-aligned bbox of the artwork, in original canvas coords
 let tfState=null;        // {tx,ty,scale,rotation} — cumulative transform applied to tfBox's center
 let tfDrag=null;         // current drag mode: 'move' | 'scale' | 'rotate' | 'pivot' | null
@@ -303,10 +309,12 @@ function _tfCommitSmartFreeTransform(){
   // destination = transformed center + rotation * scale * (source - box center).
   // Walk destination pixels and apply its exact inverse, sampling ownership
   // with nearest-neighbor so style indexes remain integers.
-  const outputIds=new Uint16Array(source.width*source.height);
+  const outputIds=tfPixelSelection?source.styleIds.slice():new Uint16Array(source.width*source.height);
+  if(tfPixelSelection)for(let p=0;p<tfPixelSelection.mask.length;p++)if(tfPixelSelection.mask[p]===255)outputIds[p]=0;
   const outputRgba=ctx.getImageData(0,0,source.width,source.height).data;
-  const sourceRgba=tfSnapshot.getContext('2d',{willReadFrequently:true})
-    .getImageData(0,0,source.width,source.height).data;
+  const sourceRgba=source.previewSourceImage
+    ? source.previewSourceImage.data
+    : tfSnapshot.getContext('2d',{willReadFrequently:true}).getImageData(0,0,source.width,source.height).data;
   const boxCenterX=tfBox.x+tfBox.w/2,boxCenterY=tfBox.y+tfBox.h/2;
   const center=_tfCenter(tfState);
   const scale=tfState.scale||1;
@@ -337,6 +345,7 @@ function _tfCommitSmartFreeTransform(){
     const sourceX=Math.floor(localX),sourceY=Math.floor(localY);
     if(sourceX<0||sourceX>=source.width||sourceY<0||sourceY>=source.height)continue;
     const sourceOffset=sourceY*source.width+sourceX;
+    if(tfPixelSelection&&tfPixelSelection.mask[sourceOffset]!==255)continue;
     if(sourceRgba[sourceOffset*4+3]===0)continue;
     outputIds[destinationOffset]=source.styleIds[sourceOffset]||0;
   }
@@ -361,6 +370,96 @@ function _tfInvertHomography(H){
   return {a:A*inv,b:B*inv,c:C*inv,d:D*inv,e:E*inv,f:F*inv,g:G*inv,h:Hc*inv,i:I*inv};
 }
 
+function _tfDrawSmartPerspectiveInverse(destinationContext,sourceCanvas,sourceBounds,corners,backgroundCanvas){
+  const homography=_tfQuadH(corners[0],corners[1],corners[2],corners[3]);
+  const inverse=_tfInvertHomography(homography);if(!inverse)return false;
+  const source=tfSmartMove&&tfSmartMove.previewSourceImage?tfSmartMove.previewSourceImage:sourceCanvas.getContext('2d',{willReadFrequently:true}).getImageData(0,0,sourceCanvas.width,sourceCanvas.height);
+  const cachedBackground=tfSmartMove&&tfSmartMove.previewBackgroundImage;
+  const output=cachedBackground?new ImageData(cachedBackground.data.slice(),cachedBackground.width,cachedBackground.height):(backgroundCanvas?backgroundCanvas.getContext('2d',{willReadFrequently:true}).getImageData(0,0,CW,CH):destinationContext.createImageData(CW,CH));
+  const src=source.data,dst=output.data;
+  const minX=Math.max(0,Math.floor(Math.min(...corners.map(point=>point.x))));
+  const minY=Math.max(0,Math.floor(Math.min(...corners.map(point=>point.y))));
+  const maxX=Math.min(CW,Math.ceil(Math.max(...corners.map(point=>point.x))));
+  const maxY=Math.min(CH,Math.ceil(Math.max(...corners.map(point=>point.y))));
+  const sourceMinX=sourceBounds.x,sourceMinY=sourceBounds.y;
+  const sourceMaxX=sourceBounds.x+sourceBounds.w-1,sourceMaxY=sourceBounds.y+sourceBounds.h-1;
+  function sample(x,y){
+    x=Math.max(sourceMinX,Math.min(sourceMaxX,x));y=Math.max(sourceMinY,Math.min(sourceMaxY,y));
+    const offset=(y*source.width+x)*4;return [src[offset],src[offset+1],src[offset+2],src[offset+3]/255];
+  }
+  for(let y=minY;y<maxY;y++)for(let x=minX;x<maxX;x++){
+    const px=x+0.5,py=y+0.5,denominator=inverse.g*px+inverse.h*py+inverse.i;
+    if(!Number.isFinite(denominator)||Math.abs(denominator)<1e-10)continue;
+    const u=(inverse.a*px+inverse.b*py+inverse.c)/denominator;
+    const v=(inverse.d*px+inverse.e*py+inverse.f)/denominator;
+    if(!Number.isFinite(u)||!Number.isFinite(v)||u<0||u>1||v<0||v>1)continue;
+    const sx=sourceBounds.x+u*sourceBounds.w-0.5,sy=sourceBounds.y+v*sourceBounds.h-0.5;
+    const x0=Math.floor(sx),y0=Math.floor(sy),tx=sx-x0,ty=sy-y0;
+    const samples=[sample(x0,y0),sample(x0+1,y0),sample(x0,y0+1),sample(x0+1,y0+1)];
+    const weights=[(1-tx)*(1-ty),tx*(1-ty),(1-tx)*ty,tx*ty];
+    let alpha=0,red=0,green=0,blue=0;
+    for(let i=0;i<4;i++){const value=samples[i],weight=weights[i];alpha+=value[3]*weight;red+=value[0]*value[3]*weight;green+=value[1]*value[3]*weight;blue+=value[2]*value[3]*weight;}
+    if(alpha<=0)continue;red/=alpha;green/=alpha;blue/=alpha;
+    const offset=(y*CW+x)*4,destinationAlpha=dst[offset+3]/255,outputAlpha=alpha+destinationAlpha*(1-alpha);
+    dst[offset]=Math.round((red*alpha+dst[offset]*destinationAlpha*(1-alpha))/outputAlpha);
+    dst[offset+1]=Math.round((green*alpha+dst[offset+1]*destinationAlpha*(1-alpha))/outputAlpha);
+    dst[offset+2]=Math.round((blue*alpha+dst[offset+2]*destinationAlpha*(1-alpha))/outputAlpha);
+    dst[offset+3]=Math.round(outputAlpha*255);
+  }
+  destinationContext.clearRect(0,0,CW,CH);destinationContext.putImageData(output,0,0);return true;
+}
+
+
+function _tfDrawRasterPerspectiveInverse(destinationContext,corners,backgroundCanvas){
+  const cached=tfRasterPerspectivePreview;if(!cached)return false;
+  const homography=_tfQuadH(corners[0],corners[1],corners[2],corners[3]);
+  const inverse=_tfInvertHomography(homography);if(!inverse)return false;
+  const output=backgroundCanvas?backgroundCanvas.getContext('2d',{willReadFrequently:true}).getImageData(0,0,CW,CH):destinationContext.createImageData(CW,CH);
+  const src=cached.image.data,dst=output.data,sourceBounds={x:0,y:0,w:cached.width,h:cached.height};
+  const minX=Math.max(0,Math.floor(Math.min(...corners.map(p=>p.x)))),minY=Math.max(0,Math.floor(Math.min(...corners.map(p=>p.y))));
+  const maxX=Math.min(CW,Math.ceil(Math.max(...corners.map(p=>p.x)))),maxY=Math.min(CH,Math.ceil(Math.max(...corners.map(p=>p.y))));
+  _tfInverseMapRgba(src,cached.width,cached.height,sourceBounds,dst,CW,CH,{minX,minY,maxX,maxY},inverse,1,true);
+  destinationContext.clearRect(0,0,CW,CH);destinationContext.putImageData(output,0,0);return true;
+}
+
+function _tfInverseMapRgba(src,srcWidth,srcHeight,sourceBounds,dst,dstWidth,dstHeight,bounds,inverse,destinationScale,composite){
+  const sourceMinX=sourceBounds.x,sourceMinY=sourceBounds.y,sourceMaxX=sourceBounds.x+sourceBounds.w-1,sourceMaxY=sourceBounds.y+sourceBounds.h-1;
+  function sample(x,y){
+    x=Math.max(sourceMinX,Math.min(sourceMaxX,x));y=Math.max(sourceMinY,Math.min(sourceMaxY,y));
+    const offset=(y*srcWidth+x)*4;return [src[offset],src[offset+1],src[offset+2],src[offset+3]/255];
+  }
+  for(let y=bounds.minY;y<bounds.maxY;y++)for(let x=bounds.minX;x<bounds.maxX;x++){
+    const px=(x+0.5)/destinationScale,py=(y+0.5)/destinationScale,denominator=inverse.g*px+inverse.h*py+inverse.i;
+    if(!Number.isFinite(denominator)||Math.abs(denominator)<1e-10)continue;
+    const u=(inverse.a*px+inverse.b*py+inverse.c)/denominator,v=(inverse.d*px+inverse.e*py+inverse.f)/denominator;
+    if(!Number.isFinite(u)||!Number.isFinite(v)||u<0||u>1||v<0||v>1)continue;
+    const sx=sourceBounds.x+u*sourceBounds.w-0.5,sy=sourceBounds.y+v*sourceBounds.h-0.5,x0=Math.floor(sx),y0=Math.floor(sy),tx=sx-x0,ty=sy-y0;
+    const samples=[sample(x0,y0),sample(x0+1,y0),sample(x0,y0+1),sample(x0+1,y0+1)],weights=[(1-tx)*(1-ty),tx*(1-ty),(1-tx)*ty,tx*ty];
+    let alpha=0,red=0,green=0,blue=0;
+    for(let i=0;i<4;i++){const value=samples[i],weight=weights[i];alpha+=value[3]*weight;red+=value[0]*value[3]*weight;green+=value[1]*value[3]*weight;blue+=value[2]*value[3]*weight;}
+    if(alpha<=0)continue;red/=alpha;green/=alpha;blue/=alpha;
+    const offset=(y*dstWidth+x)*4;
+    if(composite){
+      const destinationAlpha=dst[offset+3]/255,outputAlpha=alpha+destinationAlpha*(1-alpha);
+      dst[offset]=Math.round((red*alpha+dst[offset]*destinationAlpha*(1-alpha))/outputAlpha);dst[offset+1]=Math.round((green*alpha+dst[offset+1]*destinationAlpha*(1-alpha))/outputAlpha);dst[offset+2]=Math.round((blue*alpha+dst[offset+2]*destinationAlpha*(1-alpha))/outputAlpha);dst[offset+3]=Math.round(outputAlpha*255);
+    }else{dst[offset]=Math.round(red);dst[offset+1]=Math.round(green);dst[offset+2]=Math.round(blue);dst[offset+3]=Math.round(alpha*255);}
+  }
+}
+
+function _tfDrawFastPerspectiveInverse(destinationContext,source,sourceBounds,corners){
+  const preview=tfPerspectiveFastPreview;if(!preview)return false;
+  const inverse=_tfInvertHomography(_tfQuadH(corners[0],corners[1],corners[2],corners[3]));if(!inverse)return false;
+  const scale=preview.scale,minX=Math.max(0,Math.floor(Math.min(...corners.map(p=>p.x))*scale)),minY=Math.max(0,Math.floor(Math.min(...corners.map(p=>p.y))*scale));
+  const maxX=Math.min(preview.canvas.width,Math.ceil(Math.max(...corners.map(p=>p.x))*scale)),maxY=Math.min(preview.canvas.height,Math.ceil(Math.max(...corners.map(p=>p.y))*scale));
+  const current={minX,minY,maxX,maxY},previous=preview.dirty||current,dirty={minX:Math.min(current.minX,previous.minX),minY:Math.min(current.minY,previous.minY),maxX:Math.max(current.maxX,previous.maxX),maxY:Math.max(current.maxY,previous.maxY)};
+  const data=preview.image.data;
+  for(let y=dirty.minY;y<dirty.maxY;y++)data.fill(0,(y*preview.canvas.width+dirty.minX)*4,(y*preview.canvas.width+dirty.maxX)*4);
+  _tfInverseMapRgba(source.data,source.width,source.height,sourceBounds,data,preview.canvas.width,preview.canvas.height,current,inverse,scale,false);
+  preview.context.clearRect(dirty.minX,dirty.minY,dirty.maxX-dirty.minX,dirty.maxY-dirty.minY);
+  preview.context.putImageData(preview.image,0,0,dirty.minX,dirty.minY,dirty.maxX-dirty.minX,dirty.maxY-dirty.minY);preview.dirty=current;
+  destinationContext.save();destinationContext.imageSmoothingEnabled=true;destinationContext.drawImage(preview.canvas,0,0,CW,CH);destinationContext.restore();return true;
+}
+
 function _tfCommitSmartPerspectiveTransform(){
   if(!tfSmartMove||!tfCorners)return;
   const source=tfSmartMove;
@@ -370,10 +469,12 @@ function _tfCommitSmartPerspectiveTransform(){
   const inverse=_tfInvertHomography(homography);
   if(!inverse)return;
 
-  const outputIds=new Uint16Array(source.width*source.height);
+  const outputIds=tfPixelSelection?source.styleIds.slice():new Uint16Array(source.width*source.height);
+  if(tfPixelSelection)for(let p=0;p<tfPixelSelection.mask.length;p++)if(tfPixelSelection.mask[p]===255)outputIds[p]=0;
   const outputRgba=ctx.getImageData(0,0,source.width,source.height).data;
-  const sourceRgba=tfSnapshot.getContext('2d',{willReadFrequently:true})
-    .getImageData(0,0,source.width,source.height).data;
+  const sourceRgba=source.previewSourceImage
+    ? source.previewSourceImage.data
+    : tfSnapshot.getContext('2d',{willReadFrequently:true}).getImageData(0,0,source.width,source.height).data;
   const minX=Math.max(0,Math.floor(Math.min(...tfCorners.map(p=>p.x)))-2);
   const minY=Math.max(0,Math.floor(Math.min(...tfCorners.map(p=>p.y)))-2);
   const maxX=Math.min(source.width,Math.ceil(Math.max(...tfCorners.map(p=>p.x)))+2);
@@ -392,6 +493,7 @@ function _tfCommitSmartPerspectiveTransform(){
     const sourceY=Math.floor(source.bounds.y+v*source.bounds.h);
     if(sourceX<0||sourceX>=source.width||sourceY<0||sourceY>=source.height)continue;
     const sourceOffset=sourceY*source.width+sourceX;
+    if(tfPixelSelection&&tfPixelSelection.mask[sourceOffset]!==255)continue;
     if(sourceRgba[sourceOffset*4+3]===0)continue;
     outputIds[destinationOffset]=source.styleIds[sourceOffset]||0;
   }
@@ -408,6 +510,10 @@ function _tfCommitSmartPerspectiveTransform(){
 function enterTransformTool(){
   if(tfActive) return;
   tfSmartMove=null;
+  tfPixelSelection=null;
+  tfRasterPerspectivePreview=null;
+  tfPerspectiveFastPreview=null;
+  tfPerspectivePreviewExact=false;
 
   // Collect every layer that should move together: layers inside the
   // active group folder, layers inside any multi-selected group folders
@@ -447,8 +553,36 @@ function enterTransformTool(){
   } else {
     tfSnapshot=mkLayerCanvas();
     tfSnapshot.getContext('2d').drawImage(activeC,0,0);
-    tfBox=_computeOpaqueBBox(tfSnapshot);
+    const pixelState=window.PixelSelection&&PixelSelection.isActive()?PixelSelection.getState():null;
+    if(pixelState&&pixelState.layerIndex===curLayer&&pixelState.bounds){
+      const selected=mkLayerCanvas(),background=mkLayerCanvas();
+      const selectedCtx=selected.getContext('2d'),backgroundCtx=background.getContext('2d');
+      selectedCtx.drawImage(tfSnapshot,0,0);
+      selectedCtx.globalCompositeOperation='destination-in';selectedCtx.drawImage(pixelState.maskCanvas,0,0);selectedCtx.globalCompositeOperation='source-over';
+      backgroundCtx.drawImage(tfSnapshot,0,0);
+      backgroundCtx.globalCompositeOperation='destination-out';backgroundCtx.drawImage(pixelState.maskCanvas,0,0);backgroundCtx.globalCompositeOperation='source-over';
+      tfPixelSelection={mask:pixelState.mask.slice(),source:selected,background:background};
+      tfBox={x:pixelState.bounds.x,y:pixelState.bounds.y,w:pixelState.bounds.width,h:pixelState.bounds.height};
+      PixelSelection.setOverlayVisible(false);
+    } else tfBox=_computeOpaqueBBox(tfSnapshot);
     tfSmartMove=_tfCaptureSmartMove(curLayer,curFrame,tfBox);
+    if(tfSmartMove){
+      const previewSource=tfPixelSelection?tfPixelSelection.source:tfSnapshot;
+      tfSmartMove.previewSourceImage=previewSource.getContext('2d',{willReadFrequently:true}).getImageData(0,0,CW,CH);
+      tfSmartMove.previewBackgroundImage=tfPixelSelection?tfPixelSelection.background.getContext('2d',{willReadFrequently:true}).getImageData(0,0,CW,CH):null;
+    }else{
+      const previewSource=tfPixelSelection?tfPixelSelection.source:tfSnapshot;
+      const x=Math.floor(tfBox.x),y=Math.floor(tfBox.y);
+      const width=Math.max(1,Math.ceil(tfBox.x+tfBox.w)-x);
+      const height=Math.max(1,Math.ceil(tfBox.y+tfBox.h)-y);
+      const canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;
+      canvas.getContext('2d').drawImage(previewSource,x,y,width,height,0,0,width,height);
+      tfRasterPerspectivePreview={canvas,x,y,width,height,image:canvas.getContext('2d',{willReadFrequently:true}).getImageData(0,0,width,height)};
+    }
+    const previewScale=0.5,previewCanvas=document.createElement('canvas');
+    previewCanvas.width=Math.max(1,Math.ceil(CW*previewScale));previewCanvas.height=Math.max(1,Math.ceil(CH*previewScale));
+    const previewContext=previewCanvas.getContext('2d');
+    tfPerspectiveFastPreview={scale:previewScale,canvas:previewCanvas,context:previewContext,image:previewContext.createImageData(previewCanvas.width,previewCanvas.height),dirty:null};
     _tfHiddenLayers=new Set();
     pushUndo();
   }
@@ -466,6 +600,7 @@ function enterTransformTool(){
 
 function commitTransformTool(){
   if(!tfActive) return;
+  _tfCancelPerspectivePreview();
   tfActive=false;
   transformC.classList.remove('tf-active');
   tfCtx.clearRect(0,0,CW,CH);
@@ -508,10 +643,14 @@ function commitTransformTool(){
   }
 
   if(tfPerspective){
-    const out=mkLayerCanvas();
-    _tfDrawPerspective(out.getContext('2d'),tfSnapshot,tfBox.x,tfBox.y,tfBox.w,tfBox.h,tfCorners,28);
-    ctx.clearRect(0,0,CW,CH);
-    ctx.drawImage(out,0,0);
+    if(tfSmartMove){
+      const perspectiveSource=tfPixelSelection?tfPixelSelection.source:tfSnapshot;
+      _tfDrawSmartPerspectiveInverse(ctx,perspectiveSource,tfBox,tfCorners,tfPixelSelection?tfPixelSelection.background:null);
+      tfPerspectivePreviewExact=true;
+    }else{
+      _tfDrawRasterPerspectiveInverse(ctx,tfCorners,tfPixelSelection?tfPixelSelection.background:null);
+      tfPerspectivePreviewExact=true;
+    }
   }
 
   if(tfPerspective)_tfCommitSmartPerspectiveTransform();
@@ -519,12 +658,14 @@ function commitTransformTool(){
   saveActiveToKey();
   recomposite(curLayer,curFrame);
   renderTimeline();
-  tfSnapshot=null;tfSmartMove=null;tfBox=null;tfState=null;tfPivot=null;
+  if(tfPixelSelection&&window.PixelSelection)PixelSelection.clear();
+  tfSnapshot=null;tfSmartMove=null;tfPixelSelection=null;tfRasterPerspectivePreview=null;tfPerspectiveFastPreview=null;tfBox=null;tfState=null;tfPivot=null;
   tfPerspective=false;tfCorners=null;
 }
 
 function cancelTransformTool(){
   if(!tfActive) return;
+  _tfCancelPerspectivePreview();
   tfActive=false;
   transformC.classList.remove('tf-active');
   tfCtx.clearRect(0,0,CW,CH);
@@ -545,19 +686,45 @@ function cancelTransformTool(){
   saveActiveToKey();
   recomposite(curLayer,curFrame);
   renderTimeline();
-  tfSnapshot=null;tfSmartMove=null;tfBox=null;tfState=null;tfPivot=null;
+  if(tfPixelSelection&&window.PixelSelection)PixelSelection.setOverlayVisible(true);
+  tfSnapshot=null;tfSmartMove=null;tfPixelSelection=null;tfRasterPerspectivePreview=null;tfPerspectiveFastPreview=null;tfBox=null;tfState=null;tfPivot=null;
   tfPerspective=false;tfCorners=null;
 }
 
-function _tfRedraw(){
+function _tfSchedulePerspectivePreview(fast){
+  tfPerspectivePreviewFast=!!fast;
+  if(fast)tfPerspectivePreviewExact=false;
+  if(tfPerspectivePreviewRaf)return;
+  tfPerspectivePreviewRaf=requestAnimationFrame(()=>{
+    tfPerspectivePreviewRaf=0;
+    const useFast=tfPerspectivePreviewFast;tfPerspectivePreviewFast=false;
+    if(tfActive&&tfPerspective)_tfRedraw(useFast);
+  });
+}
+function _tfCancelPerspectivePreview(){
+  if(tfPerspectivePreviewRaf){cancelAnimationFrame(tfPerspectivePreviewRaf);tfPerspectivePreviewRaf=0;}
+  tfPerspectivePreviewFast=false;
+}
+
+function _tfRedraw(fastPerspectivePreview){
   if(!tfActive) return;
   if(tfGroupMode){
-    _tfDrawGroupPreview();
+    _tfDrawGroupPreview(fastPerspectivePreview);
     if(tfPerspective) _tfDrawHandlesPerspective(false); else _tfDrawHandles(false);
   } else {
     ctx.clearRect(0,0,CW,CH);
+    if(tfPixelSelection)ctx.drawImage(tfPixelSelection.background,0,0);
+    const transformSource=tfPixelSelection?tfPixelSelection.source:tfSnapshot;
     if(tfPerspective){
-      _tfDrawPerspective(ctx,tfSnapshot,tfBox.x,tfBox.y,tfBox.w,tfBox.h,tfCorners,12);
+      if(fastPerspectivePreview){
+        if(tfSmartMove)_tfDrawFastPerspectiveInverse(ctx,tfSmartMove.previewSourceImage,tfBox,tfCorners);
+        else if(tfRasterPerspectivePreview)_tfDrawFastPerspectiveInverse(ctx,tfRasterPerspectivePreview.image,{x:0,y:0,w:tfRasterPerspectivePreview.width,h:tfRasterPerspectivePreview.height},tfCorners);
+        else _tfDrawPerspective(ctx,transformSource,tfBox.x,tfBox.y,tfBox.w,tfBox.h,tfCorners,6);
+      }else if(tfSmartMove){
+        _tfDrawSmartPerspectiveInverse(ctx,transformSource,tfBox,tfCorners,tfPixelSelection?tfPixelSelection.background:null);
+        tfPerspectivePreviewExact=true;
+      }
+      else{_tfDrawRasterPerspectiveInverse(ctx,tfCorners,tfPixelSelection?tfPixelSelection.background:null);tfPerspectivePreviewExact=true;}
     } else {
       const c=_tfCenter();
       ctx.save();
@@ -565,7 +732,7 @@ function _tfRedraw(){
       ctx.rotate(tfState.rotation*Math.PI/180);
       ctx.scale(tfState.scale,tfState.scale);
       ctx.translate(-(tfBox.x+tfBox.w/2),-(tfBox.y+tfBox.h/2));
-      ctx.drawImage(tfSnapshot,0,0);
+      ctx.drawImage(transformSource,0,0);
       ctx.restore();
     }
     _scheduleRecomposite();
@@ -573,7 +740,7 @@ function _tfRedraw(){
   }
 }
 
-function _tfDrawGroupPreview(){
+function _tfDrawGroupPreview(fastPerspectivePreview){
   const c=_tfCenter();
   const rad=tfState.rotation*Math.PI/180;
   tfCtx.clearRect(0,0,CW,CH);
@@ -584,7 +751,7 @@ function _tfDrawGroupPreview(){
     tfCtx.save();
     tfCtx.globalAlpha=layerAlpha;
     if(tfPerspective){
-      _tfDrawPerspective(tfCtx,m.base,tfBox.x,tfBox.y,tfBox.w,tfBox.h,tfCorners,12);
+      _tfDrawPerspective(tfCtx,m.base,tfBox.x,tfBox.y,tfBox.w,tfBox.h,tfCorners,fastPerspectivePreview?6:12);
     } else {
       tfCtx.translate(c.x,c.y);
       tfCtx.rotate(rad);
@@ -901,7 +1068,7 @@ function _tfPerspPointerMoveDrag(e){
   // caps every perspective interaction — corner, edge, VP, horizon — at
   // the same source of instability instead of patching each one.
   if(PerspectiveController.isValidQuad(candidate)) tfCorners=candidate;
-  _tfRedraw();
+  _tfSchedulePerspectivePreview(true);
 }
 // Pointer capture (set in _tfPerspPointerDown) redirects every subsequent
 // pointermove/up/cancel to whichever element called setPointerCapture —
@@ -947,9 +1114,11 @@ transformC.addEventListener('pointermove',e=>{
 });
 function _tfEndDrag(e){
   if(!tfDrag) return;
+  const settlePerspective=tfPerspective;
   if(transformC.hasPointerCapture&&transformC.hasPointerCapture(e.pointerId)) transformC.releasePointerCapture(e.pointerId);
   if(perspGuideC.hasPointerCapture&&perspGuideC.hasPointerCapture(e.pointerId)) perspGuideC.releasePointerCapture(e.pointerId);
   tfDrag=null;tfDragInfo=null;tfCornerDrag=null;
+  if(settlePerspective){_tfCancelPerspectivePreview();_tfRedraw(false);}
 }
 transformC.addEventListener('pointerup',_tfEndDrag);
 transformC.addEventListener('pointercancel',_tfEndDrag);

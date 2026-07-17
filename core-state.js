@@ -340,6 +340,7 @@ function applyTransform(){
     c.style.imageRendering=useNN?'pixelated':'auto';
   });
   _updateDisplayBlur();
+  window.dispatchEvent(new Event('canvas-view-transform-changed'));
 }
 
 function toggleFlipH(){
