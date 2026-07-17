@@ -97,14 +97,56 @@
     return count;
   }
 
-  function canvasToViewport(x,y){
+  var cachedLoopSource=null,cachedContourLoops=[],screenContourPath=null,screenContourKey='',screenContourTiny=false;
+  function contourLoopsFor(segments){
+    if(cachedLoopSource===segments)return cachedContourLoops;
+    cachedLoopSource=segments;cachedContourLoops=[];screenContourKey='';
+    var count=segments.length/4,used=new Uint8Array(count),links=Object.create(null);
+    function key(x,y){return x+','+y;}
+    function link(k,index){(links[k]||(links[k]=[])).push(index);}
+    for(var i=0;i<count;i++){var o=i*4;link(key(segments[o],segments[o+1]),i);link(key(segments[o+2],segments[o+3]),i);}
+    for(var seed=0;seed<count;seed++){
+      if(used[seed])continue;
+      var so=seed*4,start=key(segments[so],segments[so+1]),current=key(segments[so+2],segments[so+3]);
+      var points=[[segments[so],segments[so+1]],[segments[so+2],segments[so+3]]];used[seed]=1;
+      for(var guard=0;current!==start&&guard<=count;guard++){
+        var candidates=links[current]||[],next=-1;
+        for(var ci=0;ci<candidates.length;ci++)if(!used[candidates[ci]]){next=candidates[ci];break;}
+        if(next<0)break;
+        used[next]=1;var no=next*4,k1=key(segments[no],segments[no+1]);
+        var nx=k1===current?segments[no+2]:segments[no],ny=k1===current?segments[no+3]:segments[no+1];
+        points.push([nx,ny]);current=key(nx,ny);
+      }
+      cachedContourLoops.push({points:points,closed:current===start});
+    }
+    return cachedContourLoops;
+  }
+  function getScreenContour(segments,dpr){
+    if(typeof Path2D==='undefined')return null;
+    var pivot=(flipX||flipY)?getNavPivot():{cx:0,cy:0};
+    var viewKey=[zoom,panX,panY,rotation,flipX?1:0,flipY?1:0,pivot.cx,pivot.cy,overlayOffsetX,overlayOffsetY,dpr,overlay.width,overlay.height].join('|');
+    if(cachedLoopSource===segments&&screenContourPath&&screenContourKey===viewKey)return screenContourPath;
+    var loops=contourLoopsFor(segments);screenContourKey=viewKey;screenContourPath=new Path2D();
     var rad=rotation*Math.PI/180,cos=Math.cos(rad),sin=Math.sin(rad);
-    var rx=(x*zoom)*cos-(y*zoom)*sin+panX;
-    var ry=(x*zoom)*sin+(y*zoom)*cos+panY;
-    var pivot=getNavPivot();
-    if(flipX)rx=pivot.cx-(rx-pivot.cx);
-    if(flipY)ry=pivot.cy-(ry-pivot.cy);
-    return{x:rx,y:ry};
+    var globalMinX=Infinity,globalMinY=Infinity,globalMaxX=-Infinity,globalMaxY=-Infinity;
+    function project(point){
+      var x=(point[0]+overlayOffsetX)*zoom,y=(point[1]+overlayOffsetY)*zoom;
+      var vx=x*cos-y*sin+panX,vy=x*sin+y*cos+panY;
+      if(flipX)vx=pivot.cx-(vx-pivot.cx);if(flipY)vy=pivot.cy-(vy-pivot.cy);
+      vx=(Math.round(vx*dpr)+.5)/dpr;vy=(Math.round(vy*dpr)+.5)/dpr;
+      if(vx<globalMinX)globalMinX=vx;if(vx>globalMaxX)globalMaxX=vx;if(vy<globalMinY)globalMinY=vy;if(vy>globalMaxY)globalMaxY=vy;
+      return[vx,vy];
+    }
+    for(var li=0;li<loops.length;li++){
+      var loop=loops[li],screen=[],lastKey='';
+      for(var pi=0;pi<loop.points.length;pi++){var p=project(loop.points[pi]),pk=p[0]+','+p[1];if(pk!==lastKey){screen.push(p);lastKey=pk;}}
+      if(loop.closed&&screen.length>1&&screen[0][0]===screen[screen.length-1][0]&&screen[0][1]===screen[screen.length-1][1])screen.pop();
+      if(screen.length<2)continue;
+      if(loop.closed&&screen.length<3){var cx=screen[0][0],cy=screen[0][1],size=2/dpr;screenContourPath.rect(cx-size/2,cy-size/2,size,size);continue;}
+      screenContourPath.moveTo(screen[0][0],screen[0][1]);for(var si=1;si<screen.length;si++)screenContourPath.lineTo(screen[si][0],screen[si][1]);if(loop.closed)screenContourPath.closePath();
+    }
+    screenContourTiny=isFinite(globalMinX)&&(globalMaxX-globalMinX)*dpr<6&&(globalMaxY-globalMinY)*dpr<6;
+    return screenContourPath;
   }
 
   function renderSelection(){
@@ -112,36 +154,18 @@
     var geometry=ensureOverlay(),c=overlay.getContext('2d'),dpr=geometry.dpr;
     c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,overlay.width,overlay.height);
     overlay.style.display=overlayVisible?'block':'none';
-    var drawSegments=transformPreviewSegments||contourSegments,drawPath=transformPreviewSegments?transformPreviewPath:contourPath;
+    var drawSegments=transformPreviewSegments||contourSegments;
     if(!overlayVisible||!selectionActive||!drawSegments.length)return;
+    var screenPath=getScreenContour(drawSegments,dpr);
+    if(!screenPath)return;
     var now=(typeof performance!=='undefined'&&performance.now)?performance.now():Date.now();
-    var dashOffset=-((now-antsEpoch)*0.024); // device pixels per millisecond
-    c.lineCap='butt';c.lineJoin='miter';
-    function strokeScreenSpace(scale){
-      scale=Math.max(0.0001,scale);
-      c.setLineDash([]);c.lineDashOffset=0;c.strokeStyle='rgba(18,18,24,.9)';c.lineWidth=3/(dpr*scale);c.stroke(drawPath);
-      c.setLineDash([4/(dpr*scale),4/(dpr*scale)]);c.lineDashOffset=dashOffset/(dpr*scale);c.strokeStyle='#9b91ff';c.lineWidth=1/(dpr*scale);c.stroke(drawPath);
-    }
-    if(drawPath){
-      var pivot=getNavPivot(),fx=flipX?-1:1,fy=flipY?-1:1;
-      c.setTransform(dpr,0,0,dpr,0.5,0.5);
-      c.translate(pivot.cx,pivot.cy);c.scale(fx,fy);c.translate(-pivot.cx,-pivot.cy);
-      c.translate(panX,panY);c.rotate(rotation*Math.PI/180);c.scale(zoom,zoom);
-      c.translate(overlayOffsetX,overlayOffsetY);
-      strokeScreenSpace(Math.abs(zoom));
-    }else{
-      c.setTransform(dpr,0,0,dpr,0.5,0.5);c.beginPath();
-      for(var i=0;i<drawSegments.length;i+=4){
-        var a=canvasToViewport(drawSegments[i]+overlayOffsetX,drawSegments[i+1]+overlayOffsetY);
-        var b=canvasToViewport(drawSegments[i+2]+overlayOffsetX,drawSegments[i+3]+overlayOffsetY);
-        c.moveTo(a.x,a.y);c.lineTo(b.x,b.y);
-      }
-      c.setLineDash([]);c.lineDashOffset=0;c.strokeStyle='rgba(18,18,24,.9)';c.lineWidth=3/dpr;c.stroke();
-      c.setLineDash([4/dpr,4/dpr]);c.lineDashOffset=dashOffset/dpr;c.strokeStyle='#9b91ff';c.lineWidth=1/dpr;c.stroke();
-    }
+    var dashOffset=screenContourTiny?0:-((now-antsEpoch)*0.024); // device pixels per millisecond
+    var dash=4/dpr,phase=dashOffset/dpr;
+    c.setTransform(dpr,0,0,dpr,0,0);c.lineCap='butt';c.lineJoin='miter';c.setLineDash([dash,dash]);c.lineWidth=1/dpr;
+    c.lineDashOffset=phase;c.strokeStyle='#000';c.stroke(screenPath);
+    c.lineDashOffset=phase+dash;c.strokeStyle='#fff';c.stroke(screenPath);
     if(!document.hidden&&overlayVisible&&selectionActive)overlayRaf=requestAnimationFrame(renderSelection);
   }
-
   function scheduleOverlayRender(){
     if(!selectionActive||overlayRaf)return;
     overlayRaf=requestAnimationFrame(renderSelection);
