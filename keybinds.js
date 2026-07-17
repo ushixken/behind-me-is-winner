@@ -22,6 +22,7 @@ const KEYBIND_DEFAULTS={
   selectLinkedPixels:{label:'Select Linked Pixels',key:'Click',ctrl:true,shift:false,alt:false,pointer:true},
   toolBrush:   {label:'Brush Tool',         key:'b',          ctrl:false, shift:false, alt:false},
   toolEraser:  {label:'Eraser Tool',        key:'e',          ctrl:false, shift:false, alt:false},
+  toolSelection:{label:'Selection Tool',     key:'g',          ctrl:false, shift:false, alt:false},
   toolFill:    {label:'Fill Tool',          key:'f',          ctrl:false, shift:false, alt:false},
   toolLine:    {label:'Line Tool',          key:'l',          ctrl:false, shift:false, alt:false},
   toolTransform: {label:'Transform Tool',   key:'t',          ctrl:false, shift:false, alt:false},
@@ -69,7 +70,7 @@ const KEYBIND_CATEGORIES=[
   {name:'Frame Clipboard', actions:['copyFrame','cutFrame','pasteFrame','duplicateFrame','clearFrame']},
   {name:'Layer Clipboard', actions:['copyLayer','cutLayer','pasteLayer','duplicateLayer','deleteLayer']},
   {name:'Selection',      actions:['selectLinkedPixels']},
-  {name:'Tools',          actions:['toolBrush','toolEraser','toolFill','toolLine','toolTransform','brushResize']},
+  {name:'Tool Controls',   actions:['brushResize']},
   {name:'Frames & Keyframes', actions:['newFrame','delKeyframe','nextFrame','prevFrame','flipperBypass','increaseExposure','decreaseExposure']},
   {name:'View',           actions:['zoomIn','zoomOut','zoomReset','rotateReset']},
   {name:'Transform',      actions:['flipHorizontal','flipVertical']},
@@ -103,6 +104,30 @@ function saveKeybinds(){
   }catch(e){}
 }
 loadKeybinds();
+
+const TOOL_GROUP_EXPANDED_KEY='keybind_tool_groups_expanded_v1';
+let _expandedToolGroups={};
+try{_expandedToolGroups=JSON.parse(localStorage.getItem(TOOL_GROUP_EXPANDED_KEY)||'{}')||{};}catch(_){_expandedToolGroups={};}
+function _toolSubActionId(groupId,subToolId){return 'toolSubTool.'+groupId+'.'+subToolId;}
+function _saveExpandedToolGroups(){try{localStorage.setItem(TOOL_GROUP_EXPANDED_KEY,JSON.stringify(_expandedToolGroups));}catch(_){}}
+function syncToolGroupKeybindCommands(){
+  if(!window.ToolGroups||typeof ToolGroups.getGroups!=='function')return;
+  let stored={};try{stored=JSON.parse(localStorage.getItem(KEYBIND_STORE_KEY)||'{}')||{};}catch(_){}
+  ToolGroups.getGroups().forEach(group=>{
+    if(group.shortcutActionId&&!KEYBIND_DEFAULTS[group.shortcutActionId])KEYBIND_DEFAULTS[group.shortcutActionId]={label:group.name+' Tool',key:'',ctrl:false,shift:false,alt:false};
+    if(group.shortcutActionId&&!keybinds[group.shortcutActionId])keybinds[group.shortcutActionId]=Object.assign({},KEYBIND_DEFAULTS[group.shortcutActionId],stored[group.shortcutActionId]||{});
+    if(group.shortcutActionId==='toolSelection'&&keybinds[group.shortcutActionId]&&keybinds[group.shortcutActionId].key==='')keybinds[group.shortcutActionId].key='g';
+    group.subTools.forEach(subTool=>{const action=_toolSubActionId(group.id,subTool.id),definition={label:subTool.name,key:'',ctrl:false,shift:false,alt:false};if(!KEYBIND_DEFAULTS[action])KEYBIND_DEFAULTS[action]=definition;if(!keybinds[action])keybinds[action]=Object.assign({},definition,stored[action]||{});});
+  });
+}
+window.addEventListener('tool-groups-ready',()=>{syncToolGroupKeybindCommands();});
+function handleToolGroupKeybind(event){
+  syncToolGroupKeybindCommands();if(!window.ToolGroups||typeof ToolGroups.getGroups!=='function')return false;
+  const groups=ToolGroups.getGroups();
+  for(const group of groups){for(const subTool of group.subTools){const action=_toolSubActionId(group.id,subTool.id);if(keybinds[action]&&matchBind(event,action)){ToolGroups.activateSubTool(group.id,subTool.id,{fromShortcut:true});return true;}}}
+  for(const group of groups){if(group.shortcutActionId&&keybinds[group.shortcutActionId]&&matchBind(event,group.shortcutActionId)){ToolGroups.activateGroup(group.id);return true;}}
+  return false;
+}
 
 // '+' and '=' share a physical key (Shift+= types '+'); treat them as one
 // so rebinding either still matches the same combo the user pressed.
@@ -172,6 +197,7 @@ function formatBind(b){
   if(b.shift) parts.push('Shift');
   if(b.alt) parts.push('Alt');
   let k=b.key;
+  if(!k)return 'Unassigned';
   if(k==='ArrowRight') k='→';
   else if(k==='ArrowLeft') k='←';
   else if(k==='ArrowUp') k='↑';
@@ -199,98 +225,45 @@ function findBindConflict(action,combo){
 let _collapsedCats={}; // category name -> bool, persists while modal stays open
 
 function renderKeybindsList(){
-  const list=document.getElementById('keybinds-list');
-  if(!list) return;
-  const searchEl=document.getElementById('keybinds-search');
-  const q=(searchEl?searchEl.value:'').trim().toLowerCase();
-  list.innerHTML='';
-
-  function matches(action){
-    const b=keybinds[action];
-    if(!b) return false;
-    if(!q) return true;
-    return b.label.toLowerCase().includes(q) || formatBind(b).toLowerCase().includes(q);
+  syncToolGroupKeybindCommands();
+  const list=document.getElementById('keybinds-list');if(!list)return;
+  const searchEl=document.getElementById('keybinds-search'),q=(searchEl?searchEl.value:'').trim().toLowerCase();list.replaceChildren();
+  const matches=action=>{const b=keybinds[action];return !!b&&(!q||b.label.toLowerCase().includes(q)||formatBind(b).toLowerCase().includes(q));};
+  function buildRow(action,options){
+    const b=keybinds[action],opts=options||{},row=document.createElement('div');row.className='modal-row keybinds-row'+(opts.child?' keybinds-tool-child':'')+(opts.disabled?' disabled':'');
+    const label=document.createElement('span');label.className='keybinds-row-label';label.textContent=b.label;row.appendChild(label);
+    if(opts.status){const status=document.createElement('span');status.className='keybinds-row-status';status.textContent=opts.status;row.appendChild(status);}
+    const btn=document.createElement('button');btn.className='modal-btn keybinds-shortcut-button';btn.textContent=formatBind(b);btn.title=opts.disabled?'Shortcut unavailable until this sub-tool is implemented':'Click, then press a new key combo';btn.disabled=!!opts.disabled;btn.onclick=event=>{event.stopPropagation();startRebind(action,btn);};row.appendChild(btn);return row;
   }
-
-  function buildRow(action){
-    const b=keybinds[action];
-    const row=document.createElement('div');
-    row.className='modal-row keybinds-row';
-    row.style.cssText='margin-left:18px;';
-    const label=document.createElement('label');
-    label.style.width='150px';
-    label.textContent=b.label;
-    const btn=document.createElement('button');
-    btn.className='modal-btn';
-    btn.style.flex='1';
-    btn.textContent=formatBind(b);
-    btn.title='Click, then press a new key combo';
-    btn.onclick=()=>startRebind(action,btn);
-    row.appendChild(label);
-    row.appendChild(btn);
-    return row;
-  }
-
   function buildSection(name,actions){
-    const visibleActions=actions.filter(a=>keybinds[a] && matches(a));
-    if(!visibleActions.length) return false;
-
-    // Auto-expand a category while the user is actively searching, so
-    // matches aren't hidden behind a collapsed section.
-    const forceOpen=!!q;
-    const collapsed=!forceOpen && !!_collapsedCats[name];
-
-    const header=document.createElement('div');
-    header.className='keybinds-cat-header';
-    header.style.cssText=
-      'display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;'+
-      'font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;'+
-      'letter-spacing:0.03em;margin:'+(list.children.length?'12px':'0')+' 0 4px;'+
-      'padding:5px 8px;border-radius:5px;background:rgba(128,128,128,0.10);';
-
-    const arrow=document.createElement('span');
-    arrow.textContent=collapsed?'▶':'▼';
-    arrow.style.cssText='font-size:9px;width:10px;display:inline-block;color:var(--text2);';
-    const title=document.createElement('span');
-    title.textContent=name;
-    const count=document.createElement('span');
-    count.textContent=visibleActions.length;
-    count.style.cssText='margin-left:auto;font-size:10px;color:var(--text2);opacity:0.7;';
-
-    header.appendChild(arrow);
-    header.appendChild(title);
-    header.appendChild(count);
-    header.onclick=()=>{
-      _collapsedCats[name]=!collapsed;
-      renderKeybindsList();
-    };
-    list.appendChild(header);
-
-    if(!collapsed){
-      visibleActions.forEach(a=>list.appendChild(buildRow(a)));
-    }
+    const visible=actions.filter(action=>keybinds[action]&&matches(action));if(!visible.length)return false;const forceOpen=!!q,collapsed=!forceOpen&&!!_collapsedCats[name];
+    const header=document.createElement('div');header.className='keybinds-cat-header';
+    const arrow=document.createElement('span');arrow.className='keybinds-cat-chevron';arrow.textContent=collapsed?'\u25b6':'\u25bc';
+    const title=document.createElement('span');title.textContent=name;const count=document.createElement('span');count.className='keybinds-cat-count';count.textContent=visible.length;header.append(arrow,title,count);
+    header.onclick=()=>{_collapsedCats[name]=!collapsed;renderKeybindsList();};list.appendChild(header);if(!collapsed)visible.forEach(action=>list.appendChild(buildRow(action)));return true;
+  }
+  function buildToolGroups(){
+    if(!window.ToolGroups||typeof ToolGroups.getGroups!=='function')return false;
+    const visibleGroups=ToolGroups.getGroups().map(group=>{const mainAction=group.shortcutActionId,children=group.subTools.map(subTool=>({subTool,action:_toolSubActionId(group.id,subTool.id)})),visibleChildren=children.filter(item=>matches(item.action)),parentMatches=mainAction&&matches(mainAction);return {group,mainAction,children,visibleChildren,parentMatches};}).filter(item=>item.mainAction&&keybinds[item.mainAction]&&(!q||item.parentMatches||item.visibleChildren.length));
+    if(!visibleGroups.length)return false;
+    const categoryExpanded=!!q||_expandedToolGroups.__toolGroupsCategory!==false,header=document.createElement('div');header.className='keybinds-cat-header';
+    const arrow=document.createElement('span');arrow.className='keybinds-cat-chevron';arrow.textContent=categoryExpanded?'\u25bc':'\u25b6';const title=document.createElement('span');title.textContent='Tool Groups';const count=document.createElement('span');count.className='keybinds-cat-count';count.textContent=visibleGroups.length;header.append(arrow,title,count);
+    header.onclick=()=>{_expandedToolGroups.__toolGroupsCategory=!categoryExpanded;_saveExpandedToolGroups();renderKeybindsList();};list.appendChild(header);if(!categoryExpanded)return true;
+    visibleGroups.forEach(({group,mainAction,children,visibleChildren,parentMatches})=>{
+      const expanded=!!q||_expandedToolGroups[group.id]!==false,parent=document.createElement('div');parent.className='modal-row keybinds-row keybinds-tool-parent';
+      const toggle=document.createElement('button');toggle.type='button';toggle.className='keybinds-tool-toggle';toggle.setAttribute('aria-expanded',String(expanded));
+      const chevron=document.createElement('span');chevron.className='keybinds-tool-chevron';chevron.textContent=expanded?'\u25bc':'\u25b6';const name=document.createElement('span');name.className='keybinds-tool-name';name.textContent=keybinds[mainAction].label;toggle.append(chevron,name);
+      toggle.onclick=()=>{_expandedToolGroups[group.id]=!expanded;_saveExpandedToolGroups();renderKeybindsList();};
+      const shortcut=document.createElement('button');shortcut.className='modal-btn keybinds-shortcut-button';shortcut.textContent=formatBind(keybinds[mainAction]);shortcut.title='Click, then press a new key combo';shortcut.onclick=event=>{event.stopPropagation();startRebind(mainAction,shortcut);};parent.append(toggle,shortcut);list.appendChild(parent);
+      const displayedChildren=q&&parentMatches?children:visibleChildren;if(expanded)displayedChildren.forEach(({subTool,action})=>{const disabled=subTool.status!=='implemented',status=subTool.id==='style-select'?'Smart Raster Only':(disabled?'Coming Soon':'');list.appendChild(buildRow(action,{child:true,disabled,status}));});
+    });
     return true;
   }
 
-  let anyVisible=false;
-  const seen=new Set();
-
-  KEYBIND_CATEGORIES.forEach(cat=>{
-    cat.actions.forEach(a=>{ if(keybinds[a]) seen.add(a); });
-    if(buildSection(cat.name,cat.actions)) anyVisible=true;
-  });
-
-  // Any action not assigned to a category (e.g. added later and forgotten
-  // above) still shows up, under a catch-all, so nothing is ever hidden.
-  const leftover=Object.keys(keybinds).filter(a=>!seen.has(a));
-  if(leftover.length && buildSection('Other',leftover)) anyVisible=true;
-
-  if(!anyVisible){
-    const empty=document.createElement('div');
-    empty.style.cssText='padding:14px 0;text-align:center;font-size:12px;color:var(--text2);';
-    empty.textContent='No keybinds match "'+q+'"';
-    list.appendChild(empty);
-  }
+  let anyVisible=buildToolGroups(),seen=new Set();if(window.ToolGroups&&typeof ToolGroups.getGroups==='function')ToolGroups.getGroups().forEach(group=>{if(group.shortcutActionId)seen.add(group.shortcutActionId);group.subTools.forEach(subTool=>seen.add(_toolSubActionId(group.id,subTool.id)));});
+  KEYBIND_CATEGORIES.forEach(category=>{category.actions.forEach(action=>{if(keybinds[action])seen.add(action);});if(buildSection(category.name,category.actions))anyVisible=true;});
+  const leftover=Object.keys(keybinds).filter(action=>!seen.has(action));if(leftover.length&&buildSection('Other',leftover))anyVisible=true;
+  if(!anyVisible){const empty=document.createElement('div');empty.className='keybinds-empty';empty.textContent='No keybinds match "'+q+'"';list.appendChild(empty);}
 }
 
 let _rebindListener=null;

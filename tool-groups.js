@@ -151,9 +151,9 @@
     group.subTools.push(subTool);return subTool;
   }
 
-  registerGroup({id:'brush',name:'Brush',icon:'B',defaultSubToolId:'brush:hard-round',subTools:presetSubTools('brush')});
-  registerGroup({id:'eraser',name:'Eraser',icon:'E',defaultSubToolId:'eraser:hard-round',subTools:presetSubTools('eraser')});
-  const selectionGroup=registerGroup({id:'selection',name:'Selection',icon:'S',defaultSubToolId:'style-select',subTools:[
+  registerGroup({id:'brush',name:'Brush',shortcutActionId:'toolBrush',icon:'B',defaultSubToolId:'brush:hard-round',subTools:presetSubTools('brush')});
+  registerGroup({id:'eraser',name:'Eraser',shortcutActionId:'toolEraser',icon:'E',defaultSubToolId:'eraser:hard-round',subTools:presetSubTools('eraser')});
+  const selectionGroup=registerGroup({id:'selection',name:'Selection',shortcutActionId:'toolSelection',icon:'S',defaultSubToolId:'style-select',subTools:[
     Object.assign(placeholder('rectangle-select','Rectangle Select','R'),{section:'Selection Area'}),
     {id:'lasso-select',name:'Lasso Select',icon:'L',section:'Selection Area',activate:toolActivation('lasso','Lasso Select'),settingsDescription:'Drag a freehand closed selection. Shift adds, Alt subtracts, and Shift+Alt intersects.'},
     Object.assign(placeholder('ellipse-select','Ellipse Select','O'),{section:'Selection Area'}),Object.assign(placeholder('polyline-select','Polyline Select','P'),{section:'Selection Area'}),
@@ -161,13 +161,13 @@
     {id:'style-select',name:'Style Select',icon:'S',section:'Smart Selection',isAvailable:activeLayerSupportsStyleSelect,unavailableLabel:'Smart Raster Only',activate:toolActivation('selection','Style Select'),settingsDescription:'Use the configured Select Linked Pixels modifier on a Smart Raster swatch or canvas pixel.'},
     Object.assign(placeholder('selection-pen','Selection Pen','P'),{section:'Selection Painting'}),Object.assign(placeholder('erase-selection','Erase Selection','E'),{section:'Selection Painting'})
   ]});selectionGroup.lastValidSubToolId='lasso-select';
-  registerGroup({id:'fill',name:'Fill',icon:'F',defaultSubToolId:'bucket-fill',subTools:[
+  registerGroup({id:'fill',name:'Fill',shortcutActionId:'toolFill',icon:'F',defaultSubToolId:'bucket-fill',subTools:[
     {id:'bucket-fill',name:'Bucket Fill',icon:'F',activate:toolActivation('fill','Fill')},placeholder('lasso-fill','Lasso Fill','L'),placeholder('rectangle-fill','Rectangle Fill','R'),placeholder('ellipse-fill','Ellipse Fill','O'),placeholder('polyline-fill','Polyline Fill','P'),placeholder('enclose-fill','Enclose and Fill','E'),placeholder('refer-other-layers','Refer Other Layers','A')
   ]});
-  registerGroup({id:'line',name:'Line',icon:'L',panelTitle:'Line',panelRenderer:renderLineOptions,defaultSubToolId:'straight-line',subTools:[
+  registerGroup({id:'line',name:'Line',shortcutActionId:'toolLine',icon:'L',panelTitle:'Line',panelRenderer:renderLineOptions,defaultSubToolId:'straight-line',subTools:[
     {id:'straight-line',name:'Straight Line',icon:'L',activate:toolActivation('line','Line'),settingsDescription:'Uses the existing line engine and shared brush settings.'},placeholder('polyline','Polyline','P'),placeholder('curve','Curve','C'),placeholder('rectangle-line','Rectangle','R'),placeholder('ellipse-line','Ellipse','O')
   ]});
-  registerGroup({id:'transform',name:'Transform',icon:'T',defaultSubToolId:'free-transform',subTools:[
+  registerGroup({id:'transform',name:'Transform',shortcutActionId:'toolTransform',icon:'T',defaultSubToolId:'free-transform',subTools:[
     {id:'free-transform',name:'Free Transform',icon:'F',activate:toolActivation('transform','Transform',()=>{if(typeof _tfSetPerspective==='function')_tfSetPerspective(false);})},
     {id:'perspective-transform',name:'Perspective Transform',icon:'P',activate:toolActivation('transform','Transform',()=>{if(typeof _tfSetPerspective==='function')_tfSetPerspective(true);})}
   ]});
@@ -181,5 +181,6 @@
   window.addEventListener('project-loaded',refreshSelectionAvailability);
   window.addEventListener('layer-type-changed',refreshSelectionAvailability);
   const initial=({brush:'brush',eraser:'eraser',fill:'fill',line:'line',lasso:'selection',selection:'selection',transform:'transform'})[typeof tool!=='undefined'?tool:'brush']||'brush';activeGroupId=initial;syncPanel(getGroup(initial));syncActiveButtons();refreshSelectionAvailability();
-  window.ToolGroups={registerGroup,getGroup,activateGroup,activateSubTool,get activeGroupId(){return activeGroupId;}};
+  window.ToolGroups={registerGroup,getGroup,getGroups:()=>Array.from(groups.values()),activateGroup,activateSubTool,get activeGroupId(){return activeGroupId;}};
+  window.dispatchEvent(new CustomEvent('tool-groups-ready'));
 })();

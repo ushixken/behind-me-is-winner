@@ -233,8 +233,12 @@ document.addEventListener('keydown',e=>{
     if(matchBind(e,'duplicateLayer')){e.preventDefault();duplicateLayer(curLayer);return;}
     if(matchBind(e,'deleteLayer')){e.preventDefault();deleteLayer(curLayer);return;}
   }
-  const toolMap={toolBrush:['brush','Brush'],toolEraser:['eraser','Eraser'],toolFill:['fill','Fill'],toolLine:['line','Line'],toolTransform:['transform','Transform']};
-  for(const action in toolMap){ if(matchBind(e,action)){ e.preventDefault(); setTool(...toolMap[action]); break; } }
+  const toolShortcutBlocked=!!(shortcutTarget&&(shortcutTarget.isContentEditable||shortcutTarget.closest('input,textarea,select,[contenteditable="true"]')))||document.querySelector('.modal-overlay.visible');
+  if(!toolShortcutBlocked&&typeof handleToolGroupKeybind==='function'&&handleToolGroupKeybind(e)){e.preventDefault();return;}
+  if(!toolShortcutBlocked&&(!window.ToolGroups||typeof ToolGroups.getGroups!=='function')){
+    const toolMap={toolBrush:['brush','Brush'],toolEraser:['eraser','Eraser'],toolFill:['fill','Fill'],toolLine:['line','Line'],toolTransform:['transform','Transform']};
+    for(const action in toolMap){if(matchBind(e,action)){e.preventDefault();setTool(...toolMap[action]);return;}}
+  }
   if(matchBind(e,'newFrame')){createBlankKey();loadFrame(curLayer,curFrame);}
   if(matchBind(e,'delKeyframe')){e.preventDefault();deleteKeyframe();}
   if(matchBind(e,'nextFrame')){e.preventDefault();kfswNavigate(+1);}
