@@ -521,6 +521,14 @@ const FloatPanels=(function(){
   function _stackKeys(hostKey){
     return [hostKey,..._splitChildrenOf(hostKey)].filter(k=>!hiddenState[k]);
   }
+  function _stackWidthLimits(hostKey){
+    const keys=_stackKeys(_stackHostOf(hostKey));
+    const configs=(keys.length?keys:[hostKey]).map(cfgOf);
+    return {
+      min:Math.max(...configs.map(cfg=>Number(cfg.minSize)||0)),
+      max:Math.min(...configs.map(cfg=>Number(cfg.maxSize)||500)),
+    };
+  }
   // Return all visible split children for a host in order
   function _splitChildrenOf(hostKey){
     return (splitChildren[hostKey]||[]).filter(k=>!hiddenState[k]);
@@ -717,7 +725,12 @@ const FloatPanels=(function(){
       panel.classList.remove('dock-left','dock-right','dock-top','dock-bottom');
       panel.classList.add('dock-'+side,'docked');
       panel.style.left='';panel.style.right='';panel.style.top='';panel.style.bottom='';
-      const size=dockSize[key];
+      let size=dockSize[key];
+      if(side==='left'||side==='right'){
+        const limits=_stackWidthLimits(key);
+        size=Math.max(limits.min,Math.min(limits.max,Number.isFinite(+size)?+size:220));
+        dockSize[key]=size;
+      }
       if(side==='left')  panel.style.left=offset+'px';
       if(side==='right') panel.style.right=offset+'px';
       if(side==='top')   panel.style.top=offset+'px';
@@ -843,6 +856,8 @@ const FloatPanels=(function(){
       _addSplitChild(newHost,childKey);
       if(!splitSize[childKey]) splitSize[childKey]=180;
     });
+    const limits=_stackWidthLimits(newHost);
+    dockSize[newHost]=Math.max(limits.min,Math.min(limits.max,sharedWidth));
 
     render();
     _saveLayout();
@@ -1117,8 +1132,8 @@ const FloatPanels=(function(){
       const cur=(side==='left'||side==='right')?e.clientX:e.clientY;
       let delta=cur-startPx;
       if(side==='right'||side==='bottom') delta=-delta;
-      const cfg=cfgOf(hostKey);
-      dockSize[hostKey]=Math.max(cfg.minSize,Math.min(cfg.maxSize,startSize+delta));
+      const limits=_stackWidthLimits(hostKey);
+      dockSize[hostKey]=Math.max(limits.min,Math.min(limits.max,startSize+delta));
       renderSide(side);
       if(typeof centerCanvas==='function') centerCanvas();
     });
@@ -1568,6 +1583,13 @@ const FloatPanels=(function(){
     Object.assign(splitChildren,state.splitChildren||{});
     Object.assign(splitSize,state.splitSize||{});
     Object.assign(splitHost,state.splitHost||{});
+    // Old layouts may contain a width valid for the stack host but too narrow
+    // for one of its children. Clamp before rendering with the live limits.
+    ['left','right'].forEach(side=>dockOrder[side].forEach(hostKey=>{
+      const limits=_stackWidthLimits(hostKey);
+      const width=Number(dockSize[hostKey]);
+      dockSize[hostKey]=Math.max(limits.min,Math.min(limits.max,Number.isFinite(width)?width:220));
+    }));
     allPanels.forEach(p=>{
       const sw=state.savedWidths&&state.savedWidths[p.dataset.panel];
       if(sw) p._savedWidth=sw;
@@ -1626,8 +1648,8 @@ const FloatPanels=(function(){
       const hostKey=_splitHostOf(key)||key;
       const side=['left','right'].find(s=>dockOrder[s].includes(hostKey));
       if(!side) return;
-      const cfg=cfgOf(hostKey);
-      dockSize[hostKey]=Math.max(cfg.minSize,Math.min(cfg.maxSize,widthPx));
+      const limits=_stackWidthLimits(hostKey);
+      dockSize[hostKey]=Math.max(limits.min,Math.min(limits.max,widthPx));
       renderSide(side);
       if(typeof centerCanvas==='function') centerCanvas();
     },
