@@ -2747,6 +2747,7 @@ canvasArea.style.touchAction='none';
 activeC.addEventListener('pointerdown',e=>{
   // e.button can be -1 on some tablet drivers for pen primary contact; use e.buttons&1 instead
   if(activeGroupId||panning||(typeof _zoomDrag!=='undefined'&&_zoomDrag)||spaceHeld||tool==='transform') return;
+  if(tool!=='brush'&&tool!=='eraser'&&tool!=='fill'&&tool!=='line') return;
   if(e.pointerType==='pen'?(!(e.buttons&1)):(e.button!==0)) return;
   // Prevent browser from hijacking tablet/stylus events (scroll, pan, zoom)
   e.preventDefault();

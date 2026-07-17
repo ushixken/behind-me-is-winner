@@ -170,6 +170,7 @@ function setTool(t,lbl){
   if(typeof refreshSizeUI==='function') refreshSizeUI(); else szValEl.textContent=s;
   if(typeof refreshColorSwatches==='function') refreshColorSwatches();
   if(t==='transform'&&typeof enterTransformTool==='function') enterTransformTool();
+  window.dispatchEvent(new CustomEvent('tool-changed',{detail:{tool:t,label:lbl}}));
 }
 document.getElementById('btn-undo').onclick=undo;
 document.getElementById('btn-redo').onclick=redo;
@@ -190,7 +191,7 @@ document.getElementById('tp-btn-brush').onclick=()=>setTool('brush','Brush');
 document.getElementById('tp-btn-eraser').onclick=()=>setTool('eraser','Eraser');
 document.getElementById('tp-btn-fill').onclick=()=>setTool('fill','Fill');
 document.getElementById('tp-btn-line').onclick=()=>setTool('line','Line');
-document.getElementById('tp-btn-lasso').onclick=()=>setTool('lasso','Lasso Select');
+document.getElementById('tp-btn-selection').onclick=()=>setTool('lasso','Lasso Select');
 document.getElementById('tp-btn-transform').onclick=()=>setTool('transform','Transform');
 
 // ════════════════════════════════════════════════════════════════
