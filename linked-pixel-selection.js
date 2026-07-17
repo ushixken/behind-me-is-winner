@@ -132,8 +132,10 @@
   }
 
   function combineMask(incoming,mode){
-    if(!selectionMask||selectionMask.length!==incoming.length||mode==='replace')selectionMask=incoming;
-    else for(var i=0;i<incoming.length;i++){
+    if(mode==='replace')selectionMask=incoming;
+    else if(!selectionMask||selectionMask.length!==incoming.length){
+      selectionMask=mode==='add'?incoming:new Uint8ClampedArray(incoming.length);
+    }else for(var i=0;i<incoming.length;i++){
       var current=selectionMask[i]===255,next=incoming[i]===255,selected;
       if(mode==='add')selected=current||next;
       else if(mode==='subtract')selected=current&&!next;
@@ -149,15 +151,20 @@
     if(!frame||!frame.meta||!(frame.styleIds instanceof Uint16Array))return true;
     var index=Number(frame.meta.styleIdToIndex&&frame.meta.styleIdToIndex[styleId])||0;
     var width=frame.width||CW,height=frame.height||CH,incoming=new Uint8ClampedArray(width*height);
+    var incomingCount=0;
     if(index){
       var rgba=ctx.getImageData(0,0,width,height).data;
       for(var y=0;y<height;y++)for(var x=0;x<width;x++){
-        var p=y*width+x,o=p*4;if(frame.styleIds[p]===index&&rgba[o+3]>0)incoming[p]=255;
+        var p=y*width+x,o=p*4;if(frame.styleIds[p]===index&&rgba[o+3]>0){incoming[p]=255;incomingCount++;}
       }
     }
     var binding=keybinds.selectLinkedPixels||{};
     var extraShift=!!event.shiftKey&&!binding.shift,extraAlt=!!event.altKey&&!binding.alt;
     var mode=extraShift&&extraAlt?'intersect':extraShift?'add':extraAlt?'subtract':'replace';
+    // An unused style is not an empty geometric selection operation. Leave
+    // the canonical selection untouched in every mode.
+    if(!incomingCount)return true;
+    if(selectionLayerIndex!==curLayer||selectionFrameIndex!==frameIndex)selectionMask=null;
     selectionWidth=width;selectionHeight=height;selectionLayerIndex=curLayer;selectionFrameIndex=frameIndex;
     combineMask(incoming,mode);var matchedCount=rebuildMaskCanvasAndBounds();
     overlayVisible=true;if(!matchedCount){renderSelection();return true;}scheduleOverlayRender();
