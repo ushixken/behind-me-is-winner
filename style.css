@@ -1613,8 +1613,6 @@ input.size-val-input{
 #palette-edit-confirm button:hover{border-color:var(--accent);color:var(--accent);}
 #palette-edit-confirm button.primary{background:var(--accent-bg);border-color:var(--accent);color:var(--accent);}
 .tool-group-body{width:100%;max-width:100%;box-sizing:border-box;flex-direction:column;min-width:0;min-height:0;padding:8px;gap:6px;overflow:hidden;}
-.tool-group-actions{display:flex;align-items:center;gap:6px;padding:2px 2px 5px;border-bottom:1px solid var(--border2);}
-.tool-group-caption{flex:1;min-width:0;font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.04em;}
 .tool-group-list{display:flex;flex:1 1 auto;width:100%;min-width:0;flex-direction:column;gap:4px;overflow-y:auto;overflow-x:hidden;min-height:0;padding-right:2px;box-sizing:border-box;}
 .tool-group-subtool{display:grid;grid-template-columns:20px minmax(0,1fr) auto;align-items:center;column-gap:7px;width:100%;min-width:0;min-height:32px;box-sizing:border-box;padding:5px 7px;border:1px solid transparent;border-radius:4px;background:transparent;color:var(--text);text-align:left;cursor:pointer;white-space:nowrap;}
 .tool-group-subtool:hover:not(:disabled){background:var(--bg3);}
@@ -1624,11 +1622,27 @@ input.size-val-input{
 .tool-group-subtool-label{min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:11px;white-space:nowrap;}
 .tool-group-coming-soon{justify-self:end;font-size:8px;color:var(--text2);white-space:nowrap;}
 .tool-group-section-header{padding:8px 4px 3px;margin-top:2px;border-bottom:1px solid var(--border2);color:var(--text2);font-size:9px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;}
+.tool-group-list>.tool-group-section-header:first-child{padding-top:2px;margin-top:0;}
+.transform-subtools-body{flex-direction:column;padding:8px;gap:4px;overflow:hidden;}
+.transform-subtools-body>.tool-group-section-header:first-child{padding-top:2px;margin-top:0;}
+.transform-subtools-body .tf-mode-btn{min-height:32px;padding:5px 7px;background:transparent;font-size:11px;}
+.transform-subtools-body .tf-mode-btn:hover{background:var(--bg3);}
+.transform-subtools-body .tf-mode-btn.active{background:rgba(127,119,221,.16);color:var(--text);border-color:var(--accent);}
+.tool-options-drawer{display:flex;flex:0 0 auto;flex-direction:column;width:calc(100% + 16px);height:25px;min-height:25px;margin:auto -8px -8px;overflow:hidden;border-top:1px solid var(--border2);background:var(--bg2);box-sizing:border-box;}
+.tool-options-drawer.expanded{min-height:64px;max-height:calc(100% - 96px);}
+.tool-options-drawer-header{display:flex;align-items:center;justify-content:space-between;flex:0 0 25px;width:100%;height:25px;padding:0 9px;border:0;background:var(--bg3);color:var(--text2);font:700 9px/1 sans-serif;letter-spacing:.05em;text-transform:uppercase;text-align:left;cursor:ns-resize;touch-action:none;user-select:none;}
+.tool-options-drawer-header:hover{color:var(--text);background:var(--bg4);}
+.tool-options-drawer-chevron{font-size:11px;line-height:1;}
+.tool-options-drawer-content{display:none;flex:1 1 auto;min-height:0;padding:8px;overflow-y:auto;overflow-x:hidden;box-sizing:border-box;}
+.tool-options-drawer.expanded .tool-options-drawer-content{display:flex;flex-direction:column;gap:7px;}
+.tool-options-message,.tf-options-empty{padding:2px 0;color:var(--text2);font-size:10px;line-height:1.4;}
+body.tool-options-resizing{cursor:ns-resize!important;user-select:none!important;}
+#tf-options-body{gap:6px;}
 .tool-group-settings{padding:14px;overflow:auto;color:var(--text);}
 .tool-group-settings h3{margin:0 0 8px;font-size:14px;}
 .tool-group-settings p{margin:0;color:var(--text2);font-size:11px;line-height:1.5;}
 
-.tool-group-inline-options{display:flex;flex-direction:column;gap:7px;flex:0 0 auto;padding-top:7px;border-top:1px solid var(--border2);}
+.tool-group-inline-options{display:flex;flex-direction:column;gap:7px;flex:0 0 auto;}
 .tool-group-option-row{display:grid;grid-template-columns:70px minmax(0,1fr) 34px;align-items:center;gap:6px;min-width:0;font-size:10px;color:var(--text2);}
 .tool-group-option-row input[type="range"]{width:100%;min-width:0;}
 .tool-group-option-row.compact{display:flex;min-height:22px;color:var(--text);}

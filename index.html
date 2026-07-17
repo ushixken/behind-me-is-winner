@@ -388,14 +388,19 @@
           </div>
           <div id="bp-no-results">No brushes match your search.</div>
         </div>
-        <div class="fp-body" data-body="transform" data-space-pan style="flex-direction:column;padding:8px;gap:4px;">
-          <div class="tf-panel-label">Mode</div>
+        <div class="fp-body transform-subtools-body" data-body="transform" data-space-pan>
+          <div class="tool-group-section-header">Transform Modes</div>
           <button class="tf-mode-btn active" id="transform-mode-free" data-mode="free" title="Move, scale and rotate">⛶ Free Transform</button>
           <button class="tf-mode-btn" id="transform-mode-perspective" data-mode="perspective" title="Drag each corner independently">◈ Perspective Transform</button>
-          <div class="tf-panel-label" style="margin-top:8px;">Transform Options</div>
-          <div id="tf-options-body" style="display:flex;flex-direction:column;gap:6px;">
-            <!-- populated by JS, per current transform mode (see transform-tool.js) -->
-          </div>
+          <section class="tool-options-drawer">
+            <button type="button" class="tool-options-drawer-header" aria-expanded="false">
+              <span class="tool-options-drawer-label">TRANSFORM OPTIONS</span>
+              <span class="tool-options-drawer-chevron" aria-hidden="true">&#9652;</span>
+            </button>
+            <div class="tool-options-drawer-content" id="tf-options-body">
+              <!-- populated by JS, per current transform mode (see transform-tool.js) -->
+            </div>
+          </section>
         </div>
       </div>
     </div>

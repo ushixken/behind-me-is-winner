@@ -1168,12 +1168,17 @@ const _tfOptionsBody=document.getElementById('tf-options-body');
 function _tfCurrentModeKey(){ return tfPerspective?'perspective':'free'; }
 
 // Rebuilds the checkbox list for whichever mode is active. Free Transform
-// has no options registered, so the section renders empty and hides itself.
+// has no options registered, so the section shows an explicit quiet state.
 function _tfRenderOptionsPanel(){
   if(!_tfOptionsBody) return;
   const opts=TF_MODE_OPTIONS[_tfCurrentModeKey()]||[];
   _tfOptionsBody.innerHTML='';
-  _tfOptionsBody.style.display=opts.length?'':'none';
+  if(!opts.length){
+    const empty=document.createElement('div');
+    empty.className='tf-options-empty';
+    empty.textContent='No additional options';
+    _tfOptionsBody.appendChild(empty);
+  }
   opts.forEach(o=>{
     const row=document.createElement('label');
     row.className='tf-option-row';

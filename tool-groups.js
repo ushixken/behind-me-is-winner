@@ -1,10 +1,12 @@
 (function(){
   'use strict';
   const STORAGE_KEY='animate.toolGroups.v1';
+  const DRAWER_STORAGE_KEY='animate.toolGroupDrawers.v1';
   const groups=new Map();
   let activeGroupId=null,activating=false;
-  let saved={};
+  let saved={},drawerSaved={};
   try{saved=JSON.parse(localStorage.getItem(STORAGE_KEY)||'{}')||{};}catch(_){saved={};}
+  try{drawerSaved=JSON.parse(localStorage.getItem(DRAWER_STORAGE_KEY)||'{}')||{};}catch(_){drawerSaved={};}
 
   function registerGroup(definition){
     if(!definition||!definition.id||!Array.isArray(definition.subTools))throw new Error('Invalid tool group');
@@ -26,12 +28,34 @@
     const rectangle=getSubTool(group,'rectangle-select');if(subToolIsAvailable(rectangle))return rectangle;
     return group.subTools.find(item=>item.id!=='style-select'&&subToolIsAvailable(item))||null;
   }
+  function drawerState(groupId){
+    const raw=drawerSaved[groupId]||{};
+    return {expanded:raw.expanded===true,height:Number.isFinite(+raw.height)?Math.max(80,Math.min(500,+raw.height)):150};
+  }
+  function saveDrawerState(groupId,state){drawerSaved[groupId]={expanded:!!state.expanded,height:Math.round(state.height)};localStorage.setItem(DRAWER_STORAGE_KEY,JSON.stringify(drawerSaved));}
+  function applyDrawerState(body,group){
+    const drawer=body.querySelector('.tool-options-drawer');if(!drawer)return;
+    const state=drawerState(group.id),header=drawer.querySelector('.tool-options-drawer-header'),chevron=drawer.querySelector('.tool-options-drawer-chevron');
+    drawer.dataset.groupId=group.id;drawer.classList.toggle('expanded',state.expanded);drawer.style.height=state.expanded?state.height+'px':'';
+    header.setAttribute('aria-expanded',String(state.expanded));if(chevron)chevron.textContent=state.expanded?'\u25be':'\u25b4';
+  }
+  function configureOptionsDrawer(body,group){
+    const drawer=body.querySelector('.tool-options-drawer'),header=drawer&&drawer.querySelector('.tool-options-drawer-header');if(!drawer||!header)return;
+    const label=drawer.querySelector('.tool-options-drawer-label');if(label)label.textContent=(group.name+' Options').toUpperCase();
+    applyDrawerState(body,group);
+    if(header.dataset.drawerBound)return;header.dataset.drawerBound='true';
+    let drag=null;
+    const finish=(event,cancelled)=>{if(!drag||event.pointerId!==drag.pointerId)return;const wasDragging=drag.dragging,groupId=drawer.dataset.groupId,current=drawerState(groupId);drag=null;if(header.hasPointerCapture&&header.hasPointerCapture(event.pointerId))header.releasePointerCapture(event.pointerId);document.body.classList.remove('tool-options-resizing');if(cancelled){const active=getGroup(groupId);if(active)applyDrawerState(body,active);return;}if(wasDragging){const height=parseFloat(drawer.style.height)||current.height;if(height<64){saveDrawerState(groupId,{expanded:false,height:current.height});}else saveDrawerState(groupId,{expanded:true,height});}else saveDrawerState(groupId,{expanded:!drawer.classList.contains('expanded'),height:current.height});const active=getGroup(groupId);if(active)applyDrawerState(body,active);};
+    header.addEventListener('pointerdown',event=>{if(event.pointerType==='mouse'&&event.button!==0)return;const state=drawerState(drawer.dataset.groupId);drag={pointerId:event.pointerId,startY:event.clientY,startHeight:drawer.classList.contains('expanded')?drawer.getBoundingClientRect().height:header.getBoundingClientRect().height,dragging:false,state};header.setPointerCapture(event.pointerId);});
+    header.addEventListener('pointermove',event=>{if(!drag||event.pointerId!==drag.pointerId)return;const delta=drag.startY-event.clientY;if(!drag.dragging&&Math.abs(delta)<4)return;drag.dragging=true;event.preventDefault();document.body.classList.add('tool-options-resizing');const max=Math.max(80,body.clientHeight-96),height=Math.max(28,Math.min(max,drag.startHeight+delta));drawer.classList.add('expanded');drawer.style.height=height+'px';header.setAttribute('aria-expanded','true');const chevron=drawer.querySelector('.tool-options-drawer-chevron');if(chevron)chevron.textContent='\u25be';});
+    header.addEventListener('pointerup',event=>finish(event,false));header.addEventListener('pointercancel',event=>finish(event,true));header.addEventListener('lostpointercapture',event=>{if(drag&&event.pointerId===drag.pointerId)finish(event,true);});
+    header.addEventListener('keydown',event=>{if(event.key!=='Enter'&&event.key!==' ')return;event.preventDefault();const groupId=drawer.dataset.groupId,state=drawerState(groupId);saveDrawerState(groupId,{expanded:!drawer.classList.contains('expanded'),height:state.height});const active=getGroup(groupId);if(active)applyDrawerState(body,active);});
+  }
   function ensureGenericBody(){
     const shell=document.getElementById('brush-presets-panel'),wrap=shell&&shell.querySelector('.fp-body-wrap');if(!wrap)return null;
     let body=wrap.querySelector('.fp-body[data-body="tool-group"]');if(body)return body;
     body=document.createElement('div');body.className='fp-body tool-group-body';body.dataset.body='tool-group';body.dataset.spacePan='';
-    body.innerHTML='<div class="tool-group-actions"><span class="tool-group-caption"></span><button type="button" class="bp-icon-btn tool-group-settings-button" title="Tool Settings">&#9881;</button></div><div class="tool-group-list"></div>';
-    body.querySelector('.tool-group-settings-button').onclick=openSettings;wrap.appendChild(body);return body;
+    body.innerHTML='<div class="tool-group-list"></div><section class="tool-options-drawer"><button type="button" class="tool-options-drawer-header" aria-expanded="false"><span class="tool-options-drawer-label"></span><span class="tool-options-drawer-chevron" aria-hidden="true">&#9652;</span></button><div class="tool-options-drawer-content"></div></section>';wrap.appendChild(body);return body;
   }
   function setBody(name){
     const shell=document.getElementById('brush-presets-panel');if(!shell)return;
@@ -39,8 +63,8 @@
   }
   function renderGeneric(group){
     const body=ensureGenericBody();if(!body)return;const list=body.querySelector('.tool-group-list');list.replaceChildren();
-    body.querySelector('.tool-group-caption').textContent=group.panelCaption||group.name+' Sub Tools';
-    body.querySelectorAll('.tool-group-inline-options').forEach(element=>element.remove());
+    const duplicateHeader=body.querySelector('.tool-group-actions');if(duplicateHeader)duplicateHeader.remove();
+    const optionsContent=body.querySelector('.tool-options-drawer-content');if(optionsContent)optionsContent.replaceChildren();
     let currentSection=null;
     group.subTools.forEach(subTool=>{
       if(subTool.section&&subTool.section!==currentSection){currentSection=subTool.section;const header=document.createElement('div');header.className='tool-group-section-header';header.textContent=currentSection;list.appendChild(header);}
@@ -51,14 +75,22 @@
       button.append(icon,label);if(button.disabled){const soon=document.createElement('span');soon.className='tool-group-coming-soon';soon.textContent=subTool.status==='implemented'?(subTool.unavailableLabel||'Unavailable'):'Coming Soon';button.appendChild(soon);}
       button.onclick=()=>activateSubTool(group.id,subTool.id);list.appendChild(button);
     });
-    if(typeof group.panelRenderer==='function')group.panelRenderer(body,group);
+    const activeSubTool=getSubTool(group,group.activeSubToolId);
+    if(optionsContent){
+      if(typeof group.panelRenderer==='function')group.panelRenderer(optionsContent,group,activeSubTool);
+      else if(activeSubTool&&typeof activeSubTool.settingsRenderer==='function')activeSubTool.settingsRenderer(optionsContent,activeSubTool,group);
+      else if(typeof group.settingsRenderer==='function')group.settingsRenderer(optionsContent,activeSubTool,group);
+      else{const message=document.createElement('div');message.className='tool-options-message';message.textContent=(activeSubTool&&activeSubTool.settingsDescription)||'No additional options';optionsContent.appendChild(message);}
+    }
+    configureOptionsDrawer(body,group);
   }
   function syncPanel(group){
     const shell=document.getElementById('brush-presets-panel');if(!shell)return;
     const name=shell.querySelector('.fp-name');if(name)name.textContent=group.panelTitle||(group.id==='brush'||group.id==='eraser'?group.name+' Presets':group.name+' Sub Tools');
+    const redundantSettings=shell.querySelector('.tool-group-dock-settings');if(redundantSettings)redundantSettings.remove();
     if(group.id==='brush'||group.id==='eraser'){
       setBody('brush-presets');if(window._brushPresets)_brushPresets.switchTab(group.id);
-    }else if(group.id==='transform')setBody('transform');
+    }else if(group.id==='transform'){const transformBody=shell.querySelector('.fp-body[data-body="transform"]');if(transformBody)configureOptionsDrawer(transformBody,group);setBody('transform');}
     else{renderGeneric(group);setBody('tool-group');}
   }
   function renderSettings(){
@@ -71,7 +103,6 @@
     else if(group&&typeof group.settingsRenderer==='function')group.settingsRenderer(alternate,subTool,group);
     else{const message=document.createElement('p');message.textContent=subTool&&subTool.status!=='implemented'?'Coming Soon':(subTool&&subTool.settingsDescription)||'This sub tool uses its current canvas controls.';alternate.appendChild(message);}
   }
-  function openSettings(){renderSettings();const modal=document.getElementById('tool-settings-modal-overlay');if(modal)modal.classList.add('visible');}
   function activateSubTool(groupId,subToolId,options){
     const group=getGroup(groupId),subTool=getSubTool(group,subToolId);if(!group||!subToolIsAvailable(subTool))return false;
     if(groupId==='selection'&&subTool.id!=='style-select')group.lastValidSubToolId=subTool.id;
@@ -98,7 +129,6 @@
 
   function renderLineOptions(body){
     const section=document.createElement('div');section.className='tool-group-inline-options';
-    const title=document.createElement('div');title.className='tf-panel-label';title.textContent='Line Options';section.appendChild(title);
     function rangeRow(label,min,max,step,value,onInput){const row=document.createElement('label');row.className='tool-group-option-row';const text=document.createElement('span');text.textContent=label;const input=document.createElement('input');input.type='range';input.min=min;input.max=max;input.step=step;input.value=value;const output=document.createElement('span');output.className='tool-group-option-value';output.textContent=value;input.oninput=()=>{output.textContent=input.value;onInput(+input.value);};row.append(text,input,output);section.appendChild(row);}
     rangeRow('Width / Size',1,2000,.1,toolSizes.line||6,value=>{toolSizes.line=value;if(tool==='line'){szSlider.value=value;if(typeof refreshSizeUI==='function')refreshSizeUI();}});
     rangeRow('Opacity',1,100,1,Math.round(brushOpacity*100),value=>{brushOpacity=value/100;const existing=document.getElementById('ts-opacity');if(existing){existing.value=value;existing.dispatchEvent(new Event('input',{bubbles:true}));}});
@@ -134,7 +164,7 @@
   registerGroup({id:'fill',name:'Fill',icon:'F',defaultSubToolId:'bucket-fill',subTools:[
     {id:'bucket-fill',name:'Bucket Fill',icon:'F',activate:toolActivation('fill','Fill')},placeholder('lasso-fill','Lasso Fill','L'),placeholder('rectangle-fill','Rectangle Fill','R'),placeholder('ellipse-fill','Ellipse Fill','O'),placeholder('polyline-fill','Polyline Fill','P'),placeholder('enclose-fill','Enclose and Fill','E'),placeholder('refer-other-layers','Refer Other Layers','A')
   ]});
-  registerGroup({id:'line',name:'Line',icon:'L',panelTitle:'Line',panelCaption:'Line Modes',panelRenderer:renderLineOptions,defaultSubToolId:'straight-line',subTools:[
+  registerGroup({id:'line',name:'Line',icon:'L',panelTitle:'Line',panelRenderer:renderLineOptions,defaultSubToolId:'straight-line',subTools:[
     {id:'straight-line',name:'Straight Line',icon:'L',activate:toolActivation('line','Line'),settingsDescription:'Uses the existing line engine and shared brush settings.'},placeholder('polyline','Polyline','P'),placeholder('curve','Curve','C'),placeholder('rectangle-line','Rectangle','R'),placeholder('ellipse-line','Ellipse','O')
   ]});
   registerGroup({id:'transform',name:'Transform',icon:'T',defaultSubToolId:'free-transform',subTools:[
