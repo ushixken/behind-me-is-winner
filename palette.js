@@ -1097,8 +1097,11 @@
     menu.id='palette-context-menu';
     menu.className='ctx-menu';
     menu.addEventListener('pointerdown',event=>event.stopPropagation());
+    const pixelSelection=window.PixelSelection&&PixelSelection.getState?PixelSelection.getState():null;
+    const canReplaceSelected=!!(style&&!isAdvancedSeparator(style)&&layers[curLayer]&&layers[curLayer].type==='smart-raster'&&pixelSelection&&pixelSelection.active&&pixelSelection.count>0&&pixelSelection.layerIndex===curLayer&&window.LinkedPixelSelection&&LinkedPixelSelection.replaceSelectedWithStyle);
     [
       menuItem('Edit Style',()=>editAdvancedStyle(style),false,!!style.locked),
+      menuItem('Replace Selected With This Style',()=>LinkedPixelSelection.replaceSelectedWithStyle(style.id,style.rgba),false,!canReplaceSelected),
       menuItem('Rename Style',()=>renameAdvancedStyle(style)),
       menuItem('Duplicate Style',()=>duplicateAdvancedStyle(style)),
       menuItem('Delete Style',()=>deleteAdvancedStyle(style),true,advancedStyles.filter(s=>!isAdvancedSeparator(s)).length<=1),
