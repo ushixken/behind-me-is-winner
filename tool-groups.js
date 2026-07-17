@@ -137,12 +137,21 @@
     body.appendChild(section);
   }
 
-  function renderSelectionOptions(body){
+  function renderSelectionOptions(body,group,activeSubTool){
     const section=document.createElement('div');section.className='tool-group-inline-options';
-    const label=document.createElement('div');label.className='tool-options-label';label.textContent='Selection Scope';section.appendChild(label);
+    const scopeLabel=document.createElement('div');scopeLabel.className='tool-options-label';scopeLabel.textContent='Selection Scope';section.appendChild(scopeLabel);
     const segments=document.createElement('div');segments.className='ts-pill-row selection-scope-segments';segments.setAttribute('role','group');segments.setAttribute('aria-label','Selection Scope');
-    [['all','All'],['inside','Inside'],['outside','Outside']].forEach(([mode,text])=>{const button=document.createElement('button');button.type='button';button.className='ts-pill';button.textContent=text;const sync=()=>{const active=(window.SelectionScope?SelectionScope.get():'all')===mode;button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));};sync();button.onclick=()=>{if(window.SelectionScope)SelectionScope.set(mode);segments.querySelectorAll('.ts-pill').forEach(item=>{const active=item===button;item.classList.toggle('active',active);item.setAttribute('aria-pressed',String(active));});};segments.appendChild(button);});
-    section.appendChild(segments);body.appendChild(section);
+    [['all','All'],['inside','Inside'],['outside','Outside']].forEach(([mode,text])=>{const button=document.createElement('button');button.type='button';button.className='ts-pill';button.textContent=text;const active=(window.SelectionScope?SelectionScope.get():'all')===mode;button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));button.onclick=()=>{if(window.SelectionScope)SelectionScope.set(mode);segments.querySelectorAll('.ts-pill').forEach(item=>{const selected=item===button;item.classList.toggle('active',selected);item.setAttribute('aria-pressed',String(selected));});};segments.appendChild(button);});
+    section.appendChild(segments);
+    if(activeSubTool&&activeSubTool.id==='magic-wand'&&window.MagicWandSelection){
+      const settings=MagicWandSelection.getSettings(),heading=document.createElement('div');heading.className='tool-options-label';heading.textContent='Magic Wand Options';section.appendChild(heading);
+      const toleranceRow=document.createElement('label');toleranceRow.className='tool-group-option-row';const toleranceLabel=document.createElement('span');toleranceLabel.textContent='Tolerance';const tolerance=document.createElement('input');tolerance.type='range';tolerance.min=0;tolerance.max=255;tolerance.step=1;tolerance.value=settings.tolerance;const toleranceValue=document.createElement('span');toleranceValue.className='tool-group-option-value';toleranceValue.textContent=settings.tolerance;tolerance.oninput=()=>{toleranceValue.textContent=tolerance.value;MagicWandSelection.updateSettings({tolerance:+tolerance.value});};toleranceRow.append(toleranceLabel,tolerance,toleranceValue);section.appendChild(toleranceRow);
+      function checkbox(labelText,key){const row=document.createElement('label');row.className='tool-group-option-row compact';const input=document.createElement('input');input.type='checkbox';input.checked=!!settings[key];input.onchange=()=>MagicWandSelection.updateSettings({[key]:input.checked});const text=document.createElement('span');text.textContent=labelText;row.append(input,text);section.appendChild(row);}
+      checkbox('Contiguous','contiguous');
+      const sampleRow=document.createElement('label');sampleRow.className='tool-group-option-row';const sampleLabel=document.createElement('span');sampleLabel.textContent='Sample';const sample=document.createElement('select');[['current','Current Layer'],['all','All Visible Layers']].forEach(([value,text])=>{const option=document.createElement('option');option.value=value;option.textContent=text;sample.appendChild(option);});sample.value=settings.sample;sample.onchange=()=>MagicWandSelection.updateSettings({sample:sample.value});sampleRow.append(sampleLabel,sample);section.appendChild(sampleRow);
+      checkbox('Include Alpha','includeAlpha');checkbox('Anti-alias','antiAlias');
+    }
+    body.appendChild(section);
   }
 
   function presetSubTools(groupId){
@@ -165,7 +174,7 @@
     {id:'rectangle-select',name:'Rectangle Select',icon:'R',section:'Selection Area',activate:toolActivation('rectangle-select','Rectangle Select'),settingsDescription:'Drag a rectangular selection. Shift adds, Alt subtracts, and Shift+Alt intersects.'},
     {id:'lasso-select',name:'Lasso Select',icon:'L',section:'Selection Area',activate:toolActivation('lasso','Lasso Select'),settingsDescription:'Drag a freehand closed selection. Shift adds, Alt subtracts, and Shift+Alt intersects.'},
     {id:'ellipse-select',name:'Ellipse Select',icon:'O',section:'Selection Area',activate:toolActivation('ellipse-select','Ellipse Select'),settingsDescription:'Drag an elliptical selection. Shift constrains a circle; selection modifiers still control add, subtract, and intersect.'},Object.assign(placeholder('polyline-select','Polyline Select','P'),{section:'Selection Area'}),
-    Object.assign(placeholder('magic-wand','Magic Wand','W'),{section:'Smart Selection'}),
+    {id:'magic-wand',name:'Magic Wand',icon:'W',section:'Smart Selection',cursor:'crosshair',activate:toolActivation('magic-wand','Magic Wand')},
     {id:'style-select',name:'Style Select',icon:'S',section:'Smart Selection',isAvailable:activeLayerSupportsStyleSelect,unavailableLabel:'Smart Raster Only',activate:toolActivation('selection','Style Select'),settingsDescription:'Use the configured Select Linked Pixels modifier on a Smart Raster swatch or canvas pixel.'},
     Object.assign(placeholder('selection-pen','Selection Pen','P'),{section:'Selection Painting'}),Object.assign(placeholder('erase-selection','Erase Selection','E'),{section:'Selection Painting'})
   ]});selectionGroup.lastValidSubToolId='lasso-select';
