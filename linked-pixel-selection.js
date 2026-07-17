@@ -10,6 +10,8 @@
   var overlayRaf=0;
   var overlayOffsetX=0,overlayOffsetY=0;
   var transformPreviewSegments=null,transformPreviewPath=null;
+  var selectionScopeMode='all',selectionScopeCanvas=null,selectionScopeContext=null;
+  try{var savedScope=localStorage.getItem('animate.selectionScope.v1');if(['all','inside','outside'].indexOf(savedScope)>=0)selectionScopeMode=savedScope;else{var legacyScope=localStorage.getItem('animate.fillScope.v1');if(legacyScope==='inside'||legacyScope==='outside')selectionScopeMode=legacyScope;localStorage.setItem('animate.selectionScope.v1',selectionScopeMode);}}catch(_){}
 
   function heldFrameIndex(layer,frameIndex){
     if(!layer)return frameIndex;
@@ -322,6 +324,34 @@
   function captureSelection(){return selectionActive&&selectionMask?{mask:selectionMask.slice(),width:selectionWidth,height:selectionHeight,layerIndex:selectionLayerIndex,frameIndex:selectionFrameIndex}:null;}
   function restoreSelection(snapshot){if(!snapshot){clearSelection();return;}replaceCanonicalMask(snapshot.mask,snapshot.width,snapshot.height,'selection-history',snapshot);}
 
+  function scopedSelectionState(){
+    var state=window.pixelSelectionState;
+    return selectionScopeMode!=='all'&&selectionActive&&state&&state.layerIndex===curLayer&&state.width===CW&&state.height===CH?state:null;
+  }
+  function selectionScopeAllowsPixel(pixel){
+    var state=scopedSelectionState();if(!state)return true;
+    return selectionScopeMode==='inside'?state.mask[pixel]===255:state.mask[pixel]!==255;
+  }
+  function clipCanvasToSelectionScope(source){
+    var state=scopedSelectionState();if(!state||!source)return source;
+    if(!selectionScopeCanvas){selectionScopeCanvas=document.createElement('canvas');selectionScopeContext=selectionScopeCanvas.getContext('2d');}
+    if(selectionScopeCanvas.width!==state.width||selectionScopeCanvas.height!==state.height){selectionScopeCanvas.width=state.width;selectionScopeCanvas.height=state.height;}
+    selectionScopeContext.clearRect(0,0,state.width,state.height);selectionScopeContext.globalCompositeOperation='source-over';selectionScopeContext.globalAlpha=1;selectionScopeContext.drawImage(source,0,0);
+    selectionScopeContext.globalCompositeOperation=selectionScopeMode==='inside'?'destination-in':'destination-out';selectionScopeContext.drawImage(maskCanvas,0,0);selectionScopeContext.globalCompositeOperation='source-over';
+    return selectionScopeCanvas;
+  }
+  function captureSelectionScopedArtwork(source){
+    if(!scopedSelectionState()||!source)return null;
+    var copy=document.createElement('canvas');copy.width=source.width;copy.height=source.height;copy.getContext('2d').drawImage(source,0,0);return copy;
+  }
+  function restoreSelectionScopeProtectedPixels(context,beforeCanvas){
+    var state=scopedSelectionState();if(!state||!beforeCanvas)return false;
+    var current=context.getImageData(0,0,state.width,state.height),before=beforeCanvas.getContext('2d',{willReadFrequently:true}).getImageData(0,0,state.width,state.height),mask=state.mask;
+    for(var pixel=0,offset=0;pixel<mask.length;pixel++,offset+=4){var allowed=selectionScopeMode==='inside'?mask[pixel]===255:mask[pixel]!==255;if(allowed)continue;current.data[offset]=before.data[offset];current.data[offset+1]=before.data[offset+1];current.data[offset+2]=before.data[offset+2];current.data[offset+3]=before.data[offset+3];}
+    context.putImageData(current,0,0);return true;
+  }
+  function setSelectionScope(mode){if(['all','inside','outside'].indexOf(mode)<0)return;selectionScopeMode=mode;try{localStorage.setItem('animate.selectionScope.v1',mode);}catch(_){}window.dispatchEvent(new CustomEvent('selection-scope-changed',{detail:{mode:mode}}));}
+
   document.addEventListener('keydown',function(event){
     if(window.LassoSelection&&LassoSelection.isActive())return;
     if(window.RectangleSelection&&RectangleSelection.isActive())return;
@@ -341,5 +371,6 @@
   document.addEventListener('visibilitychange',function(){if(!document.hidden)scheduleOverlayRender();});
 
   window.PixelSelection={isActive:function(){return selectionActive;},getState:function(){return window.pixelSelectionState;},applyMask:applyCanonicalMask,modeFromEvent:selectionModeFromEvent,clear:clearSelection,deleteSelected:deleteSelectedPixels,setOverlayVisible:setOverlayVisible,containsEvent:containsEvent,setOverlayOffset:setOverlayOffset,translate:translateSelection,setTransformPreview:setTransformPreview,clearTransformPreview:clearTransformPreview,replaceMask:replaceCanonicalMask,capture:captureSelection,restore:restoreSelection};
+  window.SelectionScope={get:function(){return selectionScopeMode;},set:setSelectionScope,isRestricted:function(){return !!scopedSelectionState();},allowsPixel:selectionScopeAllowsPixel,clipCanvas:clipCanvasToSelectionScope,captureArtwork:captureSelectionScopedArtwork,restoreProtectedPixels:restoreSelectionScopeProtectedPixels};
   window.LinkedPixelSelection={handleStylePointer:handleStylePointer,handleCanvasPointer:handleCanvasPointer,selectStyle:selectLinkedPixels,replaceSelectedWithStyle:replaceSelectedWithStyle,getMask:function(){return selectionMask?selectionMask.slice():null;},getMaskCanvas:function(){return maskCanvas;},getBounds:function(){return selectionBounds&&Object.assign({},selectionBounds);},clear:clearSelection};
 })();

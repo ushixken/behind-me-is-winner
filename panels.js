@@ -5,6 +5,7 @@ function floodFill(x,y,fc){
   const img=ctx.getImageData(0,0,CW,CH),d=img.data;
   const smartFill=layers[curLayer]&&layers[curLayer].type==='smart-raster'&&advancedPalettePaintingEnabled();
   const smartFillStyle=smartFill?activeAdvancedStyleIdForPainting():null;
+  const fillPixelAllowed=window.SelectionScope?pixel=>SelectionScope.allowsPixel(pixel):()=>true;
   const beforeSmartFill=smartFillStyle?{data:d.slice()}:null;
   const px=Math.max(0,Math.min(CW-1,Math.round(x)));
   const py=Math.max(0,Math.min(CH-1,Math.round(y)));
@@ -18,6 +19,7 @@ function floodFill(x,y,fc){
   const queue=new Int32Array(pixelCount);
   let head=0,tail=0;
   const start=py*CW+px;
+  if(!fillPixelAllowed(start))return;
   visited[start]=1;
   queue[tail++]=start;
 
@@ -26,6 +28,7 @@ function floodFill(x,y,fc){
     const cx=pixel%CW;
     const cy=Math.floor(pixel/CW);
     const j=(cy*CW+cx)*4;
+    if(!fillPixelAllowed(pixel))continue;
     const matches=ta===0?d[j+3]===0:
       d[j]===tr&&d[j+1]===tg&&d[j+2]===tb&&d[j+3]===ta;
     if(!matches) continue;

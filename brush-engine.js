@@ -166,6 +166,7 @@ let _strokeCtx    = null; // its 2D context
 let _inStroke = false;
 let _strokeReplayDabs = [];
 let _strokeReplayBase = null;
+let _selectionScopeBase = null;
 let _replayingTaper = false;
 
 function _beginEndTaperCapture(){
@@ -201,7 +202,8 @@ function _commitStrokeCanvas(){
   // forceFull=true: make sure the ENTIRE stroke is masked (not just whatever
   // region was still pending), so the committed result always matches what
   // the live preview was showing, even if a frame's mask pass got skipped.
-  const src = _getTexturedStrokeCanvas(_strokeCanvas, true);
+  let src = _getTexturedStrokeCanvas(_strokeCanvas, true);
+  if(window.SelectionScope)src=SelectionScope.clipCanvas(src);
   const styleId=typeof activeAdvancedStyleIdForPainting==='function'
     ?activeAdvancedStyleIdForPainting():null;
   const smartOwnership=tool==='brush'&&styleId&&
@@ -321,6 +323,7 @@ function _getLiveStrokePreview(){
       // wrong color — better than a blank preview.
     }
 
+    if(window.SelectionScope)strokeSrc=SelectionScope.clipCanvas(strokeSrc);
     _strokePreviewCtx.save();
     _strokePreviewCtx.globalAlpha = Math.max(0, Math.min(1, brushOpacity));
     _strokePreviewCtx.globalCompositeOperation = 'source-over';
@@ -2257,10 +2260,14 @@ function _scheduleRecomposite(){
 //     (e.buttons & 1) on every pointermove before drawing Ã¢â‚¬â€ if it isn't
 //     (e.g. the up-event was lost), stop the stroke instead of trusting
 //     the old `drawing` flag blindly.
+function _restoreSelectionScopePixels(){
+  if(_selectionScopeBase&&window.SelectionScope)SelectionScope.restoreProtectedPixels(ctx,_selectionScopeBase);
+  _selectionScopeBase=null;
+}
 function _endStroke(){
   _stopAirbrushSpray();
   _autoHardRoundPrevDab=null;
-  if(drawing){drawing=false;_flushStrokeTail();if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_cleanupErasedSmartOwnership();saveActiveToKey();_scheduleRecomposite();}
+  if(drawing){drawing=false;_flushStrokeTail();if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();_scheduleRecomposite();}
   lineStart=null;
   _pendingDabs.length=0;
   _curveP0=null;_curveP1=null; // discard in-flight curve geometry, no event to flush a tail with
@@ -2771,7 +2778,7 @@ activeC.addEventListener('pointerdown',e=>{
   if(tool==='fill'){pushUndo();ensureKey();floodFill(p.x,p.y,color);saveActiveToKey();recomposite(curLayer,curFrame);return;}
   if(tool==='line'){lineStart=p;return;}
   activeC.setPointerCapture(e.pointerId);
-  pushUndo();ensureKey();_beginEndTaperCapture();drawing=true;lx=p.x;ly=p.y;
+  pushUndo();ensureKey();_beginEndTaperCapture();_selectionScopeBase=tool==='eraser'&&window.SelectionScope?SelectionScope.captureArtwork(activeC):null;drawing=true;lx=p.x;ly=p.y;
   _autoHardRoundPrevDab=null;
   _resetCurve(p.x,p.y,currentPressure);
   _lastPointerEvent=e;
@@ -2838,7 +2845,7 @@ function _pointerEndStroke(e){
     if(_inStroke){_inStroke=false;_commitStrokeCanvas();}
     _cleanupErasedSmartOwnership();lineStart=null;saveActiveToKey();recomposite(curLayer,curFrame);return;
   }
-  if(drawing){drawing=false;_flushCurveTail(e);_flushStrokeTail();if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_cleanupErasedSmartOwnership();saveActiveToKey();_scheduleRecomposite();}
+  if(drawing){drawing=false;_flushCurveTail(e);_flushStrokeTail();if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();_scheduleRecomposite();}
 }
 activeC.addEventListener('pointerup',e=>{
   if(activeC.hasPointerCapture(e.pointerId))activeC.releasePointerCapture(e.pointerId);

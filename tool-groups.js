@@ -137,6 +137,14 @@
     body.appendChild(section);
   }
 
+  function renderSelectionOptions(body){
+    const section=document.createElement('div');section.className='tool-group-inline-options';
+    const label=document.createElement('div');label.className='tool-options-label';label.textContent='Selection Scope';section.appendChild(label);
+    const segments=document.createElement('div');segments.className='ts-pill-row selection-scope-segments';segments.setAttribute('role','group');segments.setAttribute('aria-label','Selection Scope');
+    [['all','All'],['inside','Inside'],['outside','Outside']].forEach(([mode,text])=>{const button=document.createElement('button');button.type='button';button.className='ts-pill';button.textContent=text;const sync=()=>{const active=(window.SelectionScope?SelectionScope.get():'all')===mode;button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));};sync();button.onclick=()=>{if(window.SelectionScope)SelectionScope.set(mode);segments.querySelectorAll('.ts-pill').forEach(item=>{const active=item===button;item.classList.toggle('active',active);item.setAttribute('aria-pressed',String(active));});};segments.appendChild(button);});
+    section.appendChild(segments);body.appendChild(section);
+  }
+
   function presetSubTools(groupId){
     const source=window._brushPresets?[].concat(_brushPresets.BRUSH_PRESETS||[],_brushPresets.customPresets||[]):[];
     const seen=new Set();return source.filter(preset=>preset&&preset.id&&!seen.has(preset.id)&&seen.add(preset.id)).map(preset=>({
@@ -153,7 +161,7 @@
 
   registerGroup({id:'brush',name:'Brush',shortcutActionId:'toolBrush',icon:'B',defaultSubToolId:'brush:hard-round',subTools:presetSubTools('brush')});
   registerGroup({id:'eraser',name:'Eraser',shortcutActionId:'toolEraser',icon:'E',defaultSubToolId:'eraser:hard-round',subTools:presetSubTools('eraser')});
-  const selectionGroup=registerGroup({id:'selection',name:'Selection',shortcutActionId:'toolSelection',icon:'S',defaultSubToolId:'style-select',subTools:[
+  const selectionGroup=registerGroup({id:'selection',name:'Selection',shortcutActionId:'toolSelection',icon:'S',panelRenderer:renderSelectionOptions,defaultSubToolId:'style-select',subTools:[
     {id:'rectangle-select',name:'Rectangle Select',icon:'R',section:'Selection Area',activate:toolActivation('rectangle-select','Rectangle Select'),settingsDescription:'Drag a rectangular selection. Shift adds, Alt subtracts, and Shift+Alt intersects.'},
     {id:'lasso-select',name:'Lasso Select',icon:'L',section:'Selection Area',activate:toolActivation('lasso','Lasso Select'),settingsDescription:'Drag a freehand closed selection. Shift adds, Alt subtracts, and Shift+Alt intersects.'},
     {id:'ellipse-select',name:'Ellipse Select',icon:'O',section:'Selection Area',activate:toolActivation('ellipse-select','Ellipse Select'),settingsDescription:'Drag an elliptical selection. Shift constrains a circle; selection modifiers still control add, subtract, and intersect.'},Object.assign(placeholder('polyline-select','Polyline Select','P'),{section:'Selection Area'}),
