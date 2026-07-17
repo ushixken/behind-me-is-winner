@@ -358,20 +358,23 @@
   function captureSelection(){return selectionActive&&selectionMask?{mask:selectionMask.slice(),width:selectionWidth,height:selectionHeight,layerIndex:selectionLayerIndex,frameIndex:selectionFrameIndex}:null;}
   function restoreSelection(snapshot){if(!snapshot){clearSelection();return;}replaceCanonicalMask(snapshot.mask,snapshot.width,snapshot.height,'selection-history',snapshot);}
 
+  // Raster editing always clips to the non-empty canonical selection. The
+  // persisted Selection Scope is a creation-tool preference and must never
+  // turn an active selection into an unrestricted paint target.
   function scopedSelectionState(){
-    var state=window.pixelSelectionState;
-    return selectionScopeMode!=='all'&&selectionActive&&state&&state.layerIndex===curLayer&&state.width===CW&&state.height===CH?state:null;
+    var state=window.pixelSelectionState,layer=layers[curLayer],activeFrame=layer&&layer.type==='smart-raster'?heldFrameIndex(layer,curFrame):curFrame;
+    return selectionActive&&state&&state.active&&state.mask&&state.layerIndex===curLayer&&state.frameIndex===activeFrame&&state.width===CW&&state.height===CH?state:null;
   }
   function selectionScopeAllowsPixel(pixel){
     var state=scopedSelectionState();if(!state)return true;
-    return selectionScopeMode==='inside'?state.mask[pixel]===255:state.mask[pixel]!==255;
+    return pixel>=0&&pixel<state.mask.length&&state.mask[pixel]>0;
   }
   function clipCanvasToSelectionScope(source){
     var state=scopedSelectionState();if(!state||!source)return source;
     if(!selectionScopeCanvas){selectionScopeCanvas=document.createElement('canvas');selectionScopeContext=selectionScopeCanvas.getContext('2d');}
     if(selectionScopeCanvas.width!==state.width||selectionScopeCanvas.height!==state.height){selectionScopeCanvas.width=state.width;selectionScopeCanvas.height=state.height;}
     selectionScopeContext.clearRect(0,0,state.width,state.height);selectionScopeContext.globalCompositeOperation='source-over';selectionScopeContext.globalAlpha=1;selectionScopeContext.drawImage(source,0,0);
-    selectionScopeContext.globalCompositeOperation=selectionScopeMode==='inside'?'destination-in':'destination-out';selectionScopeContext.drawImage(maskCanvas,0,0);selectionScopeContext.globalCompositeOperation='source-over';
+    selectionScopeContext.globalCompositeOperation='destination-in';selectionScopeContext.drawImage(state.maskCanvas||maskCanvas,0,0);selectionScopeContext.globalCompositeOperation='source-over';
     return selectionScopeCanvas;
   }
   function captureSelectionScopedArtwork(source){
@@ -381,7 +384,7 @@
   function restoreSelectionScopeProtectedPixels(context,beforeCanvas){
     var state=scopedSelectionState();if(!state||!beforeCanvas)return false;
     var current=context.getImageData(0,0,state.width,state.height),before=beforeCanvas.getContext('2d',{willReadFrequently:true}).getImageData(0,0,state.width,state.height),mask=state.mask;
-    for(var pixel=0,offset=0;pixel<mask.length;pixel++,offset+=4){var allowed=selectionScopeMode==='inside'?mask[pixel]===255:mask[pixel]!==255;if(allowed)continue;current.data[offset]=before.data[offset];current.data[offset+1]=before.data[offset+1];current.data[offset+2]=before.data[offset+2];current.data[offset+3]=before.data[offset+3];}
+    for(var pixel=0,offset=0;pixel<mask.length;pixel++,offset+=4){if(mask[pixel]>0)continue;current.data[offset]=before.data[offset];current.data[offset+1]=before.data[offset+1];current.data[offset+2]=before.data[offset+2];current.data[offset+3]=before.data[offset+3];}
     context.putImageData(current,0,0);return true;
   }
   function setSelectionScope(mode){if(['all','inside','outside'].indexOf(mode)<0)return;selectionScopeMode=mode;try{localStorage.setItem('animate.selectionScope.v1',mode);}catch(_){}window.dispatchEvent(new CustomEvent('selection-scope-changed',{detail:{mode:mode}}));}
