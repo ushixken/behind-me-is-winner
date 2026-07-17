@@ -422,7 +422,10 @@ function switchLayer(li){
 // derived from its own rendered DOM after the fact).
 // ════════════════════════════════════════════════════════════════
 const FloatPanels=(function(){
-  const DOCK_TRIGGER=52;       // px from canvas edge that previews an edge-dock
+  const EDGE_DOCK_ENTER_THRESHOLD=5; // pointer distance for every edge-dock target
+  const EDGE_DOCK_EXIT_THRESHOLD=7;  // minimal hysteresis for the active target
+  const STACK_DOCK_ENTER_THRESHOLD=5; // pointer distance for vertical stack boundaries
+  const STACK_DOCK_EXIT_THRESHOLD=7;  // minimal hysteresis for the active stack boundary
   const dz={left:document.getElementById('fp-dz-left'),right:document.getElementById('fp-dz-right'),
             top:document.getElementById('fp-dz-top'),bottom:document.getElementById('fp-dz-bottom')};
   const mergeZoneEl=document.getElementById('fp-mergezone');
@@ -545,25 +548,21 @@ const FloatPanels=(function(){
       columnBottom:car.bottom
     };
   }
-  function _stackInsertPoint(hostKey,clientY){
+  function _stackInsertPoint(hostKey,clientY,activeDrop){
     const layout=_stackLayout(hostKey);
     if(!layout) return null;
-    for(let i=0;i<layout.items.length;i++){
-      const {rect}=layout.items[i];
-      if(clientY<rect.top+rect.height*0.5){
-        return {hostKey,side:layout.side,atIndex:i,lineY:rect.top,left:layout.left,width:layout.right-layout.left};
+    let best=null;
+    for(let i=0;i<=layout.items.length;i++){
+      const lineY=i<layout.items.length?layout.items[i].rect.top:layout.items[layout.items.length-1].rect.bottom;
+      const threshold=activeDrop&&activeDrop.hostKey===hostKey&&activeDrop.atIndex===i
+        ?STACK_DOCK_EXIT_THRESHOLD:STACK_DOCK_ENTER_THRESHOLD;
+      const distance=Math.abs(clientY-lineY);
+      if(distance<=threshold&&(!best||distance<best.distance)){
+        best={hostKey,side:layout.side,atIndex:i,lineY,left:layout.left,width:layout.right-layout.left,distance};
       }
     }
-    return {
-      hostKey,
-      side:layout.side,
-      atIndex:layout.items.length,
-      lineY:layout.bottom,
-      left:layout.left,
-      width:layout.right-layout.left
-    };
+    return best;
   }
-
   // Stack zone: insertion line for vertical stack drops inside a dock column.
   const stackZoneEl=(function(){
     const el=document.createElement('div');
@@ -1361,7 +1360,7 @@ const FloatPanels=(function(){
           const withinX=e.clientX>=layout.left&&e.clientX<=layout.right;
           const withinY=e.clientY>=layout.columnTop&&e.clientY<=layout.columnBottom;
           if(!withinX||!withinY) return;
-          _earlyStackDrop=_stackInsertPoint(hostKey,e.clientY);
+          _earlyStackDrop=_stackInsertPoint(hostKey,e.clientY,curStackDrop);
         });
       });
 
@@ -1391,7 +1390,9 @@ const FloatPanels=(function(){
                       :(side==='top')?car.top+lineOffset
                       :car.bottom-lineOffset;
           const dist=Math.abs(axisPos-linePos);
-          if(dist<DOCK_TRIGGER&&(!best||dist<best.dist)) best={side,atIndex:i,dist,lineOffset};
+          const threshold=curDock===side&&curAtIndex===i
+            ?EDGE_DOCK_EXIT_THRESHOLD:EDGE_DOCK_ENTER_THRESHOLD;
+          if(dist<=threshold&&(!best||dist<best.dist)) best={side,atIndex:i,dist,lineOffset};
           if(i<stack.length) cum+=dockSize[stack[i]]||0;
         }
       });
