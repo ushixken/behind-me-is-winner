@@ -13,14 +13,15 @@ function updateOnion(){
 // ════════════════════════════════════════════════════════════════
 function _currentUndoSnapshot(){
   const layer=layers[curLayer];
+  const selectionSnapshot=window.PixelSelection&&PixelSelection.capture?PixelSelection.capture():null;
   const layerType=layer&&layer.type==='smart-raster'?'smart-raster':'bitmap';
   if(layerType==='smart-raster'){
     const styleBundle=typeof getStyleFrameBundle==='function'?getStyleFrameBundle(curLayer,curFrame):null;
-    return {snap:null,styleBundle,frame:curFrame,layer:curLayer,layerType};
+    return {snap:null,styleBundle,frame:curFrame,layer:curLayer,layerType,selectionSnapshot};
   }
   const snap=mkLayerCanvas();
   snap.getContext('2d').drawImage(activeC,0,0);
-  return {snap,styleBundle:null,frame:curFrame,layer:curLayer,layerType};
+  return {snap,styleBundle:null,frame:curFrame,layer:curLayer,layerType,selectionSnapshot};
 }
 
 function pushUndo(){
@@ -57,6 +58,7 @@ function _restoreUndoAction(action){
   const layer=layers[action.layer];
   if(layer&&layer.type==='smart-raster') restoreSmartRasterUndo(action);
   else restoreBitmapUndo(action);
+  if(Object.prototype.hasOwnProperty.call(action,'selectionSnapshot')&&window.PixelSelection&&PixelSelection.restore)PixelSelection.restore(action.selectionSnapshot);
 }
 
 function _showSmartRasterDuplicateFrame(action,slot,frameIndex){

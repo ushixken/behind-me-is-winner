@@ -9,6 +9,7 @@
   var overlay=null,maskCanvas=null,overlayVisible=true;
   var overlayRaf=0;
   var overlayOffsetX=0,overlayOffsetY=0;
+  var transformPreviewSegments=null,transformPreviewPath=null;
 
   function heldFrameIndex(layer,frameIndex){
     if(!layer)return frameIndex;
@@ -108,20 +109,21 @@
     var geometry=ensureOverlay(),c=overlay.getContext('2d'),dpr=geometry.dpr;
     c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,overlay.width,overlay.height);
     overlay.style.display=overlayVisible?'block':'none';
-    if(!overlayVisible||!selectionActive||!contourSegments.length)return;
+    var drawSegments=transformPreviewSegments||contourSegments,drawPath=transformPreviewSegments?transformPreviewPath:contourPath;
+    if(!overlayVisible||!selectionActive||!drawSegments.length)return;
     c.strokeStyle='#7f77dd';c.lineCap='butt';c.lineJoin='miter';
-    if(contourPath){
+    if(drawPath){
       var pivot=getNavPivot(),fx=flipX?-1:1,fy=flipY?-1:1;
       c.setTransform(dpr,0,0,dpr,0.5,0.5);
       c.translate(pivot.cx,pivot.cy);c.scale(fx,fy);c.translate(-pivot.cx,-pivot.cy);
       c.translate(panX,panY);c.rotate(rotation*Math.PI/180);c.scale(zoom,zoom);
       c.translate(overlayOffsetX,overlayOffsetY);
-      c.lineWidth=1/(dpr*Math.max(0.0001,zoom));c.stroke(contourPath);
+      c.lineWidth=1/(dpr*Math.max(0.0001,zoom));c.stroke(drawPath);
     }else{
       c.setTransform(dpr,0,0,dpr,0,0);c.lineWidth=1/dpr;c.beginPath();
-      for(var i=0;i<contourSegments.length;i+=4){
-        var a=canvasToViewport(contourSegments[i]+overlayOffsetX,contourSegments[i+1]+overlayOffsetY);
-        var b=canvasToViewport(contourSegments[i+2]+overlayOffsetX,contourSegments[i+3]+overlayOffsetY);
+      for(var i=0;i<drawSegments.length;i+=4){
+        var a=canvasToViewport(drawSegments[i]+overlayOffsetX,drawSegments[i+1]+overlayOffsetY);
+        var b=canvasToViewport(drawSegments[i+2]+overlayOffsetX,drawSegments[i+3]+overlayOffsetY);
         c.moveTo(a.x,a.y);c.lineTo(b.x,b.y);
       }
       c.stroke();
@@ -216,7 +218,7 @@
   canvasArea.addEventListener('pointerdown',handleCanvasPointer,true);
 
   function clearSelection(){
-    overlayOffsetX=overlayOffsetY=0;
+    overlayOffsetX=overlayOffsetY=0;transformPreviewSegments=transformPreviewPath=null;
     selectionMask=null;outlineMask=null;contourSegments=new Float32Array(0);contourPath=null;selectionBounds=null;selectionActive=false;
     selectionLayerIndex=selectionFrameIndex=-1;
     if(overlayRaf){cancelAnimationFrame(overlayRaf);overlayRaf=0;}
@@ -287,6 +289,39 @@
     return true;
   }
 
+  function maskBounds(mask,width,height){
+    var minX=width,minY=height,maxX=-1,maxY=-1,count=0;
+    if(mask)for(var y=0;y<height;y++)for(var x=0;x<width;x++)if(mask[y*width+x]===255){count++;if(x<minX)minX=x;if(x>maxX)maxX=x;if(y<minY)minY=y;if(y>maxY)maxY=y;}
+    return {count:count,bounds:count?{x:minX,y:minY,width:maxX-minX+1,height:maxY-minY+1}:null};
+  }
+
+  function setTransformPreview(mask,width,height){
+    transformPreviewSegments=transformPreviewPath=null;
+    if(!selectionActive||!mask||mask.length!==width*height){scheduleOverlayRender();return;}
+    var info=maskBounds(mask,width,height);
+    var savedMask=selectionMask,savedOutline=outlineMask,savedSegments=contourSegments,savedPath=contourPath;
+    selectionMask=mask;rebuildOutlineAndContours(width,height,info.bounds);
+    transformPreviewSegments=contourSegments;transformPreviewPath=contourPath;
+    selectionMask=savedMask;outlineMask=savedOutline;contourSegments=savedSegments;contourPath=savedPath;
+    overlayOffsetX=overlayOffsetY=0;scheduleOverlayRender();
+  }
+
+  function clearTransformPreview(){transformPreviewSegments=transformPreviewPath=null;overlayOffsetX=overlayOffsetY=0;scheduleOverlayRender();}
+
+  function replaceCanonicalMask(mask,width,height,source,snapshot){
+    transformPreviewSegments=transformPreviewPath=null;overlayOffsetX=overlayOffsetY=0;
+    if(!mask||mask.length!==width*height){clearSelection();return false;}
+    selectionMask=new Uint8ClampedArray(mask);selectionWidth=width;selectionHeight=height;
+    if(snapshot){selectionLayerIndex=snapshot.layerIndex;selectionFrameIndex=snapshot.frameIndex;}
+    else{selectionLayerIndex=curLayer;selectionFrameIndex=(layers[curLayer]&&layers[curLayer].type==='smart-raster')?heldFrameIndex(layers[curLayer],curFrame):curFrame;}
+    var count=rebuildMaskCanvasAndBounds();overlayVisible=true;if(count)scheduleOverlayRender();else renderSelection();
+    window.dispatchEvent(new CustomEvent('pixel-selection-changed',{detail:{active:count>0,source:source||'selection-transform',mask:selectionMask.slice(),maskCanvas:maskCanvas,bounds:selectionBounds&&Object.assign({},selectionBounds),width:width,height:height,layerIndex:selectionLayerIndex,frameIndex:selectionFrameIndex}}));
+    return count>0;
+  }
+
+  function captureSelection(){return selectionActive&&selectionMask?{mask:selectionMask.slice(),width:selectionWidth,height:selectionHeight,layerIndex:selectionLayerIndex,frameIndex:selectionFrameIndex}:null;}
+  function restoreSelection(snapshot){if(!snapshot){clearSelection();return;}replaceCanonicalMask(snapshot.mask,snapshot.width,snapshot.height,'selection-history',snapshot);}
+
   document.addEventListener('keydown',function(event){
     if(window.LassoSelection&&LassoSelection.isActive())return;
     if(window.RectangleSelection&&RectangleSelection.isActive())return;
@@ -305,6 +340,6 @@
   if(typeof ResizeObserver!=='undefined')new ResizeObserver(scheduleOverlayRender).observe(canvasArea);
   document.addEventListener('visibilitychange',function(){if(!document.hidden)scheduleOverlayRender();});
 
-  window.PixelSelection={isActive:function(){return selectionActive;},getState:function(){return window.pixelSelectionState;},applyMask:applyCanonicalMask,modeFromEvent:selectionModeFromEvent,clear:clearSelection,deleteSelected:deleteSelectedPixels,setOverlayVisible:setOverlayVisible,containsEvent:containsEvent,setOverlayOffset:setOverlayOffset,translate:translateSelection};
+  window.PixelSelection={isActive:function(){return selectionActive;},getState:function(){return window.pixelSelectionState;},applyMask:applyCanonicalMask,modeFromEvent:selectionModeFromEvent,clear:clearSelection,deleteSelected:deleteSelectedPixels,setOverlayVisible:setOverlayVisible,containsEvent:containsEvent,setOverlayOffset:setOverlayOffset,translate:translateSelection,setTransformPreview:setTransformPreview,clearTransformPreview:clearTransformPreview,replaceMask:replaceCanonicalMask,capture:captureSelection,restore:restoreSelection};
   window.LinkedPixelSelection={handleStylePointer:handleStylePointer,handleCanvasPointer:handleCanvasPointer,selectStyle:selectLinkedPixels,replaceSelectedWithStyle:replaceSelectedWithStyle,getMask:function(){return selectionMask?selectionMask.slice():null;},getMaskCanvas:function(){return maskCanvas;},getBounds:function(){return selectionBounds&&Object.assign({},selectionBounds);},clear:clearSelection};
 })();

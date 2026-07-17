@@ -160,6 +160,37 @@ function _tfDrawFreeSource(context,source,state){
 // coordinate space as tfBox — i.e. original, untransformed canvas coords.
 // Kept separate from any single mode's math so Free, Perspective, Warp,
 // etc. can all place/read the pivot consistently.
+function _tfTransformSelectionMaskFree(){
+  if(!tfPixelSelection)return null;
+  const width=tfPixelSelection.width||CW,height=tfPixelSelection.height||CH,source=tfPixelSelection.mask,output=new Uint8ClampedArray(width*height);
+  if(_tfIsIntegerTranslation(tfState)){
+    const dx=Math.round(tfState.tx),dy=Math.round(tfState.ty);
+    for(let y=0;y<height;y++)for(let x=0;x<width;x++)if(source[y*width+x]===255){const nx=x+dx,ny=y+dy;if(nx>=0&&ny>=0&&nx<width&&ny<height)output[ny*width+nx]=255;}
+    return output;
+  }
+  const boxCenterX=tfBox.x+tfBox.w/2,boxCenterY=tfBox.y+tfBox.h/2,center=_tfCenter(tfState),scale=tfState.scale||1,radians=tfState.rotation*Math.PI/180,cosR=Math.cos(radians),sinR=Math.sin(radians);
+  const corners=[{x:tfBox.x,y:tfBox.y},{x:tfBox.x+tfBox.w,y:tfBox.y},{x:tfBox.x+tfBox.w,y:tfBox.y+tfBox.h},{x:tfBox.x,y:tfBox.y+tfBox.h}].map(point=>{const dx=(point.x-boxCenterX)*scale,dy=(point.y-boxCenterY)*scale;return{x:center.x+dx*cosR-dy*sinR,y:center.y+dx*sinR+dy*cosR};});
+  const minX=Math.max(0,Math.floor(Math.min(...corners.map(point=>point.x)))),minY=Math.max(0,Math.floor(Math.min(...corners.map(point=>point.y)))),maxX=Math.min(width,Math.ceil(Math.max(...corners.map(point=>point.x)))),maxY=Math.min(height,Math.ceil(Math.max(...corners.map(point=>point.y))));
+  for(let y=minY;y<maxY;y++)for(let x=minX;x<maxX;x++){
+    const worldX=x+0.5-center.x,worldY=y+0.5-center.y,localX=(worldX*cosR+worldY*sinR)/scale+boxCenterX,localY=(-worldX*sinR+worldY*cosR)/scale+boxCenterY;
+    const sx=Math.floor(localX),sy=Math.floor(localY);if(sx>=0&&sy>=0&&sx<width&&sy<height&&source[sy*width+sx]===255)output[y*width+x]=255;
+  }
+  return output;
+}
+function _tfTransformSelectionMaskPerspective(){
+  if(!tfPixelSelection||!tfCorners)return null;
+  const width=tfPixelSelection.width||CW,height=tfPixelSelection.height||CH,source=tfPixelSelection.mask,output=new Uint8ClampedArray(width*height),inverse=_tfInvertHomography(_tfQuadH(tfCorners[0],tfCorners[1],tfCorners[2],tfCorners[3]));if(!inverse)return output;
+  const minX=Math.max(0,Math.floor(Math.min(...tfCorners.map(point=>point.x)))),minY=Math.max(0,Math.floor(Math.min(...tfCorners.map(point=>point.y)))),maxX=Math.min(width,Math.ceil(Math.max(...tfCorners.map(point=>point.x)))),maxY=Math.min(height,Math.ceil(Math.max(...tfCorners.map(point=>point.y))));
+  for(let y=minY;y<maxY;y++)for(let x=minX;x<maxX;x++){
+    const px=x+0.5,py=y+0.5,denominator=inverse.g*px+inverse.h*py+inverse.i;if(!Number.isFinite(denominator)||Math.abs(denominator)<1e-10)continue;
+    const u=(inverse.a*px+inverse.b*py+inverse.c)/denominator,v=(inverse.d*px+inverse.e*py+inverse.f)/denominator;if(!Number.isFinite(u)||!Number.isFinite(v)||u<0||u>=1||v<0||v>=1)continue;
+    const sx=Math.floor(tfBox.x+u*tfBox.w),sy=Math.floor(tfBox.y+v*tfBox.h);if(sx>=0&&sy>=0&&sx<width&&sy<height&&source[sy*width+sx]===255)output[y*width+x]=255;
+  }
+  return output;
+}
+function _tfCurrentSelectionMask(){return tfPerspective?_tfTransformSelectionMaskPerspective():_tfTransformSelectionMaskFree();}
+function _tfPreviewSelectionMask(){if(tfPixelSelection&&window.PixelSelection){const mask=_tfCurrentSelectionMask();if(mask)PixelSelection.setTransformPreview(mask,tfPixelSelection.width||CW,tfPixelSelection.height||CH);}}
+
 function _tfLocalToWorld(local,state){
   state=state||tfState;
   const c=_tfCenter(state);
@@ -579,9 +610,9 @@ function enterTransformTool(){
       selectedCtx.globalCompositeOperation='destination-in';selectedCtx.drawImage(pixelState.maskCanvas,0,0);selectedCtx.globalCompositeOperation='source-over';
       backgroundCtx.drawImage(tfSnapshot,0,0);
       backgroundCtx.globalCompositeOperation='destination-out';backgroundCtx.drawImage(pixelState.maskCanvas,0,0);backgroundCtx.globalCompositeOperation='source-over';
-      tfPixelSelection={mask:pixelState.mask.slice(),source:selected,background:background};
+      tfPixelSelection={mask:pixelState.mask.slice(),width:pixelState.width,height:pixelState.height,source:selected,background:background};
       tfBox={x:pixelState.bounds.x,y:pixelState.bounds.y,w:pixelState.bounds.width,h:pixelState.bounds.height};
-      PixelSelection.setOverlayVisible(false);
+      PixelSelection.clearTransformPreview();PixelSelection.setOverlayVisible(true);
     } else tfBox=_computeOpaqueBBox(tfSnapshot);
     tfSmartMove=_tfCaptureSmartMove(curLayer,curFrame,tfBox);
     if(tfSmartMove){
@@ -672,7 +703,7 @@ function commitTransformTool(){
   saveActiveToKey();
   recomposite(curLayer,curFrame);
   renderTimeline();
-  if(tfPixelSelection&&window.PixelSelection)PixelSelection.clear();
+  if(tfPixelSelection&&window.PixelSelection){const transformedMask=_tfCurrentSelectionMask();PixelSelection.clearTransformPreview();if(transformedMask)PixelSelection.replaceMask(transformedMask,tfPixelSelection.width||CW,tfPixelSelection.height||CH,'selection-transform');}
   tfSnapshot=null;tfSmartMove=null;tfPixelSelection=null;tfRasterPerspectivePreview=null;tfPerspectiveFastPreview=null;tfBox=null;tfState=null;tfPivot=null;
   tfPerspective=false;tfCorners=null;
 }
@@ -701,7 +732,7 @@ function cancelTransformTool(){
   saveActiveToKey();
   recomposite(curLayer,curFrame);
   renderTimeline();
-  if(tfPixelSelection&&window.PixelSelection)PixelSelection.setOverlayVisible(true);
+  if(tfPixelSelection&&window.PixelSelection){PixelSelection.clearTransformPreview();PixelSelection.setOverlayVisible(true);}
   tfSnapshot=null;tfSmartMove=null;tfPixelSelection=null;tfRasterPerspectivePreview=null;tfPerspectiveFastPreview=null;tfBox=null;tfState=null;tfPivot=null;
   tfPerspective=false;tfCorners=null;
 }
@@ -754,6 +785,7 @@ function _tfRedraw(fastPerspectivePreview){
       _tfDrawFreeSource(ctx,transformSource,tfState);
     }
     _scheduleRecomposite();
+    _tfPreviewSelectionMask();
     if(tfPerspective) _tfDrawHandlesPerspective(true); else _tfDrawHandles(true);
   }
 }
