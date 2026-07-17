@@ -116,7 +116,7 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;fon
 /* canvas-wrap uses absolute positioning + CSS transform */
 #canvas-wrap{
   position:absolute;top:0;left:0;
-  box-shadow:0 0 0 1px #333,0 4px 32px rgba(0,0,0,0.5);
+  box-shadow:none;
   transform-origin:0 0;
   will-change:transform;
 }
