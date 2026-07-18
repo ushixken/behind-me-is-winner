@@ -540,7 +540,10 @@ function _updateRotPivotVisibility(){
 }
 
 window.addEventListener('keydown',e=>{
-  if(e.code==='ControlLeft'||e.code==='ControlRight') ctrlHeld=true;
+  if(e.key==='Control'||e.code==='ControlLeft'||e.code==='ControlRight'){
+    ctrlHeld=true;
+    if(spaceHeld&&!panning&&!_zoomDrag&&!_rotateDrag) activeC.style.cursor='zoom-in';
+  }
   if(e.code==='ShiftLeft'||e.code==='ShiftRight'){ shiftHeld=true; _updateRotPivotVisibility(); }
   if(e.code==='Space'&&!_isTextEntryTarget(e.target)){
     e.preventDefault();e.stopPropagation();spaceHeld=true;
@@ -554,7 +557,10 @@ window.addEventListener('keydown',e=>{
   }
 },{capture:true});
 window.addEventListener('keyup',e=>{
-  if(e.code==='ControlLeft'||e.code==='ControlRight') ctrlHeld=false;
+  if(e.key==='Control'||e.code==='ControlLeft'||e.code==='ControlRight'){
+    ctrlHeld=false;
+    if(spaceHeld&&!panning&&!_zoomDrag&&!_rotateDrag) activeC.style.cursor=shiftHeld?'alias':'grab';
+  }
   if(e.code==='ShiftLeft'||e.code==='ShiftRight'){ shiftHeld=false; _updateRotPivotVisibility(); }
   if(e.code==='Space'){
     e.preventDefault();e.stopPropagation();
@@ -658,16 +664,33 @@ document.addEventListener('mousemove',e=>{
 });
 document.addEventListener('mouseup',()=>{ _spaceDragEnd(); });
 
-// Pointer events — so Space+pen-drag also pans/zooms/rotates on tablets
+// Pointer Events are the primary navigation path for both mouse and pen.
+// Handling mouse here prevents a canvas pointerdown from suppressing the
+// later compatibility mousedown before Ctrl+Space zoom can begin.
+let _navPointerId=null;
 window.addEventListener('pointerdown',e=>{
-  if(e.pointerType!=='pen'||!spaceHeld||!(e.buttons&1)) return;
+  const isMouse=e.pointerType==='mouse';
+  const isPen=e.pointerType==='pen';
+  const middleMouse=isMouse&&e.button===1;
+  const primaryWithSpace=(isMouse||isPen)&&spaceHeld&&e.button===0;
+  if(!middleMouse&&!primaryWithSpace) return;
   if(_isNavBlocked(e.target)) return;
   e.preventDefault();e.stopImmediatePropagation();
-  _spaceDragStartXY(e.clientX,e.clientY,e.ctrlKey);
+  _navPointerId=e.pointerId;
+  if(e.target&&e.target.setPointerCapture){
+    try{e.target.setPointerCapture(e.pointerId);}catch(_){}
+  }
+  _spaceDragStartXY(e.clientX,e.clientY,e.ctrlKey||ctrlHeld);
 },{capture:true});
 document.addEventListener('pointermove',e=>{
-  if(e.pointerType==='pen'&&(panning||_zoomDrag||_rotateDrag)) _spaceDragMove(e.clientX,e.clientY);
+  if(e.pointerId===_navPointerId&&(panning||_zoomDrag||_rotateDrag)){
+    _spaceDragMove(e.clientX,e.clientY);
+  }
 });
-document.addEventListener('pointerup',e=>{
-  if(e.pointerType==='pen') _spaceDragEnd();
-});
+function _endPointerNavigation(e){
+  if(_navPointerId==null||(e&&e.pointerId!==_navPointerId)) return;
+  _navPointerId=null;
+  _spaceDragEnd();
+}
+document.addEventListener('pointerup',_endPointerNavigation);
+document.addEventListener('pointercancel',_endPointerNavigation);
