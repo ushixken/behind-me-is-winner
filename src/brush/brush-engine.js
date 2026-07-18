@@ -609,7 +609,7 @@ function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   // small; still cheap since there are only ever a few distinct tiny sizes
   // alive in a stroke at once relative to the cache's max size.
   const rQuantStep=rRaw<=4?0.02:_Q_R;
-  const r=_quant(rRaw,rQuantStep), alpha=_quantAlpha(alphaRaw);
+  const r=_quant(rRaw,rQuantStep), alpha=_quant(alphaRaw,_Q_ALPHA);
   const hardness=Math.round(Math.max(0,Math.min(0.99,hardnessRaw))*100)/100;
   const key=r.toFixed(2)+'|'+rgb.join(',')+'|'+alpha.toFixed(2)+'|'+composite+'|'+
             hardness.toFixed(2)+'|t'+tipV+'|'+(softAlpha?'s':'h')+'|'+tipMode+'|rd'+tipRoundness.toFixed(3);
@@ -858,11 +858,10 @@ function _dabAAGpu(x,y,r,rgb,alpha,composite){
   // real layer pixels, not the scratch).
   const dc = (_inStroke && composite !== 'erase') ? _strokeCtx : ctx;
   const rr=Math.max(0.05,r);
-  const isAirbrush=typeof window!=='undefined'&&!!window._brushAirbrush;
-  // Chrome/Skia's radial-gradient rasterizer uses an ordered low-alpha
-  // pattern. Through the low-Flow range, use the cached analytic ImageData stamp
-  // instead, then let the GPU composite it at the true subpixel position.
-  if(isAirbrush||alpha<=0.25){
+  const isProceduralAirbrush=typeof window!=='undefined'&&!!window._brushAirbrush&&!window.brushTipCanvas;
+  // Only procedural Airbrush uses the analytic cached mask. Ordinary round
+  // brushes retain their original radial-gradient GPU renderer exactly.
+  if(isProceduralAirbrush){
     const stamp=_buildAAStamp(r,rgb,alpha,composite,brushHardness);
     if(stamp){
       dc.save();
@@ -1208,7 +1207,7 @@ function _dabAA(x,y,r,rgb,alpha,composite){
 let _stampCache=new Map(); // key -> {canvas,w,h}
 const _STAMP_CACHE_MAX=64;
 function _getAliasedStamp(rRaw,rgb,alphaRaw,composite){
-  const r=_quant(rRaw,_Q_R), alpha=_quantAlpha(alphaRaw);
+  const r=_quant(rRaw,_Q_R), alpha=_quant(alphaRaw,_Q_ALPHA);
   // Include tip version so the stamp is rebuilt whenever the tip changes.
   const tipV=(window.brushTipCanvas?(window.brushTipVersion||0):-1);
   const key=r.toFixed(2)+'|'+rgb.join(',')+'|'+alpha.toFixed(2)+'|'+composite+'|tv'+tipV;
@@ -1688,10 +1687,7 @@ let _autoHardRoundPrevDab=null;
 // access it without needing an extra parameter through the call chain.
 let _lastDabRGB=[0,0,0];
 function _drawAutoHardRoundSegment(d){
-  // The integer connector is safe only for fully opaque pixel coverage. At
-  // low Flow it produces a separately sampled one-pixel centerline.
-  const opaqueCoverage=d.alpha>=0.999&&brushFlow>=0.999;
-  const eligible=opaqueCoverage&&d.composite==='paint'&&_usesAutoHardRoundRaster(d.r);
+  const eligible=d.composite==='paint'&&_usesAutoHardRoundRaster(d.r);
   if(!eligible){_autoHardRoundPrevDab=null;return false;}
   const previous=_autoHardRoundPrevDab;
   _autoHardRoundPrevDab={x:d.x,y:d.y,r:d.r,rgb:d.rgb.slice(),alpha:d.alpha};
@@ -2680,7 +2676,8 @@ function _computeEffectiveParams(e){
   // replace it) and only ever applies while Airbrush mode is on.
   // Do not raise low-Flow coverage: spacing compensation may legitimately
   // produce sub-1% dabs. Raising those to 1% causes periodic over-deposition.
-  return{r:Math.max(0.05,r), alpha:Math.max(0,Math.min(1,alpha))};
+  const minimumAlpha=(window._brushAirbrush&&!window.brushTipCanvas)?0:0.01;
+  return{r:Math.max(0.05,r), alpha:Math.max(minimumAlpha,Math.min(1,alpha))};
 }
 function _getEffectiveBrushParams(e){
   const params=_computeEffectiveParams(e);

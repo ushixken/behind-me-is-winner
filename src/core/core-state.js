@@ -340,14 +340,13 @@ function applyTransform(){
   wrap.style.transform=
     `translate(${pivot.cx}px,${pivot.cy}px) scale(${fx},${fy}) translate(${-pivot.cx}px,${-pivot.cy}px) `+
     `translate(${panX}px,${panY}px) rotate(${rotation}deg) scale(${zoom})`;
-  // Viewport scaling is display-only. Keep normal artwork on the browser's
-  // smooth interpolation path at every zoom, especially fractional scales;
-  // nearest-neighbour magnifies low-alpha 8-bit coverage into a false grid.
-  // A future explicit pixel-art viewport may opt in via this flag.
-  const pixelArtViewport=window.pixelArtViewportMode===true;
+  // TVPaint behaviour: nearest-neighbour (crisp) once zoomed in enough,
+  // bilinear (soft) below that. At exact/high zoom this preserves the true
+  // hard-edged pixels instead of applying a second display blur.
+  const useNN=zoom>=2;
   const transformC=document.getElementById('transform-canvas');
   [displayC,onionC,activeC,transformC].forEach(c=>{
-    c.style.imageRendering=pixelArtViewport?'pixelated':'auto';
+    c.style.imageRendering=useNN?'pixelated':'auto';
   });
   _updateDisplayBlur();
   window.dispatchEvent(new Event('canvas-view-transform-changed'));
