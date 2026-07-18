@@ -471,9 +471,9 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 .ctx-shortcut{margin-left:auto;font-size:10px;color:var(--text2);}
 
 /* â”€â”€ MODALS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:8000;display:none;align-items:center;justify-content:center;}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:30000;display:none;align-items:center;justify-content:center;pointer-events:auto;isolation:isolate;}
 .modal-overlay.visible{display:flex;}
-.modal{background:var(--bg2);border:1px solid var(--border2);border-radius:12px;padding:20px;min-width:320px;box-shadow:0 16px 48px rgba(0,0,0,0.6);}
+.modal{position:relative;z-index:1;background:var(--bg2);border:1px solid var(--border2);border-radius:12px;padding:20px;min-width:320px;box-shadow:0 16px 48px rgba(0,0,0,0.6);}
 .modal h2{font-size:14px;font-weight:600;margin-bottom:16px;color:var(--text);}
 .modal-row{display:flex;align-items:center;gap:10px;margin-bottom:12px;}
 .modal-row label{font-size:12px;color:var(--text2);width:110px;flex-shrink:0;}
@@ -611,18 +611,19 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 
 /* â”€â”€ SPLIT RESIZE HANDLE (seam between vertically stacked panels in a column) â”€â”€â”€ */
 /* Rendered as a fixed-positioned element by JS (_syncSplitResizeHandle).
-   The 8px hit area sits over the seam; the visible 2px bar is drawn with ::after. */
+   The transparent 8px hit area sits over the seam; its child draws the independent 1px divider. */
 .fp-split-resize{
   position:fixed;height:8px;cursor:row-resize;z-index:9999;
-  background:transparent;touch-action:none;-ms-touch-action:none;
-  transition:background .15s;
+  background:transparent;border:0;outline:0;box-shadow:none;
+  touch-action:none;-ms-touch-action:none;
 }
-.fp-split-resize::after{
-  content:'';position:absolute;left:0;right:0;top:3px;height:2px;
-  background:var(--border2);border-radius:1px;transition:background .15s;
+.fp-split-divider{
+  position:absolute;left:0;right:0;top:4px;height:1px;
+  background:var(--border2);pointer-events:none;opacity:1;
 }
-.fp-split-resize:hover::after,.fp-split-resize.dragging::after{
-  background:var(--accent);
+.fp-split-resize:hover > .fp-split-divider,
+.fp-split-resize.dragging > .fp-split-divider{
+  background:var(--text2);
 }
 
 /* â”€â”€ FLOATING RESIZE HANDLES (4 edges of a free-floating panel) â”€â”€â”€ */
@@ -652,20 +653,18 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
   position:fixed;z-index:9999;background:transparent;
   touch-action:none;-ms-touch-action:none;
 }
-.fp-dock-resize::after{
-  content:"";position:absolute;background:var(--border2);pointer-events:none;
-}
-.fp-dock-resize[data-dock-side="left"]::after{
-  left:0;top:0;bottom:0;width:1px;
-}
-.fp-dock-resize[data-dock-side="right"]::after{
-  right:0;top:0;bottom:0;width:1px;
-}
-.fp-dock-resize[data-dock-side="top"]::after{
-  left:0;right:0;top:0;height:1px;
-}
-.fp-dock-resize[data-dock-side="bottom"]::after{
-  left:0;right:0;bottom:0;height:1px;
+/* Docked panels already draw the real 1px boundary. The larger exterior
+   interaction gutter remains completely invisible. */
+.fp-dock-resize::after{content:none;}
+
+/* Modal backdrops own all input. Resize gutters must not sit above or remain
+   interactive through an open dialog. */
+body:has(.modal-overlay.visible) .fp-dock-resize,
+body:has(.modal-overlay.visible) .fp-split-resize,
+body:has(#palette-color-modal) .fp-dock-resize,
+body:has(#palette-color-modal) .fp-split-resize{
+  pointer-events:none !important;
+  cursor:default !important;
 }
 /* Tools panel contents */
 #tools-panel-body{display:flex;flex-direction:row;flex-wrap:wrap;gap:3px;padding:4px;align-content:flex-start;}
@@ -1602,7 +1601,7 @@ input.size-val-input{
 .palette-swatch.separator.selected{background:var(--border);box-shadow:none;}
 .palette-swatch.selected{outline:none;box-shadow:inset 0 0 0 2px var(--accent);}
 .palette-swatch.selected.separator{background:var(--border);box-shadow:none;}
-#palette-color-modal{position:fixed;inset:0;z-index:20000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.28);}
+#palette-color-modal{position:fixed;inset:0;z-index:30000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.6);pointer-events:auto;isolation:isolate;}
 .palette-color-dialog{width:520px;max-width:calc(100vw - 28px);background:var(--bg2);border:1px solid var(--border2);box-shadow:0 18px 48px rgba(0,0,0,.55);color:var(--text);outline:none;}
 .palette-color-title{height:28px;display:flex;align-items:center;justify-content:space-between;padding:0 8px;background:var(--bg3);border-bottom:1px solid var(--border);font-size:12px;color:var(--text2);}
 .palette-color-close{border:0;background:transparent;color:var(--text2);font-size:18px;line-height:1;cursor:pointer;padding:2px 4px;}

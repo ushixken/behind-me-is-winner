@@ -1107,12 +1107,17 @@ const FloatPanels=(function(){
     else if(typeof centerCanvas==='function') requestAnimationFrame(centerCanvas);
   }
 
+  function dockResizeBlocked(){
+    return !!document.querySelector('.modal-overlay.visible, #palette-color-modal');
+  }
+
   // ── Docked-state resize (one exterior gutter per dock column) ──
   // Writes ONLY to dockSize[key] — never reads offsetWidth/Height back
   // to decide the next frame's size, so repeated drags can't drift.
   function bindDockResize(panel,rh){
     let resizing=false,startPx=0,startSize=0,side=null,hostKey=null,activePointerId=null;
     rh.addEventListener('pointerdown',e=>{
+      if(dockResizeBlocked()) return;
       e.preventDefault();e.stopPropagation();
       const ownKey=panel.dataset.panel;
       // Split children are not in dockOrder — resolve to the stack host so
@@ -1239,21 +1244,25 @@ const FloatPanels=(function(){
     const isSharedHost=key===hostKey&&panelMode[key]==='docked'&&!hiddenState[key]&&!!side;
     if(!isSharedHost){ rh.style.display='none'; return; }
 
-    const car=canvasArea.getBoundingClientRect();
     let left,top,width,height,cursor;
     if(side==='left'||side==='right'){
       const layout=_stackLayout(hostKey);
-      top=car.top;height=car.height;width=6;cursor='col-resize';
+      const rect=panel.getBoundingClientRect();
+      const stackTop=layout?layout.top:rect.top;
+      const stackBottom=layout?layout.bottom:rect.bottom;
+      top=Math.ceil(stackTop);
+      height=Math.max(0,Math.floor(stackBottom)-top);
+      width=6;cursor='col-resize';
       // Keep the complete hit area on the workspace side of the boundary.
-      if(side==='left') left=Math.ceil(layout?layout.right:panel.getBoundingClientRect().right);
-      else left=Math.floor(layout?layout.left:panel.getBoundingClientRect().left)-width;
+      if(side==='left') left=Math.ceil(layout?layout.right:rect.right);
+      else left=Math.floor(layout?layout.left:rect.left)-width;
     }else{
       const rect=panel.getBoundingClientRect();
       left=rect.left;width=rect.width;height=6;cursor='row-resize';
       top=side==='top'?Math.ceil(rect.bottom):Math.floor(rect.top)-height;
     }
     rh.dataset.dockSide=side;
-    rh.style.cssText=`display:block;position:fixed;left:${left}px;top:${top}px;width:${width}px;height:${height}px;cursor:${cursor};z-index:9999;background:transparent;touch-action:none;`;
+    rh.style.cssText=`display:block;position:fixed;left:${left}px;top:${top}px;width:${width}px;height:${height}px;cursor:${cursor};z-index:699;background:transparent;touch-action:none;`;
   }
   // ── Split resize handles (between a host and each child in a vertical stack) ──
   // Each handle is a fixed-positioned element that sits at the seam between
@@ -1265,6 +1274,9 @@ const FloatPanels=(function(){
     if(!rh){
       rh=document.createElement('div');
       rh.className='fp-split-resize';
+      const divider=document.createElement('div');
+      divider.className='fp-split-divider';
+      rh.appendChild(divider);
       document.body.appendChild(rh);
       childPanel._splitResizeEl=rh;
       // Bind once; hostKey is NOT passed — the drag handler resolves it
@@ -1301,6 +1313,7 @@ const FloatPanels=(function(){
   function _bindSplitResizeDrag(rh,childKey){
     let active=false,startY=0,startSize=0;
     rh.addEventListener('pointerdown',e=>{
+      if(dockResizeBlocked()) return;
       e.preventDefault();e.stopPropagation();
       active=true;rh.setPointerCapture(e.pointerId);
       startY=e.clientY;startSize=splitSize[childKey]||180;
