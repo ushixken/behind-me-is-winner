@@ -510,9 +510,21 @@
     drawCurve();
   }
 
-  // Toolbar "Tool Settings" button opens the panel via FloatPanels
+  // Move the authoritative Simple controls into the dock. Moving (rather
+  // than cloning) preserves every existing value, listener and reset action.
+  const dockedSimpleSettings=document.getElementById('brush-tool-settings-content');
+  const basicSettings=document.querySelector('#tool-settings-body .ts-ps-panel[data-panel="basic"] .ts-section-body');
+  if(dockedSimpleSettings&&basicSettings){
+    ['size','flow','hardness','aa'].forEach(key=>{
+      const field=basicSettings.querySelector(`.ts-field[data-eye="${key}"]`);
+      if(field)dockedSimpleSettings.appendChild(field);
+    });
+  }
+
+  // The toolbar gear opens the remaining Advanced modal.
   const tsBtnOpen=document.getElementById('btn-open-tool-settings');
   if(tsBtnOpen) tsBtnOpen.onclick=()=>{
+    setTsMode('advanced');
     document.getElementById('tool-settings-modal-overlay').classList.add('visible');
   };
   document.getElementById('tool-settings-modal-close').onclick=()=>{
@@ -696,6 +708,11 @@
     const popup=document.getElementById('ts-simple-settings-popup');
     const modal=document.getElementById('tool-settings-modal');
     if(!popup||!modal) return;
+    // These auxiliary editors also belong to the docked Simple controls, so
+    // keep them outside the hidden Advanced-modal overlay.
+    document.body.appendChild(popup);
+    const pressurePopup=document.getElementById('ts-pressure-editor-popup');
+    if(pressurePopup)document.body.appendChild(pressurePopup);
     const configs={
       size:{title:'Size Settings',controls:[['Control','ts-size-control'],['Minimum Size','ts-min-size'],['Pressure Curve','ts-size-pressure-curve']]},
       flow:{title:'Flow Settings',controls:[['Control','ts-flow-control'],['Minimum Flow','ts-min-flow'],['Pressure Curve','ts-flow-pressure-curve']]},
@@ -731,9 +748,11 @@
       else{const empty=document.createElement('div');empty.className='ts-simple-popup-empty';empty.textContent='No extra settings yet.';popup.appendChild(empty);}
       document.querySelectorAll('.ts-simple-settings-btn.active').forEach(btn=>btn.classList.remove('active'));
       button.classList.add('active');popup.classList.add('open');popup.setAttribute('aria-hidden','false');
-      const rect=modal.getBoundingClientRect();
-      const left=Math.min(window.innerWidth-popup.offsetWidth-8,rect.right+8);
-      popup.style.left=Math.max(8,left)+'px';popup.style.top=Math.max(8,rect.top+52)+'px';
+      const modalOpen=document.getElementById('tool-settings-modal-overlay')?.classList.contains('visible');
+      const rect=(modalOpen?modal:button).getBoundingClientRect();
+      let left=rect.right+8;
+      if(left+popup.offsetWidth>window.innerWidth-8)left=rect.left-popup.offsetWidth-8;
+      popup.style.left=Math.max(8,left)+'px';popup.style.top=Math.max(8,Math.min(window.innerHeight-popup.offsetHeight-8,modalOpen?rect.top+52:rect.top))+'px';
     }
     document.addEventListener('click',event=>{
       const button=event.target.closest&&event.target.closest('.ts-simple-settings-btn');

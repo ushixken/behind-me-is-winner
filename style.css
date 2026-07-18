@@ -1676,6 +1676,48 @@ input.size-val-input{
 .tool-options-drawer-chevron{flex:0 0 auto;font-size:11px;line-height:1;}
 .tool-options-drawer-content{display:none;flex:1 1 auto;height:auto;min-height:0;margin-right:var(--dock-scroll-edge-gap);padding:8px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;touch-action:pan-y;box-sizing:border-box;scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:var(--border2) transparent;}
 .tool-options-drawer.expanded .tool-options-drawer-content{display:flex;flex-direction:column;gap:7px;}
+.fp-body[data-body="brush-presets"]>.tool-settings-drawer{width:100%;margin:auto 0 0;}
+.ts-docked-simple-settings{gap:0!important;padding:9px 10px 10px;}
+.ts-docked-simple-settings>.ts-field{flex:0 0 auto;min-width:0;padding:0 0 9px;}
+.ts-docked-simple-settings>.ts-field+.ts-field{padding-top:8px;border-top:1px solid var(--border);}
+.ts-docked-simple-settings .ts-eye-btn{display:none!important;}
+.ts-docked-simple-settings .ts-divider{display:none;}
+.ts-docked-simple-settings .ts-row{min-width:0;}
+/* Docked Tool Settings use a professional two-line field: the label gets a
+   full row while the slider keeps all remaining width beside compact values. */
+.ts-docked-simple-settings>.ts-field[data-eye="size"],
+.ts-docked-simple-settings>.ts-field[data-eye="flow"]>.ts-row,
+.ts-docked-simple-settings>.ts-field[data-eye="hardness"]>.ts-row{
+  display:grid;align-items:center;width:100%;min-width:0;column-gap:6px;row-gap:5px;
+}
+.ts-docked-simple-settings>.ts-field[data-eye="size"]{
+  grid-template-columns:minmax(72px,1fr) 36px 27px 22px;
+}
+.ts-docked-simple-settings>.ts-field[data-eye="flow"]>.ts-row,
+.ts-docked-simple-settings>.ts-field[data-eye="hardness"]>.ts-row{
+  grid-template-columns:minmax(72px,1fr) 36px 22px;
+}
+.ts-docked-simple-settings>.ts-field[data-eye="size"]>.ts-label,
+.ts-docked-simple-settings>.ts-field[data-eye="flow"]>.ts-row>.ts-label,
+.ts-docked-simple-settings>.ts-field[data-eye="hardness"]>.ts-row>.ts-label{
+  grid-column:1/-1;width:auto;min-width:0;color:var(--text);line-height:1.2;
+}
+.ts-docked-simple-settings .ts-range{width:100%;min-width:0;height:18px;cursor:pointer;accent-color:var(--accent);}
+.ts-docked-simple-settings .ts-range::-webkit-slider-runnable-track{height:4px;border-radius:999px;}
+.ts-docked-simple-settings .ts-range::-webkit-slider-thumb{width:14px;height:14px;margin-top:-5px;cursor:grab;}
+.ts-docked-simple-settings .ts-range:active::-webkit-slider-thumb{cursor:grabbing;}
+.ts-docked-simple-settings .ts-range::-moz-range-track{height:4px;border-radius:999px;}
+.ts-docked-simple-settings .ts-range::-moz-range-thumb{width:14px;height:14px;cursor:grab;}
+.ts-docked-simple-settings .ts-val{width:36px;min-width:0;padding:1px 2px;text-align:right;font-variant-numeric:tabular-nums;overflow:hidden;}
+.ts-docked-simple-settings>.ts-field[data-eye="size"]>.ts-val{width:36px;}
+.ts-docked-simple-settings input.size-val-input{width:36px;height:20px;}
+.ts-docked-simple-settings .size-unit-btn{width:27px;height:22px;padding:0;}
+.ts-docked-simple-settings .ts-simple-settings-btn{width:22px;height:22px;flex:none;}
+.ts-docked-simple-settings>.ts-field[data-eye="aa"]{padding-bottom:0;}
+.ts-docked-simple-settings>.ts-field[data-eye="aa"]>.ts-row{min-height:24px;}
+.ts-docked-simple-settings #ts-aa-mode-row{display:grid;grid-template-columns:1fr;gap:5px;margin-top:4px;}
+.ts-docked-simple-settings #ts-aa-mode-row>.ts-label{width:auto;color:var(--text);}
+.ts-docked-simple-settings #ts-aa-mode{width:100%;min-width:0;height:24px;}
 .tool-options-message,.tf-options-empty{padding:2px 0;color:var(--text2);font-size:10px;line-height:1.4;}
 body.tool-options-resizing{cursor:ns-resize!important;user-select:none!important;}
 #tf-options-body{gap:6px;}

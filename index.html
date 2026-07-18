@@ -387,6 +387,13 @@
             <!-- populated by JS -->
           </div>
           <div id="bp-no-results">No brushes match your search.</div>
+          <section class="tool-options-drawer tool-settings-drawer">
+            <button type="button" class="tool-options-drawer-header" aria-expanded="false">
+              <span class="tool-options-drawer-label">TOOL SETTINGS · BRUSH</span>
+              <span class="tool-options-drawer-chevron" aria-hidden="true">&#9652;</span>
+            </button>
+            <div class="tool-options-drawer-content ts-docked-simple-settings" id="brush-tool-settings-content"></div>
+          </section>
         </div>
         <div class="fp-body transform-subtools-body" data-body="transform" data-space-pan>
           <div class="tool-group-section-header">Transform Modes</div>
@@ -725,7 +732,6 @@
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
         <h2 style="margin-bottom:0;flex:1;">⚙ Tool Settings</h2>
         <div class="ts-mode-toggle" id="ts-mode-toggle">
-          <button class="ts-mode-btn" id="ts-mode-simple" data-mode="simple" title="Only Size, Flow, Hardness &amp; Anti-alias">Simple</button>
           <button class="ts-mode-btn" id="ts-mode-advanced" data-mode="advanced" title="All brush engine settings">Advanced</button>
         </div>
       </div>

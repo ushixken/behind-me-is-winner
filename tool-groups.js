@@ -46,7 +46,7 @@
   }
   function configureOptionsDrawer(body,group){
     const drawer=body.querySelector('.tool-options-drawer'),header=drawer&&drawer.querySelector('.tool-options-drawer-header');if(!drawer||!header)return;
-    const label=drawer.querySelector('.tool-options-drawer-label'),activeSubTool=getSubTool(group,group.activeSubToolId),baseTitle=(group.name+' Options').toUpperCase(),fullTitle=group.id==='selection'&&activeSubTool?baseTitle+' — '+activeSubTool.name:baseTitle,visibleTitle=group.id==='selection'&&activeSubTool?baseTitle+' · '+activeSubTool.name.toUpperCase():baseTitle;if(label){label.textContent=visibleTitle;label.title=fullTitle;}header.setAttribute('aria-label',fullTitle);
+    const label=drawer.querySelector('.tool-options-drawer-label'),activeSubTool=getSubTool(group,group.activeSubToolId),usesToolSettings=drawer.classList.contains('tool-settings-drawer')||group.id==='fill'||group.id==='line',baseTitle=usesToolSettings?'TOOL SETTINGS':(group.name+' Options').toUpperCase(),fullTitle=(usesToolSettings||group.id==='selection')&&activeSubTool?baseTitle+' — '+(usesToolSettings?group.name:activeSubTool.name):baseTitle,visibleTitle=usesToolSettings?baseTitle+' · '+group.name.toUpperCase():(group.id==='selection'&&activeSubTool?baseTitle+' · '+activeSubTool.name.toUpperCase():baseTitle);if(label){label.textContent=visibleTitle;label.title=fullTitle;}header.setAttribute('aria-label',fullTitle);
     applyDrawerState(body,group);
     if(header.dataset.drawerBound)return;header.dataset.drawerBound='true';
     let drag=null;
@@ -94,7 +94,7 @@
     const name=shell.querySelector('.fp-name');if(name)name.textContent=group.panelTitle||(group.id==='brush'||group.id==='eraser'?group.name+' Presets':group.name+' Sub Tools');
     const redundantSettings=shell.querySelector('.tool-group-dock-settings');if(redundantSettings)redundantSettings.remove();
     if(group.id==='brush'||group.id==='eraser'){
-      setBody('brush-presets');if(window._brushPresets)_brushPresets.switchTab(group.id);
+      const brushBody=shell.querySelector('.fp-body[data-body="brush-presets"]');if(brushBody)configureOptionsDrawer(brushBody,group);setBody('brush-presets');if(window._brushPresets)_brushPresets.switchTab(group.id);
     }else if(group.id==='transform'){const transformBody=shell.querySelector('.fp-body[data-body="transform"]');if(transformBody)configureOptionsDrawer(transformBody,group);setBody('transform');}
     else{renderGeneric(group);setBody('tool-group');}
   }
