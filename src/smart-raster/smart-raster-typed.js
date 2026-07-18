@@ -56,7 +56,7 @@
     }
     return changed;
   }
-  function commitBrushMask(li,fi,maskCanvas,styleId,strokeOpacity,dirtyRect,beforeImage){
+  function commitBrushMask(li,fi,maskCanvas,styleId,strokeOpacity,dirtyRect,beforeImage,drawBehind){
     if(!maskCanvas||!styleId)return false;
     var frame=ensureFrame(li,fi),index=ensureStyleIndex(li,fi,styleId);
     if(!frame||!index)return false;
@@ -75,6 +75,7 @@
       var local=(row*width+col)*4;if(mask[local+3]===0)continue;
       if(before&&after&&before[local]===after[local]&&before[local+1]===after[local+1]&&before[local+2]===after[local+2]&&before[local+3]===after[local+3])continue;
       var offset=(y+row)*frame.width+x+col;
+      if(drawBehind&&nextIds[offset]!==0)continue;
       if(nextIds[offset]!==index){nextIds[offset]=index;changed=true;}
     }
     if(changed)frame.styleIds=nextIds;

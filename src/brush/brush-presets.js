@@ -1,4 +1,4 @@
-//  TOOL SETTINGS PANEL  wiring
+﻿//  TOOL SETTINGS PANEL  wiring
 (function(){
   // Helper: range + display
   function bindRange(id,dispId,suffix,onchange){
@@ -18,6 +18,25 @@
   bindRange('ts-spacing','ts-spacing-val','%',v=>{window._tsSpacing=v/100;});
   const spacingEl=document.getElementById('ts-spacing');
   window._tsSpacing=spacingEl?(+spacingEl.value/100):0.12;
+
+  // Draw Behind is a Brush tool preference, not a preset property. Keeping it
+  // outside preset capture prevents Eraser or imported presets from inheriting it.
+  const DRAW_BEHIND_STORAGE_KEY='brushDrawBehind';
+  const drawBehindEl=document.getElementById('ts-draw-behind');
+  const drawBehindField=document.getElementById('ts-draw-behind-field');
+  try{window.brushDrawBehind=localStorage.getItem(DRAW_BEHIND_STORAGE_KEY)==='true';}catch(_){window.brushDrawBehind=false;}
+  if(drawBehindEl){
+    drawBehindEl.checked=!!window.brushDrawBehind;
+    drawBehindEl.addEventListener('change',()=>{
+      window.brushDrawBehind=drawBehindEl.checked;
+      try{localStorage.setItem(DRAW_BEHIND_STORAGE_KEY,String(window.brushDrawBehind));}catch(_){}
+    });
+  }
+  function syncDrawBehindVisibility(){
+    if(drawBehindField) drawBehindField.hidden=tool!=='brush';
+  }
+  window.addEventListener('tool-changed',syncDrawBehindVisibility);
+  syncDrawBehindVisibility();
   // Spacing is fixed, not a user-adjustable Tool Setting — the brush
   // engine's _effectiveSpacingFrac() just uses its built-in default (0.12)
   // and never varies with stroke velocity or acceleration.
@@ -515,7 +534,7 @@
   const dockedSimpleSettings=document.getElementById('brush-tool-settings-content');
   const basicSettings=document.querySelector('#tool-settings-body .ts-ps-panel[data-panel="basic"] .ts-section-body');
   if(dockedSimpleSettings&&basicSettings){
-    ['flow','hardness','aa'].forEach(key=>{
+    ['flow','hardness','aa','draw-behind'].forEach(key=>{
       const field=basicSettings.querySelector(`.ts-field[data-eye="${key}"]`);
       if(field)dockedSimpleSettings.appendChild(field);
     });
@@ -1799,6 +1818,8 @@ function applyToolPreset(json){
     return c;
   }
 
+  const ERASER_PREVIEW_RGB='226,75,74';
+  const BRUSH_PREVIEW_RGB='225,225,232';
   const _strokePreviewCache=new Map();
   const _strokeTipLoads=new Map();
   const _strokeTextureCache=new Map();
@@ -1872,11 +1893,12 @@ function applyToolPreset(json){
     const tipSrc=settings['ts-tip-dataurl']||settings['ts-tip-url'],tipEntry=_tipThumbCache[p.id],tip=tipEntry&&tipEntry.src===tipSrc?tipEntry.alphaCanvas:null;
     const dab=document.createElement('canvas'),dabScale=Math.max(1,dpr),dabW=Math.ceil(diameter*dabScale),dabH=Math.ceil(diameter*roundness*dabScale);
     dab.width=Math.max(1,dabW);dab.height=Math.max(1,dabH);const dc=dab.getContext('2d');dc.imageSmoothingEnabled=ctx.imageSmoothingEnabled;dc.imageSmoothingQuality=ctx.imageSmoothingQuality;
+    const previewRgb=_activeTab==='eraser'?ERASER_PREVIEW_RGB:BRUSH_PREVIEW_RGB;
     if(tip){
-      dc.drawImage(tip,0,0,dab.width,dab.height);dc.globalCompositeOperation='source-in';dc.fillStyle=_activeTab==='eraser'?'rgba(226,75,74,1)':'rgba(225,225,232,1)';dc.fillRect(0,0,dab.width,dab.height);
+      dc.drawImage(tip,0,0,dab.width,dab.height);dc.globalCompositeOperation='source-in';dc.fillStyle='rgba('+previewRgb+',1)';dc.fillRect(0,0,dab.width,dab.height);
     }else{
       const radius=Math.max(dab.width,dab.height)/2,gradient=dc.createRadialGradient(dab.width/2,dab.height/2,0,dab.width/2,dab.height/2,radius);
-      const inner=Math.max(0,Math.min(.97,hardness));gradient.addColorStop(0,'rgba(225,225,232,1)');gradient.addColorStop(inner,'rgba(225,225,232,1)');gradient.addColorStop(1,'rgba(225,225,232,0)');dc.fillStyle=gradient;dc.fillRect(0,0,dab.width,dab.height);
+      const inner=Math.max(0,Math.min(.97,hardness));gradient.addColorStop(0,'rgba('+previewRgb+',1)');gradient.addColorStop(inner,'rgba('+previewRgb+',1)');gradient.addColorStop(1,'rgba('+previewRgb+',0)');dc.fillStyle=gradient;dc.fillRect(0,0,dab.width,dab.height);
     }
     const baseAlpha=Math.min(1,opacity*(.35+.65*flow));
     if(kind==='stamp'){

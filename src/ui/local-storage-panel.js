@@ -16,6 +16,7 @@
     'animator_cursor_style':{name:'Cursor Preferences',description:'Resets the selected drawing cursor style.'},
     'animator_renderer':{name:'Renderer Preference',description:'Resets the selected brush renderer.'},
     'brushSizeUnit':{name:'Brush Size Unit',description:'Resets the displayed brush size unit to pixels.'},
+    'brushDrawBehind':{name:'Brush Draw Behind',description:'Resets the saved Draw Behind preference for the Brush tool.'},
     'animator_kfexp_amount':{name:'Keyframe Exposure Amount'},
     'animator_kfexp_bypass':{name:'Keyframe Exposure Bypass'},
     'animator_kfsw_step':{name:'Keyframe Switcher Step'},

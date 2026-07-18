@@ -206,6 +206,7 @@ function _commitStrokeCanvas(){
   if(window.SelectionScope)src=SelectionScope.clipCanvas(src);
   const styleId=typeof activeAdvancedStyleIdForPainting==='function'
     ?activeAdvancedStyleIdForPainting():null;
+  const drawBehind=tool==='brush'&&!!window.brushDrawBehind;
   const smartOwnership=tool==='brush'&&styleId&&
     typeof advancedPalettePaintingEnabled==='function'&&advancedPalettePaintingEnabled()&&
     layers[curLayer]&&layers[curLayer].type==='smart-raster';
@@ -213,11 +214,11 @@ function _commitStrokeCanvas(){
   const ownershipBefore=smartOwnership?(ownershipDirtyRect?ctx.getImageData(ownershipDirtyRect.x,ownershipDirtyRect.y,ownershipDirtyRect.w,ownershipDirtyRect.h):ctx.getImageData(0,0,CW,CH)):null;
   ctx.save();
   ctx.globalAlpha = Math.max(0, Math.min(1, brushOpacity));
-  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalCompositeOperation = drawBehind ? 'destination-over' : 'source-over';
   ctx.drawImage(src, 0, 0);
   ctx.restore();
   if(smartOwnership&&typeof commitSmartRasterBrush==='function'){
-    commitSmartRasterBrush(src,styleId,brushOpacity,ownershipDirtyRect,ownershipBefore);
+    commitSmartRasterBrush(src,styleId,brushOpacity,ownershipDirtyRect,ownershipBefore,drawBehind);
   }
   _strokeCtx.clearRect(0, 0, _strokeCanvas.width, _strokeCanvas.height);
 }
@@ -326,7 +327,7 @@ function _getLiveStrokePreview(){
     if(window.SelectionScope)strokeSrc=SelectionScope.clipCanvas(strokeSrc);
     _strokePreviewCtx.save();
     _strokePreviewCtx.globalAlpha = Math.max(0, Math.min(1, brushOpacity));
-    _strokePreviewCtx.globalCompositeOperation = 'source-over';
+    _strokePreviewCtx.globalCompositeOperation = tool==='brush'&&window.brushDrawBehind ? 'destination-over' : 'source-over';
     _strokePreviewCtx.drawImage(strokeSrc, 0, 0);
     _strokePreviewCtx.restore();
   }
