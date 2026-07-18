@@ -3,6 +3,7 @@
   const STORAGE_KEY='animate.toolGroups.v1';
   const DRAWER_STORAGE_KEY='animate.toolGroupDrawers.v1';
   const SELECTION_SETTINGS_STORAGE_KEY='animate.selectionToolSettings.v1';
+  const TOOL_OPTIONS_DRAWER_STATE_ID='tool-options';
   const groups=new Map();
   let activeGroupId=null,activating=false;
   let saved={},drawerSaved={};
@@ -33,16 +34,57 @@
     const rectangle=getSubTool(group,'rectangle-select');if(subToolIsAvailable(rectangle))return rectangle;
     return group.subTools.find(item=>item.id!=='style-select'&&subToolIsAvailable(item))||null;
   }
-  function drawerState(groupId){
-    const raw=drawerSaved[groupId]||{};
+  function drawerState(stateId){
+    const raw=drawerSaved[stateId]||{};
     return {expanded:raw.expanded===true,height:Number.isFinite(+raw.height)?Math.max(80,Math.min(500,+raw.height)):150};
   }
-  function saveDrawerState(groupId,state){drawerSaved[groupId]={expanded:!!state.expanded,height:Math.round(state.height)};localStorage.setItem(DRAWER_STORAGE_KEY,JSON.stringify(drawerSaved));}
+  function saveDrawerState(stateId,state){drawerSaved[stateId]={expanded:!!state.expanded,height:Math.round(state.height)};localStorage.setItem(DRAWER_STORAGE_KEY,JSON.stringify(drawerSaved));}
+  function drawerStateId(){return TOOL_OPTIONS_DRAWER_STATE_ID;}
+  function setDrawerGeometry(drawer,state){
+    if(!state.expanded){drawer.style.height='';drawer.style.flexBasis='';drawer.style.minHeight='';drawer.style.maxHeight='';return;}
+    const size=Math.round(state.height)+'px';
+    drawer.style.height=size;drawer.style.flexBasis=size;drawer.style.minHeight=size;drawer.style.maxHeight=size;
+  }
+  function optionsBodyForGroup(groupId){
+    const shell=document.getElementById('brush-presets-panel');if(!shell)return null;
+    if(groupId==='brush'||groupId==='eraser')return shell.querySelector('.fp-body[data-body="brush-presets"]');
+    if(groupId==='transform')return shell.querySelector('.fp-body[data-body="transform"]');
+    return shell.querySelector('.fp-body[data-body="tool-group"]');
+  }
+  function captureOptionsPanelLayout(){
+    const shell=document.getElementById('brush-presets-panel'),body=shell&&shell.querySelector('.fp-body.active');
+    const drawer=body&&body.querySelector('.tool-options-drawer');if(!drawer||!drawer.isConnected)return null;
+    const savedState=drawerState(TOOL_OPTIONS_DRAWER_STATE_ID),expanded=drawer.classList.contains('expanded'),rect=drawer.getBoundingClientRect();
+    const height=expanded&&rect.height>0?rect.height:savedState.height;
+    const content=drawer.querySelector('.tool-options-drawer-content');
+    const snapshot={expanded,height,scrollTop:content?content.scrollTop:0};
+    saveDrawerState(TOOL_OPTIONS_DRAWER_STATE_ID,{expanded,height});
+    return snapshot;
+  }
+  function restoreOptionsPanelLayout(snapshot,group){
+    if(!snapshot||!group||activeGroupId!==group.id)return;
+    const body=optionsBodyForGroup(group.id),drawer=body&&body.querySelector('.tool-options-drawer');
+    if(!drawer||!drawer.isConnected)return;
+    saveDrawerState(TOOL_OPTIONS_DRAWER_STATE_ID,{expanded:snapshot.expanded,height:snapshot.height});
+    applyDrawerState(body,group);
+    const content=drawer.querySelector('.tool-options-drawer-content');
+    if(content)content.scrollTop=Math.min(snapshot.scrollTop,Math.max(0,content.scrollHeight-content.clientHeight));
+  }
   function applyDrawerState(body,group){
     const drawer=body.querySelector('.tool-options-drawer');if(!drawer)return;
-    const state=drawerState(group.id),header=drawer.querySelector('.tool-options-drawer-header'),chevron=drawer.querySelector('.tool-options-drawer-chevron');
-    drawer.dataset.groupId=group.id;drawer.classList.toggle('expanded',state.expanded);drawer.style.height=state.expanded?state.height+'px':'';
+    const stateId=drawerStateId(drawer,group);
+    // Migrate one prior drawer size once, then ignore tool-specific geometry.
+    // Every tool group renders into the same persisted lower-options slot size.
+    if(!drawerSaved[stateId]){
+      const previous=drawerSaved['tool-settings']||drawerSaved['selection-options']||drawerSaved['transform-options']||drawerSaved[group.id];
+      drawerSaved[stateId]=previous?{expanded:previous.expanded===true,height:Math.max(80,Math.min(500,+previous.height||150))}:{expanded:false,height:150};
+      localStorage.setItem(DRAWER_STORAGE_KEY,JSON.stringify(drawerSaved));
+    }
+    const state=drawerState(stateId),header=drawer.querySelector('.tool-options-drawer-header'),chevron=drawer.querySelector('.tool-options-drawer-chevron');
+    drawer.dataset.groupId=group.id;drawer.dataset.drawerStateId=stateId;drawer.classList.toggle('expanded',state.expanded);setDrawerGeometry(drawer,state);
     header.setAttribute('aria-expanded',String(state.expanded));if(chevron)chevron.textContent=state.expanded?'\u25be':'\u25b4';
+    const content=drawer.querySelector('.tool-options-drawer-content');
+    if(content)requestAnimationFrame(()=>{content.scrollTop=Math.min(content.scrollTop,Math.max(0,content.scrollHeight-content.clientHeight));});
   }
   function configureOptionsDrawer(body,group){
     const drawer=body.querySelector('.tool-options-drawer'),header=drawer&&drawer.querySelector('.tool-options-drawer-header');if(!drawer||!header)return;
@@ -50,11 +92,11 @@
     applyDrawerState(body,group);
     if(header.dataset.drawerBound)return;header.dataset.drawerBound='true';
     let drag=null;
-    const finish=(event,cancelled)=>{if(!drag||event.pointerId!==drag.pointerId)return;const wasDragging=drag.dragging,groupId=drawer.dataset.groupId,current=drawerState(groupId);drag=null;if(header.hasPointerCapture&&header.hasPointerCapture(event.pointerId))header.releasePointerCapture(event.pointerId);document.body.classList.remove('tool-options-resizing');if(cancelled){const active=getGroup(groupId);if(active)applyDrawerState(body,active);return;}if(wasDragging){const height=parseFloat(drawer.style.height)||current.height;if(height<64){saveDrawerState(groupId,{expanded:false,height:current.height});}else saveDrawerState(groupId,{expanded:true,height});}else saveDrawerState(groupId,{expanded:!drawer.classList.contains('expanded'),height:current.height});const active=getGroup(groupId);if(active)applyDrawerState(body,active);};
-    header.addEventListener('pointerdown',event=>{if(event.pointerType==='mouse'&&event.button!==0)return;const state=drawerState(drawer.dataset.groupId);drag={pointerId:event.pointerId,startY:event.clientY,startHeight:drawer.classList.contains('expanded')?drawer.getBoundingClientRect().height:header.getBoundingClientRect().height,dragging:false,state};header.setPointerCapture(event.pointerId);});
-    header.addEventListener('pointermove',event=>{if(!drag||event.pointerId!==drag.pointerId)return;const delta=drag.startY-event.clientY;if(!drag.dragging&&Math.abs(delta)<4)return;drag.dragging=true;event.preventDefault();document.body.classList.add('tool-options-resizing');const max=Math.max(80,body.clientHeight-96),height=Math.max(28,Math.min(max,drag.startHeight+delta));drawer.classList.add('expanded');drawer.style.height=height+'px';header.setAttribute('aria-expanded','true');const chevron=drawer.querySelector('.tool-options-drawer-chevron');if(chevron)chevron.textContent='\u25be';});
+    const finish=(event,cancelled)=>{if(!drag||event.pointerId!==drag.pointerId)return;const wasDragging=drag.dragging,groupId=drawer.dataset.groupId,stateId=drawer.dataset.drawerStateId||groupId,current=drawerState(stateId);drag=null;if(header.hasPointerCapture&&header.hasPointerCapture(event.pointerId))header.releasePointerCapture(event.pointerId);document.body.classList.remove('tool-options-resizing');if(cancelled){const active=getGroup(groupId);if(active)applyDrawerState(body,active);return;}if(wasDragging){const height=parseFloat(drawer.style.height)||current.height;if(height<64){saveDrawerState(stateId,{expanded:false,height:current.height});}else saveDrawerState(stateId,{expanded:true,height});}else saveDrawerState(stateId,{expanded:!drawer.classList.contains('expanded'),height:current.height});const active=getGroup(groupId);if(active)applyDrawerState(body,active);};
+    header.addEventListener('pointerdown',event=>{if(event.pointerType==='mouse'&&event.button!==0)return;const state=drawerState(drawer.dataset.drawerStateId||drawer.dataset.groupId);drag={pointerId:event.pointerId,startY:event.clientY,startHeight:drawer.classList.contains('expanded')?drawer.getBoundingClientRect().height:header.getBoundingClientRect().height,dragging:false,state};header.setPointerCapture(event.pointerId);});
+    header.addEventListener('pointermove',event=>{if(!drag||event.pointerId!==drag.pointerId)return;const delta=drag.startY-event.clientY;if(!drag.dragging&&Math.abs(delta)<4)return;drag.dragging=true;event.preventDefault();document.body.classList.add('tool-options-resizing');const max=Math.max(80,body.clientHeight-96),height=Math.max(28,Math.min(max,drag.startHeight+delta));drawer.classList.add('expanded');setDrawerGeometry(drawer,{expanded:true,height});header.setAttribute('aria-expanded','true');const chevron=drawer.querySelector('.tool-options-drawer-chevron');if(chevron)chevron.textContent='\u25be';});
     header.addEventListener('pointerup',event=>finish(event,false));header.addEventListener('pointercancel',event=>finish(event,true));header.addEventListener('lostpointercapture',event=>{if(drag&&event.pointerId===drag.pointerId)finish(event,true);});
-    header.addEventListener('keydown',event=>{if(event.key!=='Enter'&&event.key!==' ')return;event.preventDefault();const groupId=drawer.dataset.groupId,state=drawerState(groupId);saveDrawerState(groupId,{expanded:!drawer.classList.contains('expanded'),height:state.height});const active=getGroup(groupId);if(active)applyDrawerState(body,active);});
+    header.addEventListener('keydown',event=>{if(event.key!=='Enter'&&event.key!==' ')return;event.preventDefault();const groupId=drawer.dataset.groupId,stateId=drawer.dataset.drawerStateId||groupId,state=drawerState(stateId);saveDrawerState(stateId,{expanded:!drawer.classList.contains('expanded'),height:state.height});const active=getGroup(groupId);if(active)applyDrawerState(body,active);});
   }
   function ensureGenericBody(){
     const shell=document.getElementById('brush-presets-panel'),wrap=shell&&shell.querySelector('.fp-body-wrap');if(!wrap)return null;
@@ -110,6 +152,7 @@
   }
   function activateSubTool(groupId,subToolId,options){
     const group=getGroup(groupId),subTool=getSubTool(group,subToolId);if(!group||!subToolIsAvailable(subTool))return false;
+    const optionsLayout=captureOptionsPanelLayout();
     if(groupId==='selection'&&subTool.id!=='style-select')group.lastValidSubToolId=subTool.id;
     activeGroupId=groupId;group.activeSubToolId=subTool.id;persist();
     if(groupId==='selection')restoreSelectionToolContext(subTool);
@@ -117,7 +160,12 @@
     // setTool() still contains the legacy Brush/Transform body switch. Run
     // the registry's authoritative switch afterwards so exactly one dock
     // body remains active for Fill and Selection as well.
-    syncPanel(group);renderSettings();syncActiveButtons();return true;
+    syncPanel(group);renderSettings();syncActiveButtons();restoreOptionsPanelLayout(optionsLayout,group);
+    // Some tool renderers finish their control refresh after activation. Pin
+    // the same existing drawer node once more after layout without rebuilding
+    // its wrapper, header, splitter, or stack item.
+    if(optionsLayout)requestAnimationFrame(()=>restoreOptionsPanelLayout(optionsLayout,group));
+    return true;
   }
   function activateGroup(groupId){const group=getGroup(groupId);if(!group)return false;let subTool=getSubTool(group,group.activeSubToolId);if(!subToolIsAvailable(subTool)&&groupId==='selection')subTool=selectionFallback(group);return !!subTool&&activateSubTool(groupId,subTool.id,{fromGroup:true});}
   function refreshSelectionAvailability(){
