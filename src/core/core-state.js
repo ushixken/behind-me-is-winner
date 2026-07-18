@@ -340,15 +340,14 @@ function applyTransform(){
   wrap.style.transform=
     `translate(${pivot.cx}px,${pivot.cy}px) scale(${fx},${fy}) translate(${-pivot.cx}px,${-pivot.cy}px) `+
     `translate(${panX}px,${panY}px) rotate(${rotation}deg) scale(${zoom})`;
-  // TVPaint behaviour: nearest-neighbour (crisp) once zoomed in enough,
-  // bilinear (soft) below that. Lowered from 4x to 2x — at 4x the blurry
-  // bilinear upscale was visible for a lot of the zoomed-in range before
-  // switching over.
-  // This now applies to displayC (the visible canvas) — compC is hidden/data-only.
-  const useNN=zoom>=2;
+  // Viewport scaling is display-only. Keep normal artwork on the browser's
+  // smooth interpolation path at every zoom, especially fractional scales;
+  // nearest-neighbour magnifies low-alpha 8-bit coverage into a false grid.
+  // A future explicit pixel-art viewport may opt in via this flag.
+  const pixelArtViewport=window.pixelArtViewportMode===true;
   const transformC=document.getElementById('transform-canvas');
   [displayC,onionC,activeC,transformC].forEach(c=>{
-    c.style.imageRendering=useNN?'pixelated':'auto';
+    c.style.imageRendering=pixelArtViewport?'pixelated':'auto';
   });
   _updateDisplayBlur();
   window.dispatchEvent(new Event('canvas-view-transform-changed'));

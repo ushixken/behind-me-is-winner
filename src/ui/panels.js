@@ -366,6 +366,8 @@ function recomposite(li,fi,dirtyRect){
   // compC itself already only had its dirty region touched above, so
   // everything outside that region is simply the unchanged prior frame.
   displayCtx.clearRect(0,0,CW,CH);
+  displayCtx.imageSmoothingEnabled=true;
+  displayCtx.imageSmoothingQuality='high';
   displayCtx.filter = _displayBlurPx>0.05 ? `blur(${_displayBlurPx}px)` : 'none';
   displayCtx.drawImage(compC,0,0);
   displayCtx.filter='none';

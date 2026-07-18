@@ -411,8 +411,10 @@ function _hexToRGB(hex){
 // difference between two quantization buckets is sub-pixel/imperceptible,
 // but the perf difference (cache hit vs. full rebuild) is enormous.
 const _Q_R = 0.25;      // px
-const _Q_ALPHA = 0.02;  // ~2% alpha steps
+const _Q_ALPHA = 0.02;  // cache-friendly steps for medium/high-opacity dabs
+const _Q_ALPHA_LOW = 1/255; // retain low-Flow differences instead of collapsing them
 function _quant(v,step){return Math.round(v/step)*step;}
+function _quantAlpha(v){return _quant(v,v<0.1?_Q_ALPHA_LOW:_Q_ALPHA);}
 
 //  Edge width: Photoshop/Photopea-style constant-ish antialiasing
 // The old falloff used `outerSpan = 1-hardness` as a FRACTION OF THE RADIUS,
@@ -607,7 +609,7 @@ function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   // small; still cheap since there are only ever a few distinct tiny sizes
   // alive in a stroke at once relative to the cache's max size.
   const rQuantStep=rRaw<=4?0.02:_Q_R;
-  const r=_quant(rRaw,rQuantStep), alpha=_quant(alphaRaw,_Q_ALPHA);
+  const r=_quant(rRaw,rQuantStep), alpha=_quantAlpha(alphaRaw);
   const hardness=Math.round(Math.max(0,Math.min(0.99,hardnessRaw))*100)/100;
   const key=r.toFixed(2)+'|'+rgb.join(',')+'|'+alpha.toFixed(2)+'|'+composite+'|'+
             hardness.toFixed(2)+'|t'+tipV+'|'+(softAlpha?'s':'h')+'|'+tipMode+'|rd'+tipRoundness.toFixed(3);
@@ -733,7 +735,7 @@ function _getTipPixelsForStamp(w,h){
   return tc.getImageData(0,0,w,h).data;
 }
 function _buildAAStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
-  const r=_quant(rRaw,_Q_R), alpha=_quant(alphaRaw,_Q_ALPHA);
+  const r=_quant(rRaw,_Q_R), alpha=_quantAlpha(alphaRaw);
   const hardness=Math.round(Math.max(0,Math.min(0.99,hardnessRaw))*100)/100;
   const isAirbrush=typeof window!=='undefined'&&!!window._brushAirbrush;
   const aaMode=_currentAAMode();
@@ -743,7 +745,8 @@ function _buildAAStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   // None/Weak/Medium/Strong correctly rebuilds every cached stamp instead of
   // reusing a stale edge width.
   const tipV=(window.brushTipCanvas?(window.brushTipVersion||0):-1);
-  const key=r.toFixed(2)+'|'+rgb.join(',')+'|'+alpha.toFixed(2)+'|'+composite+'|'+hardness.toFixed(2)+'|'+(isAirbrush?'ab':'n')+'|tv'+tipV+'|aa'+aaMode;
+  const alphaKey=alpha<=0.25?alpha.toFixed(4):alpha.toFixed(2);
+  const key=r.toFixed(2)+'|'+rgb.join(',')+'|'+alphaKey+'|'+composite+'|'+hardness.toFixed(2)+'|'+(isAirbrush?'ab':'n')+'|tv'+tipV+'|aa'+aaMode;
   const hit=_aaDabCache.get(key);
   if(hit) return hit;
   const rr=Math.max(0.05,r);
@@ -752,49 +755,45 @@ function _buildAAStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   // stamp bitmap would clip the soft tail and reintroduce a hard cutoff.
   const pad=Math.max(2,Math.ceil(_AA_MODE_EDGE_MAX_PX[aaMode]||2)),ir=Math.ceil(rr);
   const w=(ir+pad)*2+1,h=(ir+pad)*2+1;
-  const cx=w/2,cy=h/2;
-  const tmp=document.createElement('canvas');tmp.width=w;tmp.height=h;
-  const tc=tmp.getContext('2d',{willReadFrequently:true});
-  const id=tc.createImageData(w,h);
+  // Procedural masks are evaluated above target resolution, then reduced
+  // exactly once. The cached result is already the final 1:1 dab size, so
+  // fractional placement never repeatedly rescales a coarse source mask.
+  const supersample=window.brushTipCanvas?1:(rr<=64&&hardness<0.25?4:(rr<=256?2:1));
+  const sampleW=w*supersample,sampleH=h*supersample;
+  const sampleR=rr*supersample,cx=sampleW/2,cy=sampleH/2;
+  const sampleCanvas=document.createElement('canvas');sampleCanvas.width=sampleW;sampleCanvas.height=sampleH;
+  const sampleCtx=sampleCanvas.getContext('2d',{willReadFrequently:true});
+  const id=sampleCtx.createImageData(sampleW,sampleH);
   const d=id.data;
   const cr=composite==='erase'?0:rgb[0], cg=composite==='erase'?0:rgb[1], cb=composite==='erase'?0:rgb[2];
   const inner=_effectiveInnerFrac(rr,hardness,aaMode);
-  const outerSpan=Math.max(0.0001,1-inner);
-  // Sample tip pixels at this stamp's resolution once (null when no tip loaded).
-  const tipPixels=_getTipPixelsForStamp(w,h);
+  // Custom tips retain their existing renderer; this remains a safe fallback
+  // for other callers that may request a tip-backed AA stamp directly.
+  const tipPixels=_getTipPixelsForStamp(sampleW,sampleH);
   const tipSoft=!!window.brushTipSoftAlpha;
   const tipReplace=(window.brushTipMode==='replace');
   let p=0;
-  for(let py=0;py<h;py++){
-    for(let px=0;px<w;px++,p+=4){
-      const dx=(px+0.5)-cx, dy=(py+0.5)-cy;
-      const dist=Math.sqrt(dx*dx+dy*dy);
-      const t=dist/rr;
-      let a;
-      a=alpha*_roundBrushFalloff(t,inner,hardness);
-      if(a<=0) continue; // leave fully transparent (already zeroed by createImageData)
-      // When a tip image is loaded, use its alpha channel as the shape mask.
-      // setBrushTip() normalizes flat-alpha (fully opaque) grayscale tips into
-      // real alpha on load (white shape -> opaque, black background -> transparent),
-      // so by now the tip's alpha channel already fully encodes the shape/gradient.
+  for(let py=0;py<sampleH;py++){
+    for(let px=0;px<sampleW;px++,p+=4){
+      const dx=(px+0.5)-cx,dy=(py+0.5)-cy;
+      const t=Math.sqrt(dx*dx+dy*dy)/sampleR;
+      let a=alpha*(isAirbrush?_airbrushFalloff(t):_roundBrushFalloff(t,inner,hardness));
+      if(a<=0)continue;
       if(tipPixels){
-        const tipFactor=tipPixels[p+3]/255;    // tip alpha at this pixel
-        if(tipReplace){
-          // Replace mode: radial circle is ignored; tip shape is authoritative.
-          a=alpha*tipFactor;
-        } else if(tipSoft){
-          // Multiply mode with soft-alpha: tip modulates the existing falloff.
-          a*=tipFactor;
-        } else {
-          // Hard mode: tip alpha replaces the edge falloff but keeps center flat.
-          a=alpha*tipFactor;
-        }
-        if(a<=0) continue;
+        const tipFactor=tipPixels[p+3]/255;
+        if(tipReplace)a=alpha*tipFactor;
+        else if(tipSoft)a*=tipFactor;
+        else a=alpha*tipFactor;
+        if(a<=0)continue;
       }
       d[p]=cr;d[p+1]=cg;d[p+2]=cb;d[p+3]=Math.round(Math.min(1,a)*255);
     }
   }
-  tc.putImageData(id,0,0);
+  sampleCtx.putImageData(id,0,0);
+  const tmp=document.createElement('canvas');tmp.width=w;tmp.height=h;
+  const tc=tmp.getContext('2d');
+  tc.imageSmoothingEnabled=true;tc.imageSmoothingQuality='high';
+  tc.drawImage(sampleCanvas,0,0,sampleW,sampleH,0,0,w,h);
   const stamp={canvas:tmp,w,h};
   if(_aaDabCache.size>=_AA_DAB_CACHE_MAX) _aaDabCache.delete(_aaDabCache.keys().next().value); // evict oldest
   _aaDabCache.set(key,stamp);
@@ -860,6 +859,21 @@ function _dabAAGpu(x,y,r,rgb,alpha,composite){
   const dc = (_inStroke && composite !== 'erase') ? _strokeCtx : ctx;
   const rr=Math.max(0.05,r);
   const isAirbrush=typeof window!=='undefined'&&!!window._brushAirbrush;
+  // Chrome/Skia's radial-gradient rasterizer uses an ordered low-alpha
+  // pattern. Through the low-Flow range, use the cached analytic ImageData stamp
+  // instead, then let the GPU composite it at the true subpixel position.
+  if(isAirbrush||alpha<=0.25){
+    const stamp=_buildAAStamp(r,rgb,alpha,composite,brushHardness);
+    if(stamp){
+      dc.save();
+      dc.globalCompositeOperation=_strokeDabComposite(composite);
+      dc.imageSmoothingEnabled=true;
+      dc.imageSmoothingQuality='high';
+      dc.drawImage(stamp.canvas,x-stamp.w/2,y-stamp.h/2);
+      dc.restore();
+      return;
+    }
+  }
   dc.save();
   dc.globalCompositeOperation=_strokeDabComposite(composite);
   const grad=dc.createRadialGradient(x,y,0,x,y,rr);
@@ -967,7 +981,7 @@ function _dabAACpu(x,y,r,rgb,alpha,composite){
       const dx=wx-x, dy=wy-y;
       const t=Math.sqrt(dx*dx+dy*dy)/rr;
       if(t>=1) continue;
-      let a=alpha*_roundBrushFalloff(t,inner,brushHardness);
+      let a=alpha*(isAirbrush?_airbrushFalloff(t):_roundBrushFalloff(t,inner,brushHardness));
       a=Math.min(1,Math.max(0,a));
       if(a<=0) continue;
       if(composite==='erase'){
@@ -1194,7 +1208,7 @@ function _dabAA(x,y,r,rgb,alpha,composite){
 let _stampCache=new Map(); // key -> {canvas,w,h}
 const _STAMP_CACHE_MAX=64;
 function _getAliasedStamp(rRaw,rgb,alphaRaw,composite){
-  const r=_quant(rRaw,_Q_R), alpha=_quant(alphaRaw,_Q_ALPHA);
+  const r=_quant(rRaw,_Q_R), alpha=_quantAlpha(alphaRaw);
   // Include tip version so the stamp is rebuilt whenever the tip changes.
   const tipV=(window.brushTipCanvas?(window.brushTipVersion||0):-1);
   const key=r.toFixed(2)+'|'+rgb.join(',')+'|'+alpha.toFixed(2)+'|'+composite+'|tv'+tipV;
@@ -1674,7 +1688,10 @@ let _autoHardRoundPrevDab=null;
 // access it without needing an extra parameter through the call chain.
 let _lastDabRGB=[0,0,0];
 function _drawAutoHardRoundSegment(d){
-  const eligible=d.composite==='paint'&&_usesAutoHardRoundRaster(d.r);
+  // The integer connector is safe only for fully opaque pixel coverage. At
+  // low Flow it produces a separately sampled one-pixel centerline.
+  const opaqueCoverage=d.alpha>=0.999&&brushFlow>=0.999;
+  const eligible=opaqueCoverage&&d.composite==='paint'&&_usesAutoHardRoundRaster(d.r);
   if(!eligible){_autoHardRoundPrevDab=null;return false;}
   const previous=_autoHardRoundPrevDab;
   _autoHardRoundPrevDab={x:d.x,y:d.y,r:d.r,rgb:d.rgb.slice(),alpha:d.alpha};
@@ -1931,6 +1948,7 @@ function _stampDab(x,y,e){
 let _airbrushTimer=null;
 let _lastPointerEvent=null;
 let _airbrushTimerX=0,_airbrushTimerY=0;
+let _airbrushLastMovementTime=0;
 function _airbrushIntervalMs(){
   const rate=(typeof window!=='undefined' && window._tsAirbrushRate!=null) ? window._tsAirbrushRate : 0.55;
   // rate 0..1 -> interval 50ms (gentle, slow build-up) down to 6ms (dense,
@@ -1943,14 +1961,23 @@ function _startAirbrushSpray(){
   _stopAirbrushSpray();
   _airbrushTimerX=lx;
   _airbrushTimerY=ly;
+  _airbrushLastMovementTime=performance.now();
   _airbrushTimer=setInterval(()=>{
     if(!drawing || !window._brushAirbrush){ _stopAirbrushSpray(); return; }
     if(lx!==_airbrushTimerX || ly!==_airbrushTimerY){
       _airbrushTimerX=lx;
       _airbrushTimerY=ly;
+      _airbrushLastMovementTime=performance.now();
       return;
     }
-    _stampDab(lx,ly,_lastPointerEvent);
+    // Movement owns deposition until the stabilized path has been still for
+    // two spray ticks. This prevents slow movement and the timer from both
+    // painting the same region at full strength.
+    if(performance.now()-_airbrushLastMovementTime<Math.max(50,_airbrushIntervalMs()*2))return;
+    const previousSpacingRatio=_flowSpacingRatio;
+    _flowSpacingRatio=_airbrushCanonicalSpacingRatio(_lastPointerEvent,currentPressure);
+    try{_stampDab(lx,ly,_lastPointerEvent);}
+    finally{_flowSpacingRatio=previousSpacingRatio;}
     _scheduleRecomposite();
   }, _airbrushIntervalMs());
 }
@@ -1992,24 +2019,24 @@ function _strokeTaperFactor(baseSize){
 // stay in sync. Spacing is always fixed: it never widens or narrows based
 // on stroke velocity or acceleration, only on the Spacing slider (and the
 // airbrush cap).
-function _effectiveSpacingFrac(){
-  const mode=document.getElementById('ts-spacing-mode');
-  const isAuto=mode&&mode.value==='auto'&&tool==='brush'&&!window._brushAirbrush;
-  // Auto mode's whole purpose (per its own UI tooltip: "automatically
-  // adjusts spacing for smoother brush strokes") is to force dabs dense
-  // enough that consecutive stamps blend into a continuous stroke instead
-  // of reading as separate circles. It previously only ever did this for
-  // the procedural hard-round brush (`!window.brushTipCanvas` excluded
-  // imported tips), so a custom tip brush left on Auto silently fell back
-  // to the raw manual Spacing % and kept showing visible stamp-to-stamp
-  // seams -- Auto looked like it did nothing. Imported tips need this at
-  // least as much as the round brush (arguably more, since their edges
-  // aren't a uniform soft circle), so they now get the same tight spacing.
-  if(isAuto&&!window.brushTipCanvas&&brushHardness>=0.995) return 0.01;
-  if(isAuto&&window.brushTipCanvas) return 0.01;
-  return (typeof window!=='undefined' && window._tsSpacing!=null) ? window._tsSpacing : 0;
+function _effectiveSpacingFrac(settings){
+  const fromSettings=!!settings;
+  const modeValue=fromSettings?settings['ts-spacing-mode']:document.getElementById('ts-spacing-mode')?.value;
+  const isAirbrush=fromSettings?!!settings['ts-airbrush']:!!window._brushAirbrush;
+  const hasCustomTip=fromSettings?!!(settings['ts-tip-dataurl']||settings['ts-tip-url']):!!window.brushTipCanvas;
+  const activeTool=fromSettings?'brush':tool;
+  const isAuto=modeValue==='auto'&&activeTool==='brush'&&!isAirbrush;
+  // Auto mode forces dabs dense enough to form a continuous stroke. Both
+  // procedural and imported tips use the same tight automatic spacing.
+  const hardness=fromSettings?Math.max(0,Math.min(1,(Number(settings['ts-hardness'])||0)/100)):brushHardness;
+  if(isAuto&&!hasCustomTip&&hardness>=0.995) return 0.01;
+  if(isAuto&&hasCustomTip) return 0.01;
+  const raw=fromSettings?Number(settings['ts-spacing'])/100:((typeof window!=='undefined'&&window._tsSpacing!=null)?Number(window._tsSpacing):NaN);
+  // Airbrush uses the live spacing value for movement. Its built-in 2% is
+  // only a preset default; stationary spraying keeps its independent rate.
+  return Number.isFinite(raw)&&raw>0?raw:(isAirbrush?0.02:0.12);
 }
-
+window._resolveBrushSpacingFrac=_effectiveSpacingFrac;
 let _hardRoundTailCoverageOnly=false;
 let _flowSpacingRatio=1;
 function _flowRatioForStep(step,radius){
@@ -2022,6 +2049,11 @@ function _flowRatioForStep(step,radius){
 }
 function _usesAutoHardRoundRaster(radius){
   return false;
+}
+function _airbrushCanonicalSpacingRatio(e,pressure){
+  const radius=_computeSpacingRadius(e||_lastPointerEvent,pressure==null?currentPressure:pressure);
+  const step=Math.max(0.5,radius*2*0.02);
+  return _flowRatioForStep(step,radius);
 }
 function _walkDabArc(length,pointAt,e,startPressure,endPressure){
   if(length<=0){currentPressure=endPressure;return;}
@@ -2551,6 +2583,13 @@ function _computeEffectiveParams(e){
     }
   }
 
+  // Brush Density controls the procedural Airbrush tip strength separately
+  // from Flow, before spacing compensation preserves transmittance.
+  if(window._brushAirbrush&&!window.brushTipCanvas){
+    baseAlpha*=Math.max(0,Math.min(1,brushDensity));
+    alpha=baseAlpha;
+  }
+
   if(_flowSpacingRatio!==1&&alpha<1){
     alpha=1-Math.pow(1-alpha,_flowSpacingRatio);
     baseAlpha=alpha;
@@ -2639,7 +2678,9 @@ function _computeEffectiveParams(e){
   // Flow/Opacity settings intend. This keeps user Flow/Opacity/pressure
   // behavior fully intact (it scales the already-computed alpha, doesn't
   // replace it) and only ever applies while Airbrush mode is on.
-  return{r:Math.max(0.05,r), alpha:Math.max(0.01,Math.min(1,alpha))};
+  // Do not raise low-Flow coverage: spacing compensation may legitimately
+  // produce sub-1% dabs. Raising those to 1% causes periodic over-deposition.
+  return{r:Math.max(0.05,r), alpha:Math.max(0,Math.min(1,alpha))};
 }
 function _getEffectiveBrushParams(e){
   const params=_computeEffectiveParams(e);
@@ -2820,7 +2861,12 @@ activeC.addEventListener('pointerdown',e=>{
   _resetCurve(p.x,p.y,currentPressure);
   _lastPointerEvent=e;
   if(tool!=='eraser'){_ensureStrokeCanvas();_inStroke=true;}
-  _stampDab(p.x,p.y,e);
+  if(window._brushAirbrush){
+    const previousSpacingRatio=_flowSpacingRatio;
+    _flowSpacingRatio=_airbrushCanonicalSpacingRatio(e,currentPressure);
+    try{_stampDab(p.x,p.y,e);}
+    finally{_flowSpacingRatio=previousSpacingRatio;}
+  }else _stampDab(p.x,p.y,e);
   _scheduleRecomposite();
   if(window._brushAirbrush) _startAirbrushSpray();
 });
@@ -2840,6 +2886,7 @@ function _handleMoveEvent(e){
     const t=ev.timeStamp || performance.now();
     const p=_smoothPoint(raw.x,raw.y,t);
     _updateVelocity(p.x, p.y, t);
+    if(window._brushAirbrush&&Math.hypot(p.x-lx,p.y-ly)>0.01)_airbrushLastMovementTime=performance.now();
     // Curve (not straight-line) interpolation between samples Ã¢â‚¬â€ see
     // _curveAddPoint/_stampQuadCurve above. Pressure is carried through via
     // the rolling curve buffer's own midpoint averaging, same intent as the

@@ -356,19 +356,27 @@
       return vis[key]!==undefined ? vis[key] : (DEFAULTS[key]!==undefined?DEFAULTS[key]:true);
     }
     function applyField(key){
-      const field=document.querySelector('.ts-field[data-eye="'+key+'"]');
+      const fields=document.querySelectorAll('.ts-field[data-eye="'+key+'"]');
       const buttons=document.querySelectorAll('.ts-eye-btn[data-eye-btn="'+key+'"]');
       const on=isVisible(key);
-      if(field) field.classList.toggle('ts-simple-hidden',!on);
+      fields.forEach(field=>field.classList.toggle('ts-simple-hidden',!on));
       buttons.forEach(btn=>{
         btn.classList.toggle('ts-eye-off',!on);
+        btn.setAttribute('aria-pressed',String(on));
         btn.title=on?'Visible in Simple tab — click to hide':'Hidden in Simple tab — click to show';
       });
     }
-    // Apply initial state to whatever eye buttons/fields exist right now.
-    document.querySelectorAll('.ts-eye-btn[data-eye-btn]').forEach(btn=>{
-      applyField(btn.dataset.eyeBtn);
-    });
+    function applyAllFields(){
+      const keys=new Set([...Object.keys(DEFAULTS),...Object.keys(vis)]);
+      document.querySelectorAll('[data-eye],[data-eye-btn]').forEach(element=>keys.add(element.dataset.eye||element.dataset.eyeBtn));
+      keys.forEach(key=>{if(key)applyField(key);});
+    }
+    // One visibility map drives both Advanced eyes and docked fields.
+    window._applySimpleToolVisibility=applyAllFields;
+    applyAllFields();
+    window.addEventListener('tool-changed',applyAllFields);
+    const dockedFields=document.getElementById('brush-tool-settings-content');
+    if(dockedFields)new MutationObserver(applyAllFields).observe(dockedFields,{childList:true});
 
     // Delegated click handler — works even if this script runs before the
     // modal's markup is fully parsed, and needs no per-button listeners.
@@ -576,16 +584,19 @@
   const dockedSimpleSettings=document.getElementById('brush-tool-settings-content');
   const basicSettings=document.querySelector('#tool-settings-body .ts-ps-panel[data-panel="basic"] .ts-section-body');
   if(dockedSimpleSettings&&basicSettings){
-    ['blend-mode','flow','hardness','aa'].forEach(key=>{
+    ['blend-mode','size','opacity','flow','density','hardness','spacing','aa'].forEach(key=>{
       const field=basicSettings.querySelector(`.ts-field[data-eye="${key}"]`);
       if(field)dockedSimpleSettings.appendChild(field);
     });
+    if(typeof window._applySimpleToolVisibility==='function') window._applySimpleToolVisibility();
   }
 
   // The toolbar gear opens the remaining Advanced modal.
   const tsBtnOpen=document.getElementById('btn-open-tool-settings');
   if(tsBtnOpen) tsBtnOpen.onclick=()=>{
     setTsMode('advanced');
+    if(typeof window._syncAdvancedBrushSettings==='function') window._syncAdvancedBrushSettings();
+    if(typeof window._applySimpleToolVisibility==='function') window._applySimpleToolVisibility();
     document.getElementById('tool-settings-modal-overlay').classList.add('visible');
   };
   document.getElementById('tool-settings-modal-close').onclick=()=>{
@@ -622,6 +633,7 @@
   applyTsMode();
 
   (function initAdvancedMainControlMirrors(){
+    const mirrorSyncers=[];
     document.querySelectorAll('.ts-advanced-mirror-row[data-mirror-target]').forEach(row=>{
       const source=document.getElementById(row.dataset.mirrorTarget);
       const mirror=row.querySelector('input[type="range"],input[type="checkbox"],select');
@@ -642,15 +654,23 @@
         if(source.type==='checkbox') source.checked=mirror.checked;
         else source.value=mirror.value;
         source.dispatchEvent(new Event('input',{bubbles:true}));
-        source.dispatchEvent(new Event('change',{bubbles:true}));
         syncFromSource();
       };
       mirror.addEventListener('input',syncToSource);
-      mirror.addEventListener('change',syncToSource);
+      mirror.addEventListener('change',()=>{
+        if(source.type==='checkbox') source.checked=mirror.checked;
+        else source.value=mirror.value;
+        source.dispatchEvent(new Event('change',{bubbles:true}));
+        syncFromSource();
+      });
       source.addEventListener('input',syncFromSource);
       source.addEventListener('change',syncFromSource);
+      mirrorSyncers.push(syncFromSource);
       syncFromSource();
     });
+    // Canonical controls keep their stable IDs even after some of them move
+    // into the dock. Advanced is only a view/editor over those controls.
+    window._syncAdvancedBrushSettings=()=>mirrorSyncers.forEach(sync=>sync());
   })();
 
   (function initSpacingMode(){
@@ -1518,8 +1538,14 @@ function applyToolPreset(json){
       settings:builtinBrushSettings({
         'ts-size':400,
         'ts-flow':10,
+        'ts-density':62,
         'ts-hardness':0,
-        'ts-spacing':40,
+        'ts-spacing':2,
+        'ts-spacing-mode':'fixed',
+        'ts-airbrush':true,
+        'ts-airbrush-rate':55,
+        'ts-aa':true,
+        'ts-aa-mode':'medium',
         'ts-size-control':'off'
       })
     },
@@ -1921,7 +1947,9 @@ function applyToolPreset(json){
     const ctx=out.getContext('2d');ctx.clearRect(0,0,out.width,out.height);ctx.scale(dpr,dpr);ctx.imageSmoothingEnabled=settings['ts-aa']!==false&&settings['ts-aa-mode']!=='none';ctx.imageSmoothingQuality=settings['ts-aa-mode']==='strong'?'high':'medium';
     const rawSize=Math.max(1,Number(settings['ts-size'])||Number(p.settings&&p.settings['ts-size'])||12);
     const requestedDiameter=5+Math.sqrt(rawSize)*2.25;
-    const spacing=Math.max(.04,(Number(settings['ts-spacing'])||12)/100);
+    const spacing=typeof window._resolveBrushSpacingFrac==='function'
+      ? window._resolveBrushSpacingFrac(settings)
+      : Math.max(.01,(Number(settings['ts-spacing'])||12)/100);
     const hardness=Math.max(0,Math.min(1,(Number(settings['ts-hardness'])||0)/100));
     const opacity=Math.max(.04,Math.min(1,(Number(settings['ts-opacity'])||100)/100));
     const flow=Math.max(.04,Math.min(1,(Number(settings['ts-flow'])||100)/100));
@@ -2551,7 +2579,7 @@ function applyToolPreset(json){
     }
     Object.entries(s).forEach(([id,value])=>{
       const control=document.getElementById(id);
-      if(!control||!control.matches('#tool-settings-body input:not([type=file]),#tool-settings-body select')) return;
+      if(!control||!control.matches('input:not([type=file]),select')) return;
       if(control.type==='checkbox') control.checked=!!value;
       else control.value=value;
     });
@@ -2608,8 +2636,9 @@ function applyToolPreset(json){
     });
     Object.keys(s).forEach(key=>{
       const source=document.getElementById(key);
-      if(source&&source.matches('#tool-settings-body input:not([type=file]),#tool-settings-body select')) source.dispatchEvent(new Event('input',{bubbles:true}));
+      if(source&&source.matches('input:not([type=file]),select')) source.dispatchEvent(new Event('input',{bubbles:true}));
     });
+    if(typeof window._syncAdvancedBrushSettings==='function') window._syncAdvancedBrushSettings();
     // Airbrush is a per-preset on/off, like Photoshop/CSP — presets that
     // don't mention it explicitly should switch it off rather than leaking
     // the previous preset's airbrush state.
