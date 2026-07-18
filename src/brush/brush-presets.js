@@ -1865,7 +1865,7 @@ function applyToolPreset(json){
     const roundness=Math.max(.08,Math.min(1,(Number(settings['ts-tip-roundness'])||100)/100));
     const angle=(Number(settings['ts-angle'])||0)*Math.PI/180,directionFollowsStroke=settings['ts-rotation-mode']==='stroke-direction';
     const edgeSafety=3+Math.max(0,1-hardness)*2,rotationWidth=directionFollowsStroke?1:Math.abs(Math.cos(angle))+roundness*Math.abs(Math.sin(angle)),rotationHeight=directionFollowsStroke?1:Math.abs(Math.sin(angle))+roundness*Math.abs(Math.cos(angle));
-    const targetWave=Math.min(8,height*.20),diameter=Math.max(3,Math.min(requestedDiameter,(height-(edgeSafety+targetWave)*2)/Math.max(1,rotationHeight))),step=Math.max(.75,diameter*spacing);
+    const targetWave=Math.min(6,height*.50),diameter=Math.max(3,Math.min(requestedDiameter,(height-(edgeSafety+targetWave)*2)/Math.max(1,rotationHeight))),step=Math.max(.75,diameter*spacing);
     const radiusX=diameter*rotationWidth/2,radiusY=diameter*rotationHeight/2;
     const scatterAmount=settings['ts-scatter-enabled']?Math.max(0,Number(settings['ts-scatter-amount'])||0)/100:0;
     const scatterPad=Math.min(width*.08,diameter*scatterAmount*.5),safeX=Math.ceil(radiusX+edgeSafety+scatterPad),safeY=Math.ceil(radiusY+edgeSafety+scatterPad);
@@ -1890,7 +1890,7 @@ function applyToolPreset(json){
     for(let dabIndex=0;dabIndex<=dabCount;dabIndex++){
       const distance=Math.min(span,dabIndex*step),t=distance/span,rise=Math.min(1,.58+t*2.8),fall=t<.62?1:Math.max(.02,1-(t-.62)/.38),pressure=Math.min(rise,fall);
       const scale=sizePressure?Math.max(minScale,pressure):(1-.18*(1-fall));
-      const phase=t*Math.PI*2.5,wave=-Math.sin(phase),waveDerivative=-Math.PI*2.5*Math.cos(phase);
+      const phase=t*Math.PI*2,wave=-Math.sin(phase),waveDerivative=-Math.PI*2.5*Math.cos(phase);
       const x=start+distance,y=height/2+wave*waveAmplitude,strokeAngle=angle+(directionFollowsStroke?Math.atan2(waveDerivative*waveAmplitude,span):0);
       ctx.globalAlpha=baseAlpha*(opacityPressure?Math.max(minAlpha,pressure):1);ctx.save();ctx.translate(x,y);if(strokeAngle)ctx.rotate(strokeAngle);
       ctx.drawImage(dab,-diameter*scale/2,-diameter*roundness*scale/2,diameter*scale,diameter*roundness*scale);ctx.restore();
