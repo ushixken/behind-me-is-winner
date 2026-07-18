@@ -176,7 +176,7 @@
   // Equivalent to the old commitSmartRasterBrush.  Writes coverage + index
   // for every non-transparent pixel in maskCanvas into the index canvas, then
   // calls renderFrame to update the RGBA canvas.
-  function commitBrushMask(li,fi,maskCanvas,styleId,strokeOpacity,dirtyRect,beforeImage,drawBehind){
+  function commitBrushMask(li,fi,maskCanvas,styleId,strokeOpacity,dirtyRect,beforeImage,brushBlendMode){
     if(!styleId||!maskCanvas) return false;
     var index=ensureStyleIndex(li,fi,styleId);
     var bundle=ensureFrame(li,fi);
@@ -202,7 +202,7 @@
           var smartOffset=runX*4;
           var previousPixel=_decodePixel(smart,smartOffset,bundle.meta);
           var previous=previousPixel.coverage;
-          if(drawBehind&&previousPixel.index&&previousPixel.index!==index) continue;
+          if(brushBlendMode==='draw-behind'&&previousPixel.index&&previousPixel.index!==index) continue;
           var coverage=Math.min(255,incoming+Math.round(previous*(255-incoming)/255));
           _encodePixel(smart,smartOffset,previousPixel.index||index,coverage);
         }

@@ -844,12 +844,13 @@
                     </select>
                   </div>
                 </div>
-                <div class="ts-field" data-eye="draw-behind" id="ts-draw-behind-field">
-                  <div class="ts-divider" style="margin:6px 0;"></div>
-                  <div class="ts-row">
-                    <label class="ts-label-sm" style="flex:1;display:flex;align-items:center;gap:5px;cursor:pointer;" for="ts-draw-behind">
-                      <input type="checkbox" class="ts-check" id="ts-draw-behind" name="brush-draw-behind"/> Draw Behind
-                    </label>
+                <div class="ts-field" data-eye="blend-mode" id="ts-brush-blend-mode-field" title="Controls how brush paint combines with existing artwork.">
+                  <div class="ts-row ts-brush-blend-mode-row">
+                    <!--<label class="ts-brush-blend-mode-label" for="ts-brush-blend-mode">Blend Mode</label> -->
+                    <button class="ts-brush-blend-mode-trigger" id="ts-brush-blend-mode" name="brush-blend-mode" type="button" aria-label="Brush blend mode" aria-haspopup="listbox" aria-expanded="false" title="Controls how brush paint combines with existing artwork.">
+                      <span id="ts-brush-blend-mode-value">Normal</span>
+                      <span class="ts-brush-blend-mode-chevron" aria-hidden="true">&#9662;</span>
+                    </button>
                   </div>
                 </div>
               </div>

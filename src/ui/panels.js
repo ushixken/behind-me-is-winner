@@ -112,9 +112,9 @@ function renderSmartRasterFrame(li,fi,targetCanvas){
   return window.SmartRasterLayer.renderFrame(li,fi,targetCanvas);
 }
 
-function commitSmartRasterBrush(maskCanvas,styleId,strokeOpacity,dirtyRect,beforeImage,drawBehind){
+function commitSmartRasterBrush(maskCanvas,styleId,strokeOpacity,dirtyRect,beforeImage,brushBlendMode){
   if(!advancedPalettePaintingEnabled()||!styleId||!maskCanvas) return false;
-  return window.SmartRasterLayer.commitBrushMask(curLayer,curFrame,maskCanvas,styleId,strokeOpacity,dirtyRect,beforeImage,drawBehind);
+  return window.SmartRasterLayer.commitBrushMask(curLayer,curFrame,maskCanvas,styleId,strokeOpacity,dirtyRect,beforeImage,brushBlendMode);
 }
 
 function rerenderAllSmartRasterFrames(){

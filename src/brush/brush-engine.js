@@ -197,6 +197,44 @@ function _ensureStrokeCanvas(){
 // Opacity is already baked into each dab's alpha as it was painted (see
 // _computeEffectiveParams), so this only needs to apply the constant
 // brushOpacity ceiling Ã¢â‚¬â€ no separate end-of-stroke multiplier.
+function _brushPaintCompositeOperation(){
+  if(tool!=='brush') return 'source-over';
+  switch(window.brushBlendMode){
+    case 'draw-behind': return 'destination-over';
+    case 'darken': return 'darken';
+    case 'multiply': return 'multiply';
+    case 'color-burn': return 'color-burn';
+    case 'lighten': return 'lighten';
+    case 'screen': return 'screen';
+    case 'color-dodge': return 'color-dodge';
+    case 'add': return 'lighter';
+    case 'add-glow': return 'lighter';
+    case 'overlay': return 'overlay';
+    case 'soft-light': return 'soft-light';
+    case 'hard-light': return 'hard-light';
+    case 'difference': return 'difference';
+    case 'exclusion': return 'exclusion';
+    case 'hue': return 'hue';
+    case 'saturation': return 'saturation';
+    case 'color': return 'color';
+    case 'luminosity': return 'luminosity';
+    default: return 'source-over';
+  }
+}
+
+// Add uses one premultiplied-alpha additive pass. Add (Glow) uses a second,
+// lower-strength contribution from the same stroke source.
+function _drawBrushComposite(targetCtx,src){
+  const alpha=targetCtx.globalAlpha;
+  targetCtx.globalCompositeOperation=_brushPaintCompositeOperation();
+  targetCtx.drawImage(src,0,0);
+  if(tool==='brush'&&window.brushBlendMode==='add-glow'){
+    targetCtx.globalAlpha=alpha*0.65;
+    targetCtx.drawImage(src,0,0);
+    targetCtx.globalAlpha=alpha;
+  }
+}
+
 function _commitStrokeCanvas(){
   if(!_strokeCanvas) return;
   // forceFull=true: make sure the ENTIRE stroke is masked (not just whatever
@@ -206,7 +244,7 @@ function _commitStrokeCanvas(){
   if(window.SelectionScope)src=SelectionScope.clipCanvas(src);
   const styleId=typeof activeAdvancedStyleIdForPainting==='function'
     ?activeAdvancedStyleIdForPainting():null;
-  const drawBehind=tool==='brush'&&!!window.brushDrawBehind;
+  const brushBlendMode=tool==='brush'&&typeof window.brushBlendMode==='string'?window.brushBlendMode:'normal';
   const smartOwnership=tool==='brush'&&styleId&&
     typeof advancedPalettePaintingEnabled==='function'&&advancedPalettePaintingEnabled()&&
     layers[curLayer]&&layers[curLayer].type==='smart-raster';
@@ -214,11 +252,10 @@ function _commitStrokeCanvas(){
   const ownershipBefore=smartOwnership?(ownershipDirtyRect?ctx.getImageData(ownershipDirtyRect.x,ownershipDirtyRect.y,ownershipDirtyRect.w,ownershipDirtyRect.h):ctx.getImageData(0,0,CW,CH)):null;
   ctx.save();
   ctx.globalAlpha = Math.max(0, Math.min(1, brushOpacity));
-  ctx.globalCompositeOperation = drawBehind ? 'destination-over' : 'source-over';
-  ctx.drawImage(src, 0, 0);
+  _drawBrushComposite(ctx,src);
   ctx.restore();
   if(smartOwnership&&typeof commitSmartRasterBrush==='function'){
-    commitSmartRasterBrush(src,styleId,brushOpacity,ownershipDirtyRect,ownershipBefore,drawBehind);
+    commitSmartRasterBrush(src,styleId,brushOpacity,ownershipDirtyRect,ownershipBefore,brushBlendMode);
   }
   _strokeCtx.clearRect(0, 0, _strokeCanvas.width, _strokeCanvas.height);
 }
@@ -327,8 +364,7 @@ function _getLiveStrokePreview(){
     if(window.SelectionScope)strokeSrc=SelectionScope.clipCanvas(strokeSrc);
     _strokePreviewCtx.save();
     _strokePreviewCtx.globalAlpha = Math.max(0, Math.min(1, brushOpacity));
-    _strokePreviewCtx.globalCompositeOperation = tool==='brush'&&window.brushDrawBehind ? 'destination-over' : 'source-over';
-    _strokePreviewCtx.drawImage(strokeSrc, 0, 0);
+    _drawBrushComposite(_strokePreviewCtx,strokeSrc);
     _strokePreviewCtx.restore();
   }
   return _strokePreviewCanvas;

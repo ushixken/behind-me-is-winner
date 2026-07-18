@@ -19,24 +19,66 @@
   const spacingEl=document.getElementById('ts-spacing');
   window._tsSpacing=spacingEl?(+spacingEl.value/100):0.12;
 
-  // Draw Behind is a Brush tool preference, not a preset property. Keeping it
-  // outside preset capture prevents Eraser or imported presets from inheriting it.
-  const DRAW_BEHIND_STORAGE_KEY='brushDrawBehind';
-  const drawBehindEl=document.getElementById('ts-draw-behind');
-  const drawBehindField=document.getElementById('ts-draw-behind-field');
-  try{window.brushDrawBehind=localStorage.getItem(DRAW_BEHIND_STORAGE_KEY)==='true';}catch(_){window.brushDrawBehind=false;}
-  if(drawBehindEl){
-    drawBehindEl.checked=!!window.brushDrawBehind;
-    drawBehindEl.addEventListener('change',()=>{
-      window.brushDrawBehind=drawBehindEl.checked;
-      try{localStorage.setItem(DRAW_BEHIND_STORAGE_KEY,String(window.brushDrawBehind));}catch(_){}
+  // Brush compositing is a tool preference, independent from both presets and
+  // layer blend modes. Migrate the former Draw Behind boolean when needed.
+  const BRUSH_BLEND_MODE_STORAGE_KEY='brushBlendMode';
+  const BRUSH_BLEND_MODE_GROUPS=[
+    ['Normal',[['normal','Normal','Paints normally over existing pixels.'],['draw-behind','Draw Behind','Paints behind existing pixels.']]],
+    ['Darken',[['darken','Darken','Keeps the darker brush or artwork color.'],['multiply','Multiply','Darkens by multiplying brush and artwork colors.'],['color-burn','Color Burn','Deepens shadows and contrast using the brush color.'],['linear-burn','Linear Burn','Coming Soon',false],['darker-color','Darker Color','Coming Soon',false]]],
+    ['Lighten',[['lighten','Lighten','Keeps the lighter brush or artwork color.'],['screen','Screen','Lightens by screening brush and artwork colors.'],['color-dodge','Color Dodge','Brightens artwork toward the brush color.'],['glow-dodge','Glow Dodge','Coming Soon',false],['add','Add','Adds the brush color to existing artwork, increasing brightness.'],['add-glow','Add (Glow)','Creates a stronger luminous additive effect than Add.'],['lighter-color','Lighter Color','Coming Soon',false]]],
+    ['Contrast',[['overlay','Overlay','Combines Multiply and Screen based on the artwork.'],['soft-light','Soft Light','Adds gentle contrast using the brush color.'],['hard-light','Hard Light','Adds strong contrast based on the brush color.'],['vivid-light','Vivid Light','Coming Soon',false],['linear-light','Linear Light','Coming Soon',false],['pin-light','Pin Light','Coming Soon',false],['hard-mix','Hard Mix','Coming Soon',false]]],
+    ['Comparison',[['difference','Difference','Shows the channel difference between brush and artwork.'],['exclusion','Exclusion','Creates a softer difference effect.']]],
+    ['Component',[['hue','Hue','Uses brush hue while preserving artwork saturation and brightness.'],['saturation','Saturation','Uses brush saturation while preserving artwork hue and brightness.'],['color','Color','Uses brush hue and saturation while preserving artwork brightness.'],['luminosity','Luminosity','Uses brush brightness while preserving artwork color.']]],
+    ['Other',[['divide','Divide','Coming Soon',false],['subtract','Subtract','Coming Soon',false]]]
+  ];  const BRUSH_BLEND_MODES=new Set(BRUSH_BLEND_MODE_GROUPS.flatMap(g=>g[1].filter(m=>m[3]!==false).map(m=>m[0])));
+  const BRUSH_BLEND_MODE_LABELS=new Map(BRUSH_BLEND_MODE_GROUPS.flatMap(g=>g[1].map(m=>[m[0],m[1]])));
+  const brushBlendModeEl=document.getElementById('ts-brush-blend-mode');
+  const brushBlendModeValueEl=document.getElementById('ts-brush-blend-mode-value');
+  const brushBlendModeField=document.getElementById('ts-brush-blend-mode-field');
+  let savedBrushBlendMode='normal';
+  try{
+    const stored=localStorage.getItem(BRUSH_BLEND_MODE_STORAGE_KEY);
+    savedBrushBlendMode=BRUSH_BLEND_MODES.has(stored)?stored:(localStorage.getItem('brushDrawBehind')==='true'?'draw-behind':'normal');
+    localStorage.setItem(BRUSH_BLEND_MODE_STORAGE_KEY,savedBrushBlendMode);localStorage.removeItem('brushDrawBehind');
+  }catch(_){}
+  window.brushBlendMode=savedBrushBlendMode;
+  let blendMenu=null,blendOptions=[],blendMenuOpen=false;
+  function updateBlendModeUI(){
+    const mode=BRUSH_BLEND_MODES.has(window.brushBlendMode)?window.brushBlendMode:'normal';
+    if(brushBlendModeValueEl)brushBlendModeValueEl.textContent=BRUSH_BLEND_MODE_LABELS.get(mode)||'Normal';
+    blendOptions.forEach(el=>{const on=el.dataset.mode===mode;el.classList.toggle('is-selected',on);el.setAttribute('aria-selected',String(on));});
+  }
+  function setBlendMode(mode){window.brushBlendMode=BRUSH_BLEND_MODES.has(mode)?mode:'normal';try{localStorage.setItem(BRUSH_BLEND_MODE_STORAGE_KEY,window.brushBlendMode);}catch(_){}updateBlendModeUI();}
+  function buildBlendMenu(){
+    if(blendMenu||!brushBlendModeEl)return;
+    blendMenu=document.createElement('div');blendMenu.id='ts-brush-blend-mode-menu';blendMenu.className='ts-brush-blend-mode-menu';blendMenu.role='listbox';blendMenu.setAttribute('aria-label','Brush blend mode');blendMenu.tabIndex=-1;blendMenu.hidden=true;
+    BRUSH_BLEND_MODE_GROUPS.forEach(([label,modes])=>{
+      const h=document.createElement('div');h.className='ts-brush-blend-mode-group';h.textContent=label;blendMenu.appendChild(h);
+      modes.forEach(([value,name,description,enabled=true])=>{const option=document.createElement(enabled?'button':'div');option.className='ts-brush-blend-mode-option';option.dataset.mode=value;option.title=description;if(!enabled){option.classList.add('is-disabled');option.setAttribute('aria-disabled','true');option.innerHTML='<span></span><span class="ts-brush-blend-mode-status">Coming Soon</span>';option.firstElementChild.textContent=name;blendMenu.appendChild(option);return;}option.type='button';option.role='option';option.innerHTML='<span></span><span class="ts-brush-blend-mode-check" aria-hidden="true">✓</span>';option.firstElementChild.textContent=name;option.onclick=()=>{setBlendMode(value);closeBlendMenu(true);};option.onkeydown=blendOptionKeydown;blendOptions.push(option);blendMenu.appendChild(option);});
     });
+    document.body.appendChild(blendMenu);brushBlendModeEl.setAttribute('aria-controls',blendMenu.id);updateBlendModeUI();
   }
-  function syncDrawBehindVisibility(){
-    if(drawBehindField) drawBehindField.hidden=tool!=='brush';
+  function positionBlendMenu(){
+    if(!blendMenuOpen||!blendMenu)return;const r=brushBlendModeEl.getBoundingClientRect();
+    if(!r.width||brushBlendModeField?.hidden||tool!=='brush'){closeBlendMenu(false);return;}
+    const gap=8,below=innerHeight-r.bottom-gap,above=r.top-gap,up=below<280&&above>below;
+    blendMenu.style.maxHeight=Math.max(120,Math.min(340,(up?above:below)-4))+'px';blendMenu.style.width=Math.max(210,r.width)+'px';blendMenu.style.left=Math.max(gap,Math.min(r.left,innerWidth-blendMenu.offsetWidth-gap))+'px';blendMenu.style.top=(up?Math.max(gap,r.top-blendMenu.offsetHeight-4):r.bottom+4)+'px';
   }
-  window.addEventListener('tool-changed',syncDrawBehindVisibility);
-  syncDrawBehindVisibility();
+  function openBlendMenu(){buildBlendMenu();if(!blendMenu||brushBlendModeField?.hidden||tool!=='brush')return;blendMenuOpen=true;blendMenu.hidden=false;brushBlendModeEl.setAttribute('aria-expanded','true');positionBlendMenu();const selected=blendOptions.find(el=>el.dataset.mode===window.brushBlendMode)||blendOptions[0];selected?.focus({preventScroll:true});selected?.scrollIntoView({block:'nearest'});}
+  function closeBlendMenu(focus){if(!blendMenu)return;blendMenuOpen=false;blendMenu.hidden=true;brushBlendModeEl?.setAttribute('aria-expanded','false');if(focus)brushBlendModeEl?.focus({preventScroll:true});}
+  function blendOptionKeydown(e){
+    const i=Math.max(0,blendOptions.indexOf(e.currentTarget));let next=null;
+    if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();next=blendOptions[(i+(e.key==='ArrowDown'?1:-1)+blendOptions.length)%blendOptions.length];}
+    else if(e.key==='Home'||e.key==='End'){e.preventDefault();next=e.key==='Home'?blendOptions[0]:blendOptions[blendOptions.length-1];}
+    else if(e.key==='Escape'){e.preventDefault();closeBlendMenu(true);}else if(e.key==='Tab')closeBlendMenu(false);
+    next?.focus({preventScroll:true});next?.scrollIntoView({block:'nearest'});
+  }
+  if(brushBlendModeEl){brushBlendModeEl.onclick=()=>blendMenuOpen?closeBlendMenu(false):openBlendMenu();brushBlendModeEl.onkeydown=e=>{if(['ArrowDown','ArrowUp','Enter',' '].includes(e.key)){e.preventDefault();openBlendMenu();}else if(e.key==='Escape')closeBlendMenu(false);};}
+  document.addEventListener('pointerdown',e=>{if(blendMenuOpen&&!blendMenu?.contains(e.target)&&!brushBlendModeEl?.contains(e.target))closeBlendMenu(false);},true);
+  document.addEventListener('scroll',()=>{if(blendMenuOpen)positionBlendMenu();},true);window.addEventListener('resize',()=>{if(blendMenuOpen)positionBlendMenu();});
+  updateBlendModeUI();
+  function syncBrushBlendModeVisibility(){if(brushBlendModeField)brushBlendModeField.hidden=tool!=='brush';if(tool!=='brush')closeBlendMenu(false);}
+  window.addEventListener('tool-changed',syncBrushBlendModeVisibility);syncBrushBlendModeVisibility();
   // Spacing is fixed, not a user-adjustable Tool Setting — the brush
   // engine's _effectiveSpacingFrac() just uses its built-in default (0.12)
   // and never varies with stroke velocity or acceleration.
@@ -534,7 +576,7 @@
   const dockedSimpleSettings=document.getElementById('brush-tool-settings-content');
   const basicSettings=document.querySelector('#tool-settings-body .ts-ps-panel[data-panel="basic"] .ts-section-body');
   if(dockedSimpleSettings&&basicSettings){
-    ['flow','hardness','aa','draw-behind'].forEach(key=>{
+    ['blend-mode','flow','hardness','aa'].forEach(key=>{
       const field=basicSettings.querySelector(`.ts-field[data-eye="${key}"]`);
       if(field)dockedSimpleSettings.appendChild(field);
     });
