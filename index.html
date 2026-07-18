@@ -1198,8 +1198,15 @@
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
             <div style="font-size:12px;color:var(--text);"><b>Total:</b> <span id="ls-total-size">0 B</span></div>
             <div style="display:flex;gap:8px;">
-              <button class="modal-btn danger" id="ls-delete-all" style="padding:5px 12px;">Delete All</button>
               <button class="modal-btn" id="ls-get-zip" style="padding:5px 12px;">Get All as ZIP</button>
+            </div>
+          </div>
+          <div id="ls-bulk-actions" class="ls-bulk-actions">
+            <label class="ls-select-all" for="ls-select-all"><input type="checkbox" id="ls-select-all" name="stored-data-select-all"/> <span>Select All</span></label>
+            <span id="ls-selected-count" class="ls-selected-count" aria-live="polite"></span>
+            <div class="ls-bulk-buttons">
+              <button type="button" class="modal-btn" id="ls-clear-selection">Clear Selection</button>
+              <button type="button" class="modal-btn danger" id="ls-delete-selected">Delete Selected</button>
             </div>
           </div>
           <div id="ls-list" style="max-height:260px;overflow-y:auto;border:1px solid var(--border2);border-radius:6px;"></div>

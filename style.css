@@ -513,18 +513,27 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 .modal-btn.danger{color:#ff6b6b;border-color:#7a3535;}
 .modal-btn.danger:hover{background:#4a2323;}
 #ls-list{font-size:12px;}
+.ls-bulk-actions{display:flex;align-items:center;justify-content:space-between;gap:8px;height:34px;box-sizing:border-box;margin-bottom:4px;padding:5px 8px;border:1px solid var(--border2);border-radius:6px;background:var(--bg3);}
+.ls-select-all{display:flex;align-items:center;gap:6px;color:var(--text);font-size:11px;white-space:nowrap;cursor:pointer;}
+.ls-select-all input{margin:0;accent-color:var(--accent);cursor:pointer;}
+.ls-selected-count{color:var(--text);font-size:11px;white-space:nowrap;}
+.ls-bulk-buttons{display:flex;justify-content:flex-end;gap:5px;min-width:0;}
+.ls-bulk-buttons .modal-btn{padding:4px 8px;font-size:10px;white-space:nowrap;}
+.ls-section-header{padding:8px 10px 6px;border-bottom:1px solid var(--border2);background:var(--bg3);color:var(--text2);font-size:9px;font-weight:700;letter-spacing:.07em;line-height:1.2;text-transform:uppercase;}
+.ls-section-header.important{color:#ffb3b3;}
+.ls-section-header.preferences{color:var(--accent);}
 .ls-row{display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid var(--border2);}
+.ls-row.is-selected{background:rgba(127,119,221,.16);outline:1px solid rgba(127,119,221,.55);outline-offset:-1px;}
+.ls-row-important.is-selected{background:rgba(180,45,45,.2);}
 .ls-row:last-child{border-bottom:none;}
-.ls-row .ls-swatch{width:12px;height:12px;border-radius:3px;background:var(--accent);flex-shrink:0;}
+.ls-select{width:14px;height:14px;margin:0;flex-shrink:0;accent-color:var(--accent);cursor:pointer;}
+.ls-row-important .ls-select{accent-color:#e05858;}
 .ls-row .ls-size{width:64px;flex-shrink:0;color:var(--text2);}
 .ls-row .ls-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;}
 .ls-row .ls-name{color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .ls-row .ls-description{font-size:10px;line-height:1.35;color:var(--text2);}
 .ls-row-important{background:rgba(180,45,45,.1);box-shadow:inset 3px 0 0 rgba(255,85,85,.75);}
-.ls-row-important .ls-swatch{background:#e05858;}
 .ls-row-important .ls-name{color:#ffb3b3;}
-.ls-row .ls-del{background:transparent;border:none;color:var(--text2);cursor:pointer;font-size:14px;padding:2px 6px;border-radius:4px;flex-shrink:0;}
-.ls-row .ls-del:hover{background:#4a2323;color:#ff6b6b;}
 #ls-empty{padding:16px;text-align:center;color:var(--text2);font-size:12px;}
 .preset-row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;}
 .preset-btn{padding:4px 10px;border-radius:4px;border:1px solid var(--border2);background:transparent;color:var(--text2);font-size:11px;cursor:pointer;}
@@ -1433,11 +1442,13 @@ input.size-val-input{
 /* â”€â”€ PREFERENCES MODAL â€” PS-style two-column layout (mirrors the
    Advanced Tool Settings sidebar, but its own classes since ts-ps-*
    selectors are queried globally by brush-presets.js) â”€â”€ */
-#modal-preferences .modal{width:min(900px,calc(100vw - 32px));min-width:0;max-width:900px;}
-#pref-body{display:flex;flex-direction:row;gap:0;min-height:320px;max-height:60vh;}
+#modal-preferences .modal{width:min(1160px,85vw);height:min(760px,82vh);min-width:0;min-height:min(520px,calc(100vh - 32px));max-width:1160px;max-height:calc(100vh - 32px);display:flex;flex-direction:column;}
+#pref-body{display:flex;flex:1;flex-direction:row;gap:0;min-height:0;max-height:none;}
+#modal-preferences .modal-actions{flex-shrink:0;}
+#modal-preferences .pref-ps-panel[data-panel="storage"] #ls-list{flex:1;min-height:0;max-height:none !important;}
 
 .pref-ps-sidebar{
-  width:180px;flex-shrink:0;
+  width:clamp(160px,24%,270px);flex:0 1 270px;min-width:160px;
   background:var(--bg3);border-right:1px solid var(--border);
   display:flex;flex-direction:column;overflow-y:auto;overflow-x:hidden;
   scrollbar-width:none;

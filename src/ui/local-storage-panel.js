@@ -2,16 +2,9 @@
 // LOCAL STORAGE PANEL (Edit > Local Storage)
 // Lists everything this app has saved in localStorage (settings,
 // keybinds, brush presets, panel layout, etc.), with a running total
-// size, per-item delete, "Delete All", and "Get All as ZIP" (mirrors
-// Photopea's own Local Storage panel).
+// size, per-item delete, bulk delete, "Delete All", and ZIP export.
 // ================================================================
 (function(){
-
-  // Friendly display names for keys this app is known to write. Anything
-  // not listed here still shows up (using the raw key), so nothing saved
-  // is ever hidden from the user - this just makes common entries readable.
-  // nicely, the same way Photopea shows "Josh H. Black Brushes.abr"
-  // instead of a raw storage key.
   const STORAGE_META={
     'animatorBrushPresetsV2':{name:'Brush Presets',description:'Deletes saved brushes, per-brush settings, folders, and brush/eraser preset sizes.',important:true,reset:'brush presets and brush settings'},
     'keybinds_v1':{name:'Keyboard Shortcuts',description:'Deletes customized keyboard shortcuts and restores their defaults.',important:true,reset:'keyboard shortcuts'},
@@ -28,25 +21,14 @@
     'animator_kfsw_step':{name:'Keyframe Switcher Step'},
     'animator_kfsw_bypass':{name:'Keyframe Switcher Bypass'}
   };
-  function _meta(key){
-    return STORAGE_META[key]||{name:key,description:''};
-  }
-  function _friendlyName(key){
-    return _meta(key).name;
-  }
+  function _meta(key){return STORAGE_META[key]||{name:key,description:''};}
+  function _friendlyName(key){return _meta(key).name;}
   function _formatBytes(n){
     if(n<1024) return n+' B';
     if(n<1024*1024) return (n/1024).toFixed(1)+' KB';
     return (n/(1024*1024)).toFixed(1)+' MB';
   }
-
-  // Rough on-disk size: localStorage stores UTF-16, but byte-length of the
-  // UTF-8 encoding (via Blob) is what people actually recognize as "size",
-  // and matches how browsers/other tools usually report it.
-  function _byteSize(str){
-    return new Blob([str]).size;
-  }
-
+  function _byteSize(str){return new Blob([str]).size;}
   function _collectEntries(){
     const entries=[];
     let total=0;
@@ -58,59 +40,131 @@
       total+=size;
       entries.push({key,size,val});
     }
-    entries.sort((a,b)=>b.size-a.size);
+    entries.sort((a,b)=>{
+      const aMeta=_meta(a.key),bMeta=_meta(b.key),importance=Number(!!bMeta.important)-Number(!!aMeta.important);
+      return importance||aMeta.name.localeCompare(bMeta.name,undefined,{sensitivity:'base'});
+    });
     return {entries,total};
   }
 
   const listEl=document.getElementById('ls-list');
   const totalEl=document.getElementById('ls-total-size');
-  const deleteAllBtn=document.getElementById('ls-delete-all');
+  const selectAll=document.getElementById('ls-select-all');
+  const selectedCount=document.getElementById('ls-selected-count');
+  const clearSelection=document.getElementById('ls-clear-selection');
+  const deleteSelected=document.getElementById('ls-delete-selected');
+  const selectedKeys=new Set();
+
+  function _checkboxId(key){
+    let hash=2166136261;
+    for(let i=0;i<key.length;i++) hash=Math.imul(hash^key.charCodeAt(i),16777619);
+    return 'ls-item-'+(hash>>>0).toString(36);
+  }
+  function _syncSelection(entries){
+    const visibleKeys=new Set(entries.map(entry=>entry.key));
+    selectedKeys.forEach(key=>{if(!visibleKeys.has(key)) selectedKeys.delete(key);});
+    const count=selectedKeys.size,allSelected=entries.length>0&&count===entries.length;
+    selectAll.checked=allSelected;
+    selectAll.indeterminate=count>0&&!allSelected;
+    selectAll.disabled=entries.length===0;
+    clearSelection.disabled=count===0;
+    deleteSelected.disabled=count===0;
+    selectedCount.textContent=count+' item'+(count===1?'':'s')+' selected';
+  }
+  function _refreshRenderedSelection(entries){
+    listEl.querySelectorAll('.ls-select').forEach(checkbox=>{
+      const checked=selectedKeys.has(checkbox.dataset.storageKey);
+      checkbox.checked=checked;
+      checkbox.closest('.ls-row').classList.toggle('is-selected',checked);
+    });
+    _syncSelection(entries);
+  }
+  function _setAll(entries,checked){
+    entries.forEach(({key})=>checked?selectedKeys.add(key):selectedKeys.delete(key));
+    _refreshRenderedSelection(entries);
+  }
 
   function render(){
     const {entries,total}=_collectEntries();
     totalEl.textContent=_formatBytes(total);
+    const previousScrollTop=listEl.scrollTop;
     listEl.innerHTML='';
     if(entries.length===0){
       const empty=document.createElement('div');
       empty.id='ls-empty';
       empty.textContent='Nothing saved yet.';
       listEl.appendChild(empty);
-      deleteAllBtn.disabled=true;
+      _syncSelection(entries);
       return;
     }
-    deleteAllBtn.disabled=false;
+    let currentSection=null;
     entries.forEach(({key,size})=>{
+      const meta=_meta(key),section=meta.important?'important':'preferences';
+      if(section!==currentSection){
+        currentSection=section;
+        const heading=document.createElement('div');
+        heading.className='ls-section-header '+section;
+        heading.textContent=meta.important?'IMPORTANT SAVED DATA':'STORED APPLICATION PREFERENCES';
+        listEl.appendChild(heading);
+      }
       const row=document.createElement('div');
-      const meta=_meta(key);
+      const checkboxId=_checkboxId(key);
       row.className='ls-row'+(meta.important?' ls-row-important':'');
+      row.classList.toggle('is-selected',selectedKeys.has(key));
       row.innerHTML=
-        '<span class="ls-swatch"></span>'+
+        '<input class="ls-select" type="checkbox"/>'+
         '<span class="ls-size"></span>'+
-        '<span class="ls-info"><span class="ls-name"></span><span class="ls-description"></span></span>'+
-        '<button class="ls-del" title="Delete">Delete</button>';
+        '<label class="ls-info"><span class="ls-name"></span><span class="ls-description"></span></label>';
+      const checkbox=row.querySelector('.ls-select');
+      const info=row.querySelector('.ls-info');
+      checkbox.id=checkboxId;
+      checkbox.name=checkboxId;
+      checkbox.dataset.storageKey=key;
+      checkbox.checked=selectedKeys.has(key);
+      checkbox.setAttribute('aria-label','Select '+meta.name);
+      info.htmlFor=checkboxId;
       row.querySelector('.ls-size').textContent=_formatBytes(size);
       row.querySelector('.ls-name').textContent=meta.name;
       row.querySelector('.ls-name').title=key;
-      row.querySelector('.ls-description').textContent=meta.description||'Stored application preference.';
-      row.querySelector('.ls-del').onclick=()=>{
-        const message=meta.important
-          ? 'Deleting this will reset your '+meta.reset+'. Continue?'
-          : "Delete \""+meta.name+"\"? This can't be undone.";
-        if(!confirm(message)) return;
-        localStorage.removeItem(key);
-        render();
+      row.querySelector('.ls-description').textContent=meta.description||(meta.important?'Deleting this resets '+(meta.reset||meta.name.toLowerCase())+'.':'Stored application preference.');
+      checkbox.onchange=()=>{
+        checkbox.checked?selectedKeys.add(key):selectedKeys.delete(key);
+        row.classList.toggle('is-selected',checkbox.checked);
+        _syncSelection(entries);
+      };
+      row.onclick=event=>{
+        if(event.target.closest('button,input,label')) return;
+        checkbox.click();
       };
       listEl.appendChild(row);
     });
+    _syncSelection(entries);
+    listEl.scrollTop=Math.min(previousScrollTop,Math.max(0,listEl.scrollHeight-listEl.clientHeight));
   }
 
-  deleteAllBtn.onclick=()=>{
-    const {entries}=_collectEntries();
+  selectAll.onchange=()=>_setAll(_collectEntries().entries,selectAll.checked);
+  clearSelection.onclick=()=>{selectedKeys.clear();_refreshRenderedSelection(_collectEntries().entries);};
+  deleteSelected.onclick=()=>{
+    const entries=_collectEntries().entries.filter(({key})=>selectedKeys.has(key));
     if(entries.length===0) return;
-    if(!confirm('Delete ALL locally saved data ('+entries.length+' item'+(entries.length===1?'':'s')+')? This resets every preference, keybind, and saved brush preset. This can\'t be undone.')) return;
-    localStorage.clear();
+    const important=entries.filter(({key})=>_meta(key).important);
+    const names=entries.map(({key})=>'- '+_meta(key).name).join('\n');
+    const warning=important.length
+      ? '\n\nWARNING: '+important.length+' important saved data item'+(important.length===1?' is':'s are')+' included. This may reset brushes, shortcuts, workspace layout, or Tool Settings.'
+      : '';
+    if(!confirm('Delete '+entries.length+' selected item'+(entries.length===1?'':'s')+'?\n\n'+names+warning+'\n\nThis cannot be undone.')) return;
+    const failed=[];
+    entries.forEach(({key})=>{
+      try{
+        localStorage.removeItem(key);
+        if(localStorage.getItem(key)!==null) failed.push(_meta(key).name);
+        else selectedKeys.delete(key);
+      }catch(error){failed.push(_meta(key).name);}
+    });
     render();
+    if(failed.length) alert('Could not delete:\n- '+failed.join('\n- '));
   };
+
 
   const getZipBtn=document.getElementById('ls-get-zip');
   if(getZipBtn){
@@ -123,22 +177,19 @@
       }
       const zip=new JSZip();
       entries.forEach(({key,val})=>{
-        // .txt keeps every entry openable/readable regardless of whether
-        // the underlying value is JSON, a plain string, or something else.
-        zip.file(_friendlyName(key).replace(/[\\/:*?"<>|]/g,'_')+'.txt', val);
+        zip.file(_friendlyName(key).replace(/[\\/:*?"<>|]/g,'_')+'.txt',val);
       });
       const blob=await zip.generateAsync({type:'blob'});
       const url=URL.createObjectURL(blob);
       const a=document.createElement('a');
-      a.href=url; a.download='local-storage.zip';
-      document.body.appendChild(a); a.click(); a.remove();
+      a.href=url;
+      a.download='local-storage.zip';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
       URL.revokeObjectURL(url);
     };
   }
 
-  // Exposed so Preferences (keybinds.js) can refresh this list whenever
-  // the Local Storage tab is opened or becomes visible - this module no
-  // longer has its own menu entry or modal.
   window._renderLocalStorage=render;
-
 })();
