@@ -256,15 +256,26 @@ function drawBg(){
 function _getClearArea(){
   const r=canvasArea.getBoundingClientRect();
   let left=0,right=0,top=0,bottom=0;
-  document.querySelectorAll('.float-panel').forEach(panel=>{
-    if(panel.classList.contains('fp-hidden')||!panel.classList.contains('docked')) return;
+  document.querySelectorAll('.float-panel.docked:not(.fp-hidden)').forEach(panel=>{
     const pr=panel.getBoundingClientRect();
-    if(panel.classList.contains('dock-left')) left=Math.max(left,pr.width);
-    else if(panel.classList.contains('dock-right')) right=Math.max(right,pr.width);
-    else if(panel.classList.contains('dock-top')) top=Math.max(top,pr.height);
-    else if(panel.classList.contains('dock-bottom')) bottom=Math.max(bottom,pr.height);
+    // Use the actual canvas-facing edge, including the panel's live dock
+    // offset. Width alone is insufficient when several dock columns sit
+    // side-by-side on the same edge.
+    if(panel.classList.contains('dock-left')){
+      left=Math.max(left,Math.min(r.width,Math.max(0,pr.right-r.left)));
+    }else if(panel.classList.contains('dock-right')){
+      right=Math.max(right,Math.min(r.width,Math.max(0,r.right-pr.left)));
+    }else if(panel.classList.contains('dock-top')){
+      top=Math.max(top,Math.min(r.height,Math.max(0,pr.bottom-r.top)));
+    }else if(panel.classList.contains('dock-bottom')){
+      bottom=Math.max(bottom,Math.min(r.height,Math.max(0,r.bottom-pr.top)));
+    }
   });
-  return {r,left,right,top,bottom,clearW:r.width-left-right,clearH:r.height-top-bottom};
+  return {
+    r,left,right,top,bottom,
+    clearW:Math.max(0,r.width-left-right),
+    clearH:Math.max(0,r.height-top-bottom)
+  };
 }
 
 /** Center canvas within the visible canvas-area */
@@ -305,10 +316,10 @@ function _toUnflippedNavPoint(x,y){
  * Used for initial layout and "Reset Layout" so large canvases (e.g. 1920×1080) don't start zoomed
  * in past the visible viewport. */
 function fitCanvasToView(){
-  const r=canvasArea.getBoundingClientRect();
-  if(r.width<=0||r.height<=0) return; // layout not settled yet
+  const {clearW,clearH}=_getClearArea();
+  if(clearW<=0||clearH<=0) return; // layout not settled yet
   const pad=40;
-  const fitZoom=Math.min((r.width-pad)/CW,(r.height-pad)/CH);
+  const fitZoom=Math.min((clearW-pad)/CW,(clearH-pad)/CH);
   zoom=Math.max(zoomMin,Math.min(zoomMax,fitZoom>0?fitZoom:1));
   centerCanvas();showZoom();
 }
