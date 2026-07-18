@@ -1557,7 +1557,7 @@ function applyToolPreset(json){
         delete settings['ts-texture-dataurl'];
       }
     }
-    if(captureTip){const pending=_strokeTipLoads.get(presetId);if(pending)pending.src='';_strokeTipLoads.delete(presetId);delete _tipThumbCache[presetId];}
+    if(captureTip){const pending=_strokeTipLoads.get(presetId);if(pending)pending.src='';_strokeTipLoads.delete(presetId);delete _tipThumbCache[presetId];const texturePending=_strokeTextureLoads.get(presetId);if(texturePending)texturePending.src='';_strokeTextureLoads.delete(presetId);_strokeTextureCache.delete(presetId);}
     for(const key of _strokePreviewCache.keys())if(key.startsWith(presetId+'|'))_strokePreviewCache.delete(key);
     const selector='.bp-stroke-canvas[data-preset-id="'+CSS.escape(presetId)+'"]';
     document.querySelectorAll(selector).forEach(canvas=>{const preset=findPreset(presetId);if(preset)_scheduleStrokePreview(canvas,preset);});  }
@@ -1801,6 +1801,8 @@ function applyToolPreset(json){
 
   const _strokePreviewCache=new Map();
   const _strokeTipLoads=new Map();
+  const _strokeTextureCache=new Map();
+  const _strokeTextureLoads=new Map();
   function _presetPreviewSettings(p){
     const settings=Object.assign({},p.settings||{},_presetSettings[_presetSettingsKey(p.id,_activeTab)]||{});
     const liveTool=tool==='eraser'?'eraser':'brush';
@@ -1810,7 +1812,7 @@ function applyToolPreset(json){
     return settings;
   }
   function _previewHash(p,settings,width,height,dpr,kind){
-    const keys=['ts-size','ts-spacing','ts-hardness','ts-opacity','ts-flow','ts-aa','ts-aa-mode','ts-airbrush','ts-airbrush-rate','ts-size-control','ts-opacity-control','ts-flow-control','ts-min-size','ts-min-flow','ts-tip-roundness','ts-tip-min-roundness','ts-angle','ts-tip-flip-x','ts-tip-flip-y','ts-tip-dataurl','ts-tip-url','ts-scatter-enabled','ts-scatter-amount','ts-texture-url','ts-texture-strength','ts-texture-scale'];
+    const keys=['ts-size','ts-spacing','ts-hardness','ts-opacity','ts-flow','ts-aa','ts-aa-mode','ts-airbrush','ts-airbrush-rate','ts-size-control','ts-opacity-control','ts-flow-control','ts-min-size','ts-min-flow','ts-rotation-mode','ts-tip-roundness','ts-tip-min-roundness','ts-angle','ts-tip-flip-x','ts-tip-flip-y','ts-tip-dataurl','ts-tip-url','ts-scatter-enabled','ts-scatter-amount','ts-texture-dataurl','ts-texture-url','ts-texture-strength','ts-texture-scale','ts-texture-invert','ts-texture-brightness','ts-texture-contrast'];
     return [p.id,_activeTab,kind,width,height,dpr,...keys.map(key=>settings[key]??'')].join('|');
   }
   function _requestStrokeTip(p,settings){
@@ -1823,6 +1825,34 @@ function applyToolPreset(json){
     };
     img.onerror=()=>{if(_strokeTipLoads.get(p.id)===img)_strokeTipLoads.delete(p.id);};img.src=src;
   }
+  function _requestStrokeTexture(p,settings){
+    const src=settings['ts-texture-dataurl']||settings['ts-texture-url'];
+    if(!src||(_strokeTextureCache.get(p.id)&&_strokeTextureCache.get(p.id).src===src)||_strokeTextureLoads.has(p.id))return;
+    const img=new Image();_strokeTextureLoads.set(p.id,img);
+    img.onload=()=>{
+      if(_strokeTextureLoads.get(p.id)!==img)return;_strokeTextureLoads.delete(p.id);_strokeTextureCache.set(p.id,{image:img,src});
+      for(const key of _strokePreviewCache.keys())if(key.startsWith(p.id+'|'))_strokePreviewCache.delete(key);
+      document.querySelectorAll('.bp-stroke-canvas[data-preset-id="'+CSS.escape(p.id)+'"]').forEach(canvas=>_scheduleStrokePreview(canvas,p));
+    };
+    img.onerror=()=>{if(_strokeTextureLoads.get(p.id)===img)_strokeTextureLoads.delete(p.id);};img.src=src;
+  }
+  function _applyPresetTexture(preview,p,settings){
+    const src=settings['ts-texture-dataurl']||settings['ts-texture-url'],entry=_strokeTextureCache.get(p.id);
+    if(!src||!entry||entry.src!==src||!entry.image)return;
+    const width=preview.width,height=preview.height,mask=document.createElement('canvas');mask.width=width;mask.height=height;
+    const mc=mask.getContext('2d'),scale=Math.max(.1,(Number(settings['ts-texture-scale'])||100)/100),pattern=mc.createPattern(entry.image,'repeat');
+    if(!pattern)return;if(typeof pattern.setTransform==='function')pattern.setTransform(new DOMMatrix().scale(scale*(window.devicePixelRatio||1)));
+    mc.fillStyle=pattern;mc.fillRect(0,0,width,height);
+    try{
+      const image=mc.getImageData(0,0,width,height),data=image.data,invert=!!settings['ts-texture-invert'],brightness=(Number(settings['ts-texture-brightness'])||0)/100,contrast=Math.max(.05,1+(Number(settings['ts-texture-contrast'])||0)/50);
+      for(let i=0;i<data.length;i+=4){let value=(data[i]*.2126+data[i+1]*.7152+data[i+2]*.0722)/255;if(invert)value=1-value;value=Math.max(0,Math.min(1,.5+(value+brightness-.5)*contrast));data[i]=data[i+1]=data[i+2]=255;data[i+3]=Math.round(value*255);}
+      mc.putImageData(image,0,0);
+    }catch(_){}
+    const strength=Math.max(0,Math.min(1,(Number(settings['ts-texture-strength'])||100)/100)),masked=document.createElement('canvas');masked.width=width;masked.height=height;
+    const xc=masked.getContext('2d');xc.drawImage(preview,0,0);xc.globalCompositeOperation='destination-in';xc.drawImage(mask,0,0);
+    const pc=preview.getContext('2d');pc.setTransform(1,0,0,1,0,0);const original=document.createElement('canvas');original.width=width;original.height=height;original.getContext('2d').drawImage(preview,0,0);
+    pc.clearRect(0,0,width,height);pc.globalAlpha=1-strength;pc.drawImage(original,0,0);pc.globalAlpha=strength;pc.drawImage(masked,0,0);pc.globalAlpha=1;
+  }
   function _renderPresetPreview(p,settings,width,height,dpr,kind){
     const out=document.createElement('canvas');out.width=Math.max(1,Math.round(width*dpr));out.height=Math.max(1,Math.round(height*dpr));
     const ctx=out.getContext('2d');ctx.clearRect(0,0,out.width,out.height);ctx.scale(dpr,dpr);ctx.imageSmoothingEnabled=settings['ts-aa']!==false&&settings['ts-aa-mode']!=='none';ctx.imageSmoothingQuality=settings['ts-aa-mode']==='strong'?'high':'medium';
@@ -1833,9 +1863,9 @@ function applyToolPreset(json){
     const opacity=Math.max(.04,Math.min(1,(Number(settings['ts-opacity'])||100)/100));
     const flow=Math.max(.04,Math.min(1,(Number(settings['ts-flow'])||100)/100));
     const roundness=Math.max(.08,Math.min(1,(Number(settings['ts-tip-roundness'])||100)/100));
-    const angle=(Number(settings['ts-angle'])||0)*Math.PI/180;
-    const edgeSafety=3+Math.max(0,1-hardness)*2,rotationWidth=Math.abs(Math.cos(angle))+roundness*Math.abs(Math.sin(angle)),rotationHeight=Math.abs(Math.sin(angle))+roundness*Math.abs(Math.cos(angle));
-    const diameter=Math.max(3,Math.min(requestedDiameter,(height-edgeSafety*2)/Math.max(1,rotationHeight))),step=Math.max(.75,diameter*spacing);
+    const angle=(Number(settings['ts-angle'])||0)*Math.PI/180,directionFollowsStroke=settings['ts-rotation-mode']==='stroke-direction';
+    const edgeSafety=3+Math.max(0,1-hardness)*2,rotationWidth=directionFollowsStroke?1:Math.abs(Math.cos(angle))+roundness*Math.abs(Math.sin(angle)),rotationHeight=directionFollowsStroke?1:Math.abs(Math.sin(angle))+roundness*Math.abs(Math.cos(angle));
+    const targetWave=Math.min(8,height*.20),diameter=Math.max(3,Math.min(requestedDiameter,(height-(edgeSafety+targetWave)*2)/Math.max(1,rotationHeight))),step=Math.max(.75,diameter*spacing);
     const radiusX=diameter*rotationWidth/2,radiusY=diameter*rotationHeight/2;
     const scatterAmount=settings['ts-scatter-enabled']?Math.max(0,Number(settings['ts-scatter-amount'])||0)/100:0;
     const scatterPad=Math.min(width*.08,diameter*scatterAmount*.5),safeX=Math.ceil(radiusX+edgeSafety+scatterPad),safeY=Math.ceil(radiusY+edgeSafety+scatterPad);
@@ -1852,25 +1882,26 @@ function applyToolPreset(json){
     if(kind==='stamp'){
       const stampPad=5,stampSize=Math.max(2,Math.min(diameter,(width-stampPad*2)/Math.max(.01,rotationWidth),(height-stampPad*2)/Math.max(.01,rotationHeight)));
       ctx.globalAlpha=baseAlpha;ctx.save();ctx.translate(width/2,height/2);if(angle)ctx.rotate(angle);
-      ctx.drawImage(dab,-stampSize/2,-stampSize*roundness/2,stampSize,stampSize*roundness);ctx.restore();return out;
+      ctx.drawImage(dab,-stampSize/2,-stampSize*roundness/2,stampSize,stampSize*roundness);ctx.restore();_applyPresetTexture(out,p,settings);return out;
     }
     const sizePressure=settings['ts-size-control']==='pressure',opacityPressure=settings['ts-opacity-control']==='pressure'||settings['ts-flow-control']==='pressure';
     const minScale=Math.max(.04,Math.min(1,(Number(settings['ts-min-size'])||0)/100)),minAlpha=Math.max(.04,Math.min(1,(Number(settings['ts-min-flow'])||0)/100));
-    const start=Math.min(width/2,Math.max(6,safeX)),end=Math.max(start,width-Math.max(6,safeX)),span=Math.max(1,end-start),dabCount=Math.max(1,Math.ceil(span/step)),waveRoom=Math.max(0,height/2-safeY);
+    const start=Math.min(width/2,Math.max(6,safeX)),end=Math.max(start,width-Math.max(6,safeX)),span=Math.max(1,end-start),dabCount=Math.max(1,Math.ceil(span/step)),waveRoom=Math.max(0,height/2-safeY),waveAmplitude=Math.min(targetWave,waveRoom);
     for(let dabIndex=0;dabIndex<=dabCount;dabIndex++){
       const distance=Math.min(span,dabIndex*step),t=distance/span,rise=Math.min(1,.58+t*2.8),fall=t<.62?1:Math.max(.02,1-(t-.62)/.38),pressure=Math.min(rise,fall);
       const scale=sizePressure?Math.max(minScale,pressure):(1-.18*(1-fall));
-      const x=start+distance,y=height/2+Math.sin(t*Math.PI*2.2)*Math.min(height*.08,waveRoom);
-      ctx.globalAlpha=baseAlpha*(opacityPressure?Math.max(minAlpha,pressure):1);ctx.save();ctx.translate(x,y);if(angle)ctx.rotate(angle);
+      const phase=t*Math.PI*2.5,wave=-Math.sin(phase),waveDerivative=-Math.PI*2.5*Math.cos(phase);
+      const x=start+distance,y=height/2+wave*waveAmplitude,strokeAngle=angle+(directionFollowsStroke?Math.atan2(waveDerivative*waveAmplitude,span):0);
+      ctx.globalAlpha=baseAlpha*(opacityPressure?Math.max(minAlpha,pressure):1);ctx.save();ctx.translate(x,y);if(strokeAngle)ctx.rotate(strokeAngle);
       ctx.drawImage(dab,-diameter*scale/2,-diameter*roundness*scale/2,diameter*scale,diameter*roundness*scale);ctx.restore();
     }
-    return out;
+    _applyPresetTexture(out,p,settings);return out;
   }
   function _scheduleStrokePreview(canvas,p){
     if(canvas.dataset.previewPending==='true')return;canvas.dataset.previewPending='true';
     requestAnimationFrame(()=>{
       canvas.dataset.previewPending='false';if(!canvas.isConnected)return;const rect=canvas.getBoundingClientRect(),kind=canvas.dataset.previewKind||'stroke',width=Math.max(kind==='stamp'?30:72,Math.round(rect.width||(kind==='stamp'?38:132))),height=Math.max(30,Math.round(rect.height||40)),dpr=Math.max(1,window.devicePixelRatio||1),settings=_presetPreviewSettings(p);
-      _requestStrokeTip(p,settings);const key=_previewHash(p,settings,width,height,dpr,kind);let cached=_strokePreviewCache.get(key);
+      _requestStrokeTip(p,settings);_requestStrokeTexture(p,settings);const key=_previewHash(p,settings,width,height,dpr,kind);let cached=_strokePreviewCache.get(key);
       if(!cached){cached=_renderPresetPreview(p,settings,width,height,dpr,kind);_strokePreviewCache.set(key,cached);if(_strokePreviewCache.size>300)_strokePreviewCache.delete(_strokePreviewCache.keys().next().value);}
       canvas.width=cached.width;canvas.height=cached.height;canvas.getContext('2d').drawImage(cached,0,0);
     });
