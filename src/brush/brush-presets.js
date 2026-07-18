@@ -515,7 +515,7 @@
   const dockedSimpleSettings=document.getElementById('brush-tool-settings-content');
   const basicSettings=document.querySelector('#tool-settings-body .ts-ps-panel[data-panel="basic"] .ts-section-body');
   if(dockedSimpleSettings&&basicSettings){
-    ['size','flow','hardness','aa'].forEach(key=>{
+    ['flow','hardness','aa'].forEach(key=>{
       const field=basicSettings.querySelector(`.ts-field[data-eye="${key}"]`);
       if(field)dockedSimpleSettings.appendChild(field);
     });
@@ -1202,7 +1202,8 @@
 })(); // end Tool Settings panel init
 
 // Preset get/apply
-function getToolPreset(){
+function getToolPreset(options){
+  const includeImages=!options||options.includeImages!==false;
   const ids=['ts-size','ts-opacity','ts-flow','ts-density','ts-hardness','ts-spacing','ts-spacing-mode','ts-rotation-mode','ts-angle','ts-angle-jitter','ts-tip-roundness','ts-round-jitter','ts-tip-min-roundness','ts-tip-flip-x','ts-tip-flip-y','ts-scatter-enabled','ts-scatter-amount','ts-scatter-count','ts-airbrush','ts-airbrush-rate',
     'ts-min-size','ts-size-jitter','ts-taper-mode','ts-start-taper','ts-end-taper','ts-size-control','ts-size-pressure-curve','ts-flow-control','ts-flow-pressure-curve','ts-opacity-control','ts-opacity-pressure-curve','ts-min-flow',
     'ts-texture-scale','ts-texture-strength','ts-texture-buildup','ts-texture-brightness','ts-texture-contrast','ts-texture-invert','ts-texture-each','ts-texture-mode'];
@@ -1218,7 +1219,7 @@ function getToolPreset(){
   //  Brush tip & texture image data (stored as data URLs for JSON export)
   // These are only written when an image is actually loaded; absent keys mean
   // "no custom tip/texture" so legacy presets silently skip this code path.
-  if(window.brushTipCanvas){
+  if(includeImages&&window.brushTipCanvas){
     try{ out['ts-tip-dataurl']=window.brushTipCanvas.toDataURL('image/png'); }catch(e){}
     out['ts-tip-mode']=(window.brushTipMode||'multiply');
     out['ts-tip-soft-alpha']=!!(window.brushTipSoftAlpha!==false);
@@ -1230,7 +1231,7 @@ function getToolPreset(){
     out['ts-tip-flip-x']=!!window.brushTipFlipX;
     out['ts-tip-flip-y']=!!window.brushTipFlipY;
   }
-  if(window.brushTextureCanvas){
+  if(includeImages&&window.brushTextureCanvas){
     try{ out['ts-texture-dataurl']=window.brushTextureCanvas.toDataURL('image/png'); }catch(e){}
     out['ts-texture-strength']=Math.round((window.brushTextureStrength!=null?window.brushTextureStrength:1.0)*100);
     out['ts-texture-buildup-custom']=Math.round((window.brushTextureBuildup!=null?window.brushTextureBuildup:1.0)*100);
@@ -1523,10 +1524,15 @@ function applyToolPreset(json){
     if(!presetId) return;
     const key=_presetSettingsKey(presetId,toolType);
     const settings=_presetSettings[key]||(_presetSettings[key]={});
-    document.querySelectorAll('#tool-settings-body input[id]:not([type=file]),#tool-settings-body select[id]').forEach(control=>{
-      settings[control.id]=control.type==='checkbox'?control.checked:control.value;
+    // getToolPreset() is the authoritative effective-settings resolver used by
+    // the live brush. Reuse it so docked controls and engine-side values never
+    // drift from the preset preview snapshot.
+    const effective=typeof getToolPreset==='function'?getToolPreset({includeImages:captureTip}):{};
+    Object.keys(effective).forEach(settingKey=>{
+      if(!captureTip&&(settingKey==='ts-tip-dataurl'||settingKey==='ts-texture-dataurl'))return;
+      settings[settingKey]=effective[settingKey];
     });
-    settings['ts-pressure-curves']=JSON.parse(JSON.stringify(window._tsCustomPressureCurves||{}));
+    settings['ts-size']=toolSizes[toolType];
     if(captureTip){
       if(window.brushTipCanvas){
         try{settings['ts-tip-dataurl']=window.brushTipCanvas.toDataURL('image/png');}catch(e){}
@@ -1551,7 +1557,10 @@ function applyToolPreset(json){
         delete settings['ts-texture-dataurl'];
       }
     }
-  }
+    if(captureTip){const pending=_strokeTipLoads.get(presetId);if(pending)pending.src='';_strokeTipLoads.delete(presetId);delete _tipThumbCache[presetId];}
+    for(const key of _strokePreviewCache.keys())if(key.startsWith(presetId+'|'))_strokePreviewCache.delete(key);
+    const selector='.bp-stroke-canvas[data-preset-id="'+CSS.escape(presetId)+'"]';
+    document.querySelectorAll(selector).forEach(canvas=>{const preset=findPreset(presetId);if(preset)_scheduleStrokePreview(canvas,preset);});  }
 
   //  Per-tool memory
   // Brush and Eraser each keep their OWN preset + slider values. Switching
@@ -1586,7 +1595,7 @@ function applyToolPreset(json){
   let _persistSettingsTimer=null;
   const TIP_SETTING_IDS=new Set(['ts-tip-mode','ts-tip-soft-alpha']);
   function captureActivePresetFromEvent(event){
-    if(_applyingPresetSettings||!event.target||!event.target.closest('#tool-settings-body')||!event.target.id) return;
+    if(_applyingPresetSettings||!event.target||!event.target.closest('#tool-settings-body,#brush-tool-settings-content')||!event.target.id) return;
     if(!event.target.matches('input:not([type=file]),select')) return;
     const captureTip=TIP_SETTING_IDS.has(event.target.id);
     _captureToPreset(_activePresetId, captureTip);
@@ -1790,6 +1799,86 @@ function applyToolPreset(json){
     return c;
   }
 
+  const _strokePreviewCache=new Map();
+  const _strokeTipLoads=new Map();
+  function _presetPreviewSettings(p){
+    const settings=Object.assign({},p.settings||{},_presetSettings[_presetSettingsKey(p.id,_activeTab)]||{});
+    const liveTool=tool==='eraser'?'eraser':'brush';
+    if(p.id===_activePresetId&&liveTool===_activeTab&&typeof getToolPreset==='function'){
+      Object.assign(settings,getToolPreset({includeImages:false}));settings['ts-size']=toolSizes[liveTool];
+    }
+    return settings;
+  }
+  function _previewHash(p,settings,width,height,dpr,kind){
+    const keys=['ts-size','ts-spacing','ts-hardness','ts-opacity','ts-flow','ts-aa','ts-aa-mode','ts-airbrush','ts-airbrush-rate','ts-size-control','ts-opacity-control','ts-flow-control','ts-min-size','ts-min-flow','ts-tip-roundness','ts-tip-min-roundness','ts-angle','ts-tip-flip-x','ts-tip-flip-y','ts-tip-dataurl','ts-tip-url','ts-scatter-enabled','ts-scatter-amount','ts-texture-url','ts-texture-strength','ts-texture-scale'];
+    return [p.id,_activeTab,kind,width,height,dpr,...keys.map(key=>settings[key]??'')].join('|');
+  }
+  function _requestStrokeTip(p,settings){
+    const src=settings['ts-tip-dataurl']||settings['ts-tip-url'];if(!src||(_tipThumbCache[p.id]&&_tipThumbCache[p.id].src===src)||_strokeTipLoads.has(p.id))return;
+    const img=new Image();_strokeTipLoads.set(p.id,img);
+    img.onload=()=>{
+      if(_strokeTipLoads.get(p.id)!==img)return;_strokeTipLoads.delete(p.id);_tipThumbCache[p.id]={alphaCanvas:_tipImageToAlphaCanvas(img),src};
+      for(const key of _strokePreviewCache.keys())if(key.startsWith(p.id+'|'))_strokePreviewCache.delete(key);
+      document.querySelectorAll('.bp-stroke-canvas[data-preset-id="'+CSS.escape(p.id)+'"]').forEach(canvas=>_scheduleStrokePreview(canvas,p));
+    };
+    img.onerror=()=>{if(_strokeTipLoads.get(p.id)===img)_strokeTipLoads.delete(p.id);};img.src=src;
+  }
+  function _renderPresetPreview(p,settings,width,height,dpr,kind){
+    const out=document.createElement('canvas');out.width=Math.max(1,Math.round(width*dpr));out.height=Math.max(1,Math.round(height*dpr));
+    const ctx=out.getContext('2d');ctx.clearRect(0,0,out.width,out.height);ctx.scale(dpr,dpr);ctx.imageSmoothingEnabled=settings['ts-aa']!==false&&settings['ts-aa-mode']!=='none';ctx.imageSmoothingQuality=settings['ts-aa-mode']==='strong'?'high':'medium';
+    const rawSize=Math.max(1,Number(settings['ts-size'])||Number(p.settings&&p.settings['ts-size'])||12);
+    const requestedDiameter=5+Math.sqrt(rawSize)*2.25;
+    const spacing=Math.max(.04,(Number(settings['ts-spacing'])||12)/100);
+    const hardness=Math.max(0,Math.min(1,(Number(settings['ts-hardness'])||0)/100));
+    const opacity=Math.max(.04,Math.min(1,(Number(settings['ts-opacity'])||100)/100));
+    const flow=Math.max(.04,Math.min(1,(Number(settings['ts-flow'])||100)/100));
+    const roundness=Math.max(.08,Math.min(1,(Number(settings['ts-tip-roundness'])||100)/100));
+    const angle=(Number(settings['ts-angle'])||0)*Math.PI/180;
+    const edgeSafety=3+Math.max(0,1-hardness)*2,rotationWidth=Math.abs(Math.cos(angle))+roundness*Math.abs(Math.sin(angle)),rotationHeight=Math.abs(Math.sin(angle))+roundness*Math.abs(Math.cos(angle));
+    const diameter=Math.max(3,Math.min(requestedDiameter,(height-edgeSafety*2)/Math.max(1,rotationHeight))),step=Math.max(.75,diameter*spacing);
+    const radiusX=diameter*rotationWidth/2,radiusY=diameter*rotationHeight/2;
+    const scatterAmount=settings['ts-scatter-enabled']?Math.max(0,Number(settings['ts-scatter-amount'])||0)/100:0;
+    const scatterPad=Math.min(width*.08,diameter*scatterAmount*.5),safeX=Math.ceil(radiusX+edgeSafety+scatterPad),safeY=Math.ceil(radiusY+edgeSafety+scatterPad);
+    const tipSrc=settings['ts-tip-dataurl']||settings['ts-tip-url'],tipEntry=_tipThumbCache[p.id],tip=tipEntry&&tipEntry.src===tipSrc?tipEntry.alphaCanvas:null;
+    const dab=document.createElement('canvas'),dabScale=Math.max(1,dpr),dabW=Math.ceil(diameter*dabScale),dabH=Math.ceil(diameter*roundness*dabScale);
+    dab.width=Math.max(1,dabW);dab.height=Math.max(1,dabH);const dc=dab.getContext('2d');dc.imageSmoothingEnabled=ctx.imageSmoothingEnabled;dc.imageSmoothingQuality=ctx.imageSmoothingQuality;
+    if(tip){
+      dc.drawImage(tip,0,0,dab.width,dab.height);dc.globalCompositeOperation='source-in';dc.fillStyle=_activeTab==='eraser'?'rgba(226,75,74,1)':'rgba(225,225,232,1)';dc.fillRect(0,0,dab.width,dab.height);
+    }else{
+      const radius=Math.max(dab.width,dab.height)/2,gradient=dc.createRadialGradient(dab.width/2,dab.height/2,0,dab.width/2,dab.height/2,radius);
+      const inner=Math.max(0,Math.min(.97,hardness));gradient.addColorStop(0,'rgba(225,225,232,1)');gradient.addColorStop(inner,'rgba(225,225,232,1)');gradient.addColorStop(1,'rgba(225,225,232,0)');dc.fillStyle=gradient;dc.fillRect(0,0,dab.width,dab.height);
+    }
+    const baseAlpha=Math.min(1,opacity*(.35+.65*flow));
+    if(kind==='stamp'){
+      const stampPad=5,stampSize=Math.max(2,Math.min(diameter,(width-stampPad*2)/Math.max(.01,rotationWidth),(height-stampPad*2)/Math.max(.01,rotationHeight)));
+      ctx.globalAlpha=baseAlpha;ctx.save();ctx.translate(width/2,height/2);if(angle)ctx.rotate(angle);
+      ctx.drawImage(dab,-stampSize/2,-stampSize*roundness/2,stampSize,stampSize*roundness);ctx.restore();return out;
+    }
+    const sizePressure=settings['ts-size-control']==='pressure',opacityPressure=settings['ts-opacity-control']==='pressure'||settings['ts-flow-control']==='pressure';
+    const minScale=Math.max(.04,Math.min(1,(Number(settings['ts-min-size'])||0)/100)),minAlpha=Math.max(.04,Math.min(1,(Number(settings['ts-min-flow'])||0)/100));
+    const start=Math.min(width/2,Math.max(6,safeX)),end=Math.max(start,width-Math.max(6,safeX)),span=Math.max(1,end-start),dabCount=Math.max(1,Math.ceil(span/step)),waveRoom=Math.max(0,height/2-safeY);
+    for(let dabIndex=0;dabIndex<=dabCount;dabIndex++){
+      const distance=Math.min(span,dabIndex*step),t=distance/span,rise=Math.min(1,.58+t*2.8),fall=t<.62?1:Math.max(.02,1-(t-.62)/.38),pressure=Math.min(rise,fall);
+      const scale=sizePressure?Math.max(minScale,pressure):(1-.18*(1-fall));
+      const x=start+distance,y=height/2+Math.sin(t*Math.PI*2.2)*Math.min(height*.08,waveRoom);
+      ctx.globalAlpha=baseAlpha*(opacityPressure?Math.max(minAlpha,pressure):1);ctx.save();ctx.translate(x,y);if(angle)ctx.rotate(angle);
+      ctx.drawImage(dab,-diameter*scale/2,-diameter*roundness*scale/2,diameter*scale,diameter*roundness*scale);ctx.restore();
+    }
+    return out;
+  }
+  function _scheduleStrokePreview(canvas,p){
+    if(canvas.dataset.previewPending==='true')return;canvas.dataset.previewPending='true';
+    requestAnimationFrame(()=>{
+      canvas.dataset.previewPending='false';if(!canvas.isConnected)return;const rect=canvas.getBoundingClientRect(),kind=canvas.dataset.previewKind||'stroke',width=Math.max(kind==='stamp'?30:72,Math.round(rect.width||(kind==='stamp'?38:132))),height=Math.max(30,Math.round(rect.height||40)),dpr=Math.max(1,window.devicePixelRatio||1),settings=_presetPreviewSettings(p);
+      _requestStrokeTip(p,settings);const key=_previewHash(p,settings,width,height,dpr,kind);let cached=_strokePreviewCache.get(key);
+      if(!cached){cached=_renderPresetPreview(p,settings,width,height,dpr,kind);_strokePreviewCache.set(key,cached);if(_strokePreviewCache.size>300)_strokePreviewCache.delete(_strokePreviewCache.keys().next().value);}
+      canvas.width=cached.width;canvas.height=cached.height;canvas.getContext('2d').drawImage(cached,0,0);
+    });
+  }
+  const _strokePreviewPresetByCanvas=new WeakMap();
+  const _strokePreviewResizeObserver=typeof ResizeObserver==='undefined'?null:new ResizeObserver(entries=>{
+    entries.forEach(entry=>{const preset=_strokePreviewPresetByCanvas.get(entry.target);if(preset)_scheduleStrokePreview(entry.target,preset);});
+  });
   function drawPresetThumb(canvas, p){
     const s = _presetSettings[_presetSettingsKey(p.id,'brush')];
     // Support both data-URL tips (imported ABR / user upload) and file-URL tips
@@ -2131,26 +2220,23 @@ function applyToolPreset(json){
 
   //  Create a single bp-item element (draggable + reorderable)
   function makeBpItem(p, groupId){
-    const item = document.createElement('div');
+    const item=document.createElement('div');
     item.className='bp-item'+(p.id===_activePresetId?' active':'');
-    item.dataset.presetId=p.id;
-    item.dataset.groupId=groupId;
-    item.draggable=true;
-    const prev = document.createElement('div');
-    prev.className='bp-preview';
-    const cvs = document.createElement('canvas');
-    drawPresetThumb(cvs, p);
-    prev.appendChild(cvs);
-    const lbl = document.createElement('div');
-    lbl.className='bp-name';
-    lbl.textContent=p.name;
-    lbl.title=p.name;
-    item.title=p.name;
-    item.appendChild(prev);
-    item.appendChild(lbl);
+    item.dataset.presetId=p.id;item.dataset.groupId=groupId;item.draggable=true;
+    item.tabIndex=0;item.setAttribute('role','button');item.setAttribute('aria-pressed',String(p.id===_activePresetId));item.setAttribute('aria-label',p.name+' brush preset');item.title=p.name;
+    const previewRow=document.createElement('div');previewRow.className='bp-preview-row';
+    const stampWrap=document.createElement('div');stampWrap.className='bp-preview bp-tip-preview';
+    const stamp=document.createElement('canvas');stamp.className='bp-stroke-canvas';stamp.dataset.presetId=p.id;stamp.dataset.previewKind='stamp';stamp.setAttribute('aria-hidden','true');stampWrap.appendChild(stamp);
+    const strokeWrap=document.createElement('div');strokeWrap.className='bp-preview bp-line-preview';
+    const stroke=document.createElement('canvas');stroke.className='bp-stroke-canvas';stroke.dataset.presetId=p.id;stroke.dataset.previewKind='stroke';stroke.setAttribute('aria-hidden','true');strokeWrap.appendChild(stroke);previewRow.append(stampWrap,strokeWrap);
+    const info=document.createElement('div');info.className='bp-preset-info';
+    const lbl=document.createElement('div');lbl.className='bp-name';lbl.textContent=p.name;lbl.title=p.name;
+    const size=document.createElement('div');size.className='bp-preset-size';const settings=_presetPreviewSettings(p);size.textContent=Math.round(Number(settings['ts-size'])||Number(p.settings&&p.settings['ts-size'])||6);info.append(lbl,size);
+    item.append(previewRow,info);
+    [stamp,stroke].forEach(canvas=>{_strokePreviewPresetByCanvas.set(canvas,p);if(_strokePreviewResizeObserver)_strokePreviewResizeObserver.observe(canvas);_scheduleStrokePreview(canvas,p);});
     item.onclick=()=>selectPreset(p.id);
-    item.addEventListener('contextmenu', e=>showBpCtxMenu(e, p.id));
-
+    item.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();selectPreset(p.id);}});
+    item.addEventListener('contextmenu',e=>showBpCtxMenu(e,p.id));
     item.addEventListener('dragstart', e=>{
       _drag={type:'item', id:p.id, fromGroup:groupId};
       item.classList.add('dragging');
@@ -2167,7 +2253,7 @@ function applyToolPreset(json){
       if(item.dataset.presetId===_drag.id) return;
       e.preventDefault();
       const r=item.getBoundingClientRect();
-      const before = (e.clientX - r.left) < r.width/2;
+      const before = (e.clientY - r.top) < r.height/2;
       document.querySelectorAll('.bp-item.drop-before,.bp-item.drop-after').forEach(el=>{if(el!==item) el.classList.remove('drop-before','drop-after');});
       item.classList.toggle('drop-before', before);
       item.classList.toggle('drop-after', !before);
@@ -2593,7 +2679,7 @@ function applyToolPreset(json){
   //  Refresh grid active states
   function refreshGrid(){
     document.querySelectorAll('.bp-item').forEach(el=>{
-      el.classList.toggle('active', el.dataset.presetId===_activePresetId);
+      const active=el.dataset.presetId===_activePresetId;el.classList.toggle('active',active);el.setAttribute('aria-pressed',String(active));
     });
   }
 
