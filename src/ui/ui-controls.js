@@ -1,4 +1,61 @@
 // ════════════════════════════════════════════════════════════════
+// Form accessibility normalization. Existing IDs remain authoritative; controls
+// created by tool panels receive collision-free IDs/names as they enter the DOM.
+(function initFormControlAccessibility(){
+  const selector='input:not([type="hidden"]),select,textarea';
+  let generatedId=0;
+  const slug=value=>String(value||'field').trim().toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||'field';
+  const uniqueId=base=>{
+    let id=slug(base),candidate=id;
+    while(document.getElementById(candidate))candidate=id+'-'+(++generatedId);
+    return candidate;
+  };
+  const contextName=control=>{
+    const mirror=control.closest('[data-mirror-target]')?.dataset.mirrorTarget;
+    if(mirror)return mirror+'-mirror-'+(control.type||control.tagName.toLowerCase());
+    if(control.name)return control.name+(control.value?'-'+control.value:'');
+    const owner=control.closest('[id],[data-panel],[data-body]');
+    const ownerName=owner&&(owner.id||owner.dataset.panel||owner.dataset.body);
+    return (ownerName||'app')+'-'+(control.type||control.tagName.toLowerCase());
+  };
+  const readableName=control=>{
+    const wrapping=control.closest('label');
+    if(wrapping){const text=wrapping.textContent.trim();if(text)return text;}
+    const row=control.closest('.ts-row,.modal-row,.selection-option-field,.tool-group-option-row,.cp-slider-row,.palette-size-control');
+    const text=row?.querySelector('.ts-label,.ts-label-sm,.selection-option-label,label,span')?.textContent?.trim();
+    if(text)return text;
+    return slug(control.id).replace(/-/g,' ');
+  };
+  function normalizeControl(control){
+    if(!control.id)control.id=uniqueId(contextName(control));
+    if(!control.name)control.name=control.id;
+    const wrapping=control.closest('label');
+    if(wrapping&&!wrapping.htmlFor)wrapping.htmlFor=control.id;
+    let explicit=document.querySelector('label[for="'+CSS.escape(control.id)+'"]');
+    if(!explicit){
+      const row=control.closest('.ts-row,.modal-row,.selection-option-field,.tool-group-option-row,.cp-slider-row,.palette-size-control');
+      const label=row?.querySelector('label:not([for])');
+      if(label){label.htmlFor=control.id;explicit=label;}
+    }
+    if(!explicit&&!wrapping&&!control.hasAttribute('aria-label')&&!control.hasAttribute('aria-labelledby')){
+      control.setAttribute('aria-label',readableName(control));
+    }
+  }
+  function normalize(root){
+    if(root.nodeType!==Node.ELEMENT_NODE&&root!==document)return;
+    const controls=[];
+    if(root.matches?.(selector))controls.push(root);
+    root.querySelectorAll?.(selector).forEach(control=>controls.push(control));
+    controls.forEach(normalizeControl);
+    root.querySelectorAll?.('label:not([for])').forEach(label=>{
+      const control=label.querySelector(selector)||label.parentElement?.querySelector(selector);
+      if(control)label.htmlFor=control.id;
+    });
+  }
+  normalize(document);
+  new MutationObserver(records=>records.forEach(record=>record.addedNodes.forEach(normalize)))
+    .observe(document.documentElement,{childList:true,subtree:true});
+})();
 // Panel resizing (Tools / Layers, docked or floating) now lives
 // entirely inside panels.js's FloatPanels module — a single layout
 // state owns dock order, dock size, and floating rect for every
