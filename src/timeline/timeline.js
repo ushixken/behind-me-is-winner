@@ -1,4 +1,4 @@
-﻿// ════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════
 // PLAYBACK
 // ════════════════════════════════════════════════════════════════
 // ════════════════════════════════════════════════════════════════
@@ -578,7 +578,6 @@ function tlZoomToSpan(newSpan, anchorFrame, anchorScreenX){
     const trackW = track.clientWidth;   // track is flex:1 with 4px margins each side
 
     // Diagnostics — remove once confirmed working
-    console.log('[tl-hscroll] totalW='+totalW+' viewW='+viewW+' trackW='+trackW+' scrollLeft='+tlScroll.scrollLeft);
 
     const fits = totalW <= viewW;
     row.classList.toggle('tl-hscroll-full', fits);
@@ -600,8 +599,6 @@ function tlZoomToSpan(newSpan, anchorFrame, anchorScreenX){
 
     thumb.style.width = thumbW + 'px';
     thumb.style.left  = leftPx + 'px';
-
-    console.log('[tl-hscroll] thumbW='+thumbW+' leftPx='+leftPx);
   };
 
   // Keep thumb in sync whenever tlScroll is scrolled by any other means

@@ -1,4 +1,4 @@
-﻿// ════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════
 // FLOOD FILL
 // ════════════════════════════════════════════════════════════════
 function floodFill(x,y,fc){
@@ -1644,7 +1644,7 @@ const FloatPanels=(function(){
     requestAnimationFrame(()=>requestAnimationFrame(()=>{
       if(typeof fitCanvasToView==='function') fitCanvasToView();
       else if(typeof centerCanvas==='function') centerCanvas();
-      updateWindowChecks();
+      if(windowCheckHook) windowCheckHook();
     }));
   }
 

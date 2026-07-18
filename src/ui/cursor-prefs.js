@@ -35,7 +35,8 @@ function _setCursorStyle(v){
 function _refreshActiveCursor(){
   if(typeof activeC==='undefined'||!activeC) return;
   if(panning||_zoomDrag||_rotateDrag||spaceHeld) return;
-  activeC.style.cursor=activeGroupId?'not-allowed':_baseCursorCSS();
+  const toolGroupId=window.ToolGroups?.activeGroupId||null;
+  activeC.style.cursor=toolGroupId?'not-allowed':_baseCursorCSS();
 }
 
 // Apply on load, since the CSS default (crosshair) is only a fallback for

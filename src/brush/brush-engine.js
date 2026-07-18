@@ -2851,4 +2851,4 @@ activeC.addEventListener('pointerup',e=>{
   if(activeC.hasPointerCapture(e.pointerId))activeC.releasePointerCapture(e.pointerId);
   _pointerEndStroke(e);
 });
-activeC.addEventListener('pointercancel',()=>{_endStroke();});z
+activeC.addEventListener('pointercancel',()=>{_endStroke();});
