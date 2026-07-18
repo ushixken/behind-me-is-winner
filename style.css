@@ -1677,9 +1677,9 @@ input.size-val-input{
 .tool-options-drawer-content{display:none;flex:1 1 auto;height:auto;min-height:0;margin-right:var(--dock-scroll-edge-gap);padding:8px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;touch-action:pan-y;box-sizing:border-box;scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:var(--border2) transparent;}
 .tool-options-drawer.expanded .tool-options-drawer-content{display:flex;flex-direction:column;gap:7px;}
 .fp-body[data-body="brush-presets"]>.tool-settings-drawer{width:100%;margin:auto 0 0;}
-.ts-docked-simple-settings{gap:0!important;padding:9px 10px 10px;}
-.ts-docked-simple-settings>.ts-field{flex:0 0 auto;min-width:0;padding:0 0 9px;}
-.ts-docked-simple-settings>.ts-field+.ts-field{padding-top:8px;border-top:1px solid var(--border);}
+.ts-docked-simple-settings{gap:0!important;padding:7px 10px 8px;}
+.ts-docked-simple-settings>.ts-field{flex:0 0 auto;min-width:0;padding:0 0 5px;}
+.ts-docked-simple-settings>.ts-field+.ts-field{padding-top:5px;border-top:1px solid var(--border);}
 .ts-docked-simple-settings .ts-eye-btn{display:none!important;}
 .ts-docked-simple-settings .ts-divider{display:none;}
 .ts-docked-simple-settings .ts-row{min-width:0;}
@@ -1688,7 +1688,7 @@ input.size-val-input{
 .ts-docked-simple-settings>.ts-field[data-eye="size"],
 .ts-docked-simple-settings>.ts-field[data-eye="flow"]>.ts-row,
 .ts-docked-simple-settings>.ts-field[data-eye="hardness"]>.ts-row{
-  display:grid;align-items:center;width:100%;min-width:0;column-gap:6px;row-gap:5px;
+  display:grid;align-items:center;width:100%;min-width:0;column-gap:6px;row-gap:4px;
 }
 .ts-docked-simple-settings>.ts-field[data-eye="size"]{
   grid-template-columns:minmax(72px,1fr) 36px 27px 22px;
@@ -1714,8 +1714,8 @@ input.size-val-input{
 .ts-docked-simple-settings .size-unit-btn{width:27px;height:22px;padding:0;}
 .ts-docked-simple-settings .ts-simple-settings-btn{width:22px;height:22px;flex:none;}
 .ts-docked-simple-settings>.ts-field[data-eye="aa"]{padding-bottom:0;}
-.ts-docked-simple-settings>.ts-field[data-eye="aa"]>.ts-row{min-height:24px;}
-.ts-docked-simple-settings #ts-aa-mode-row{display:grid;grid-template-columns:1fr;gap:5px;margin-top:4px;}
+.ts-docked-simple-settings>.ts-field[data-eye="aa"]>.ts-row{min-height:22px;}
+.ts-docked-simple-settings #ts-aa-mode-row{display:grid;grid-template-columns:1fr;gap:3px;margin-top:1px;}
 .ts-docked-simple-settings #ts-aa-mode-row>.ts-label{width:auto;color:var(--text);}
 .ts-docked-simple-settings #ts-aa-mode{width:100%;min-width:0;height:24px;}
 .tool-options-message,.tf-options-empty{padding:2px 0;color:var(--text2);font-size:10px;line-height:1.4;}
