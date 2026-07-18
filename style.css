@@ -621,10 +621,7 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
   position:absolute;left:0;right:0;top:4px;height:1px;
   background:var(--border2);pointer-events:none;opacity:1;
 }
-.fp-split-resize:hover > .fp-split-divider,
-.fp-split-resize.dragging > .fp-split-divider{
-  background:var(--text2);
-}
+
 
 /* â”€â”€ FLOATING RESIZE HANDLES (4 edges of a free-floating panel) â”€â”€â”€ */
 .fp-float-resize{position:absolute;background:transparent;touch-action:none;-ms-touch-action:none;}

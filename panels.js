@@ -1311,11 +1311,12 @@ const FloatPanels=(function(){
   // making the seam handle silently do nothing on drag. Dynamic lookup fixes this for
   // all panels, including the keyframe-switcher which gets re-stacked most often.
   function _bindSplitResizeDrag(rh,childKey){
-    let active=false,startY=0,startSize=0;
+    let active=false,startY=0,startSize=0,activePointerId=null;
     rh.addEventListener('pointerdown',e=>{
       if(dockResizeBlocked()) return;
       e.preventDefault();e.stopPropagation();
-      active=true;rh.setPointerCapture(e.pointerId);
+      active=true;activePointerId=e.pointerId;
+      rh.setPointerCapture(e.pointerId);
       startY=e.clientY;startSize=splitSize[childKey]||180;
     });
     rh.addEventListener('pointermove',e=>{
@@ -1328,9 +1329,18 @@ const FloatPanels=(function(){
       renderSide(['left','right','top','bottom'].find(s=>dockOrder[s].includes(currentHost))||'left');
       // Reposition this handle live (renderSide already calls _syncSplitResizeHandle)
     });
-    function end(){ if(!active) return; active=false; _saveLayout(); }
+    function end(){
+      if(!active) return;
+      const pointerId=activePointerId;
+      active=false;activePointerId=null;
+      if(pointerId!=null&&rh.hasPointerCapture&&rh.hasPointerCapture(pointerId)){
+        rh.releasePointerCapture(pointerId);
+      }
+      _saveLayout();
+    }
     rh.addEventListener('pointerup',end);
     rh.addEventListener('pointercancel',end);
+    rh.addEventListener('lostpointercapture',end);
     // Same safety net as bindDockResize: don't let a stolen pointer
     // capture (e.g. from dragging the timeline) leave this split seam
     // permanently glued to the mouse.
