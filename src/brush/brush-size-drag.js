@@ -26,8 +26,7 @@
   });
   document.body.appendChild(previewEl);
 
-  // Small readout of the exact size next to the circle, in whatever unit
-  // (px/mm) the rest of the size UI is currently showing.
+  // Small unitless readout of the exact fractional brush size.
   const labelEl=document.createElement('div');
   labelEl.id='brush-size-preview-label';
   Object.assign(labelEl.style,{
@@ -46,11 +45,8 @@
   });
   document.body.appendChild(labelEl);
 
-  function sizeLabelText(px){
-    if(typeof window._brushSizeUnit!=='undefined' && window._brushSizeUnit.unit==='mm'){
-      return window._brushSizeUnit.pxToMm(px).toFixed(px<10*window._brushSizeUnit.pxToMm(1)?2:1)+' mm';
-    }
-    return (px<10?px.toFixed(1):Math.round(px))+' px';
+  function sizeLabelText(value){
+    return typeof window.formatBrushSize==='function'?window.formatBrushSize(value):String(Math.round(value*10)/10);
   }
 
   function showPreview(clientX,clientY,px){

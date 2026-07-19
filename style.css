@@ -1332,14 +1332,6 @@ input.size-val-input{
 }
 #bp-size-bar input.size-val-input{width:42px;height:16px;}
 .ts-row input.size-val-input{width:48px;height:18px;}
-/* px / mm unit toggle */
-.size-unit-btn{
-  font-size:9px;line-height:1;padding:2px 5px;border-radius:3px;
-  border:1px solid var(--border2);background:var(--bg2);color:var(--text2);
-  cursor:pointer;flex-shrink:0;white-space:nowrap;
-}
-.size-unit-btn:hover{background:var(--bg4,rgba(255,255,255,0.1));color:var(--text1);}
-.size-unit-btn.active-mm{color:var(--accent);border-color:var(--accent);}
 #ts-size, #bp-sz{touch-action:none;}
 /* Brush preset groups */
 #brush-preset-grid{min-height:0;min-width:0;width:100%;box-sizing:border-box;} /* FIX: without this, flex children with
@@ -1745,7 +1737,6 @@ input.size-val-input{
 .ts-docked-simple-settings .ts-val{width:36px;min-width:0;padding:1px 2px;text-align:right;font-variant-numeric:tabular-nums;overflow:hidden;}
 .ts-docked-simple-settings .mini-setting-value-group{display:flex;align-items:center;justify-content:flex-end;min-width:0;gap:3px;}
 .ts-docked-simple-settings input.size-val-input{width:36px;height:20px;}
-.ts-docked-simple-settings .size-unit-btn{width:27px;height:22px;padding:0;}
 .ts-docked-simple-settings .ts-simple-settings-btn{width:22px;height:22px;flex:none;}
 .ts-docked-simple-settings>.ts-field[data-eye="aa"]{padding-bottom:0;}
 .ts-docked-simple-settings>.ts-field[data-eye="aa"]>.ts-row{min-height:22px;}

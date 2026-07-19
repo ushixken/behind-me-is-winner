@@ -681,9 +681,8 @@
         else mirror.value=source.value;
         mirror.disabled=source.disabled;
         if(value){
-          if(row.dataset.mirrorTarget==='ts-size' && window._brushSizeUnit){
-            const px=+source.value;
-            value.textContent=window._brushSizeUnit.unit==='mm'?String(Math.round(window._brushSizeUnit.pxToMm(px)*100)/100):String(Math.round(px*10)/10);
+          if(row.dataset.mirrorTarget==='ts-size' && window.formatBrushSize){
+            value.textContent=window.formatBrushSize(source.value);
           } else value.textContent=source.value+(row.dataset.mirrorSuffix||'');
         }
       };
@@ -753,7 +752,6 @@
         if(apply){
           let value=parseFloat(input.value);
           if(Number.isFinite(value)){
-            if(display.dataset.sizeValue==='true' && window._brushSizeUnit?.unit==='mm') value=window._brushSizeUnit.mmToPx(value);
             value=Math.max(+source.min,Math.min(+source.max,value));
             source.value=value;source.dispatchEvent(new Event('input',{bubbles:true}));source.dispatchEvent(new Event('change',{bubbles:true}));
           }
@@ -766,14 +764,6 @@
     }
     document.addEventListener('click',event=>{const display=event.target.closest&&event.target.closest('.ts-value-edit');if(display) beginEdit(display);});
     document.addEventListener('keydown',event=>{if((event.key==='Enter'||event.key===' ')&&event.target.classList?.contains('ts-value-edit')){event.preventDefault();beginEdit(event.target);}});
-    const advancedUnit=document.querySelector('.ts-advanced-size-unit');
-    const simpleUnit=document.getElementById('ts-size-unit');
-    if(advancedUnit&&simpleUnit){
-      const syncUnit=()=>{advancedUnit.textContent=simpleUnit.textContent;advancedUnit.classList.toggle('active-mm',simpleUnit.classList.contains('active-mm'));document.getElementById('ts-size')?.dispatchEvent(new Event('input',{bubbles:true}));};
-      advancedUnit.addEventListener('click',()=>{simpleUnit.click();syncUnit();});
-      simpleUnit.addEventListener('click',()=>setTimeout(syncUnit,0));
-      syncUnit();
-    }
   })();
 
   (function initPressureCurveEditors(){
@@ -2410,7 +2400,7 @@ function applyToolPreset(json){
     const stroke=document.createElement('canvas');stroke.className='bp-stroke-canvas';stroke.dataset.presetId=p.id;stroke.dataset.previewKind='stroke';stroke.setAttribute('aria-hidden','true');strokeWrap.appendChild(stroke);previewRow.append(stampWrap,strokeWrap);
     const info=document.createElement('div');info.className='bp-preset-info';
     const lbl=document.createElement('div');lbl.className='bp-name';lbl.textContent=p.name;lbl.title=p.name;
-    const size=document.createElement('div');size.className='bp-preset-size';const settings=_presetPreviewSettings(p);size.textContent=Math.round(Number(settings['ts-size'])||Number(p.settings&&p.settings['ts-size'])||6);info.append(lbl,size);
+    const size=document.createElement('div');size.className='bp-preset-size';const settings=_presetPreviewSettings(p);size.textContent=window.formatBrushSize?window.formatBrushSize(Number(settings['ts-size'])||Number(p.settings&&p.settings['ts-size'])||6):String(Math.round((Number(settings['ts-size'])||Number(p.settings&&p.settings['ts-size'])||6)*10)/10);info.append(lbl,size);
     item.append(previewRow,info);
     [stamp,stroke].forEach(canvas=>{_strokePreviewPresetByCanvas.set(canvas,p);if(_strokePreviewResizeObserver)_strokePreviewResizeObserver.observe(canvas);_scheduleStrokePreview(canvas,p);});
     item.onclick=()=>selectPreset(p.id);
@@ -4128,7 +4118,7 @@ function showABRPicker(brushes, filename, onImport) {
 
   brushes.forEach((b, i) => {
     const tile = document.createElement('div');
-    tile.title = b.name + '\n' + b.size + 'px  spacing:' + b.spacing + '%';
+    tile.title = b.name + '\n' + (window.formatBrushSize?window.formatBrushSize(b.size):b.size) + '  spacing:' + b.spacing + '%';
     Object.assign(tile.style, {
       display:'flex', flexDirection:'column', alignItems:'center',
       gap:'3px', padding:'5px', borderRadius:'6px',
@@ -4153,7 +4143,7 @@ function showABRPicker(brushes, filename, onImport) {
 
     // Size badge
     const sz = document.createElement('span');
-    sz.textContent = b.size+'px';
+    sz.textContent = window.formatBrushSize?window.formatBrushSize(b.size):String(b.size);
     Object.assign(sz.style,{
       fontSize:'7px', color:'var(--accent)', fontWeight:'600',
     });
@@ -4188,7 +4178,7 @@ function showABRPicker(brushes, filename, onImport) {
       const clampedSize=_applyABRSettingsToUI(b.size,b.spacing,mapped);
       const fn=document.getElementById('ts-tip-filename');
       if(fn){fn.textContent=b.name;fn.style.display='';}
-      showInfo('Loaded "'+b.name+'" ('+clampedSize+'px) from '+filename+'.','ABR Import');
+      showInfo('Loaded "'+b.name+'" ('+(window.formatBrushSize?window.formatBrushSize(clampedSize):clampedSize)+') from '+filename+'.','ABR Import');
     });
   });
 

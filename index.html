@@ -377,7 +377,6 @@
             <label>Size</label>
             <input type="range" id="bp-sz" min="1" max="2000" step="0.1" value="6"/>
             <span class="size-val-edit" id="bp-sz-val" title="Tap to type an exact size" tabindex="0">6</span>
-            <button class="size-unit-btn" id="bp-sz-unit" type="button" title="Switch between pixels and millimeters">px</button>
             <button class="bp-icon-btn" id="btn-open-tool-settings" title="Tool Settings">⚙</button>
           </div>
           <!-- Search + group/brush management -->
@@ -775,7 +774,7 @@
                 <div class="ts-row ts-field" data-eye="size">
                   <span class="ts-label">Size</span>
                   <input type="range" class="ts-range" id="ts-size" min="1" max="2000" step="0.1" value="6"/>
-                  <span class="mini-setting-value-group"><span class="ts-val size-val-edit" id="ts-size-val" title="Tap to type an exact size" tabindex="0">6</span><button class="size-unit-btn" id="ts-size-unit" type="button" title="Switch between pixels and millimeters">px</button></span>
+                  <span class="mini-setting-value-group"><span class="ts-val size-val-edit" id="ts-size-val" title="Tap to type an exact size" tabindex="0">6</span></span>
                   <button type="button" class="ts-simple-settings-btn ts-simple-only" data-simple-settings="size" title="Size settings">⚙</button>
                 </div>
                 <div class="ts-field" data-eye="opacity">
@@ -864,7 +863,7 @@
             <div class="ts-ps-panel" data-panel="tip-image" id="ts-tip-image-section">
               <div class="ts-section-body">
                 <div class="ts-label-sm" style="color:var(--text);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px;">Tip Shape</div>
-                <div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-size"><button type="button" class="ts-eye-btn" data-eye-btn="size">👁</button><span class="ts-label">Size</span><input type="range" class="ts-range" min="1" max="2000" step="0.1"><span class="ts-val ts-value-edit" data-value-target="ts-size" data-size-value="true" tabindex="0"></span><button class="size-unit-btn ts-advanced-size-unit" type="button">px</button></div>
+                <div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-size"><button type="button" class="ts-eye-btn" data-eye-btn="size">👁</button><span class="ts-label">Size</span><input type="range" class="ts-range" min="1" max="2000" step="0.1"><span class="ts-val ts-value-edit" data-value-target="ts-size" data-size-value="true" tabindex="0"></span></div>
                 <div class="ts-divider"></div>
                 <div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-opacity"><button type="button" class="ts-eye-btn" data-eye-btn="opacity">👁</button><span class="ts-label">Opacity</span><input type="range" class="ts-range" min="1" max="100"><span class="ts-val ts-value-edit" data-value-target="ts-opacity" tabindex="0"></span></div>
                 <div class="ts-divider"></div>
