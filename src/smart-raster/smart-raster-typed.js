@@ -183,6 +183,20 @@
   function resizeAllFrames(nw,nh){
     layers.forEach(function(layer){if(!layer.smartStyleFrames)return;Object.keys(layer.smartStyleFrames).forEach(function(fi){var old=layer.smartStyleFrames[fi],ids=new Uint16Array(nw*nh),dx=Math.round((nw-old.width)/2),dy=Math.round((nh-old.height)/2);for(var y=0;y<old.height;y++)for(var x=0;x<old.width;x++){var nx=x+dx,ny=y+dy;if(nx>=0&&nx<nw&&ny>=0&&ny<nh)ids[ny*nw+nx]=old.styleIds[y*old.width+x];}layer.smartStyleFrames[fi]={width:nw,height:nh,styleIds:ids,meta:cloneMeta(old.meta)};});});
   }
+  function isStyleUsed(styleId){
+    if(!styleId)return false;
+    for(var li=0;li<layers.length;li++){
+      var layer=layers[li];
+      if(!layer||!layer.smartStyleFrames)continue;
+      var frameKeys=Object.keys(layer.smartStyleFrames);
+      for(var f=0;f<frameKeys.length;f++){
+        var frame=layer.smartStyleFrames[frameKeys[f]];
+        var index=frame&&frame.meta&&Number(frame.meta.styleIdToIndex[styleId])||0;
+        if(index&&frame.styleIds instanceof Uint16Array&&frame.styleIds.includes(index))return true;
+      }
+    }
+    return false;
+  }
   function markDeleted(styleId){layers.forEach(function(layer){if(!layer.smartStyleFrames)return;Object.keys(layer.smartStyleFrames).forEach(function(fi){var meta=layer.smartStyleFrames[fi].meta,index=meta.styleIdToIndex[styleId];if(index){meta.indexToStyleId[index]='__deleted__:'+styleId;delete meta.styleIdToIndex[styleId];}});});}
   function encodeStyleIds(styleIds){
     var bytes=new Uint8Array(styleIds.length*2);
@@ -262,5 +276,5 @@
   }
 
 
-  window.SmartRasterLayer=Object.assign(window.SmartRasterLayer||{},{ensureFrame:ensureFrame,resetFrame:resetFrame,cloneMeta:cloneMeta,getFrameBundle:getFrameBundle,restoreFrameBundle:restoreFrameBundle,ensureStyleIndex:ensureStyleIndex,getStyleIdAt:getStyleIdAt,commitBrushMask:commitBrushMask,applyDiff:applyDiff,clearWhereTransparent:clearWhereTransparent,rerenderAll:rerenderAll,rerenderStyle:rerenderStyle,resizeAllFrames:resizeAllFrames,markDeleted:markDeleted,serializeLayer:serializeLayer,deserializeLayer:deserializeLayer});
+  window.SmartRasterLayer=Object.assign(window.SmartRasterLayer||{},{ensureFrame:ensureFrame,resetFrame:resetFrame,cloneMeta:cloneMeta,getFrameBundle:getFrameBundle,restoreFrameBundle:restoreFrameBundle,ensureStyleIndex:ensureStyleIndex,getStyleIdAt:getStyleIdAt,commitBrushMask:commitBrushMask,applyDiff:applyDiff,clearWhereTransparent:clearWhereTransparent,rerenderAll:rerenderAll,rerenderStyle:rerenderStyle,resizeAllFrames:resizeAllFrames,isStyleUsed:isStyleUsed,markDeleted:markDeleted,serializeLayer:serializeLayer,deserializeLayer:deserializeLayer});
 })();

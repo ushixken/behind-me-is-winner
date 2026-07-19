@@ -10,6 +10,8 @@
   const SWATCH_SIZE_STEP=2;
   const SWATCH_SIZE_DEFAULT=28;
   const ADVANCED_PALETTE_VERSION=2;
+  const PALETTE_REORDER_HOLD_MS=260;
+  function paletteReorderMoveTolerance(pointerType){return pointerType==='touch'?12:8;}
   let palettes=[];
   let activePaletteId=null;
   let swatches=[];
@@ -1102,17 +1104,29 @@
     render();
     persist();
   }
-  function deleteAdvancedStyle(style){
-    if(!style||isAdvancedSeparator(style)||advancedStyles.filter(s=>!isAdvancedSeparator(s)).length<=1) return;
+  async function deleteAdvancedStyle(style){
+    if(!style||isAdvancedSeparator(style)||advancedStyles.filter(s=>!isAdvancedSeparator(s)).length<=1)return false;
     const idx=advancedStyles.findIndex(s=>s.id===style.id);
-    if(idx<0) return;
+    if(idx<0)return false;
+    const used=!!(window.SmartRasterLayer&&typeof window.SmartRasterLayer.isStyleUsed==='function'&&window.SmartRasterLayer.isStyleUsed(style.id));
+    if(used){
+      const confirmed=await requestPaletteConfirm('Delete Style','This style is used by existing Smart Raster pixels. Deleting it will orphan their style ownership while preserving their current painted appearance. Continue?','Delete Style');
+      if(!confirmed)return false;
+    }
+    const previous=advancedStyles.slice(0,idx).reverse().find(item=>!isAdvancedSeparator(item));
+    const next=advancedStyles.slice(idx+1).find(item=>!isAdvancedSeparator(item));
     advancedStyles.splice(idx,1);
-    if(activeAdvancedStyleId===style.id){const next=advancedStyles.slice(idx).concat(advancedStyles.slice(0,idx)).find(s=>!isAdvancedSeparator(s));activeAdvancedStyleId=next?next.id:null;}
-    // Mark pixels owned by this style as orphaned in the style-index buffer.
-    // The RGBA artwork is preserved; only the style ownership meta is updated.
-    if(typeof window.markStyleDeleted==='function') window.markStyleDeleted(style.id);
+    if(typeof window.markStyleDeleted==='function')window.markStyleDeleted(style.id);
+    if(activeAdvancedStyleId===style.id){
+      const neighbor=previous||next||null;
+      activeAdvancedStyleId=neighbor?neighbor.id:null;
+      advancedColorPanelStyleId=activeAdvancedStyleId;
+      advancedColorPanelPaletteId=activeAdvancedStyleId?activePaletteId:null;
+      if(neighbor)syncAdvancedStyleToColorPanel(neighbor);
+    }
     render();
     persist();
+    return true;
   }
   function toggleAdvancedStyleLock(style){
     if(!style) return;
@@ -1202,17 +1216,24 @@
     state.rafPending=true;
     requestAnimationFrame(processAdvancedStyleDragMove);
   }
+  function activateAdvancedStyleDrag(state){
+    if(!state||advancedStyleDrag!==state||state.active||state.holdCancelled)return;
+    state.active=true;advancedStyleSuppressClick=true;state.source.classList.add('dragging');
+    state.oldUserSelect=document.documentElement.style.userSelect||'';state.oldCursor=document.documentElement.style.cursor||'';
+    document.documentElement.style.userSelect='none';document.documentElement.style.cursor='grabbing';
+    try{state.source.setPointerCapture(state.pointerId);state.captured=true;}catch(e){}
+  }
   function processAdvancedStyleDragMove(){
     const state=advancedStyleDrag;if(!state||!state.lastMove)return;
     state.rafPending=false;
     const event=state.lastMove;
-    const distance=Math.hypot(event.clientX-state.startX,event.clientY-state.startY);
     if(!state.active){
-      if(distance<5)return;
-      state.active=true;advancedStyleSuppressClick=true;state.source.classList.add('dragging');
-      state.oldUserSelect=document.documentElement.style.userSelect||'';state.oldCursor=document.documentElement.style.cursor||'';
-      document.documentElement.style.userSelect='none';document.documentElement.style.cursor='grabbing';
-      try{state.source.setPointerCapture(state.pointerId);state.captured=true;}catch(e){}
+      const distance=Math.hypot(event.clientX-state.startX,event.clientY-state.startY);
+      if(distance>paletteReorderMoveTolerance(state.pointerType)){
+        state.holdCancelled=true;
+        clearTimeout(state.holdTimer);
+      }
+      return;
     }
     const grid=document.getElementById('palette-grid');
     const gridRect=grid&&grid.getBoundingClientRect();
@@ -1235,6 +1256,7 @@
     document.removeEventListener('pointermove',updateAdvancedStyleDrag);
     document.removeEventListener('pointerup',onAdvancedStylePointerUp);
     document.removeEventListener('pointercancel',onAdvancedStylePointerCancel);
+    clearTimeout(state.holdTimer);
     state.source.classList.remove('dragging');clearAdvancedStyleInsert();
     if(state.captured&&state.source.hasPointerCapture&&state.source.hasPointerCapture(state.pointerId)){try{state.source.releasePointerCapture(state.pointerId);}catch(e){}}
     if(state.active){document.documentElement.style.userSelect=state.oldUserSelect;document.documentElement.style.cursor=state.oldCursor;}
@@ -1249,7 +1271,11 @@
         render();persist();
       }
     }
-    if(state.active)setTimeout(()=>{advancedStyleSuppressClick=false;},0);
+    if(!cancelled&&state.selectable&&(!state.active||!state.target)){
+      selectStyle(state.id,true);
+      advancedStyleSuppressClick=true;
+    }
+    if(state.active||advancedStyleSuppressClick)setTimeout(()=>{advancedStyleSuppressClick=false;},0);
   }
   function onAdvancedStylePointerUp(event){finishAdvancedStyleDrag(event,false);}
   function onAdvancedStylePointerCancel(event){finishAdvancedStyleDrag(event,true);}
@@ -1257,7 +1283,10 @@
     if(event.isPrimary===false||event.target.closest('input'))return;
     if((event.pointerType||'mouse')==='mouse'&&event.button!==0)return;
     if(advancedStyleDrag)finishAdvancedStyleDrag(null,true);
-    advancedStyleDrag={id:style.id,pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,source:card,active:false,captured:false,target:null,rafPending:false,lastMove:null};
+    const pointerType=event.pointerType||'mouse';
+    advancedStyleDrag={id:style.id,pointerId:event.pointerId,pointerType:pointerType,startX:event.clientX,startY:event.clientY,source:card,selectable:!isAdvancedSeparator(style),active:false,captured:false,target:null,rafPending:false,lastMove:null,holdCancelled:false,holdTimer:null};
+    const pendingDrag=advancedStyleDrag;
+    advancedStyleDrag.holdTimer=setTimeout(()=>activateAdvancedStyleDrag(pendingDrag),PALETTE_REORDER_HOLD_MS);
     document.addEventListener('pointermove',updateAdvancedStyleDrag,{passive:false});
     document.addEventListener('pointerup',onAdvancedStylePointerUp);
     document.addEventListener('pointercancel',onAdvancedStylePointerCancel);
@@ -1411,8 +1440,14 @@
     const item=selectedItem();
     const apply=document.getElementById('palette-apply-color');
     const remove=document.getElementById('palette-remove-color');
-    if(apply) apply.disabled=!isSwatch(item);
-    if(remove) remove.disabled=!item;
+    const advanced=currentPaletteDockerMode()==='advanced';
+    if(apply)apply.disabled=advanced||!isSwatch(item);
+    if(remove){
+      const label=advanced?'Delete Style':'Delete Swatch';
+      remove.title=label;
+      remove.setAttribute('aria-label',label);
+      remove.disabled=advanced?!activeAdvancedStyle()||advancedStyles.filter(style=>!isAdvancedSeparator(style)).length<=1:!item;
+    }
   }
   function syncSelectionClasses(){
     updateToolbarState();
@@ -2065,7 +2100,9 @@
     if(event.button!==undefined&&event.button!==0) return;
     hideContextMenu();
     const rect=el.getBoundingClientRect();
-    dragState={id:swatch.id,startX:event.clientX,startY:event.clientY,grabOffsetX:event.clientX-rect.left,grabOffsetY:event.clientY-rect.top,swatchWidth:rect.width,swatchHeight:rect.height,pointerType:event.pointerType||'mouse',active:false,overId:swatch.id,side:'after',targetGroupIndex:null,targetLocalIndex:null,targetGlobalIndex:null,targetSeparatorSide:null,targetSeparatorId:null,rafPending:false,lastMove:null,pointerId:event.pointerId,sourceEl:el,captured:false};
+    dragState={id:swatch.id,startX:event.clientX,startY:event.clientY,grabOffsetX:event.clientX-rect.left,grabOffsetY:event.clientY-rect.top,swatchWidth:rect.width,swatchHeight:rect.height,pointerType:event.pointerType||'mouse',active:false,overId:swatch.id,side:'after',targetGroupIndex:null,targetLocalIndex:null,targetGlobalIndex:null,targetSeparatorSide:null,targetSeparatorId:null,rafPending:false,lastMove:null,pointerId:event.pointerId,sourceEl:el,captured:false,holdCancelled:false,holdTimer:null};
+    const pendingDrag=dragState;
+    dragState.holdTimer=setTimeout(()=>activatePaletteDrag(pendingDrag),PALETTE_REORDER_HOLD_MS);
     document.addEventListener('pointermove',onDragMove);
     document.addEventListener('pointerup',onDragEnd);
     document.addEventListener('pointercancel',onDragEnd);
@@ -2086,22 +2123,28 @@
     dragState.rafPending=true;
     requestAnimationFrame(processDragMove);
   }
+  function activatePaletteDrag(state){
+    if(!state||dragState!==state||state.active||state.holdCancelled)return;
+    state.active=true;
+    suppressClick=true;
+    if(state.sourceEl&&!state.captured){
+      try{state.sourceEl.setPointerCapture(state.pointerId);state.captured=true;}catch(e){}
+    }
+    const dragged=document.querySelector('.palette-swatch[data-id="'+CSS.escape(state.id)+'"]');
+    if(dragged)dragged.classList.add('dragging');
+  }
   function processDragMove(){
-    if(!dragState||!dragState.lastMove) return;
+    if(!dragState||!dragState.lastMove)return;
     dragState.rafPending=false;
     const event=dragState.lastMove;
-    if(event.pointerId!==dragState.pointerId) return;
-    const dx=event.clientX-dragState.startX;
-    const dy=event.clientY-dragState.startY;
+    if(event.pointerId!==dragState.pointerId)return;
     if(!dragState.active){
-      if(Math.hypot(dx,dy)<5) return;
-      dragState.active=true;
-      suppressClick=true;
-      if(dragState.sourceEl&&!dragState.captured){
-        try{dragState.sourceEl.setPointerCapture(event.pointerId);dragState.captured=true;}catch(e){}
+      const distance=Math.hypot(event.clientX-dragState.startX,event.clientY-dragState.startY);
+      if(distance>paletteReorderMoveTolerance(dragState.pointerType)){
+        dragState.holdCancelled=true;
+        clearTimeout(dragState.holdTimer);
       }
-      const dragged=document.querySelector('.palette-swatch[data-id="'+CSS.escape(dragState.id)+'"]');
-      if(dragged) dragged.classList.add('dragging');
+      return;
     }
     const dragX=event.clientX-dragState.grabOffsetX;
     const dragY=event.clientY-dragState.grabOffsetY;
@@ -2125,6 +2168,7 @@
     document.removeEventListener('pointermove',onDragMove);
     document.removeEventListener('pointerup',onDragEnd);
     document.removeEventListener('pointercancel',onDragEnd);
+    clearTimeout(state.holdTimer);
     if(state.sourceEl&&state.captured){
       try{state.sourceEl.releasePointerCapture(event.pointerId);}catch(e){}
     }
@@ -2135,7 +2179,7 @@
       event.preventDefault();
       if(state.lineMode==='slot'&&Number.isInteger(state.targetGroupStart)&&Number.isInteger(state.targetGroupEnd)&&Number.isInteger(state.targetLocalSlot)) reorderSwatchToSlot(state.id,state.targetGroupStart,state.targetGroupEnd,state.targetLocalSlot);
       else if(state.overId&&state.overId!==state.id) reorderSwatch(state.id,state.overId,state.side);
-      else activatePaletteSwatch(state.id,{select:true,setForeground:false});
+      else activatePaletteSwatch(state.id,{select:true,setForeground:true});
       setTimeout(()=>{suppressClick=false;},0);
       return;
     }
@@ -2602,7 +2646,10 @@
     if(add) add.addEventListener('click',addTransparentSwatch);
     if(applyColor) applyColor.addEventListener('click',applyCurrentColorToSelected);
     if(addSeparatorBtn) addSeparatorBtn.addEventListener('click',addSeparator);
-    if(remove) remove.addEventListener('click',deleteSelected);
+    if(remove)remove.addEventListener('click',()=>{
+      if(currentPaletteDockerMode()==='advanced')deleteAdvancedStyle(activeAdvancedStyle());
+      else deleteSelected();
+    });
     const sizeSlider=document.getElementById('palette-size-slider');
     if(sizeSlider&&!sizeSlider.dataset.bound){
       sizeSlider.addEventListener('input',()=>setSwatchSize(sizeSlider.value,true));
