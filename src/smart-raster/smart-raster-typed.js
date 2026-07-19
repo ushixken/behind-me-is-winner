@@ -52,6 +52,14 @@
     if(!styleId||String(styleId).indexOf('__deleted__:')===0)return null;
     return styleId;
   }
+  function getStyleOwnership(li,fi,styleId){
+    var layer=layers[li];
+    if(!layer||layer.type!=='smart-raster'||!layer.smartStyleFrames||!styleId)return null;
+    var frame=layer.smartStyleFrames[fi];
+    if(!frame||!(frame.styleIds instanceof Uint16Array)||!frame.meta)return null;
+    var index=Number(frame.meta.styleIdToIndex[styleId])||0;
+    return index?{styleIds:frame.styleIds,index:index,width:frame.width,height:frame.height}:null;
+  }
   function artworkCanvas(li,fi){
     var layer=layers[li];
     return li===curLayer&&fi===curFrame?activeC:layer&&layer.frames&&layer.frames[fi];
@@ -276,5 +284,5 @@
   }
 
 
-  window.SmartRasterLayer=Object.assign(window.SmartRasterLayer||{},{ensureFrame:ensureFrame,resetFrame:resetFrame,cloneMeta:cloneMeta,getFrameBundle:getFrameBundle,restoreFrameBundle:restoreFrameBundle,ensureStyleIndex:ensureStyleIndex,getStyleIdAt:getStyleIdAt,commitBrushMask:commitBrushMask,applyDiff:applyDiff,clearWhereTransparent:clearWhereTransparent,rerenderAll:rerenderAll,rerenderStyle:rerenderStyle,resizeAllFrames:resizeAllFrames,isStyleUsed:isStyleUsed,markDeleted:markDeleted,serializeLayer:serializeLayer,deserializeLayer:deserializeLayer});
+  window.SmartRasterLayer=Object.assign(window.SmartRasterLayer||{},{ensureFrame:ensureFrame,resetFrame:resetFrame,cloneMeta:cloneMeta,getFrameBundle:getFrameBundle,restoreFrameBundle:restoreFrameBundle,ensureStyleIndex:ensureStyleIndex,getStyleIdAt:getStyleIdAt,getStyleOwnership:getStyleOwnership,commitBrushMask:commitBrushMask,applyDiff:applyDiff,clearWhereTransparent:clearWhereTransparent,rerenderAll:rerenderAll,rerenderStyle:rerenderStyle,resizeAllFrames:resizeAllFrames,isStyleUsed:isStyleUsed,markDeleted:markDeleted,serializeLayer:serializeLayer,deserializeLayer:deserializeLayer});
 })();

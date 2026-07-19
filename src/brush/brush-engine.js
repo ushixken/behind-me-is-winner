@@ -155,6 +155,39 @@ let _inStroke = false;
 let _strokeReplayDabs = [];
 let _strokeReplayBase = null;
 let _selectionScopeBase = null;
+let _colorEraserBase = null;
+let _colorEraserTarget = null;
+let _colorEraserOwnership = null;
+
+function _beginColorEraserStroke(){
+  _colorEraserBase=null;_colorEraserTarget=null;_colorEraserOwnership=null;
+  if(tool!=='eraser'||window.eraserMode!=='color')return;
+  _colorEraserBase=ctx.getImageData(0,0,CW,CH);
+  const rgb=_hexToRGB(color);
+  _colorEraserTarget=[rgb[0],rgb[1],rgb[2],255];
+  const layer=layers[curLayer];
+  const styleId=typeof activeAdvancedStyleIdForPainting==='function'?activeAdvancedStyleIdForPainting():null;
+  if(layer&&layer.type==='smart-raster'&&styleId&&window.SmartRasterLayer&&typeof window.SmartRasterLayer.getStyleOwnership==='function'){
+    _colorEraserOwnership=window.SmartRasterLayer.getStyleOwnership(curLayer,curFrame,styleId);
+  }
+}
+function _filterColorEraserRegion(centerX,centerY,radiusX,radiusY){
+  if(!_colorEraserBase||tool!=='eraser'||window.eraserMode!=='color')return;
+  const pad=3,x=Math.max(0,Math.floor(centerX-radiusX-pad)),y=Math.max(0,Math.floor(centerY-radiusY-pad));
+  const right=Math.min(CW,Math.ceil(centerX+radiusX+pad)),bottom=Math.min(CH,Math.ceil(centerY+radiusY+pad));
+  const width=right-x,height=bottom-y;if(width<=0||height<=0)return;
+  const image=ctx.getImageData(x,y,width,height),data=image.data,base=_colorEraserBase.data,target=_colorEraserTarget,ownership=_colorEraserOwnership;
+  for(let row=0;row<height;row++)for(let col=0;col<width;col++){
+    const canvasOffset=(y+row)*CW+x+col,local=(row*width+col)*4,source=canvasOffset*4;
+    const matches=ownership
+      ?canvasOffset<ownership.styleIds.length&&ownership.styleIds[canvasOffset]===ownership.index
+      :base[source]===target[0]&&base[source+1]===target[1]&&base[source+2]===target[2]&&base[source+3]===target[3];
+    if(matches)continue;
+    data[local]=base[source];data[local+1]=base[source+1];data[local+2]=base[source+2];data[local+3]=base[source+3];
+  }
+  ctx.putImageData(image,x,y);
+}
+function _endColorEraserStroke(){_colorEraserBase=null;_colorEraserTarget=null;_colorEraserOwnership=null;}
 let _replayingTaper = false;
 
 function _beginEndTaperCapture(){
@@ -1810,6 +1843,7 @@ function _drawAutoHardRoundSegment(d){
     _growTexDirtyRect(d.x,d.y,dirtyRadiusX,dirtyRadiusY);
     if(!_inStroke) _applyTextureToDabDirect(ctx,d.x,d.y,d.r,d.alpha);
   }
+  _filterColorEraserRegion(d.x,d.y,dirtyRadiusX,dirtyRadiusY);
   _growDirtyRect(d.x,d.y,dirtyRadiusX,dirtyRadiusY);
 }
 function _taperDistance(amount){return 320*amount;}
@@ -2390,7 +2424,7 @@ function _endStroke(pointerId){
   _strokeCompletionStarted=true;
   _stopAirbrushSpray();
   _autoHardRoundPrevDab=null;
-  if(drawing){drawing=false;_flushStrokeTail();if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();_scheduleRecomposite();}
+  if(drawing){drawing=false;_flushStrokeTail();if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();_scheduleRecomposite();}_endColorEraserStroke();
   lineStart=null;
   _pendingDabs.length=0;
   _curveP0=null;_curveP1=null;
@@ -2933,7 +2967,7 @@ activeC.addEventListener('pointerdown',e=>{
   _strokeCompletionStarted=false;
   if(tool==='line'){lineStart=p;return;}
   activeC.setPointerCapture(e.pointerId);
-  pushUndo();ensureKey();_beginEndTaperCapture();_selectionScopeBase=tool==='eraser'&&window.SelectionScope?SelectionScope.captureArtwork(activeC):null;drawing=true;lx=p.x;ly=p.y;
+  pushUndo();ensureKey();_beginColorEraserStroke();_beginEndTaperCapture();_selectionScopeBase=tool==='eraser'&&window.SelectionScope?SelectionScope.captureArtwork(activeC):null;drawing=true;lx=p.x;ly=p.y;
   _autoHardRoundPrevDab=null;
   _resetCurve(p.x,p.y,currentPressure);
   _lastPointerEvent=e;
@@ -3002,7 +3036,7 @@ function _pointerEndStroke(e){
   if(_activeStrokePointerId!=null&&e.pointerId!==_activeStrokePointerId) return;
   _strokeCompletionStarted=true;
   _stopAirbrushSpray();
-  if(activeGroupId){drawing=false;lineStart=null;_pendingDabs.length=0;_activeStrokePointerId=null;return;}
+  if(activeGroupId){drawing=false;lineStart=null;_pendingDabs.length=0;_endColorEraserStroke();_activeStrokePointerId=null;return;}
   if(tool==='line'&&lineStart){
     pushUndo();ensureKey();_beginEndTaperCapture();const p=getPos(e);
     if(tool!=='eraser'){_ensureStrokeCanvas();_inStroke=true;}
@@ -3017,6 +3051,7 @@ function _pointerEndStroke(e){
     if(_inStroke){_inStroke=false;_commitStrokeCanvas();}
     _restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();_scheduleRecomposite();
   }
+  _endColorEraserStroke();
   _pendingDabs.length=0;
   _curveP0=null;_curveP1=null;
   _strokeSegCarryOver=0;

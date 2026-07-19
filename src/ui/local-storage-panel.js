@@ -16,6 +16,7 @@
     'animator_cursor_style':{name:'Cursor Preferences',description:'Resets the selected drawing cursor style.'},
     'brushSizeUnit':{name:'Brush Size Unit',description:'Resets the displayed brush size unit to pixels.'},
     'brushBlendMode':{name:'Brush Blend Mode',description:'Resets the saved compositing mode for the Brush tool.'},
+    'eraserMode':{name:'Eraser Mode',description:'Resets the Eraser mode to Normal.'},
     'animator_onion_skin_enabled':{name:'Onion Skin',description:'Resets Onion Skin to off.'},
     'animator_kfexp_amount':{name:'Keyframe Exposure Amount'},
     'animator_kfexp_bypass':{name:'Keyframe Exposure Bypass'},

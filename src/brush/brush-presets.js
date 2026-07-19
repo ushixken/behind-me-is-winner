@@ -1,4 +1,4 @@
-﻿//  TOOL SETTINGS PANEL  wiring
+//  TOOL SETTINGS PANEL  wiring
 (function(){
   // Helper: range + display
   function bindRange(id,dispId,suffix,onchange){
@@ -77,6 +77,30 @@
   updateBlendModeUI();
   function syncBrushBlendModeVisibility(){if(brushBlendModeField)brushBlendModeField.hidden=tool!=='brush';if(tool!=='brush')closeBlendMenu(false);}
   window.addEventListener('tool-changed',syncBrushBlendModeVisibility);syncBrushBlendModeVisibility();
+
+  const ERASER_MODE_STORAGE_KEY='eraserMode';
+  const eraserModeField=document.getElementById('ts-eraser-mode-field');
+  const eraserModeEl=document.getElementById('ts-eraser-mode');
+  const eraserModeValueEl=document.getElementById('ts-eraser-mode-value');
+  let savedEraserMode='normal';
+  try{savedEraserMode=localStorage.getItem(ERASER_MODE_STORAGE_KEY)==='color'?'color':'normal';}catch(_){}
+  window.eraserMode=savedEraserMode;
+  let eraserModeMenu=null,eraserModeOpen=false;
+  function updateEraserModeUI(){if(eraserModeValueEl)eraserModeValueEl.textContent=window.eraserMode==='color'?'Color':'Normal';}
+  function setEraserMode(mode){window.eraserMode=mode==='color'?'color':'normal';try{localStorage.setItem(ERASER_MODE_STORAGE_KEY,window.eraserMode);}catch(_){}updateEraserModeUI();}
+  function closeEraserModeMenu(focus){if(!eraserModeMenu)return;eraserModeOpen=false;eraserModeMenu.hidden=true;eraserModeEl?.setAttribute('aria-expanded','false');if(focus)eraserModeEl?.focus({preventScroll:true});}
+  function positionEraserModeMenu(){if(!eraserModeOpen||!eraserModeMenu||!eraserModeEl)return;const r=eraserModeEl.getBoundingClientRect(),gap=8;eraserModeMenu.style.width=r.width+'px';eraserModeMenu.style.left=Math.max(gap,Math.min(r.left,innerWidth-r.width-gap))+'px';eraserModeMenu.style.top=r.bottom+4+'px';}
+  function buildEraserModeMenu(){
+    if(eraserModeMenu||!eraserModeEl)return;
+    eraserModeMenu=document.createElement('div');eraserModeMenu.id='ts-eraser-mode-menu';eraserModeMenu.className='ts-brush-blend-mode-menu';eraserModeMenu.role='listbox';eraserModeMenu.setAttribute('aria-label','Eraser mode');eraserModeMenu.hidden=true;
+    [['normal','Normal'],['color','Color']].forEach(([value,label])=>{const option=document.createElement('button');option.type='button';option.role='option';option.className='ts-brush-blend-mode-option';option.dataset.mode=value;option.innerHTML='<span></span><span class="ts-brush-blend-mode-check" aria-hidden="true">✓</span>';option.firstElementChild.textContent=label;option.onclick=()=>{setEraserMode(value);eraserModeMenu.querySelectorAll('.ts-brush-blend-mode-option').forEach(item=>{const selected=item.dataset.mode===window.eraserMode;item.classList.toggle('is-selected',selected);item.setAttribute('aria-selected',String(selected));});closeEraserModeMenu(true);};eraserModeMenu.appendChild(option);});
+    document.body.appendChild(eraserModeMenu);eraserModeEl.setAttribute('aria-controls',eraserModeMenu.id);
+  }
+  function openEraserModeMenu(){if(tool!=='eraser'||eraserModeField?.hidden)return;buildEraserModeMenu();eraserModeOpen=true;eraserModeMenu.hidden=false;eraserModeEl.setAttribute('aria-expanded','true');eraserModeMenu.querySelectorAll('.ts-brush-blend-mode-option').forEach(item=>{const selected=item.dataset.mode===window.eraserMode;item.classList.toggle('is-selected',selected);item.setAttribute('aria-selected',String(selected));});positionEraserModeMenu();}
+  if(eraserModeEl){eraserModeEl.onclick=()=>eraserModeOpen?closeEraserModeMenu(false):openEraserModeMenu();eraserModeEl.onkeydown=event=>{if(['ArrowDown','ArrowUp','Enter',' '].includes(event.key)){event.preventDefault();openEraserModeMenu();eraserModeMenu?.querySelector('.is-selected')?.focus();}else if(event.key==='Escape')closeEraserModeMenu(false);};}
+  document.addEventListener('pointerdown',event=>{if(eraserModeOpen&&!eraserModeMenu?.contains(event.target)&&!eraserModeEl?.contains(event.target))closeEraserModeMenu(false);},true);
+  function syncEraserModeVisibility(){if(eraserModeField)eraserModeField.hidden=tool!=='eraser';if(tool!=='eraser')closeEraserModeMenu(false);updateEraserModeUI();}
+  window.addEventListener('tool-changed',syncEraserModeVisibility);window.addEventListener('resize',positionEraserModeMenu);syncEraserModeVisibility();
   // Spacing is fixed, not a user-adjustable Tool Setting — the brush
   // engine's _effectiveSpacingFrac() just uses its built-in default (0.12)
   // and never varies with stroke velocity or acceleration.
@@ -352,7 +376,7 @@
   (function initSimpleVisibilityEyes(){
     const EYE_KEY='tsSimpleFieldVisibility';
     // What shows in Simple by default, before the user customizes anything.
-    const DEFAULTS={size:true,opacity:false,flow:true,hardness:true,spacing:false,aa:true};
+    const DEFAULTS={size:true,opacity:false,flow:true,hardness:true,spacing:false,aa:true,'eraser-mode':true};
     let vis={};
     try{ vis=JSON.parse(localStorage.getItem(EYE_KEY)||'{}'); }catch(e){ vis={}; }
     if(Object.prototype.hasOwnProperty.call(vis,'density')){delete vis.density;try{localStorage.setItem(EYE_KEY,JSON.stringify(vis));}catch(e){}}
@@ -589,7 +613,7 @@
   const dockedSimpleSettings=document.getElementById('brush-tool-settings-content');
   const basicSettings=document.querySelector('#tool-settings-body .ts-ps-panel[data-panel="basic"] .ts-section-body');
   if(dockedSimpleSettings&&basicSettings){
-    ['blend-mode','size','opacity','flow','hardness','spacing','aa'].forEach(key=>{
+    ['blend-mode','eraser-mode','size','opacity','flow','hardness','spacing','aa'].forEach(key=>{
       const field=basicSettings.querySelector(`.ts-field[data-eye="${key}"]`);
       if(field)dockedSimpleSettings.appendChild(field);
     });
@@ -1788,6 +1812,7 @@ function applyToolPreset(json){
 
   //  Draw preview canvas
   function drawPreview(canvas, cfg){
+    const eraserRgb=cfg.previewRgb||'232,232,240';
     const W=48,H=48;
     canvas.width=W; canvas.height=H;
     const c=canvas.getContext('2d');
@@ -1799,12 +1824,12 @@ function applyToolPreset(json){
     const innerStop = cfg.aliased ? 1 : hard;
     if(cfg.shape === 'square'){
       const s = r*1.5;
-      c.fillStyle = cfg.isEraser ? 'rgba(226,75,74,0.7)' : '#e8e8f0';
+      c.fillStyle=cfg.isEraser?'rgba('+eraserRgb+',0.7)':'#e8e8f0';
       c.fillRect(cx-s/2, cy-s/2, s, s);
     } else if(cfg.shape === 'ellipse'){
       const ry = r * 0.32;
       const grad = c.createRadialGradient(cx,cy,0,cx,cy,r);
-      const clr = cfg.isEraser ? '226,75,74' : '232,232,240';
+      const clr=cfg.isEraser?eraserRgb:'232,232,240';
       grad.addColorStop(0,`rgba(${clr},0.95)`);
       grad.addColorStop(innerStop,`rgba(${clr},0.95)`);
       grad.addColorStop(1,`rgba(${clr},0)`);
@@ -1816,7 +1841,7 @@ function applyToolPreset(json){
     } else {
       // circle
       const grad = c.createRadialGradient(cx,cy,0,cx,cy,r);
-      const clr = cfg.isEraser ? '226,75,74' : '232,232,240';
+      const clr=cfg.isEraser?eraserRgb:'232,232,240';
       grad.addColorStop(0,`rgba(${clr},0.95)`);
       grad.addColorStop(innerStop,`rgba(${clr},0.95)`);
       grad.addColorStop(1,`rgba(${clr},0)`);
@@ -1828,7 +1853,7 @@ function applyToolPreset(json){
   // ── Draw a preset's grid thumbnail, using its real tip image when the
   //    preset has one (imported ABR / custom-uploaded tips) instead of
   //    always falling back to the generic circle/square/ellipse shapes.
-  function _paintTipThumbnail(canvas,img,settings,width,height,allowUpscale=false){
+  function _paintTipThumbnail(canvas,img,settings,width,height,allowUpscale=false,previewRgb='232,232,240'){
     canvas.width=width; canvas.height=height;
     const context=canvas.getContext('2d');
     context.clearRect(0,0,width,height);
@@ -1844,7 +1869,7 @@ function applyToolPreset(json){
     const rotatedHeight=Math.abs(shapedWidth*Math.sin(rotation))+Math.abs(shapedHeight*Math.cos(rotation));
     const scale=Math.min(maxW/Math.max(1,rotatedWidth),maxH/Math.max(1,rotatedHeight),allowUpscale?Infinity:1);
     context.save();
-    context.fillStyle='rgba(232,232,240,0.95)';
+    context.fillStyle='rgba('+previewRgb+',0.95)';
     context.fillRect(0,0,width,height);
     context.globalCompositeOperation='destination-in';
     context.translate(width/2,height/2);
@@ -1895,8 +1920,12 @@ function applyToolPreset(json){
     return c;
   }
 
-  const ERASER_PREVIEW_RGB='226,75,74';
   const BRUSH_PREVIEW_RGB='225,225,232';
+  function _foregroundPreviewRgb(){
+    const match=/^#([0-9a-f]{6})$/i.exec(String(typeof color==='string'?color:'#000000'));
+    if(!match)return '0,0,0';
+    const value=parseInt(match[1],16);return ((value>>16)&255)+','+((value>>8)&255)+','+(value&255);
+  }
   const _strokePreviewCache=new Map();
   const _strokeTipLoads=new Map();
   const _strokeTextureCache=new Map();
@@ -1911,7 +1940,7 @@ function applyToolPreset(json){
   }
   function _previewHash(p,settings,width,height,dpr,kind){
     const keys=['ts-size','ts-spacing','ts-hardness','ts-opacity','ts-flow','ts-aa','ts-aa-mode','ts-airbrush','ts-airbrush-rate','ts-continuous-spraying','ts-size-control','ts-opacity-control','ts-flow-control','ts-min-size','ts-min-flow','ts-rotation-mode','ts-tip-roundness','ts-tip-min-roundness','ts-angle','ts-tip-flip-x','ts-tip-flip-y','ts-tip-dataurl','ts-tip-url','ts-scatter-enabled','ts-scatter-amount','ts-texture-dataurl','ts-texture-url','ts-texture-strength','ts-texture-scale','ts-texture-invert','ts-texture-brightness','ts-texture-contrast'];
-    return [p.id,_activeTab,kind,width,height,dpr,...keys.map(key=>settings[key]??'')].join('|');
+    return [p.id,_activeTab,_activeTab==='eraser'?_foregroundPreviewRgb():'',kind,width,height,dpr,...keys.map(key=>settings[key]??'')].join('|');
   }
   function _requestStrokeTip(p,settings){
     const src=settings['ts-tip-dataurl']||settings['ts-tip-url'];if(!src||(_tipThumbCache[p.id]&&_tipThumbCache[p.id].src===src)||_strokeTipLoads.has(p.id))return;
@@ -1972,7 +2001,7 @@ function applyToolPreset(json){
     const tipSrc=settings['ts-tip-dataurl']||settings['ts-tip-url'],tipEntry=_tipThumbCache[p.id],tip=tipEntry&&tipEntry.src===tipSrc?tipEntry.alphaCanvas:null;
     const dab=document.createElement('canvas'),dabScale=Math.max(1,dpr),dabW=Math.ceil(diameter*dabScale),dabH=Math.ceil(diameter*roundness*dabScale);
     dab.width=Math.max(1,dabW);dab.height=Math.max(1,dabH);const dc=dab.getContext('2d');dc.imageSmoothingEnabled=ctx.imageSmoothingEnabled;dc.imageSmoothingQuality=ctx.imageSmoothingQuality;
-    const previewRgb=_activeTab==='eraser'?ERASER_PREVIEW_RGB:BRUSH_PREVIEW_RGB;
+    const previewRgb=_activeTab==='eraser'?_foregroundPreviewRgb():BRUSH_PREVIEW_RGB;
     if(tip){
       dc.drawImage(tip,0,0,dab.width,dab.height);dc.globalCompositeOperation='source-in';dc.fillStyle='rgba('+previewRgb+',1)';dc.fillRect(0,0,dab.width,dab.height);
     }else{
@@ -2016,6 +2045,13 @@ function applyToolPreset(json){
       canvas.width=cached.width;canvas.height=cached.height;canvas.getContext('2d').drawImage(cached,0,0);
     });
   }
+  function refreshEraserPresetPreviewColors(){
+    if(_activeTab!=='eraser')return;
+    _strokePreviewCache.clear();
+    document.querySelectorAll('.bp-stroke-canvas').forEach(canvas=>{const preset=_strokePreviewPresetByCanvas.get(canvas);if(preset)_scheduleStrokePreview(canvas,preset);});
+    document.querySelectorAll('.bp-tip-canvas').forEach(canvas=>{const preset=findPreset(canvas.dataset.presetId);if(preset)drawPresetThumb(canvas,preset);});
+  }
+  window.addEventListener('foreground-color-changed',refreshEraserPresetPreviewColors);
   const _strokePreviewPresetByCanvas=new WeakMap();
   const _strokePreviewResizeObserver=typeof ResizeObserver==='undefined'?null:new ResizeObserver(entries=>{
     entries.forEach(entry=>{const preset=_strokePreviewPresetByCanvas.get(entry.target);if(preset)_scheduleStrokePreview(entry.target,preset);});
@@ -2026,7 +2062,7 @@ function applyToolPreset(json){
     // (on-disk brush-preset packs). Either key is a valid Image.src value.
     const tipSrc = s && (s['ts-tip-dataurl'] || s['ts-tip-url']);
     if(!tipSrc){
-      drawPreview(canvas, Object.assign({}, p.preview, {isEraser:_activeTab==='eraser'}));
+      drawPreview(canvas,Object.assign({},p.preview,{isEraser:_activeTab==='eraser',previewRgb:_foregroundPreviewRgb()}));
       return;
     }
     const W=48,H=48;
@@ -2034,7 +2070,7 @@ function applyToolPreset(json){
     const settings=s; // alias for closure
 
     function paintOnto(c, alphaCanvas){
-      _paintTipThumbnail(c, alphaCanvas, settings, W, H, false);
+      _paintTipThumbnail(c,alphaCanvas,settings,W,H,false,_activeTab==='eraser'?_foregroundPreviewRgb():'232,232,240');
     }
 
     const cached=_tipThumbCache[p.id];
@@ -2072,7 +2108,7 @@ function applyToolPreset(json){
     img.onerror=()=>{
       // File missing or unloadable — fall back to the generic shape preview so
       // the thumbnail never stays blank.
-      drawPreview(canvas, Object.assign({}, p.preview, {isEraser:_activeTab==='eraser'}));
+      drawPreview(canvas,Object.assign({},p.preview,{isEraser:_activeTab==='eraser',previewRgb:_foregroundPreviewRgb()}));
     };
     img.src=tipSrc;
   }

@@ -209,7 +209,7 @@ const swatchEl=document.getElementById('color-swatch');
 const colorIn=document.getElementById('color-input');
 const csStack=document.getElementById('color-swatch-stack');
 swatchEl.style.background=color;
-colorIn.oninput=e=>{color=e.target.value;swatchEl.style.background=color;document.getElementById('stat-color').textContent='Color: '+color;if(typeof refreshColorSwatches==='function')refreshColorSwatches();if(typeof syncColorPanelSwatches==='function')syncColorPanelSwatches();};
+colorIn.oninput=e=>{color=e.target.value;swatchEl.style.background=color;document.getElementById('stat-color').textContent='Color: '+color;if(typeof refreshColorSwatches==='function')refreshColorSwatches();if(typeof syncColorPanelSwatches==='function')syncColorPanelSwatches();window.dispatchEvent(new CustomEvent('foreground-color-changed',{detail:{color}}));};
 
 // ════════════════════════════════════════════════════════════════
 // TOOLS PANEL — button bindings (floating panel duplicate of the
@@ -237,8 +237,8 @@ let colorTarget='fg'; // which swatch the Color panel is currently editing: 'fg'
 
 function refreshColorSwatches(){
   // keep the relocated swatch in sync with the current foreground color
-  swatchEl.style.background=tool==='eraser'?'':color;
-  swatchEl.classList.toggle('cs-swatch-checker',tool==='eraser');
+  swatchEl.style.background=color;
+  swatchEl.classList.remove('cs-swatch-checker');
 }
 refreshColorSwatches();
 
@@ -640,15 +640,17 @@ function syncSliders(){
 function _applyColorLive(hex){
   if(colorTarget==='fg'){
     color=hex;colorIn.value=hex;document.getElementById('stat-color').textContent='Color: '+hex;
-    if(tool==='eraser') setTool('brush','Brush');
   } else {bgDrawColor=hex;}
   refreshColorSwatches();
   syncColorPanelSwatches();
-  if(colorTarget==='fg'&&window.PaletteDocker&&typeof window.PaletteDocker.updateActiveAdvancedStyleFromColorPanel==='function') window.PaletteDocker.updateActiveAdvancedStyleFromColorPanel(hex);
+  if(colorTarget==='fg'){
+    if(window.PaletteDocker&&typeof window.PaletteDocker.updateActiveAdvancedStyleFromColorPanel==='function')window.PaletteDocker.updateActiveAdvancedStyleFromColorPanel(hex);
+    window.dispatchEvent(new CustomEvent('foreground-color-changed',{detail:{color:hex}}));
+  }
 }
 function syncColorPanelSwatches(){
-  cpSwFg.style.background=tool==='eraser'?'':color;
-  cpSwFg.classList.toggle('cs-swatch-checker',tool==='eraser');
+  cpSwFg.style.background=color;
+  cpSwFg.classList.remove('cs-swatch-checker');
   cpSwBg.style.background=bgDrawColor;
   cpSwTransparent.classList.toggle('active',tool==='eraser');
   // Selected border highlight + bring selected swatch to front
@@ -658,7 +660,7 @@ function syncColorPanelSwatches(){
   cpSwFg.style.zIndex=fgSel?'3':'1';
   cpSwBg.style.zIndex=fgSel?'1':'3';
 }
-function currentEditColor(){return colorTarget==='fg'?(tool==='eraser'?'#000000':color):bgDrawColor;}
+function currentEditColor(){return colorTarget==='fg'?color:bgDrawColor;}
 function setFromHsv(h,s,v){
   cpHue=h;cpSat=s;cpVal=v;
   const rgb=hsvToRgb(h,s,v);
