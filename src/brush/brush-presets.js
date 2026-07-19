@@ -14,7 +14,7 @@
   // Density (per-dab alpha build-up, works alongside Flow/Opacity)
   bindRange('ts-density','ts-density-val','',v=>{brushDensity=v/100;});
   // Hardness
-  bindRange('ts-hardness','ts-hardness-val','',v=>{brushHardness=v/100;_aaDabCache.clear();_tipDabCache.clear();_stampCache.clear();});
+  bindRange('ts-hardness','ts-hardness-val','',v=>{brushHardness=v/100;_aaDabCache.clear();_softRoundMaskCache.clear();_tipDabCache.clear();_stampCache.clear();});
   bindRange('ts-spacing','ts-spacing-val','%',v=>{window._tsSpacing=v/100;});
   const spacingEl=document.getElementById('ts-spacing');
   window._tsSpacing=spacingEl?(+spacingEl.value/100):0.12;
@@ -243,12 +243,18 @@
   // ── Airbrush mode — Tool Settings checkbox (activate/deactivate from
   // Tool Settings only; no separate toolbar button)
   window._tsAirbrushRate = window._tsAirbrushRate!==undefined ? window._tsAirbrushRate : 0.55;
+  window._brushContinuousSpraying = window._brushContinuousSpraying===true;
   function _setAirbrush(on){
     window._brushAirbrush=!!on;
     const cb=document.getElementById('ts-airbrush'); if(cb) cb.checked=window._brushAirbrush;
     if(!window._brushAirbrush && typeof window._stopAirbrushSpray==='function') window._stopAirbrushSpray();
   }
   window._setAirbrush=_setAirbrush;
+  function _setContinuousSpraying(on){
+    window._brushContinuousSpraying=!!on;
+    if(!window._brushContinuousSpraying&&typeof window._stopAirbrushSpray==='function') window._stopAirbrushSpray();
+  }
+  window._setContinuousSpraying=_setContinuousSpraying;
   const tsAirbrush=document.getElementById('ts-airbrush');
   if(tsAirbrush){
     tsAirbrush.checked=!!window._brushAirbrush;
@@ -1285,7 +1291,7 @@
 // Preset get/apply
 function getToolPreset(options){
   const includeImages=!options||options.includeImages!==false;
-  const ids=['ts-size','ts-opacity','ts-flow','ts-density','ts-hardness','ts-spacing','ts-spacing-mode','ts-rotation-mode','ts-angle','ts-angle-jitter','ts-tip-roundness','ts-round-jitter','ts-tip-min-roundness','ts-tip-flip-x','ts-tip-flip-y','ts-scatter-enabled','ts-scatter-amount','ts-scatter-count','ts-airbrush','ts-airbrush-rate',
+  const ids=['ts-size','ts-opacity','ts-flow','ts-density','ts-hardness','ts-spacing','ts-spacing-mode','ts-rotation-mode','ts-angle','ts-angle-jitter','ts-tip-roundness','ts-round-jitter','ts-tip-min-roundness','ts-tip-flip-x','ts-tip-flip-y','ts-scatter-enabled','ts-scatter-amount','ts-scatter-count','ts-airbrush','ts-airbrush-rate','ts-continuous-spraying',
     'ts-min-size','ts-size-jitter','ts-taper-mode','ts-start-taper','ts-end-taper','ts-size-control','ts-size-pressure-curve','ts-flow-control','ts-flow-pressure-curve','ts-opacity-control','ts-opacity-pressure-curve','ts-min-flow',
     'ts-texture-scale','ts-texture-strength','ts-texture-buildup','ts-texture-brightness','ts-texture-contrast','ts-texture-invert','ts-texture-each','ts-texture-mode'];
   const out={};
@@ -1468,6 +1474,7 @@ function applyToolPreset(json){
     'ts-opacity-pressure-curve':'linear',
     'ts-airbrush':false,
     'ts-airbrush-rate':55,
+    'ts-continuous-spraying':false,
     'ts-tip-mode':'multiply',
     'ts-tip-soft-alpha':true,
     'ts-texture-invert':false,
@@ -1521,10 +1528,10 @@ function applyToolPreset(json){
     {
       id:'soft-round',
       name:'Soft Round',
-      preview:{shape:'circle',hardness:0.08},
+      preview:{shape:'circle',hardness:0},
       settings:builtinBrushSettings({
         'ts-size':32,
-        'ts-hardness':6,
+        'ts-hardness':0,
         'ts-spacing-mode':'auto',
         'ts-size-control':'off',
         'ts-spacing':5,
@@ -1543,6 +1550,7 @@ function applyToolPreset(json){
         'ts-spacing':2,
         'ts-spacing-mode':'fixed',
         'ts-airbrush':true,
+        'ts-continuous-spraying':false,
         'ts-airbrush-rate':55,
         'ts-aa':true,
         'ts-aa-mode':'medium',
@@ -1663,6 +1671,7 @@ function applyToolPreset(json){
   let _activeTab = 'brush';
   // Which preset is currently shown active/highlighted in the grid
   let _activePresetId = 'hard-round';
+  window._activeBrushPresetId = _activePresetId;
   let _applyingPresetSettings=false;
   // Drag state (kept in JS, not dataTransfer — reading dataTransfer.getData
   // during dragover is unreliable cross-browser, so we just track it here)
@@ -1901,7 +1910,7 @@ function applyToolPreset(json){
     return settings;
   }
   function _previewHash(p,settings,width,height,dpr,kind){
-    const keys=['ts-size','ts-spacing','ts-hardness','ts-opacity','ts-flow','ts-aa','ts-aa-mode','ts-airbrush','ts-airbrush-rate','ts-size-control','ts-opacity-control','ts-flow-control','ts-min-size','ts-min-flow','ts-rotation-mode','ts-tip-roundness','ts-tip-min-roundness','ts-angle','ts-tip-flip-x','ts-tip-flip-y','ts-tip-dataurl','ts-tip-url','ts-scatter-enabled','ts-scatter-amount','ts-texture-dataurl','ts-texture-url','ts-texture-strength','ts-texture-scale','ts-texture-invert','ts-texture-brightness','ts-texture-contrast'];
+    const keys=['ts-size','ts-spacing','ts-hardness','ts-opacity','ts-flow','ts-aa','ts-aa-mode','ts-airbrush','ts-airbrush-rate','ts-continuous-spraying','ts-size-control','ts-opacity-control','ts-flow-control','ts-min-size','ts-min-flow','ts-rotation-mode','ts-tip-roundness','ts-tip-min-roundness','ts-angle','ts-tip-flip-x','ts-tip-flip-y','ts-tip-dataurl','ts-tip-url','ts-scatter-enabled','ts-scatter-amount','ts-texture-dataurl','ts-texture-url','ts-texture-strength','ts-texture-scale','ts-texture-invert','ts-texture-brightness','ts-texture-contrast'];
     return [p.id,_activeTab,kind,width,height,dpr,...keys.map(key=>settings[key]??'')].join('|');
   }
   function _requestStrokeTip(p,settings){
@@ -1968,7 +1977,16 @@ function applyToolPreset(json){
       dc.drawImage(tip,0,0,dab.width,dab.height);dc.globalCompositeOperation='source-in';dc.fillStyle='rgba('+previewRgb+',1)';dc.fillRect(0,0,dab.width,dab.height);
     }else{
       const radius=Math.max(dab.width,dab.height)/2,gradient=dc.createRadialGradient(dab.width/2,dab.height/2,0,dab.width/2,dab.height/2,radius);
-      const inner=Math.max(0,Math.min(.97,hardness));gradient.addColorStop(0,'rgba('+previewRgb+',1)');gradient.addColorStop(inner,'rgba('+previewRgb+',1)');gradient.addColorStop(1,'rgba('+previewRgb+',0)');dc.fillStyle=gradient;dc.fillRect(0,0,dab.width,dab.height);
+      const isAirbrush=!!settings['ts-airbrush'];
+      const previewFalloff=typeof window._proceduralBrushFalloff==='function'
+        ? t=>window._proceduralBrushFalloff(t,hardness,diameter/2,settings['ts-aa-mode']||'medium',isAirbrush)
+        : t=>(t<=hardness?1:Math.max(0,1-(t-hardness)/Math.max(.0001,1-hardness)));
+      const PREVIEW_STOPS=24;
+      for(let stop=0;stop<=PREVIEW_STOPS;stop++){
+        const t=stop/PREVIEW_STOPS;
+        gradient.addColorStop(t,'rgba('+previewRgb+','+previewFalloff(t)+')');
+      }
+      dc.fillStyle=gradient;dc.fillRect(0,0,dab.width,dab.height);
     }
     const baseAlpha=Math.min(1,opacity*(.35+.65*flow));
     if(kind==='stamp'){
@@ -2588,7 +2606,7 @@ function applyToolPreset(json){
     if(taperMode) taperMode.dispatchEvent(new Event('input',{bubbles:true}));
     const mapping = {
       'ts-size': {slider:'ts-size', val:'ts-size-val', suffix:'', extra: v=>{toolSizes[tool]=v; const bpSz=document.getElementById('bp-sz'); if(bpSz)bpSz.value=v; if(typeof refreshSizeUI==='function')refreshSizeUI(); _aaDabCache.clear();_stampCache.clear();}},
-      'ts-hardness': {slider:'ts-hardness', val:'ts-hardness-val', suffix:'', extra: v=>{brushHardness=v/100; _aaDabCache.clear();_stampCache.clear();}},
+      'ts-hardness': {slider:'ts-hardness', val:'ts-hardness-val', suffix:'', extra: v=>{brushHardness=v/100; _aaDabCache.clear(); _softRoundMaskCache.clear();_stampCache.clear();}},
       'ts-opacity': {slider:'ts-opacity', val:'ts-opacity-val', suffix:'', extra: v=>{brushOpacity=v/100;}},
       'ts-flow': {slider:'ts-flow', val:'ts-flow-val', suffix:'', extra: v=>{brushFlow=v/100;}},
       'ts-density': {slider:'ts-density', val:'ts-density-val', suffix:'', extra: v=>{brushDensity=v/100;}},
@@ -2625,6 +2643,10 @@ function applyToolPreset(json){
         if(typeof window._setAirbrush==='function') window._setAirbrush(!!val);
         return;
       }
+      if(key==='ts-continuous-spraying'){
+        if(typeof window._setContinuousSpraying==='function') window._setContinuousSpraying(!!val);
+        return;
+      }
       const m=mapping[key];
       if(m){
         const sl=document.getElementById(m.slider);
@@ -2643,6 +2665,7 @@ function applyToolPreset(json){
     // don't mention it explicitly should switch it off rather than leaking
     // the previous preset's airbrush state.
     if(!('ts-airbrush' in s) && typeof window._setAirbrush==='function') window._setAirbrush(false);
+    if(!('ts-continuous-spraying' in s) && typeof window._setContinuousSpraying==='function') window._setContinuousSpraying(false);
 
     // Tip image: restore from preset data URL if present; clear if absent.
     // This matches what applyToolPreset does for JSON imports.
@@ -2743,6 +2766,7 @@ function applyToolPreset(json){
     if(!preset) return;
     _seedPresetSettings(preset,t);
     _activePresetId=presetId;
+    window._activeBrushPresetId = _activePresetId;
     const savedSettings=Object.assign({},preset.settings||{},_presetSettings[_presetSettingsKey(presetId,t)]||{});
     // Non-custom presets: structural settings always come from the preset definition.
     const PRESET_STRUCTURAL_KEYS=['ts-taper-mode','ts-start-taper','ts-end-taper','ts-min-size','ts-spacing-mode','ts-texture-scale','ts-texture-strength','ts-texture-buildup-custom','ts-texture-brightness','ts-texture-contrast','ts-texture-invert','ts-texture-each','ts-texture-mode','ts-texture-url'];
@@ -2789,6 +2813,7 @@ function applyToolPreset(json){
     }
     if(targetTool==='eraser') savedSettings['ts-aa']=true;
     _activePresetId = id;
+    window._activeBrushPresetId = _activePresetId;
     _toolState[targetTool].presetId = id;
     _applyingPresetSettings=true;
     try{
@@ -2883,6 +2908,7 @@ function applyToolPreset(json){
       t.classList.toggle('active', t.dataset.bpTool===toolType);
     });
     _activePresetId = _toolState[toolType].presetId;
+    window._activeBrushPresetId = _activePresetId;
     const bpSearch = document.getElementById('bp-search');
     if(bpSearch) bpSearch.value='';
     buildGrid();

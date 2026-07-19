@@ -570,6 +570,18 @@ function _airbrushFalloff(t){
   const floor=Math.exp(-k);
   return Math.max(0,(raw-floor)/(1-floor));
 }
+// Shared by cached GPU stamps, CPU dabs, and the preset preview.
+function _proceduralBrushFalloff(t,hardness,radius,aaMode,isAirbrush){
+  const h=Math.max(0,Math.min(1,hardness));
+  const inner=_effectiveInnerFrac(Math.max(0.05,radius),h,aaMode);
+  if(isAirbrush){
+    if(t<=inner) return 1;
+    const featherT=(t-inner)/Math.max(0.0001,1-inner);
+    return _airbrushFalloff(featherT);
+  }
+  return _roundBrushFalloff(t,inner,h);
+}
+window._proceduralBrushFalloff=_proceduralBrushFalloff;
 // Airbrush needs denser dab placement than a normal round brush so
 // overlapping dabs blend into continuous fog instead of separate visible
 // stamps along a stroke (see _strokeSegment/_stampQuadCurve). But the peak
@@ -580,6 +592,63 @@ function _airbrushFalloff(t){
 // without erasing each dab's own visible falloff.
 const _aaDabCache=new Map(); // key -> {canvas,w,h}
 const _AA_DAB_CACHE_MAX=64;
+
+// Standard Soft Round caches only its neutral shape; colour and alpha stay live.
+const _softRoundMaskCache=new Map();
+const _SOFT_ROUND_MASK_CACHE_MAX=64;
+let _softRoundTintCanvas=null;
+function _isStandardProceduralSoftRound(){
+  return tool==='brush' && window._activeBrushPresetId==='soft-round' && !window._brushAirbrush && !window.brushTipCanvas;
+}
+function _buildSoftRoundMask(rRaw){
+  const diameter=Math.max(1,Math.round(Math.max(0.05,rRaw)*2*4)/4);
+  const radius=diameter/2;
+  const hardness=Math.round(Math.max(0,Math.min(1,brushHardness))*1000)/1000;
+  const aaMode=_currentAAMode();
+  const key=diameter.toFixed(2)+'|'+hardness.toFixed(3)+'|aa'+aaMode;
+  const cached=_softRoundMaskCache.get(key);
+  if(cached) return cached;
+  const pad=Math.max(2,Math.ceil(_AA_MODE_EDGE_MAX_PX[aaMode]||2));
+  const size=Math.ceil(diameter)+pad*2+1;
+  const canvas=document.createElement('canvas'); canvas.width=size; canvas.height=size;
+  const maskContext=canvas.getContext('2d',{willReadFrequently:true});
+  const image=maskContext.createImageData(size,size),pixels=image.data,center=size/2;
+  const inner=_effectiveInnerFrac(radius,hardness,aaMode);
+  let offset=0;
+  for(let y=0;y<size;y++) for(let x=0;x<size;x++,offset+=4){
+    const dx=x+0.5-center,dy=y+0.5-center;
+    const coverage=_roundBrushFalloff(Math.sqrt(dx*dx+dy*dy)/radius,inner,hardness);
+    if(coverage<=0) continue;
+    pixels[offset]=pixels[offset+1]=pixels[offset+2]=255;
+    pixels[offset+3]=Math.round(coverage*255);
+  }
+  maskContext.putImageData(image,0,0);
+  const stamp={canvas,w:size,h:size};
+  if(_softRoundMaskCache.size>=_SOFT_ROUND_MASK_CACHE_MAX) _softRoundMaskCache.delete(_softRoundMaskCache.keys().next().value);
+  _softRoundMaskCache.set(key,stamp);
+  return stamp;
+}
+function _drawSoftRoundMask(x,y,r,rgb,alpha,composite){
+  const stamp=_buildSoftRoundMask(r);
+  if(!_softRoundTintCanvas) _softRoundTintCanvas=document.createElement('canvas');
+  const tint=_softRoundTintCanvas;
+  if(tint.width!==stamp.w||tint.height!==stamp.h){tint.width=stamp.w;tint.height=stamp.h;}
+  const tc=tint.getContext('2d');
+  tc.clearRect(0,0,tint.width,tint.height);
+  tc.globalCompositeOperation='source-over';
+  tc.fillStyle='rgb('+rgb[0]+','+rgb[1]+','+rgb[2]+')';
+  tc.fillRect(0,0,tint.width,tint.height);
+  tc.globalCompositeOperation='destination-in'; tc.drawImage(stamp.canvas,0,0);
+  tc.globalCompositeOperation='source-over';
+  const dc=(_inStroke&&composite!=='erase')?_strokeCtx:ctx;
+  dc.save();
+  dc.globalCompositeOperation=_strokeDabComposite(composite);
+  dc.globalAlpha=Math.max(0,Math.min(1,alpha));
+  dc.imageSmoothingEnabled=brushHardness<0.999;
+  if(dc.imageSmoothingEnabled) dc.imageSmoothingQuality='high';
+  dc.drawImage(tint,x-stamp.w/2,y-stamp.h/2);
+  dc.restore();
+}
 
 //  Tip-shaped dab cache
 // Mirrors _aaDabCache but for dabs whose shape comes from brushTipCanvas.
@@ -736,7 +805,7 @@ function _getTipPixelsForStamp(w,h){
 }
 function _buildAAStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   const r=_quant(rRaw,_Q_R), alpha=_quantAlpha(alphaRaw);
-  const hardness=Math.round(Math.max(0,Math.min(0.99,hardnessRaw))*100)/100;
+  const hardness=Math.round(Math.max(0,Math.min(1,hardnessRaw))*100)/100;
   const isAirbrush=typeof window!=='undefined'&&!!window._brushAirbrush;
   const aaMode=_currentAAMode();
   // Include the current tip version in the cache key so that loading a new
@@ -777,7 +846,7 @@ function _buildAAStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
     for(let px=0;px<sampleW;px++,p+=4){
       const dx=(px+0.5)-cx,dy=(py+0.5)-cy;
       const t=Math.sqrt(dx*dx+dy*dy)/sampleR;
-      let a=alpha*(isAirbrush?_airbrushFalloff(t):_roundBrushFalloff(t,inner,hardness));
+      let a=alpha*_proceduralBrushFalloff(t,hardness,rr,aaMode,isAirbrush);
       if(a<=0)continue;
       if(tipPixels){
         const tipFactor=tipPixels[p+3]/255;
@@ -980,7 +1049,7 @@ function _dabAACpu(x,y,r,rgb,alpha,composite){
       const dx=wx-x, dy=wy-y;
       const t=Math.sqrt(dx*dx+dy*dy)/rr;
       if(t>=1) continue;
-      let a=alpha*(isAirbrush?_airbrushFalloff(t):_roundBrushFalloff(t,inner,brushHardness));
+      let a=alpha*_proceduralBrushFalloff(t,brushHardness,rr,aaModeCpu,isAirbrush);
       a=Math.min(1,Math.max(0,a));
       if(a<=0) continue;
       if(composite==='erase'){
@@ -1189,6 +1258,10 @@ function _dabAA(x,y,r,rgb,alpha,composite){
   // same class of genuine supersampled-coverage rendering.
   const tinyTipDab=r<=1&&!window._brushAirbrush&&!!window.brushTipCanvas;
   if(tinyTipDab){_dabTipTinyCoverage(x,y,r,rgb,alpha,composite);return;}
+  if(_isStandardProceduralSoftRound()){
+    _drawSoftRoundMask(x,y,r,rgb,alpha,composite);
+    return;
+  }
   if(brushRenderer==='cpu') _dabAACpu(x,y,r,rgb,alpha,composite);
   else _dabAAGpu(x,y,r,rgb,alpha,composite);
 }
@@ -1955,11 +2028,12 @@ function _airbrushIntervalMs(){
 }
 function _startAirbrushSpray(){
   _stopAirbrushSpray();
+  if(!window._brushAirbrush||!window._brushContinuousSpraying) return;
   _airbrushTimerX=lx;
   _airbrushTimerY=ly;
   _airbrushLastMovementTime=performance.now();
   _airbrushTimer=setInterval(()=>{
-    if(!drawing || !window._brushAirbrush){ _stopAirbrushSpray(); return; }
+    if(!drawing || !window._brushAirbrush || !window._brushContinuousSpraying){ _stopAirbrushSpray(); return; }
     if(lx!==_airbrushTimerX || ly!==_airbrushTimerY){
       _airbrushTimerX=lx;
       _airbrushTimerY=ly;
@@ -2049,6 +2123,11 @@ function _usesAutoHardRoundRaster(radius){
 function _airbrushCanonicalSpacingRatio(e,pressure){
   const radius=_computeSpacingRadius(e||_lastPointerEvent,pressure==null?currentPressure:pressure);
   const step=Math.max(0.5,radius*2*0.02);
+  return _flowRatioForStep(step,radius);
+}
+function _initialDabSpacingRatio(e,pressure){
+  const radius=_computeSpacingRadius(e,pressure);
+  const step=Math.max(0.5,radius*2*_effectiveSpacingFrac());
   return _flowRatioForStep(step,radius);
 }
 function _walkDabArc(length,pointAt,e,startPressure,endPressure){
@@ -2858,14 +2937,14 @@ activeC.addEventListener('pointerdown',e=>{
   _resetCurve(p.x,p.y,currentPressure);
   _lastPointerEvent=e;
   if(tool!=='eraser'){_ensureStrokeCanvas();_inStroke=true;}
-  if(window._brushAirbrush){
-    const previousSpacingRatio=_flowSpacingRatio;
-    _flowSpacingRatio=_airbrushCanonicalSpacingRatio(e,currentPressure);
-    try{_stampDab(p.x,p.y,e);}
-    finally{_flowSpacingRatio=previousSpacingRatio;}
-  }else _stampDab(p.x,p.y,e);
+  // Pointer-down uses the same spacing-derived transmittance ratio as every
+  // arc-walked movement dab, so Flow is identical for isolated stamps.
+  const previousSpacingRatio=_flowSpacingRatio;
+  _flowSpacingRatio=_initialDabSpacingRatio(e,currentPressure);
+  try{_stampDab(p.x,p.y,e);}
+  finally{_flowSpacingRatio=previousSpacingRatio;}
   _scheduleRecomposite();
-  if(window._brushAirbrush) _startAirbrushSpray();
+  if(window._brushAirbrush&&window._brushContinuousSpraying) _startAirbrushSpray();
 });
 // _handleMoveEvent: shared by pointermove + pointerrawupdate.
 // pointerrawupdate fires at the full OS/Windows Ink sampling rate (up to 1000Hz)
