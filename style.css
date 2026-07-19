@@ -1797,3 +1797,22 @@ body.tool-options-resizing{cursor:ns-resize!important;user-select:none!important
 .tool-group-option-row.compact{display:flex;min-height:22px;color:var(--text);}
 .tool-group-option-value{text-align:right;font-variant-numeric:tabular-nums;}
 .tool-group-line-color{width:18px;height:18px;flex:0 0 18px;border:1px solid var(--border2);border-radius:3px;}
+
+/* Temporary distraction-free drawing workspace. Panels remain mounted so
+   docking, sizing, scroll positions, and listeners are preserved verbatim. */
+body.draw-mode #menubar,
+body.draw-mode #toolbar,
+body.draw-mode #panel-layer,
+body.draw-mode .fp-dock-resize,
+body.draw-mode .fp-split-resize,
+body.draw-mode .fp-float-resize,
+body.draw-mode #bottom-area,
+body.draw-mode #status{display:none!important;}
+body.draw-mode #main-area{flex:1 1 auto;min-height:0;}
+#draw-mode-exit-zone{display:none;position:fixed;right:0;bottom:0;width:14px;height:64px;z-index:20000;align-items:flex-end;justify-content:flex-end;overflow:visible;}
+body.draw-mode #draw-mode-exit-zone{display:flex;}
+#draw-mode-exit-zone:hover{width:148px;}
+#draw-mode-exit{position:absolute;right:8px;bottom:8px;width:124px;height:30px;padding:0 10px;border:1px solid var(--border2);border-radius:5px;background:var(--bg2);color:var(--text);font:600 11px/1 system-ui,sans-serif;opacity:0;pointer-events:none;cursor:pointer;transition:opacity 120ms ease,background-color 120ms ease;}
+#draw-mode-exit-zone:hover #draw-mode-exit,
+#draw-mode-exit:focus-visible{opacity:.92;pointer-events:auto;}
+#draw-mode-exit:hover{background:var(--bg4);}

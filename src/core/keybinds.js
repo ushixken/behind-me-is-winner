@@ -35,6 +35,7 @@ const KEYBIND_DEFAULTS={
   zoomReset:   {label:'Reset Zoom',         key:'0',          ctrl:true,  shift:false, alt:false},
   rotateReset: {label:'Reset Rotation',     key:'0',          ctrl:true,  shift:true,  alt:false},
   toggleOnionSkin:{label:'Toggle Onion Skin', key:'d',          ctrl:false, shift:false, alt:false},
+  toggleDrawMode:{label:'Toggle Draw Mode', key:'9',          ctrl:false, shift:false, alt:false},
   flipHorizontal: {label:'Flip Horizontal', key:'h',          ctrl:false, shift:false, alt:false},
   flipVertical:   {label:'Flip Vertical',   key:'v',          ctrl:false, shift:false, alt:false},
   brushResize:    {label:'Resize Brush (hold + drag)', key:'s', ctrl:false, shift:false, alt:false},
@@ -73,7 +74,7 @@ const KEYBIND_CATEGORIES=[
   {name:'Selection',      actions:['selectLinkedPixels']},
   {name:'Tool Controls',   actions:['brushResize']},
   {name:'Frames & Keyframes', actions:['newFrame','delKeyframe','nextFrame','prevFrame','flipperBypass','increaseExposure','decreaseExposure']},
-  {name:'View',           actions:['toggleOnionSkin','zoomIn','zoomOut','zoomReset','rotateReset']},
+  {name:'View',           actions:['toggleDrawMode','toggleOnionSkin','zoomIn','zoomOut','zoomReset','rotateReset']},
   {name:'Transform',      actions:['flipHorizontal','flipVertical']},
 ];
 
@@ -345,7 +346,7 @@ function cancelRebind(){
 const KEYBIND_MENU_LABELS={
   undo:'dd-undo', redo:'dd-redo', cutLayer:'dd-cut', copyLayer:'dd-copy',
   pasteLayer:'dd-paste', duplicateLayer:'dd-duplicate', pasteImage:'dd-paste-image', clearFrame:'dd-clear',
-  rotateReset:'dd-reset-rotation'
+  rotateReset:'dd-reset-rotation', toggleDrawMode:'dd-toggle-draw-mode'
 };
 function syncKeybindMenuLabels(){
   for(const action in KEYBIND_MENU_LABELS){

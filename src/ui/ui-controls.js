@@ -266,6 +266,34 @@ document.getElementById('modal-zoom-ok').onclick=()=>{
 };
 
 // ════════════════════════════════════════════════════════════════
+// DRAW MODE — temporary, deliberately not persisted
+// ════════════════════════════════════════════════════════════════
+let drawModeActive=false;
+function setDrawMode(enabled){
+  const next=!!enabled;
+  if(drawModeActive===next)return;
+  drawModeActive=next;
+  document.body.classList.toggle('draw-mode',drawModeActive);
+  const exitZone=document.getElementById('draw-mode-exit-zone');
+  exitZone.setAttribute('aria-hidden',String(!drawModeActive));
+  document.getElementById('draw-mode-exit').tabIndex=drawModeActive?0:-1;
+  if(typeof closeAllDropdowns==='function')closeAllDropdowns();
+  if(typeof hideAllMenus==='function')hideAllMenus();
+  if(typeof updateWindowChecks==='function')updateWindowChecks();
+  requestAnimationFrame(()=>{
+    if(typeof centerCanvas==='function')centerCanvas();
+    else if(typeof applyTransform==='function')applyTransform();
+  });
+}
+function toggleDrawMode(){setDrawMode(!drawModeActive);}
+window.setDrawMode=setDrawMode;
+window.toggleDrawMode=toggleDrawMode;
+window.isDrawModeActive=()=>drawModeActive;
+document.body.classList.remove('draw-mode');
+document.getElementById('draw-mode-exit').tabIndex=-1;
+document.getElementById('draw-mode-exit').addEventListener('click',()=>setDrawMode(false));
+
+// ════════════════════════════════════════════════════════════════
 // KEYBOARD SHORTCUTS
 // ════════════════════════════════════════════════════════════════
 document.addEventListener('keydown',e=>{
@@ -291,6 +319,7 @@ document.addEventListener('keydown',e=>{
     if(matchBind(e,'deleteLayer')){e.preventDefault();deleteLayer(curLayer);return;}
   }
   const toolShortcutBlocked=!!(shortcutTarget&&(shortcutTarget.isContentEditable||shortcutTarget.closest('input,textarea,select,[contenteditable="true"]')))||document.querySelector('.modal-overlay.visible');
+  if(!toolShortcutBlocked&&!e.repeat&&matchBind(e,'toggleDrawMode')){e.preventDefault();toggleDrawMode();return;}
   if(!toolShortcutBlocked&&!e.repeat&&matchBind(e,'toggleOnionSkin')){e.preventDefault();toggleOnionSkin();return;}
   if(!toolShortcutBlocked&&typeof handleToolGroupKeybind==='function'&&handleToolGroupKeybind(e)){e.preventDefault();return;}
   if(!toolShortcutBlocked&&(!window.ToolGroups||typeof ToolGroups.getGroups!=='function')){

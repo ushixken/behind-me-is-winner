@@ -114,6 +114,8 @@
       <div class="dd-item" id="dd-show-drawing-marks"><span class="dd-check" id="chk-drawing-marks"></span>Drawing Marks</div>
       <div class="dd-item" id="dd-show-toolbar"><span class="dd-check" id="chk-toolbar">✓</span>Toolbar</div>
       <div class="dd-sep"></div>
+      <div class="dd-item" id="dd-toggle-draw-mode"><span class="dd-check" id="chk-draw-mode"></span>Draw Mode<span class="dd-shortcut">9</span></div>
+      <div class="dd-sep"></div>
       <div class="dd-item" id="dd-reset-layout">Reset Layout</div>
       <div class="dd-item" id="dd-center-canvas">Center Canvas</div>
       <div class="dd-item" id="dd-reset-rotation">Reset Rotation<span class="dd-shortcut"></span></div>
@@ -575,6 +577,10 @@
 </div>
 
 <!-- ── CANVAS CONTEXT MENU ─────────────────────────────────── -->
+<div id="draw-mode-exit-zone" aria-hidden="true">
+  <button type="button" id="draw-mode-exit" title="Exit Draw Mode">Exit Draw Mode</button>
+</div>
+
 <div class="ctx-menu" id="ctx-menu">
   <div class="ctx-item" id="ctx-cut">Cut Frame<span class="ctx-shortcut">Ctrl+X</span></div>
   <div class="ctx-item" id="ctx-copy">Copy Frame<span class="ctx-shortcut">Ctrl+C</span></div>
