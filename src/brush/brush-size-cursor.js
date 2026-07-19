@@ -31,7 +31,7 @@
       && _hovering
       && !activeGroupId
       && !panning && !_zoomDrag && !_rotateDrag && !spaceHeld
-      && tool!=='transform';
+      && tool!=='transform' && tool!=='eyedropper';
   }
 
   function _update(){

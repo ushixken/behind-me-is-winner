@@ -12,12 +12,14 @@ try{ cursorStyle=localStorage.getItem('animator_cursor_style')||'crosshair'; }ca
 // A small precise dot, used for 'point' mode. Falls back to the native
 // crosshair cursor in browsers that can't render the custom image.
 const _POINT_CURSOR_CSS="url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='15' height='15'><circle cx='7.5' cy='7.5' r='2.5' fill='white' stroke='black' stroke-width='1.3'/></svg>\") 7 7, crosshair";
+const _EYEDROPPER_CURSOR_CSS="url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'><path d='M19.7 4.3a2.4 2.4 0 0 0-3.4 0l-2.1 2.1-.9-.9-1.4 1.4.9.9-7.6 7.6-.7 3.1 3.1-.7 7.6-7.6.9.9 1.4-1.4-.9-.9 2.1-2.1a2.4 2.4 0 0 0 0-3.4Z' fill='white' stroke='black' stroke-width='2' stroke-linejoin='round'/></svg>\") 4 20, crosshair";
 
 // The CSS cursor to use for the canvas in its normal idle state (i.e. not
 // mid pan/zoom/rotate, which use their own transient cursors). 'brush'
 // hides the native cursor entirely — brush-size-cursor.js draws a live
 // circle overlay in its place.
 function _baseCursorCSS(){
+  if(typeof tool!=='undefined'&&tool==='eyedropper') return _EYEDROPPER_CURSOR_CSS;
   if(cursorStyle==='point') return _POINT_CURSOR_CSS;
   if(cursorStyle==='brush') return 'none';
   return 'crosshair';

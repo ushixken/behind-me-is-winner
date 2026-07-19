@@ -297,20 +297,23 @@
   registerGroup({id:'line',name:'Line',shortcutActionId:'toolLine',icon:'L',panelTitle:'Line',panelRenderer:renderLineOptions,defaultSubToolId:'straight-line',subTools:[
     {id:'straight-line',name:'Straight Line',icon:'L',activate:toolActivation('line','Line'),settingsDescription:'Uses the existing line engine and shared brush settings.'},placeholder('polyline','Polyline','P'),placeholder('curve','Curve','C'),placeholder('rectangle-line','Rectangle','R'),placeholder('ellipse-line','Ellipse','O')
   ]});
+  registerGroup({id:'eyedropper',name:'Eyedropper',shortcutActionId:'toolEyedropper',icon:'I',defaultSubToolId:'sample-visible-color',subTools:[
+    {id:'sample-visible-color',name:'Sample Visible Color',icon:'I',activate:toolActivation('eyedropper','Eyedropper'),settingsDescription:'Samples the visible composited canvas color.'}
+  ]});
   registerGroup({id:'transform',name:'Transform',shortcutActionId:'toolTransform',icon:'T',defaultSubToolId:'free-transform',subTools:[
     {id:'free-transform',name:'Free Transform',icon:'F',activate:toolActivation('transform','Transform',()=>{if(typeof _tfSetPerspective==='function')_tfSetPerspective(false);})},
     {id:'perspective-transform',name:'Perspective Transform',icon:'P',activate:toolActivation('transform','Transform',()=>{if(typeof _tfSetPerspective==='function')_tfSetPerspective(true);})}
   ]});
 
-  bindMainButton('tp-btn-brush','brush');bindMainButton('tp-btn-eraser','eraser');bindMainButton('tp-btn-selection','selection');bindMainButton('tp-btn-fill','fill');bindMainButton('tp-btn-line','line');bindMainButton('tp-btn-transform','transform');
+  bindMainButton('tp-btn-brush','brush');bindMainButton('tp-btn-eraser','eraser');bindMainButton('tp-btn-selection','selection');bindMainButton('tp-btn-fill','fill');bindMainButton('tp-btn-line','line');bindMainButton('tp-btn-eyedropper','eyedropper');bindMainButton('tp-btn-transform','transform');
   const free=document.getElementById('transform-mode-free'),perspective=document.getElementById('transform-mode-perspective');
   if(free)free.onclick=()=>activateSubTool('transform','free-transform');if(perspective)perspective.onclick=()=>activateSubTool('transform','perspective-transform');
   const grid=document.getElementById('brush-preset-grid');if(grid)grid.addEventListener('click',event=>{const item=event.target.closest('.bp-item');if(!item)return;const group=getGroup(tool==='eraser'?'eraser':'brush');if(group){const subTool=ensurePresetSubTool(group,item.dataset.presetId);group.activeSubToolId=subTool.id;persist();renderSettings();}});
-  window.addEventListener('tool-changed',event=>{if(activating)return;const map={brush:'brush',eraser:'eraser',fill:'fill',line:'line',lasso:'selection','rectangle-select':'selection','ellipse-select':'selection',selection:'selection',transform:'transform'},id=map[event.detail&&event.detail.tool];if(id){activeGroupId=id;syncPanel(getGroup(id));syncActiveButtons();renderSettings();}});
+  window.addEventListener('tool-changed',event=>{if(activating)return;const map={brush:'brush',eraser:'eraser',fill:'fill',line:'line',eyedropper:'eyedropper',lasso:'selection','rectangle-select':'selection','ellipse-select':'selection',selection:'selection',transform:'transform'},id=map[event.detail&&event.detail.tool];if(id){activeGroupId=id;syncPanel(getGroup(id));syncActiveButtons();renderSettings();}});
   window.addEventListener('active-artwork-changed',refreshSelectionAvailability);
   window.addEventListener('project-loaded',refreshSelectionAvailability);
   window.addEventListener('layer-type-changed',refreshSelectionAvailability);
-  const initial=({brush:'brush',eraser:'eraser',fill:'fill',line:'line',lasso:'selection','rectangle-select':'selection','ellipse-select':'selection',selection:'selection',transform:'transform'})[typeof tool!=='undefined'?tool:'brush']||'brush';activeGroupId=initial;if(initial==='selection')restoreSelectionToolContext(getSubTool(selectionGroup,selectionGroup.activeSubToolId));syncPanel(getGroup(initial));syncActiveButtons();refreshSelectionAvailability();
+  const initial=({brush:'brush',eraser:'eraser',fill:'fill',line:'line',eyedropper:'eyedropper',lasso:'selection','rectangle-select':'selection','ellipse-select':'selection',selection:'selection',transform:'transform'})[typeof tool!=='undefined'?tool:'brush']||'brush';activeGroupId=initial;if(initial==='selection')restoreSelectionToolContext(getSubTool(selectionGroup,selectionGroup.activeSubToolId));syncPanel(getGroup(initial));syncActiveButtons();refreshSelectionAvailability();
   window.SelectionToolSettings={
     get(toolId){return selectionSettingsFor(getSubTool(selectionGroup,toolId));},
     set(toolId,key,value){const subTool=getSubTool(selectionGroup,toolId);if(subTool)updateSelectionSetting(subTool,key,value);},

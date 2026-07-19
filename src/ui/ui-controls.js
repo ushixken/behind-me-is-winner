@@ -294,6 +294,25 @@ document.getElementById('draw-mode-exit').tabIndex=-1;
 document.getElementById('draw-mode-exit').addEventListener('click',()=>setDrawMode(false));
 
 // ════════════════════════════════════════════════════════════════
+// Alt temporarily samples the visible canvas color without changing the
+// user's permanent drawing-tool choice.
+let _temporaryEyedropperRestore=null;
+function _shortcutTargetIsEditable(target){
+  return target instanceof Element&&!!(target.isContentEditable||target.closest('input,textarea,select,[contenteditable="true"]'));
+}
+function _restoreTemporaryEyedropper(){
+  if(!_temporaryEyedropperRestore)return;
+  const previous=_temporaryEyedropperRestore;_temporaryEyedropperRestore=null;
+  if(tool==='eyedropper')setTool(previous.tool,previous.label);
+}
+document.addEventListener('keydown',e=>{
+  if(e.key!=='Alt'||e.repeat||_temporaryEyedropperRestore||_shortcutTargetIsEditable(e.target)||document.querySelector('.modal-overlay.visible'))return;
+  if(!['brush','eraser','fill','line'].includes(tool))return;
+  e.preventDefault();_temporaryEyedropperRestore={tool,label:document.getElementById('stat-tool').textContent};setTool('eyedropper','Eyedropper');
+});
+document.addEventListener('keyup',e=>{if(e.key==='Alt')_restoreTemporaryEyedropper();});
+window.addEventListener('blur',_restoreTemporaryEyedropper);
+
 // KEYBOARD SHORTCUTS
 // ════════════════════════════════════════════════════════════════
 document.addEventListener('keydown',e=>{
@@ -323,7 +342,7 @@ document.addEventListener('keydown',e=>{
   if(!toolShortcutBlocked&&!e.repeat&&matchBind(e,'toggleOnionSkin')){e.preventDefault();toggleOnionSkin();return;}
   if(!toolShortcutBlocked&&typeof handleToolGroupKeybind==='function'&&handleToolGroupKeybind(e)){e.preventDefault();return;}
   if(!toolShortcutBlocked&&(!window.ToolGroups||typeof ToolGroups.getGroups!=='function')){
-    const toolMap={toolBrush:['brush','Brush'],toolEraser:['eraser','Eraser'],toolFill:['fill','Fill'],toolLine:['line','Line'],toolTransform:['transform','Transform']};
+    const toolMap={toolBrush:['brush','Brush'],toolEraser:['eraser','Eraser'],toolFill:['fill','Fill'],toolLine:['line','Line'],toolEyedropper:['eyedropper','Eyedropper'],toolTransform:['transform','Transform']};
     for(const action in toolMap){if(matchBind(e,action)){e.preventDefault();setTool(...toolMap[action]);return;}}
   }
   if(matchBind(e,'newFrame')){createBlankKey();loadFrame(curLayer,curFrame);}

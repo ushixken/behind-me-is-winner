@@ -1,4 +1,4 @@
-﻿// ════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════
 // ONION SKIN
 // ════════════════════════════════════════════════════════════════
 const ONION_SKIN_PREF_KEY='animator_onion_skin_enabled';
@@ -181,12 +181,14 @@ function _syncBrushPresetsDocker(t){
   if(nameEl) nameEl.textContent=showTransform?'Transform':'Brush Presets';
 }
 function setTool(t,lbl){
+  const previousTool=tool;
   // Leaving the Transform tool for anything else commits the current
   // move/scale/rotate into the layer (baking it into the active canvas)
   // before the new tool takes over.
   if(tool==='transform'&&t!=='transform'&&typeof commitTransformTool==='function') commitTransformTool();
   if(tool==='lasso'&&t!=='lasso'&&window.LassoSelection) LassoSelection.cancel();
   tool=t;
+  if((t==='eyedropper'||previousTool==='eyedropper')&&typeof _baseCursorCSS==='function')activeC.style.cursor=_baseCursorCSS();
   _syncBrushPresetsDocker(t);
   document.querySelectorAll('.tbtn').forEach(b=>b.classList.remove('active'));
   const btn=document.getElementById('btn-'+t);if(btn) btn.classList.add('active');
@@ -217,6 +219,7 @@ document.getElementById('tp-btn-brush').onclick=()=>setTool('brush','Brush');
 document.getElementById('tp-btn-eraser').onclick=()=>setTool('eraser','Eraser');
 document.getElementById('tp-btn-fill').onclick=()=>setTool('fill','Fill');
 document.getElementById('tp-btn-line').onclick=()=>setTool('line','Line');
+document.getElementById('tp-btn-eyedropper').onclick=()=>setTool('eyedropper','Eyedropper');
 document.getElementById('tp-btn-selection').onclick=()=>setTool('lasso','Lasso Select');
 document.getElementById('tp-btn-transform').onclick=()=>setTool('transform','Transform');
 

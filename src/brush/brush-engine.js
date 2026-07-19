@@ -2879,11 +2879,27 @@ window.clearBrushTexture=function(){
 activeC.style.touchAction='none';
 canvasArea.style.touchAction='none';
 
+let _eyedropperPointerId=null;
+function _sampleVisibleCanvasColor(e){
+  const p=getPos(e),x=Math.floor(p.x),y=Math.floor(p.y);
+  if(x<0||y<0||x>=CW||y>=CH)return;
+  const pixel=compCtx.getImageData(x,y,1,1).data;
+  if(pixel[3]===0)return;
+  const hex='#'+[pixel[0],pixel[1],pixel[2]].map(value=>value.toString(16).padStart(2,'0')).join('');
+  if(typeof colorTarget!=='undefined')colorTarget='fg';
+  if(typeof _applyColorLive==='function')_applyColorLive(hex);
+  else{color=hex;const input=document.getElementById('color-input');if(input){input.value=hex;input.dispatchEvent(new Event('input',{bubbles:true}));}}
+}
+
+
 activeC.addEventListener('pointerdown',e=>{
   // e.button can be -1 on some tablet drivers for pen primary contact; use e.buttons&1 instead
   if(activeGroupId||panning||(typeof _zoomDrag!=='undefined'&&_zoomDrag)||spaceHeld||tool==='transform') return;
-  if(tool!=='brush'&&tool!=='eraser'&&tool!=='fill'&&tool!=='line') return;
   if(e.pointerType==='pen'?(!(e.buttons&1)):(e.button!==0)) return;
+  if(tool==='eyedropper'){
+    e.preventDefault();_eyedropperPointerId=e.pointerId;activeC.setPointerCapture(e.pointerId);_sampleVisibleCanvasColor(e);return;
+  }
+  if(tool!=='brush'&&tool!=='eraser'&&tool!=='fill'&&tool!=='line') return;
   // Prevent browser from hijacking tablet/stylus events (scroll, pan, zoom)
   e.preventDefault();
   _isDrawingWithPen = (e.pointerType === 'pen');
@@ -2961,12 +2977,14 @@ function _handleMoveEvent(e){
 // normally).
 const _hasRawUpdate = (typeof window !== 'undefined' && 'onpointerrawupdate' in window);
 activeC.addEventListener('pointermove', e=>{
+  if(tool==='eyedropper'&&e.pointerId===_eyedropperPointerId){if(e.buttons&1){e.preventDefault();_sampleVisibleCanvasColor(e);}return;}
   if(_hasRawUpdate && e.pointerType === 'pen') return; // handled exclusively by pointerrawupdate below
   _handleMoveEvent(e);
 });
 if(_hasRawUpdate){
   activeC.addEventListener('pointerrawupdate', e=>{
     if(e.pointerType !== 'pen') return;
+    if(tool==='eyedropper'&&e.pointerId===_eyedropperPointerId){if(e.buttons&1){e.preventDefault();_sampleVisibleCanvasColor(e);}return;}
     _handleMoveEvent(e);
   });
 }
@@ -2996,8 +3014,9 @@ function _pointerEndStroke(e){
   _activeStrokePointerId=null;
 }
 activeC.addEventListener('pointerup',e=>{
+  if(e.pointerId===_eyedropperPointerId){_eyedropperPointerId=null;if(activeC.hasPointerCapture(e.pointerId))activeC.releasePointerCapture(e.pointerId);return;}
   _pointerEndStroke(e);
   if(activeC.hasPointerCapture(e.pointerId))activeC.releasePointerCapture(e.pointerId);
 });
-activeC.addEventListener('pointercancel',e=>{_endStroke(e.pointerId);});
-activeC.addEventListener('lostpointercapture',e=>{_endStroke(e.pointerId);});
+activeC.addEventListener('pointercancel',e=>{if(e.pointerId===_eyedropperPointerId)_eyedropperPointerId=null;_endStroke(e.pointerId);});
+activeC.addEventListener('lostpointercapture',e=>{if(e.pointerId===_eyedropperPointerId)_eyedropperPointerId=null;_endStroke(e.pointerId);});
