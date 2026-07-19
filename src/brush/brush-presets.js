@@ -1694,10 +1694,14 @@ function applyToolPreset(json){
   let _toolPresetSizes={brush:{'hard-round':6},eraser:{'hard-round':20}};
   // Which tab is shown in the preset panel (brush|eraser) — follows setTool()
   let _activeTab = 'brush';
-  // Which preset is currently shown active/highlighted in the grid
+  // Visual selection can be restored before an asset-pack preset is registered.
+  // Runtime identity changes only after that preset's settings and assets commit.
   let _activePresetId = 'hard-round';
+  let _activeRuntimePresetId = null;
   window._activeBrushPresetId = _activePresetId;
   let _applyingPresetSettings=false;
+  let _brushRuntimeActivationVersion=0;
+  window._brushRuntimeReady=true;
   // Drag state (kept in JS, not dataTransfer — reading dataTransfer.getData
   // during dragover is unreliable cross-browser, so we just track it here)
   let _drag = null; // {type:'group',id} | {type:'item',id,fromGroup}
@@ -2455,6 +2459,13 @@ function applyToolPreset(json){
   }
 
   function _bpSearchVal(){ const el=document.getElementById('bp-search'); return el?el.value:''; }
+  function rebuildPresetGridPreservingView(){
+    const grid=document.getElementById('brush-preset-grid');
+    const previousScrollTop=grid?grid.scrollTop:0;
+    buildGrid(_bpSearchVal());
+    refreshGrid();
+    if(grid) requestAnimationFrame(()=>{grid.scrollTop=Math.min(previousScrollTop,Math.max(0,grid.scrollHeight-grid.clientHeight));});
+  }
 
   //  Build the grid (groups + items, draggable/reorderable, scrollable)
   function buildGrid(searchQuery){
@@ -2598,6 +2609,10 @@ function applyToolPreset(json){
 
   //  Apply a preset's settings to the tool settings sliders
   function applyPresetSettings(p){
+    const activationVersion=++_brushRuntimeActivationVersion;
+    const runtimeAssets=p.runtimeAssets||null;
+    const pendingAssets=[];
+    window._brushRuntimeReady=false;
     const s = normalizeBrushSettings(p.settings);
     p.settings=s;
     if(!('ts-rotation-mode' in s)||s['ts-rotation-mode']==='fixed') s['ts-rotation-mode']='fixed-rotation';
@@ -2712,15 +2727,15 @@ function applyToolPreset(json){
     const tipLoadGeneration=(window._brushTipLoadGeneration||0)+1;
     window._brushTipLoadGeneration=tipLoadGeneration;
     if(tipSrc){
-      if(typeof _dataURLToCanvas==='function'){
-        _dataURLToCanvas(tipSrc).then(c=>{
-          if(window._brushTipLoadGeneration!==tipLoadGeneration) return;
-          if(typeof window.setBrushTip==='function') window.setBrushTip(c,s['ts-tip-reference-diameter']);
-          if(s['ts-tip-mode']) window.brushTipMode=s['ts-tip-mode'];
-          if(s['ts-tip-soft-alpha']!==undefined) window.brushTipSoftAlpha=!!s['ts-tip-soft-alpha'];
-          if(typeof window._syncTipUI==='function') window._syncTipUI();
-        }).catch(()=>{});
-      }
+      const commitTip=c=>{
+        if(activationVersion!==_brushRuntimeActivationVersion||window._brushTipLoadGeneration!==tipLoadGeneration) return;
+        if(typeof window.setBrushTip==='function') window.setBrushTip(c,s['ts-tip-reference-diameter']);
+        if(s['ts-tip-mode']) window.brushTipMode=s['ts-tip-mode'];
+        if(s['ts-tip-soft-alpha']!==undefined) window.brushTipSoftAlpha=!!s['ts-tip-soft-alpha'];
+        if(typeof window._syncTipUI==='function') window._syncTipUI();
+      };
+      if(runtimeAssets&&runtimeAssets.tipSrc===tipSrc&&runtimeAssets.tipCanvas) commitTip(runtimeAssets.tipCanvas);
+      else if(typeof _dataURLToCanvas==='function') pendingAssets.push(_dataURLToCanvas(tipSrc).then(commitTip));
     } else {
       if(typeof window.clearBrushTip==='function') window.clearBrushTip();
       if(typeof window._syncTipUI==='function') window._syncTipUI();
@@ -2728,25 +2743,36 @@ function applyToolPreset(json){
 
     // Texture image: same pattern.
     if(textureSrc){
-      if(typeof _dataURLToCanvas==='function'){
-        _dataURLToCanvas(textureSrc).then(c=>{
-          if(typeof window.setBrushTexture==='function') window.setBrushTexture(c);
-          const depth=s['ts-texture-strength']!=null?(+s['ts-texture-strength']/100):1.0;
-          window.brushTextureStrength=depth;
-          const buildup=s['ts-texture-buildup-custom']!=null?(+s['ts-texture-buildup-custom']/100):1.0;
-          window.brushTextureBuildup=buildup;
-          window.brushTextureScale=s['ts-texture-scale']!=null?(+s['ts-texture-scale']/100):1.0;
-          window.brushTextureInvert=!!s['ts-texture-invert'];
-          window.brushTextureBrightness=s['ts-texture-brightness']!=null?+s['ts-texture-brightness']:0;
-          window.brushTextureContrast=s['ts-texture-contrast']!=null?+s['ts-texture-contrast']:0;
-          if(typeof window._invalidateTextureCache==='function') window._invalidateTextureCache();
-          if(typeof window._syncTextureUI==='function') window._syncTextureUI();
-        }).catch(()=>{});
-      }
+      const commitTexture=c=>{
+        if(activationVersion!==_brushRuntimeActivationVersion) return;
+        if(typeof window.setBrushTexture==='function') window.setBrushTexture(c);
+        const depth=s['ts-texture-strength']!=null?(+s['ts-texture-strength']/100):1.0;
+        window.brushTextureStrength=depth;
+        const buildup=s['ts-texture-buildup-custom']!=null?(+s['ts-texture-buildup-custom']/100):1.0;
+        window.brushTextureBuildup=buildup;
+        window.brushTextureScale=s['ts-texture-scale']!=null?(+s['ts-texture-scale']/100):1.0;
+        window.brushTextureInvert=!!s['ts-texture-invert'];
+        window.brushTextureBrightness=s['ts-texture-brightness']!=null?+s['ts-texture-brightness']:0;
+        window.brushTextureContrast=s['ts-texture-contrast']!=null?+s['ts-texture-contrast']:0;
+        if(typeof window._invalidateTextureCache==='function') window._invalidateTextureCache();
+        if(typeof window._syncTextureUI==='function') window._syncTextureUI();
+      };
+      if(runtimeAssets&&runtimeAssets.textureSrc===textureSrc&&runtimeAssets.textureCanvas) commitTexture(runtimeAssets.textureCanvas);
+      else if(typeof _dataURLToCanvas==='function') pendingAssets.push(_dataURLToCanvas(textureSrc).then(commitTexture));
     } else {
       if(typeof window.clearBrushTexture==='function') window.clearBrushTexture();
       if(typeof window._syncTextureUI==='function') window._syncTextureUI();
     }
+    const completeActivation=()=>{
+      if(activationVersion!==_brushRuntimeActivationVersion) return false;
+      const activatedPresetId=p.presetId||_activePresetId;
+      _activeRuntimePresetId=activatedPresetId;
+      window._brushRuntimeReady=true;
+      window.dispatchEvent(new CustomEvent('brush-runtime-ready',{detail:{presetId:activatedPresetId}}));
+      return true;
+    };
+    if(!pendingAssets.length){completeActivation();return Promise.resolve(true);}
+    return Promise.allSettled(pendingAssets).then(completeActivation);
   }
 
   //  Snapshot / restore per-tool live settings
@@ -2804,10 +2830,14 @@ function applyToolPreset(json){
     if(t==='eraser') savedSettings['ts-aa']=true;
     _applyingPresetSettings=true;
     try{
-      applyPresetSettings({settings:savedSettings});
+      applyPresetSettings({settings:savedSettings,runtimeAssets:preset._runtimeAssets,presetId});
       restoreToolPresetSize(t,presetId,savedSettings['ts-size']);
 
     }finally{_applyingPresetSettings=false;}
+  }
+  function activateToolRuntimeState(t){
+    restoreLiveState(t);
+    refreshGrid();
   }
 
   //  Select a preset (always for the currently active tab/tool)
@@ -2845,7 +2875,7 @@ function applyToolPreset(json){
     _toolState[targetTool].presetId = id;
     _applyingPresetSettings=true;
     try{
-      applyPresetSettings({ settings: savedSettings });
+      applyPresetSettings({settings:savedSettings,runtimeAssets:p._runtimeAssets,presetId:id});
       restoreToolPresetSize(targetTool,id,savedSettings['ts-size']);
     }finally{ _applyingPresetSettings=false; }
     captureLiveState(targetTool);
@@ -2916,6 +2946,13 @@ function applyToolPreset(json){
                     hardness:(json.settings&&json.settings['ts-hardness']!=null)?json.settings['ts-hardness']/100:0.5 },
           settings
         };
+        const tipSrc=settings['ts-tip-dataurl']||settings['ts-tip-url']||null;
+        const textureSrc=settings['ts-texture-dataurl']||settings['ts-texture-url']||null;
+        const [tipCanvas,textureCanvas]=await Promise.all([
+          tipSrc?_dataURLToCanvas(tipSrc).catch(()=>null):Promise.resolve(null),
+          textureSrc?_dataURLToCanvas(textureSrc).catch(()=>null):Promise.resolve(null)
+        ]);
+        Object.defineProperty(preset,'_runtimeAssets',{value:{tipSrc,tipCanvas,textureSrc,textureCanvas},enumerable:false});
         _assetPackPresets.push(preset);
         _seedPresetSettings(preset);
         const general=_groups.find(g=>g.default)||_groups[0];
@@ -2925,11 +2962,13 @@ function applyToolPreset(json){
       }
     }
     const restoredPresetId=_toolState[_activeTab].presetId;
-    if(restoredPresetId&&_activePresetId!==restoredPresetId&&findPreset(restoredPresetId)){
+    // switchTab() may already show this ID even though no runtime preset was applied.
+    if(restoredPresetId&&_activeRuntimePresetId!==restoredPresetId&&findPreset(restoredPresetId)){
       selectPreset(restoredPresetId);
-    }else{
-      buildGrid();
     }
+    // One batched rebuild after every pack is registered adds the new rows.
+    // Selection refresh alone cannot populate items that did not exist yet.
+    rebuildPresetGridPreservingView();
   }
   _loadBrushPresetPacks();
 
@@ -2952,7 +2991,7 @@ function applyToolPreset(json){
     btn.onclick=()=>{
       const t=btn.dataset.bpTool;
       if(tool!==t) window.setTool(t,t==='brush'?'Brush':'Eraser');
-      else {switchTab(t);restoreLiveState(t);refreshGrid();}
+      else {switchTab(t);activateToolRuntimeState(t);}
     };
   });
 
@@ -2964,8 +3003,7 @@ function applyToolPreset(json){
     _origSetTool(t, lbl);
     if(t==='brush' || t==='eraser'){
       if(_activeTab!==t){ _activeTab=t; document.querySelectorAll('.bp-tool-tab').forEach(b=>b.classList.toggle('active',b.dataset.bpTool===t)); buildGrid(); }
-      restoreLiveState(t);
-      refreshGrid();
+      activateToolRuntimeState(t);
     }
   };
 
