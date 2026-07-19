@@ -2924,7 +2924,12 @@ function applyToolPreset(json){
         console.warn('[brush-presets] failed to load preset pack "'+slug+'":',err);
       }
     }
-    buildGrid();
+    const restoredPresetId=_toolState[_activeTab].presetId;
+    if(restoredPresetId&&_activePresetId!==restoredPresetId&&findPreset(restoredPresetId)){
+      selectPreset(restoredPresetId);
+    }else{
+      buildGrid();
+    }
   }
   _loadBrushPresetPacks();
 
