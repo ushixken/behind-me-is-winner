@@ -2006,6 +2006,8 @@ let _airbrushTimer=null;
 let _lastPointerEvent=null;
 let _airbrushTimerX=0,_airbrushTimerY=0;
 let _airbrushLastMovementTime=0;
+let _activeStrokePointerId=null;
+let _strokeCompletionStarted=true;
 function _airbrushIntervalMs(){
   const rate=(typeof window!=='undefined' && window._tsAirbrushRate!=null) ? window._tsAirbrushRate : 0.55;
   // rate 0..1 -> interval 50ms (gentle, slow build-up) down to 6ms (dense,
@@ -2319,14 +2321,10 @@ function _curveAddPoint(x,y,pressure,e){
 function _flushCurveTail(e){
   if(_curveP0===null||_curveP1===null) return;
   const B=_curveP1;
-  const isGeneratedHardRound=tool==='brush'&&!window.brushTipCanvas&&brushHardness>=0.995;
-  if(isGeneratedHardRound){
-    const startPt={x:(_curveP0.x+B.x)/2,y:(_curveP0.y+B.y)/2};
-    _stampQuadCurve(startPt.x,startPt.y,B.x,B.y,B.x,B.y,_lastPointerEvent||e,(_curvePr0+_curvePr1)/2,_curvePr1);
-  } else {
-    currentPressure=_curvePr1;
-    _stampDab(B.x,B.y,_lastPointerEvent||e);
-  }
+  // Finalization uses the same arc-length spacing path as movement. For a
+  // stationary tap startPt===B, so this emits no second dab.
+  const startPt={x:(_curveP0.x+B.x)/2,y:(_curveP0.y+B.y)/2};
+  _stampQuadCurve(startPt.x,startPt.y,B.x,B.y,B.x,B.y,_lastPointerEvent||e,(_curvePr0+_curvePr1)/2,_curvePr1);
   // Fill the gap between the last smoothed curve point (B) and the true
   // raw pen-up position. On a fast flick the One Euro Filter trails the
   // real pen tip by several pixels at lift time, leaving an undrawn gap
@@ -2388,14 +2386,18 @@ function _restoreSelectionScopePixels(){
   if(_selectionScopeBase&&window.SelectionScope)SelectionScope.restoreProtectedPixels(ctx,_selectionScopeBase);
   _selectionScopeBase=null;
 }
-function _endStroke(){
+function _endStroke(pointerId){
+  if(_strokeCompletionStarted) return;
+  if(pointerId!=null&&_activeStrokePointerId!=null&&pointerId!==_activeStrokePointerId) return;
+  _strokeCompletionStarted=true;
   _stopAirbrushSpray();
   _autoHardRoundPrevDab=null;
   if(drawing){drawing=false;_flushStrokeTail();if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();_scheduleRecomposite();}
   lineStart=null;
   _pendingDabs.length=0;
-  _curveP0=null;_curveP1=null; // discard in-flight curve geometry, no event to flush a tail with
+  _curveP0=null;_curveP1=null;
   _strokeSegCarryOver=0;
+  _activeStrokePointerId=null;
 }
 document.addEventListener('visibilitychange',()=>{
   if(document.hidden){_endStroke();}
@@ -2904,6 +2906,8 @@ activeC.addEventListener('pointerdown',e=>{
   _resetSmoothing(p.x,p.y,e.timeStamp||performance.now());
   _updateVelocity(p.x, p.y, e.timeStamp);
   if(tool==='fill'){pushUndo();ensureKey();floodFill(p.x,p.y,color);saveActiveToKey();recomposite(curLayer,curFrame);return;}
+  _activeStrokePointerId=e.pointerId;
+  _strokeCompletionStarted=false;
   if(tool==='line'){lineStart=p;return;}
   activeC.setPointerCapture(e.pointerId);
   pushUndo();ensureKey();_beginEndTaperCapture();_selectionScopeBase=tool==='eraser'&&window.SelectionScope?SelectionScope.captureArtwork(activeC):null;drawing=true;lx=p.x;ly=p.y;
@@ -2925,8 +2929,9 @@ activeC.addEventListener('pointerdown',e=>{
 // before the browser throttles events to display refresh rate Ã¢â‚¬â€ giving every
 // real pressure value the tablet digitizer reports, not just the surviving ones.
 function _handleMoveEvent(e){
-  if(!drawing||activeGroupId) return;
-  if(!(e.buttons&1)){_endStroke();return;}
+  if(!drawing||activeGroupId||_strokeCompletionStarted) return;
+  if(_activeStrokePointerId!=null&&e.pointerId!==_activeStrokePointerId) return;
+  if(!(e.buttons&1)){_endStroke(e.pointerId);return;}
   e.preventDefault();
   const events=(typeof e.getCoalescedEvents==='function'&&e.getCoalescedEvents().length)?e.getCoalescedEvents():[e];
   for(const ev of events){
@@ -2968,21 +2973,33 @@ if(_hasRawUpdate){
   });
 }
 function _pointerEndStroke(e){
+  if(_strokeCompletionStarted) return;
+  if(_activeStrokePointerId!=null&&e.pointerId!==_activeStrokePointerId) return;
+  _strokeCompletionStarted=true;
   _stopAirbrushSpray();
-  if(activeGroupId){drawing=false;lineStart=null;_pendingDabs.length=0;return;}
+  if(activeGroupId){drawing=false;lineStart=null;_pendingDabs.length=0;_activeStrokePointerId=null;return;}
   if(tool==='line'&&lineStart){
     pushUndo();ensureKey();_beginEndTaperCapture();const p=getPos(e);
     if(tool!=='eraser'){_ensureStrokeCanvas();_inStroke=true;}
-    // Line tool: stamp dabs along the line (respects hardness/opacity)
     _strokeSegment(lineStart.x,lineStart.y,p.x,p.y,e,currentPressure,currentPressure);
     _flushStrokeTail();
     if(_inStroke){_inStroke=false;_commitStrokeCanvas();}
-    _cleanupErasedSmartOwnership();lineStart=null;saveActiveToKey();recomposite(curLayer,curFrame);return;
+    _cleanupErasedSmartOwnership();lineStart=null;saveActiveToKey();recomposite(curLayer,curFrame);
+  }else if(drawing){
+    drawing=false;
+    _flushCurveTail(e);
+    _flushStrokeTail();
+    if(_inStroke){_inStroke=false;_commitStrokeCanvas();}
+    _restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();_scheduleRecomposite();
   }
-  if(drawing){drawing=false;_flushCurveTail(e);_flushStrokeTail();if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();_scheduleRecomposite();}
+  _pendingDabs.length=0;
+  _curveP0=null;_curveP1=null;
+  _strokeSegCarryOver=0;
+  _activeStrokePointerId=null;
 }
 activeC.addEventListener('pointerup',e=>{
-  if(activeC.hasPointerCapture(e.pointerId))activeC.releasePointerCapture(e.pointerId);
   _pointerEndStroke(e);
+  if(activeC.hasPointerCapture(e.pointerId))activeC.releasePointerCapture(e.pointerId);
 });
-activeC.addEventListener('pointercancel',()=>{_endStroke();});
+activeC.addEventListener('pointercancel',e=>{_endStroke(e.pointerId);});
+activeC.addEventListener('lostpointercapture',e=>{_endStroke(e.pointerId);});
