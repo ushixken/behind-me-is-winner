@@ -151,9 +151,10 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;fon
 #rotation-indicator{
   position:absolute;bottom:8px;left:64px;background:rgba(0,0,0,0.6);border:1px solid var(--border2);
   border-radius:5px;padding:3px 8px;font-size:11px;color:var(--text2);pointer-events:none;
-  opacity:0;transition:opacity .35s;
+  opacity:0;transition:opacity .35s;z-index:1000;
 }
 #rotation-indicator.show{opacity:1;}
+body.draw-mode #rotation-indicator{display:none!important;}
 
 /* Crosshair marking the canvas-area center â€” the pivot Shift+Space+drag
    rotates around. Always centered on canvas-area regardless of zoom/pan;

@@ -244,6 +244,16 @@ function drawBg(){
 // same thing for layout and for the rotation pivot.
 function _getClearArea(){
   const r=canvasArea.getBoundingClientRect();
+  // Draw Mode hides the complete dock layer. Its child panels can still
+  // match the dock selectors while returning zero-sized rectangles at the
+  // viewport origin, which must not be interpreted as occupied dock space.
+  if(document.body.classList.contains('draw-mode')){
+    return {
+      r,left:0,right:0,top:0,bottom:0,
+      clearW:r.width,
+      clearH:r.height
+    };
+  }
   let left=0,right=0,top=0,bottom=0;
   document.querySelectorAll('.float-panel.docked:not(.fp-hidden)').forEach(panel=>{
     const pr=panel.getBoundingClientRect();
@@ -381,6 +391,9 @@ function showZoom(){
 }
 
 const rotInd=document.getElementById('rotation-indicator');
+// Keep the angle HUD in the main application overlay layer, outside the
+// lower canvas stacking context used beneath docked panels.
+document.getElementById('main-area')?.appendChild(rotInd);
 function showRotation(){
   // Normalize to (-180, 180] for a friendlier readout while keeping
   // the underlying `rotation` value unbounded (simpler drag math).
