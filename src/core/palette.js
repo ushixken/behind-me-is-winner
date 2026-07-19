@@ -1271,10 +1271,6 @@
         render();persist();
       }
     }
-    if(!cancelled&&state.selectable&&(!state.active||!state.target)){
-      selectStyle(state.id,true);
-      advancedStyleSuppressClick=true;
-    }
     if(state.active||advancedStyleSuppressClick)setTimeout(()=>{advancedStyleSuppressClick=false;},0);
   }
   function onAdvancedStylePointerUp(event){finishAdvancedStyleDrag(event,false);}
@@ -1284,6 +1280,7 @@
     if((event.pointerType||'mouse')==='mouse'&&event.button!==0)return;
     if(advancedStyleDrag)finishAdvancedStyleDrag(null,true);
     const pointerType=event.pointerType||'mouse';
+    if(!isAdvancedSeparator(style)){selectStyle(style.id,true);advancedStyleSuppressClick=true;}
     advancedStyleDrag={id:style.id,pointerId:event.pointerId,pointerType:pointerType,startX:event.clientX,startY:event.clientY,source:card,selectable:!isAdvancedSeparator(style),active:false,captured:false,target:null,rafPending:false,lastMove:null,holdCancelled:false,holdTimer:null};
     const pendingDrag=advancedStyleDrag;
     advancedStyleDrag.holdTimer=setTimeout(()=>activateAdvancedStyleDrag(pendingDrag),PALETTE_REORDER_HOLD_MS);
@@ -2099,6 +2096,7 @@
     if(event.isPrimary===false) return;
     if(event.button!==undefined&&event.button!==0) return;
     hideContextMenu();
+    activatePaletteSwatch(swatch.id,{select:true,setForeground:true});
     const rect=el.getBoundingClientRect();
     dragState={id:swatch.id,startX:event.clientX,startY:event.clientY,grabOffsetX:event.clientX-rect.left,grabOffsetY:event.clientY-rect.top,swatchWidth:rect.width,swatchHeight:rect.height,pointerType:event.pointerType||'mouse',active:false,overId:swatch.id,side:'after',targetGroupIndex:null,targetLocalIndex:null,targetGlobalIndex:null,targetSeparatorSide:null,targetSeparatorId:null,rafPending:false,lastMove:null,pointerId:event.pointerId,sourceEl:el,captured:false,holdCancelled:false,holdTimer:null};
     const pendingDrag=dragState;
@@ -2179,11 +2177,9 @@
       event.preventDefault();
       if(state.lineMode==='slot'&&Number.isInteger(state.targetGroupStart)&&Number.isInteger(state.targetGroupEnd)&&Number.isInteger(state.targetLocalSlot)) reorderSwatchToSlot(state.id,state.targetGroupStart,state.targetGroupEnd,state.targetLocalSlot);
       else if(state.overId&&state.overId!==state.id) reorderSwatch(state.id,state.overId,state.side);
-      else activatePaletteSwatch(state.id,{select:true,setForeground:true});
       setTimeout(()=>{suppressClick=false;},0);
       return;
     }
-    if(!cancelled) activatePaletteSwatch(state.id,{select:true,setForeground:true});
     if(state.active) setTimeout(()=>{suppressClick=false;},0);
   }
   function paletteDropItems(grid){

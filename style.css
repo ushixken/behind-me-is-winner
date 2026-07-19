@@ -1705,6 +1705,7 @@ input.size-val-input{
 .ts-docked-simple-settings>.ts-field{flex:0 0 auto;min-width:0;padding:0 0 5px;}
 .ts-docked-simple-settings>.ts-field.ts-simple-hidden{display:none!important;}
 .ts-docked-simple-settings>.ts-field+.ts-field{padding-top:5px;border-top:1px solid var(--border);}
+.ts-docked-simple-settings>#ts-eraser-mode-field{padding-top:0;border-top:0;}
 .ts-docked-simple-settings .ts-eye-btn{display:none!important;}
 .ts-docked-simple-settings .ts-divider{display:none;}
 .ts-docked-simple-settings .ts-row{min-width:0;}

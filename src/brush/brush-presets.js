@@ -86,6 +86,7 @@
   try{savedSmartEraserMode=localStorage.getItem(ERASER_MODE_STORAGE_KEY)==='color'?'color':'normal';}catch(_){}
   window.eraserMode='normal';
   function eraserColorModeAvailable(){return !!(layers[curLayer]&&layers[curLayer].type==='smart-raster');}
+  window.eraserColorModeAvailable=eraserColorModeAvailable;
   let eraserModeMenu=null,eraserModeOpen=false;
   function updateEraserModeUI(){if(eraserModeValueEl)eraserModeValueEl.textContent=window.eraserMode==='color'?'Color':'Normal';}
   function setEraserMode(mode){if(!eraserColorModeAvailable())mode='normal';window.eraserMode=mode==='color'?'color':'normal';if(eraserColorModeAvailable()){savedSmartEraserMode=window.eraserMode;try{localStorage.setItem(ERASER_MODE_STORAGE_KEY,savedSmartEraserMode);}catch(_){}}updateEraserModeUI();}
@@ -108,7 +109,7 @@
     if(tool!=='eraser')closeEraserModeMenu(false);
     updateEraserModeUI();
   }
-  window.addEventListener('tool-changed',syncEraserModeVisibility);window.addEventListener('active-layer-changed',syncEraserModeVisibility);window.addEventListener('resize',positionEraserModeMenu);syncEraserModeVisibility();
+  window.addEventListener('tool-changed',syncEraserModeVisibility);window.addEventListener('active-layer-changed',syncEraserModeVisibility);window.addEventListener('active-artwork-changed',syncEraserModeVisibility);window.addEventListener('resize',positionEraserModeMenu);syncEraserModeVisibility();
   // Spacing is fixed, not a user-adjustable Tool Setting — the brush
   // engine's _effectiveSpacingFrac() just uses its built-in default (0.12)
   // and never varies with stroke velocity or acceleration.

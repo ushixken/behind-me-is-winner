@@ -162,7 +162,8 @@ function _beginColorEraserStroke(){
   _colorEraserBase=null;_colorEraserOwnership=null;
   if(tool!=='eraser'||window.eraserMode!=='color')return;
   const layer=layers[curLayer];
-  if(!layer||layer.type!=='smart-raster'){window.eraserMode='normal';return;}
+  const colorModeAvailable=typeof window.eraserColorModeAvailable==='function'?window.eraserColorModeAvailable():!!(layer&&layer.type==='smart-raster');
+  if(!colorModeAvailable){window.eraserMode='normal';return;}
   _colorEraserBase=ctx.getImageData(0,0,CW,CH);
   const styleId=typeof activeAdvancedStyleIdForPainting==='function'?activeAdvancedStyleIdForPainting():null;
   if(layer&&layer.type==='smart-raster'&&styleId&&window.SmartRasterLayer&&typeof window.SmartRasterLayer.beginStyleErase==='function'){
