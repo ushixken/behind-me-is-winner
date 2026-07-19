@@ -492,8 +492,8 @@ function _roundBrushFalloff(t,inner,hardness){
 // affects the stamp's appearance changes (size, hardness, roundness, AA
 // toggle) Ã¢â‚¬â€ this invalidates every cached stamp so the next dab rebuilds.
 
-// Ã¢â€â‚¬Ã¢â€â‚¬ AA dab: soft, sub-pixel accurate Ã¢â‚¬â€ GPU or CPU rasterized, selectable
-// via Edit Ã¢â€“Â¸ Preferences Ã¢â€“Â¸ Renderer (brushRenderer in core-state.js).
+// AA dab: soft, sub-pixel accurate. Canvas 2D is the production path.
+// The CPU rasterizer below is retained only as an internal fallback.
 //
 // GPU mode (_dabAAGpu, default): ctx.createRadialGradient()+fill() Ã¢â‚¬â€ hands
 // rasterization to the browser's hardware-accelerated canvas backend.
@@ -984,8 +984,7 @@ function _dabAAGpu(x,y,r,rgb,alpha,composite){
 // then composite it by hand (standard source-over / destination-out alpha
 // math) directly into the canvas's pixel buffer instead of drawing a
 // pre-baked bitmap. This is intentionally heavier than the old cached
-// version (that's the whole point of choosing the CPU renderer Ã¢â‚¬â€ see the
-// brushRenderer comment in core-state.js) but it now matches the GPU
+// version, but it now matches the GPU
 // renderer's stroke quality, pressure response and edge softness exactly;
 // only the rasterization backend differs (hand-written per-pixel math vs.
 // the browser's hardware gradient/fill).
@@ -1060,8 +1059,8 @@ function _dabAACpu(x,y,r,rgb,alpha,composite){
   }
   dc.putImageData(imgData,sx,sy);
 }
-// Renderer preference dispatch Ã¢â‚¬â€ see brushRenderer in core-state.js and the
-// Preferences modal (Edit Ã¢â€“Â¸ Preferences).
+// Software fallback retained for internal diagnostics. Normal drawing always
+// uses the Canvas 2D accelerated path below.
 function _dabAATinyCoverage(x,y,r,rgb,alpha,composite){
   const dc=(_inStroke&&composite!=='erase')?_strokeCtx:ctx;
   const rr=Math.max(0.05,r),pad=1;
@@ -1250,8 +1249,7 @@ function _dabAA(x,y,r,rgb,alpha,composite){
     _drawSoftRoundMask(x,y,r,rgb,alpha,composite);
     return;
   }
-  if(brushRenderer==='cpu') _dabAACpu(x,y,r,rgb,alpha,composite);
-  else _dabAAGpu(x,y,r,rgb,alpha,composite);
+  _dabAAGpu(x,y,r,rgb,alpha,composite);
 }
 
 // Ã¢â€â‚¬Ã¢â€â‚¬ Aliased dab: solid circle, quantised edge pixels to full on/off.

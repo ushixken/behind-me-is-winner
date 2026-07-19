@@ -31,17 +31,6 @@ let brushAA=true;
 // Backward compatibility: old saved settings with ts-aa=false map to
 // 'none', ts-aa=true maps to 'medium' (also the default for Hard Round).
 window.brushAAMode='medium';
-// Renderer preference (Edit ▸ Preferences): 'gpu' uses the browser's
-// hardware-accelerated canvas gradient/fill primitives (fast, default).
-// 'cpu' uses a hand-written per-pixel software rasterizer instead, closer
-// to how TVPaint's own brush engine works — heavier on the CPU, offered
-// as an opt-in for people who specifically want that behavior rather than
-// forced on everyone (forcing it engine-wide was what caused the CPU
-// spikes/lag — normal GPU-accelerated canvas rendering doesn't have that
-// problem, which is why TVPaint itself only spikes in the modes analogous
-// to 'cpu' here, not by default).
-let brushRenderer='gpu';
-try{ brushRenderer=localStorage.getItem('animator_renderer')||'gpu'; }catch(e){}
 let undoStack=[],redoStack=[],clipboard=null,styleClipboard=null;
 const LCOLORS=['#7F77DD','#1D9E75','#EF9F27','#e24b4a','#D4537E','#378ADD'];
 

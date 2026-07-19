@@ -421,14 +421,11 @@ document.getElementById('modal-keybinds-reset').onclick=()=>{
     });
   });
   // Lets other modules (e.g. local-storage-panel.js's menu item) open
-  // Preferences directly to a specific tab instead of always "Renderer".
+  // Preferences directly to a specific tab instead of always "Cursor".
   window._prefPsActivate=activate;
 })();
 
 document.getElementById('dd-preferences').onclick=()=>{
-  const gpuRadio=document.getElementById('pref-renderer-gpu');
-  const cpuRadio=document.getElementById('pref-renderer-cpu');
-  (brushRenderer==='cpu'?cpuRadio:gpuRadio).checked=true;
   const cursorRadio=document.getElementById('pref-cursor-'+cursorStyle);
   (cursorRadio||document.getElementById('pref-cursor-crosshair')).checked=true;
   document.getElementById('modal-preferences').classList.add('visible');
@@ -440,12 +437,6 @@ document.getElementById('dd-preferences').onclick=()=>{
   }
   closeAllDropdowns();
 };
-function _setBrushRenderer(v){
-  brushRenderer=v;
-  try{ localStorage.setItem('animator_renderer',v); }catch(e){}
-}
-document.getElementById('pref-renderer-gpu').onchange=e=>{ if(e.target.checked) _setBrushRenderer('gpu'); };
-document.getElementById('pref-renderer-cpu').onchange=e=>{ if(e.target.checked) _setBrushRenderer('cpu'); };
 document.getElementById('pref-cursor-crosshair').onchange=e=>{ if(e.target.checked) _setCursorStyle('crosshair'); };
 document.getElementById('pref-cursor-point').onchange=e=>{ if(e.target.checked) _setCursorStyle('point'); };
 document.getElementById('pref-cursor-brush').onchange=e=>{ if(e.target.checked) _setCursorStyle('brush'); };

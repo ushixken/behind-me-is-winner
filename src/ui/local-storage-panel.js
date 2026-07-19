@@ -14,7 +14,6 @@
     'tsSimpleSectionVisibility':{name:'Tool Settings Sections',description:'Resets visible Tool Settings sections.',important:true,reset:'Tool Settings sections'},
     'tsSimpleSectionOrder':{name:'Tool Settings Section Order',description:'Resets the customized Tool Settings section order.',important:true,reset:'Tool Settings section order'},
     'animator_cursor_style':{name:'Cursor Preferences',description:'Resets the selected drawing cursor style.'},
-    'animator_renderer':{name:'Renderer Preference',description:'Resets the selected brush renderer.'},
     'brushSizeUnit':{name:'Brush Size Unit',description:'Resets the displayed brush size unit to pixels.'},
     'brushBlendMode':{name:'Brush Blend Mode',description:'Resets the saved compositing mode for the Brush tool.'},
     'animator_onion_skin_enabled':{name:'Onion Skin',description:'Resets Onion Skin to off.'},
