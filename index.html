@@ -515,13 +515,6 @@
   <div id="timeline-area">
     <div id="tl-controls">
       <div id="tl-controls-left">
-        <button class="tl-btn newkey" id="btn-new-key" title="New keyframe (N)">✦ Key</button>
-        <button class="tl-btn" id="btn-del-key" title="Delete keyframe">✕ Key</button>
-        <div class="tsep"></div>
-        <span class="tlabel">FPS</span>
-        <input type="range" id="fps-tl" min="1" max="24" value="24"/>
-        <span class="tval" id="fps-val" title="Click to set FPS">24</span>
-        <div class="tsep"></div>
         <button class="tl-btn" id="btn-loop">↺ Loop</button>
       </div>
       <div id="tl-controls-center">
@@ -532,6 +525,9 @@
         <button class="tl-btn" id="btn-last" title="Last">⏭</button>
       </div>
       <div id="tl-controls-right">
+        <span class="tlabel">FPS</span>
+        <input type="range" id="fps-tl" min="1" max="24" value="24"/>
+        <span class="tval" id="fps-val" title="Click to set FPS">24</span>
         <span id="frame-info" title="Click to set total frame count">Frame 1 / 48</span>
       </div>
     </div>

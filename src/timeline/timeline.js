@@ -88,7 +88,6 @@ function updateFpsSliderColor(){
 }
 
 
-document.getElementById('btn-new-key').onclick=()=>{createBlankKey();loadFrame(curLayer,curFrame);};
 function deleteKeyframe(){
   delete layers[curLayer].frames[curFrame];
   if(typeof deleteStyleFrame==='function') deleteStyleFrame(curLayer,curFrame);
@@ -106,7 +105,6 @@ function deleteKeyframe(){
   }
   loadFrame(curLayer,curFrame);renderTimeline();
 }
-document.getElementById('btn-del-key').onclick=deleteKeyframe;
 
 fpsVal.addEventListener('click',()=>{
   document.getElementById('fps-direct-input').value=getFPS();
