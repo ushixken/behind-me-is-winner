@@ -156,19 +156,17 @@ let _strokeReplayDabs = [];
 let _strokeReplayBase = null;
 let _selectionScopeBase = null;
 let _colorEraserBase = null;
-let _colorEraserTarget = null;
 let _colorEraserOwnership = null;
 
 function _beginColorEraserStroke(){
-  _colorEraserBase=null;_colorEraserTarget=null;_colorEraserOwnership=null;
+  _colorEraserBase=null;_colorEraserOwnership=null;
   if(tool!=='eraser'||window.eraserMode!=='color')return;
-  _colorEraserBase=ctx.getImageData(0,0,CW,CH);
-  const rgb=_hexToRGB(color);
-  _colorEraserTarget=[rgb[0],rgb[1],rgb[2],255];
   const layer=layers[curLayer];
+  if(!layer||layer.type!=='smart-raster'){window.eraserMode='normal';return;}
+  _colorEraserBase=ctx.getImageData(0,0,CW,CH);
   const styleId=typeof activeAdvancedStyleIdForPainting==='function'?activeAdvancedStyleIdForPainting():null;
-  if(layer&&layer.type==='smart-raster'&&styleId&&window.SmartRasterLayer&&typeof window.SmartRasterLayer.getStyleOwnership==='function'){
-    _colorEraserOwnership=window.SmartRasterLayer.getStyleOwnership(curLayer,curFrame,styleId);
+  if(layer&&layer.type==='smart-raster'&&styleId&&window.SmartRasterLayer&&typeof window.SmartRasterLayer.beginStyleErase==='function'){
+    _colorEraserOwnership=window.SmartRasterLayer.beginStyleErase(curLayer,curFrame,styleId);
   }
 }
 function _filterColorEraserRegion(centerX,centerY,radiusX,radiusY){
@@ -176,18 +174,12 @@ function _filterColorEraserRegion(centerX,centerY,radiusX,radiusY){
   const pad=3,x=Math.max(0,Math.floor(centerX-radiusX-pad)),y=Math.max(0,Math.floor(centerY-radiusY-pad));
   const right=Math.min(CW,Math.ceil(centerX+radiusX+pad)),bottom=Math.min(CH,Math.ceil(centerY+radiusY+pad));
   const width=right-x,height=bottom-y;if(width<=0||height<=0)return;
-  const image=ctx.getImageData(x,y,width,height),data=image.data,base=_colorEraserBase.data,target=_colorEraserTarget,ownership=_colorEraserOwnership;
-  for(let row=0;row<height;row++)for(let col=0;col<width;col++){
-    const canvasOffset=(y+row)*CW+x+col,local=(row*width+col)*4,source=canvasOffset*4;
-    const matches=ownership
-      ?canvasOffset<ownership.styleIds.length&&ownership.styleIds[canvasOffset]===ownership.index
-      :base[source]===target[0]&&base[source+1]===target[1]&&base[source+2]===target[2]&&base[source+3]===target[3];
-    if(matches)continue;
-    data[local]=base[source];data[local+1]=base[source+1];data[local+2]=base[source+2];data[local+3]=base[source+3];
-  }
+  const image=ctx.getImageData(x,y,width,height),ownership=_colorEraserOwnership;
+  if(!ownership||!window.SmartRasterLayer||typeof window.SmartRasterLayer.applyStyleEraseRegion!=='function')return;
+  window.SmartRasterLayer.applyStyleEraseRegion(ownership,{x,y,w:width,h:height},image,_colorEraserBase);
   ctx.putImageData(image,x,y);
 }
-function _endColorEraserStroke(){_colorEraserBase=null;_colorEraserTarget=null;_colorEraserOwnership=null;}
+function _endColorEraserStroke(){if(_colorEraserOwnership&&window.SmartRasterLayer&&typeof window.SmartRasterLayer.finishStyleErase==='function')window.SmartRasterLayer.finishStyleErase(_colorEraserOwnership);_colorEraserBase=null;_colorEraserOwnership=null;}
 let _replayingTaper = false;
 
 function _beginEndTaperCapture(){

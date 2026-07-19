@@ -381,6 +381,7 @@ function switchLayer(li){
   saveActiveToKey();curLayer=li;activeGroupId=null;selectedGroupIds.clear();layerShiftAnchor=li;groupShiftAnchor=null;
   loadFrame(curLayer,curFrame);syncOpacityControls();renderLayerPanel();renderTimeline();
   if(window.PaletteDocker&&typeof window.PaletteDocker.refresh==='function') window.PaletteDocker.refresh();
+  window.dispatchEvent(new CustomEvent('active-layer-changed',{detail:{layerIndex:curLayer,layer:layers[curLayer]}}));
 }
 
 // ════════════════════════════════════════════════════════════════

@@ -82,12 +82,13 @@
   const eraserModeField=document.getElementById('ts-eraser-mode-field');
   const eraserModeEl=document.getElementById('ts-eraser-mode');
   const eraserModeValueEl=document.getElementById('ts-eraser-mode-value');
-  let savedEraserMode='normal';
-  try{savedEraserMode=localStorage.getItem(ERASER_MODE_STORAGE_KEY)==='color'?'color':'normal';}catch(_){}
-  window.eraserMode=savedEraserMode;
+  let savedSmartEraserMode='normal';
+  try{savedSmartEraserMode=localStorage.getItem(ERASER_MODE_STORAGE_KEY)==='color'?'color':'normal';}catch(_){}
+  window.eraserMode='normal';
+  function eraserColorModeAvailable(){return !!(layers[curLayer]&&layers[curLayer].type==='smart-raster');}
   let eraserModeMenu=null,eraserModeOpen=false;
   function updateEraserModeUI(){if(eraserModeValueEl)eraserModeValueEl.textContent=window.eraserMode==='color'?'Color':'Normal';}
-  function setEraserMode(mode){window.eraserMode=mode==='color'?'color':'normal';try{localStorage.setItem(ERASER_MODE_STORAGE_KEY,window.eraserMode);}catch(_){}updateEraserModeUI();}
+  function setEraserMode(mode){if(!eraserColorModeAvailable())mode='normal';window.eraserMode=mode==='color'?'color':'normal';if(eraserColorModeAvailable()){savedSmartEraserMode=window.eraserMode;try{localStorage.setItem(ERASER_MODE_STORAGE_KEY,savedSmartEraserMode);}catch(_){}}updateEraserModeUI();}
   function closeEraserModeMenu(focus){if(!eraserModeMenu)return;eraserModeOpen=false;eraserModeMenu.hidden=true;eraserModeEl?.setAttribute('aria-expanded','false');if(focus)eraserModeEl?.focus({preventScroll:true});}
   function positionEraserModeMenu(){if(!eraserModeOpen||!eraserModeMenu||!eraserModeEl)return;const r=eraserModeEl.getBoundingClientRect(),gap=8;eraserModeMenu.style.width=r.width+'px';eraserModeMenu.style.left=Math.max(gap,Math.min(r.left,innerWidth-r.width-gap))+'px';eraserModeMenu.style.top=r.bottom+4+'px';}
   function buildEraserModeMenu(){
@@ -96,11 +97,18 @@
     [['normal','Normal'],['color','Color']].forEach(([value,label])=>{const option=document.createElement('button');option.type='button';option.role='option';option.className='ts-brush-blend-mode-option';option.dataset.mode=value;option.innerHTML='<span></span><span class="ts-brush-blend-mode-check" aria-hidden="true">✓</span>';option.firstElementChild.textContent=label;option.onclick=()=>{setEraserMode(value);eraserModeMenu.querySelectorAll('.ts-brush-blend-mode-option').forEach(item=>{const selected=item.dataset.mode===window.eraserMode;item.classList.toggle('is-selected',selected);item.setAttribute('aria-selected',String(selected));});closeEraserModeMenu(true);};eraserModeMenu.appendChild(option);});
     document.body.appendChild(eraserModeMenu);eraserModeEl.setAttribute('aria-controls',eraserModeMenu.id);
   }
-  function openEraserModeMenu(){if(tool!=='eraser'||eraserModeField?.hidden)return;buildEraserModeMenu();eraserModeOpen=true;eraserModeMenu.hidden=false;eraserModeEl.setAttribute('aria-expanded','true');eraserModeMenu.querySelectorAll('.ts-brush-blend-mode-option').forEach(item=>{const selected=item.dataset.mode===window.eraserMode;item.classList.toggle('is-selected',selected);item.setAttribute('aria-selected',String(selected));});positionEraserModeMenu();}
+  function openEraserModeMenu(){if(tool!=='eraser'||eraserModeField?.hidden||!eraserColorModeAvailable())return;buildEraserModeMenu();eraserModeOpen=true;eraserModeMenu.hidden=false;eraserModeEl.setAttribute('aria-expanded','true');eraserModeMenu.querySelectorAll('.ts-brush-blend-mode-option').forEach(item=>{const selected=item.dataset.mode===window.eraserMode;item.classList.toggle('is-selected',selected);item.setAttribute('aria-selected',String(selected));});positionEraserModeMenu();}
   if(eraserModeEl){eraserModeEl.onclick=()=>eraserModeOpen?closeEraserModeMenu(false):openEraserModeMenu();eraserModeEl.onkeydown=event=>{if(['ArrowDown','ArrowUp','Enter',' '].includes(event.key)){event.preventDefault();openEraserModeMenu();eraserModeMenu?.querySelector('.is-selected')?.focus();}else if(event.key==='Escape')closeEraserModeMenu(false);};}
   document.addEventListener('pointerdown',event=>{if(eraserModeOpen&&!eraserModeMenu?.contains(event.target)&&!eraserModeEl?.contains(event.target))closeEraserModeMenu(false);},true);
-  function syncEraserModeVisibility(){if(eraserModeField)eraserModeField.hidden=tool!=='eraser';if(tool!=='eraser')closeEraserModeMenu(false);updateEraserModeUI();}
-  window.addEventListener('tool-changed',syncEraserModeVisibility);window.addEventListener('resize',positionEraserModeMenu);syncEraserModeVisibility();
+  function syncEraserModeVisibility(){
+    const available=eraserColorModeAvailable();
+    if(eraserModeField)eraserModeField.hidden=tool!=='eraser';
+    if(eraserModeEl){eraserModeEl.disabled=!available;eraserModeEl.setAttribute('aria-disabled',String(!available));}
+    if(!available){window.eraserMode='normal';closeEraserModeMenu(false);}else if(tool==='eraser')window.eraserMode=savedSmartEraserMode;
+    if(tool!=='eraser')closeEraserModeMenu(false);
+    updateEraserModeUI();
+  }
+  window.addEventListener('tool-changed',syncEraserModeVisibility);window.addEventListener('active-layer-changed',syncEraserModeVisibility);window.addEventListener('resize',positionEraserModeMenu);syncEraserModeVisibility();
   // Spacing is fixed, not a user-adjustable Tool Setting — the brush
   // engine's _effectiveSpacingFrac() just uses its built-in default (0.12)
   // and never varies with stroke velocity or acceleration.
@@ -1921,11 +1929,7 @@ function applyToolPreset(json){
   }
 
   const BRUSH_PREVIEW_RGB='225,225,232';
-  function _foregroundPreviewRgb(){
-    const match=/^#([0-9a-f]{6})$/i.exec(String(typeof color==='string'?color:'#000000'));
-    if(!match)return '0,0,0';
-    const value=parseInt(match[1],16);return ((value>>16)&255)+','+((value>>8)&255)+','+(value&255);
-  }
+  const ERASER_PREVIEW_RGB='196,198,208';
   const _strokePreviewCache=new Map();
   const _strokeTipLoads=new Map();
   const _strokeTextureCache=new Map();
@@ -1940,7 +1944,7 @@ function applyToolPreset(json){
   }
   function _previewHash(p,settings,width,height,dpr,kind){
     const keys=['ts-size','ts-spacing','ts-hardness','ts-opacity','ts-flow','ts-aa','ts-aa-mode','ts-airbrush','ts-airbrush-rate','ts-continuous-spraying','ts-size-control','ts-opacity-control','ts-flow-control','ts-min-size','ts-min-flow','ts-rotation-mode','ts-tip-roundness','ts-tip-min-roundness','ts-angle','ts-tip-flip-x','ts-tip-flip-y','ts-tip-dataurl','ts-tip-url','ts-scatter-enabled','ts-scatter-amount','ts-texture-dataurl','ts-texture-url','ts-texture-strength','ts-texture-scale','ts-texture-invert','ts-texture-brightness','ts-texture-contrast'];
-    return [p.id,_activeTab,_activeTab==='eraser'?_foregroundPreviewRgb():'',kind,width,height,dpr,...keys.map(key=>settings[key]??'')].join('|');
+    return [p.id,_activeTab,kind,width,height,dpr,...keys.map(key=>settings[key]??'')].join('|');
   }
   function _requestStrokeTip(p,settings){
     const src=settings['ts-tip-dataurl']||settings['ts-tip-url'];if(!src||(_tipThumbCache[p.id]&&_tipThumbCache[p.id].src===src)||_strokeTipLoads.has(p.id))return;
@@ -2001,7 +2005,7 @@ function applyToolPreset(json){
     const tipSrc=settings['ts-tip-dataurl']||settings['ts-tip-url'],tipEntry=_tipThumbCache[p.id],tip=tipEntry&&tipEntry.src===tipSrc?tipEntry.alphaCanvas:null;
     const dab=document.createElement('canvas'),dabScale=Math.max(1,dpr),dabW=Math.ceil(diameter*dabScale),dabH=Math.ceil(diameter*roundness*dabScale);
     dab.width=Math.max(1,dabW);dab.height=Math.max(1,dabH);const dc=dab.getContext('2d');dc.imageSmoothingEnabled=ctx.imageSmoothingEnabled;dc.imageSmoothingQuality=ctx.imageSmoothingQuality;
-    const previewRgb=_activeTab==='eraser'?_foregroundPreviewRgb():BRUSH_PREVIEW_RGB;
+    const previewRgb=_activeTab==='eraser'?ERASER_PREVIEW_RGB:BRUSH_PREVIEW_RGB;
     if(tip){
       dc.drawImage(tip,0,0,dab.width,dab.height);dc.globalCompositeOperation='source-in';dc.fillStyle='rgba('+previewRgb+',1)';dc.fillRect(0,0,dab.width,dab.height);
     }else{
@@ -2045,13 +2049,6 @@ function applyToolPreset(json){
       canvas.width=cached.width;canvas.height=cached.height;canvas.getContext('2d').drawImage(cached,0,0);
     });
   }
-  function refreshEraserPresetPreviewColors(){
-    if(_activeTab!=='eraser')return;
-    _strokePreviewCache.clear();
-    document.querySelectorAll('.bp-stroke-canvas').forEach(canvas=>{const preset=_strokePreviewPresetByCanvas.get(canvas);if(preset)_scheduleStrokePreview(canvas,preset);});
-    document.querySelectorAll('.bp-tip-canvas').forEach(canvas=>{const preset=findPreset(canvas.dataset.presetId);if(preset)drawPresetThumb(canvas,preset);});
-  }
-  window.addEventListener('foreground-color-changed',refreshEraserPresetPreviewColors);
   const _strokePreviewPresetByCanvas=new WeakMap();
   const _strokePreviewResizeObserver=typeof ResizeObserver==='undefined'?null:new ResizeObserver(entries=>{
     entries.forEach(entry=>{const preset=_strokePreviewPresetByCanvas.get(entry.target);if(preset)_scheduleStrokePreview(entry.target,preset);});
@@ -2062,7 +2059,7 @@ function applyToolPreset(json){
     // (on-disk brush-preset packs). Either key is a valid Image.src value.
     const tipSrc = s && (s['ts-tip-dataurl'] || s['ts-tip-url']);
     if(!tipSrc){
-      drawPreview(canvas,Object.assign({},p.preview,{isEraser:_activeTab==='eraser',previewRgb:_foregroundPreviewRgb()}));
+      drawPreview(canvas,Object.assign({},p.preview,{isEraser:_activeTab==='eraser',previewRgb:ERASER_PREVIEW_RGB}));
       return;
     }
     const W=48,H=48;
@@ -2070,7 +2067,7 @@ function applyToolPreset(json){
     const settings=s; // alias for closure
 
     function paintOnto(c, alphaCanvas){
-      _paintTipThumbnail(c,alphaCanvas,settings,W,H,false,_activeTab==='eraser'?_foregroundPreviewRgb():'232,232,240');
+      _paintTipThumbnail(c,alphaCanvas,settings,W,H,false,_activeTab==='eraser'?ERASER_PREVIEW_RGB:'232,232,240');
     }
 
     const cached=_tipThumbCache[p.id];
@@ -2108,7 +2105,7 @@ function applyToolPreset(json){
     img.onerror=()=>{
       // File missing or unloadable — fall back to the generic shape preview so
       // the thumbnail never stays blank.
-      drawPreview(canvas,Object.assign({},p.preview,{isEraser:_activeTab==='eraser',previewRgb:_foregroundPreviewRgb()}));
+      drawPreview(canvas,Object.assign({},p.preview,{isEraser:_activeTab==='eraser',previewRgb:ERASER_PREVIEW_RGB}));
     };
     img.src=tipSrc;
   }
