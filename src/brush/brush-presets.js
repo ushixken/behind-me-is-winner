@@ -11,8 +11,6 @@
   bindRange('ts-opacity','ts-opacity-val','',v=>{brushOpacity=v/100;});
   // Flow (per-dab build-up within the stroke)
   bindRange('ts-flow','ts-flow-val','',v=>{brushFlow=v/100;});
-  // Density (per-dab alpha build-up, works alongside Flow/Opacity)
-  bindRange('ts-density','ts-density-val','',v=>{brushDensity=v/100;});
   // Hardness
   bindRange('ts-hardness','ts-hardness-val','',v=>{brushHardness=v/100;_aaDabCache.clear();_softRoundMaskCache.clear();_tipDabCache.clear();_stampCache.clear();});
   bindRange('ts-spacing','ts-spacing-val','%',v=>{window._tsSpacing=v/100;});
@@ -354,9 +352,10 @@
   (function initSimpleVisibilityEyes(){
     const EYE_KEY='tsSimpleFieldVisibility';
     // What shows in Simple by default, before the user customizes anything.
-    const DEFAULTS={size:true,opacity:false,flow:true,density:false,hardness:true,spacing:false,aa:true};
+    const DEFAULTS={size:true,opacity:false,flow:true,hardness:true,spacing:false,aa:true};
     let vis={};
     try{ vis=JSON.parse(localStorage.getItem(EYE_KEY)||'{}'); }catch(e){ vis={}; }
+    if(Object.prototype.hasOwnProperty.call(vis,'density')){delete vis.density;try{localStorage.setItem(EYE_KEY,JSON.stringify(vis));}catch(e){}}
 
     function isVisible(key){
       return vis[key]!==undefined ? vis[key] : (DEFAULTS[key]!==undefined?DEFAULTS[key]:true);
@@ -590,7 +589,7 @@
   const dockedSimpleSettings=document.getElementById('brush-tool-settings-content');
   const basicSettings=document.querySelector('#tool-settings-body .ts-ps-panel[data-panel="basic"] .ts-section-body');
   if(dockedSimpleSettings&&basicSettings){
-    ['blend-mode','size','opacity','flow','density','hardness','spacing','aa'].forEach(key=>{
+    ['blend-mode','size','opacity','flow','hardness','spacing','aa'].forEach(key=>{
       const field=basicSettings.querySelector(`.ts-field[data-eye="${key}"]`);
       if(field)dockedSimpleSettings.appendChild(field);
     });
@@ -683,17 +682,14 @@
     const mode=document.getElementById('ts-spacing-mode');
     if(!mode) return;
     const sync=()=>{
-      const fixed=mode.value==='fixed';
+      if(!['fixed','velocity','pen-pressure'].includes(mode.value)) mode.value='fixed';
+      const manualAvailable=mode.value==='fixed'||mode.value==='velocity';
       const simpleRow=document.getElementById('ts-spacing-manual-row');
       const advancedRow=document.getElementById('ts-advanced-spacing-manual-row');
-      if(simpleRow){ simpleRow.style.display=fixed?'':'none'; simpleRow.title=fixed?'':'Auto spacing automatically adjusts spacing for smoother brush strokes.'; }
-      if(advancedRow){ advancedRow.style.display=fixed?'':'none'; advancedRow.title=fixed?'':'Auto spacing automatically adjusts spacing for smoother brush strokes.'; }
+      if(simpleRow){simpleRow.style.display=manualAvailable?'':'none';simpleRow.title='';}
+      if(advancedRow){advancedRow.style.display=manualAvailable?'':'none';advancedRow.title='';}
       const spacing=document.getElementById('ts-spacing');
-      if(spacing){
-        spacing.disabled=!fixed;
-        spacing.title=fixed?'':'Auto spacing automatically adjusts spacing for smoother brush strokes.';
-        spacing.dispatchEvent(new Event('change',{bubbles:true}));
-      }
+      if(spacing){spacing.disabled=!manualAvailable;spacing.title='';spacing.dispatchEvent(new Event('change',{bubbles:true}));}
     };
     mode.addEventListener('input',sync);
     mode.addEventListener('change',sync);
@@ -913,7 +909,6 @@
   // Flush display values on load
   document.getElementById('ts-opacity-val').textContent=document.getElementById('ts-opacity').value;
   document.getElementById('ts-flow-val').textContent=document.getElementById('ts-flow').value;
-  document.getElementById('ts-density-val').textContent=document.getElementById('ts-density').value;
   document.getElementById('ts-hardness-val').textContent=document.getElementById('ts-hardness').value;
   document.getElementById('ts-spacing-val').textContent=document.getElementById('ts-spacing').value+'%';
 
@@ -1291,7 +1286,7 @@
 // Preset get/apply
 function getToolPreset(options){
   const includeImages=!options||options.includeImages!==false;
-  const ids=['ts-size','ts-opacity','ts-flow','ts-density','ts-hardness','ts-spacing','ts-spacing-mode','ts-rotation-mode','ts-angle','ts-angle-jitter','ts-tip-roundness','ts-round-jitter','ts-tip-min-roundness','ts-tip-flip-x','ts-tip-flip-y','ts-scatter-enabled','ts-scatter-amount','ts-scatter-count','ts-airbrush','ts-airbrush-rate','ts-continuous-spraying',
+  const ids=['ts-size','ts-opacity','ts-flow','ts-hardness','ts-spacing','ts-spacing-mode','ts-rotation-mode','ts-angle','ts-angle-jitter','ts-tip-roundness','ts-round-jitter','ts-tip-min-roundness','ts-tip-flip-x','ts-tip-flip-y','ts-scatter-enabled','ts-scatter-amount','ts-scatter-count','ts-airbrush','ts-airbrush-rate','ts-continuous-spraying',
     'ts-min-size','ts-size-jitter','ts-taper-mode','ts-start-taper','ts-end-taper','ts-size-control','ts-size-pressure-curve','ts-flow-control','ts-flow-pressure-curve','ts-opacity-control','ts-opacity-pressure-curve','ts-min-flow',
     'ts-texture-scale','ts-texture-strength','ts-texture-buildup','ts-texture-brightness','ts-texture-contrast','ts-texture-invert','ts-texture-each','ts-texture-mode'];
   const out={};
@@ -1436,7 +1431,6 @@ function applyToolPreset(json){
     'ts-size':6,
     'ts-opacity':100,
     'ts-flow':100,
-    'ts-density':100,
     'ts-hardness':100,
     'ts-spacing':1,
     'ts-spacing-mode':'fixed',
@@ -1506,7 +1500,16 @@ function applyToolPreset(json){
     }
     return normalized;
   }
-  const builtinBrushSettings=overrides=>Object.assign({},DEFAULT_BUILTIN_BRUSH_SETTINGS,{'ts-pressure-curves':{}},normalizeTextureSettings(overrides));
+  function normalizeBrushSettings(settings){
+    const normalized=normalizeTextureSettings(settings);
+    const spacing=Number(normalized['ts-spacing']);
+    normalized['ts-spacing']=Number.isFinite(spacing)&&spacing>0?spacing:12;
+    delete normalized['ts-density'];
+    const mode=normalized['ts-spacing-mode'];
+    normalized['ts-spacing-mode']=(mode==='velocity'||mode==='pen-pressure')?mode:'fixed';
+    return normalized;
+  }
+  const builtinBrushSettings=overrides=>Object.assign({},DEFAULT_BUILTIN_BRUSH_SETTINGS,{'ts-pressure-curves':{}},normalizeBrushSettings(overrides));
 
   const BRUSH_PRESETS = [
     {
@@ -1517,7 +1520,7 @@ function applyToolPreset(json){
         'ts-size':6,
         'ts-spacing':1,
         'ts-hardness':100,
-        'ts-spacing-mode':'auto',
+        'ts-spacing-mode':'fixed',
         'ts-min-size':0,
         'ts-min-flow':0,
         'ts-taper-mode':'off',
@@ -1532,7 +1535,7 @@ function applyToolPreset(json){
       settings:builtinBrushSettings({
         'ts-size':32,
         'ts-hardness':0,
-        'ts-spacing-mode':'auto',
+        'ts-spacing-mode':'fixed',
         'ts-size-control':'off',
         'ts-spacing':5,
         'ts-flow':60,
@@ -1545,7 +1548,6 @@ function applyToolPreset(json){
       settings:builtinBrushSettings({
         'ts-size':400,
         'ts-flow':10,
-        'ts-density':62,
         'ts-hardness':0,
         'ts-spacing':2,
         'ts-spacing-mode':'fixed',
@@ -1593,7 +1595,7 @@ function applyToolPreset(json){
     // Deep-clone the built-in settings so the original BRUSH_PRESETS entry
     // is never mutated by later UI captures or Object.assign merges.
     if(!_presetSettings[key]){
-      _presetSettings[key]=JSON.parse(JSON.stringify(preset.settings||{}));
+      _presetSettings[key]=JSON.parse(JSON.stringify(normalizeBrushSettings(preset.settings)));
     } else {
       // Always re-inject URL-based tip/texture references from the pack preset
       // definition even when persisted settings already exist. Persisted data
@@ -1663,8 +1665,8 @@ function applyToolPreset(json){
   // incoming tool's saved settings — so "brush=preset1, eraser=preset2" each
   // stick, and manual tweaks to either are remembered too.
   let _toolState = {
-    brush:  {presetId:'hard-round', size:6, hardness:100,  opacity:100, flow:100, density:100, spacing:1, roundness:100, aa:true, airbrush:false},
-    eraser: {presetId:'hard-round', size:20, hardness:100, opacity:100, flow:100, density:100, spacing:1, roundness:100, aa:true, airbrush:false},
+    brush:  {presetId:'hard-round', size:6, hardness:100,  opacity:100, flow:100, spacing:1, roundness:100, aa:true, airbrush:false},
+    eraser: {presetId:'hard-round', size:20, hardness:100, opacity:100, flow:100, spacing:1, roundness:100, aa:true, airbrush:false},
   };
   let _toolPresetSizes={brush:{'hard-round':6},eraser:{'hard-round':20}};
   // Which tab is shown in the preset panel (brush|eraser) — follows setTool()
@@ -1707,11 +1709,11 @@ function applyToolPreset(json){
       const raw=localStorage.getItem(STORE_KEY);
       if(!raw) return;
       const data=JSON.parse(raw);
-      if(data && Array.isArray(data.customPresets)) _customPresets=data.customPresets;
+      if(data && Array.isArray(data.customPresets)) _customPresets=data.customPresets.map(p=>Object.assign({},p,{settings:normalizeBrushSettings(p.settings)}));
       if(data && Array.isArray(data.groups) && data.groups.length) _groups=data.groups;
       if(data && data.toolState){
-        if(data.toolState.brush)  _toolState.brush  = Object.assign({}, _toolState.brush,  data.toolState.brush);
-        if(data.toolState.eraser) _toolState.eraser = Object.assign({}, _toolState.eraser, data.toolState.eraser);
+        if(data.toolState.brush){ _toolState.brush=Object.assign({},_toolState.brush,data.toolState.brush); delete _toolState.brush.density; }
+        if(data.toolState.eraser){ _toolState.eraser=Object.assign({},_toolState.eraser,data.toolState.eraser); delete _toolState.eraser.density; }
       }
       if(data && data.toolPresetSizes){
         if(data.toolPresetSizes.brush) Object.assign(_toolPresetSizes.brush,data.toolPresetSizes.brush);
@@ -1722,7 +1724,7 @@ function applyToolPreset(json){
       if(data && data.presetSettings && typeof data.presetSettings === 'object'){
         Object.entries(data.presetSettings).forEach(([key,value])=>{
           if(key.includes(':')){
-            const restored=Object.assign({},value);
+            const restored=normalizeBrushSettings(value);
             if(key==='eraser:hard-round') restored['ts-aa']=true;
             // Migration: brush:hard-round with hardness=55 is a contaminated
             // entry caused by the HTML slider default (55) being captured
@@ -1748,12 +1750,11 @@ function applyToolPreset(json){
               // user-adjustable for Hard Round and must survive any stale
               // capture that wrote the wrong value before the fix was deployed.
               restored['ts-min-size']=0;
-              restored['ts-spacing-mode']='auto';
             }
             _presetSettings[key]=restored;
             return;
           }
-          const migrated=Object.assign({},value);
+          const migrated=normalizeBrushSettings(value);
           if(key==='hard-round'){
             // V1 key format (no tool prefix) — migrate contaminated defaults.
             if(Number(migrated['ts-hardness'])===55) migrated['ts-hardness']=100;
@@ -1767,7 +1768,6 @@ function applyToolPreset(json){
             }
             // Always enforce canonical structural values unconditionally.
             migrated['ts-min-size']=0;
-            migrated['ts-spacing-mode']='auto';
             if(Number(migrated['ts-spacing'])===12) migrated['ts-spacing']=1;
           }
           _presetSettings[_presetSettingsKey(key,'brush')]=migrated;
@@ -2569,7 +2569,8 @@ function applyToolPreset(json){
 
   //  Apply a preset's settings to the tool settings sliders
   function applyPresetSettings(p){
-    const s = p.settings;
+    const s = normalizeBrushSettings(p.settings);
+    p.settings=s;
     if(!('ts-rotation-mode' in s)||s['ts-rotation-mode']==='fixed') s['ts-rotation-mode']='fixed-rotation';
     if(!('ts-angle' in s)) s['ts-angle']=0;
     if(!('ts-tip-roundness' in s)) s['ts-tip-roundness']=100;
@@ -2593,7 +2594,7 @@ function applyToolPreset(json){
     const spacingMode=document.getElementById('ts-spacing-mode');
     if(spacingMode){
       const savedMode=s['ts-spacing-mode'];
-      s['ts-spacing-mode']=(savedMode==='auto'||savedMode==='fixed')?savedMode:'fixed';
+      s['ts-spacing-mode']=(savedMode==='velocity'||savedMode==='pen-pressure')?savedMode:'fixed';
     }
     Object.entries(s).forEach(([id,value])=>{
       const control=document.getElementById(id);
@@ -2609,7 +2610,6 @@ function applyToolPreset(json){
       'ts-hardness': {slider:'ts-hardness', val:'ts-hardness-val', suffix:'', extra: v=>{brushHardness=v/100; _aaDabCache.clear(); _softRoundMaskCache.clear();_stampCache.clear();}},
       'ts-opacity': {slider:'ts-opacity', val:'ts-opacity-val', suffix:'', extra: v=>{brushOpacity=v/100;}},
       'ts-flow': {slider:'ts-flow', val:'ts-flow-val', suffix:'', extra: v=>{brushFlow=v/100;}},
-      'ts-density': {slider:'ts-density', val:'ts-density-val', suffix:'', extra: v=>{brushDensity=v/100;}},
       'ts-spacing': {slider:'ts-spacing', val:'ts-spacing-val', suffix:'%', extra: v=>{window._tsSpacing=v/100;}},
       'ts-roundness': {slider:'ts-roundness', val:'ts-roundness-val', suffix:'', extra: v=>{window._tsRoundness=v/100; _aaDabCache.clear();_stampCache.clear();}},
       'ts-aa': null,
@@ -2749,7 +2749,6 @@ function applyToolPreset(json){
     st.hardness = Math.round(brushHardness*100);
     st.opacity = Math.round(brushOpacity*100);
     st.flow = Math.round(brushFlow*100);
-    st.density = Math.round(brushDensity*100);
     st.spacing = Math.round(((window._tsSpacing!=null?window._tsSpacing:0.12))*100);
     st.roundness = Math.round(((window._tsRoundness!=null?window._tsRoundness:1))*100);
     st.aa = !!brushAA;
@@ -2767,9 +2766,9 @@ function applyToolPreset(json){
     _seedPresetSettings(preset,t);
     _activePresetId=presetId;
     window._activeBrushPresetId = _activePresetId;
-    const savedSettings=Object.assign({},preset.settings||{},_presetSettings[_presetSettingsKey(presetId,t)]||{});
+    const savedSettings=normalizeBrushSettings(Object.assign({},preset.settings||{},_presetSettings[_presetSettingsKey(presetId,t)]||{}));
     // Non-custom presets: structural settings always come from the preset definition.
-    const PRESET_STRUCTURAL_KEYS=['ts-taper-mode','ts-start-taper','ts-end-taper','ts-min-size','ts-spacing-mode','ts-texture-scale','ts-texture-strength','ts-texture-buildup-custom','ts-texture-brightness','ts-texture-contrast','ts-texture-invert','ts-texture-each','ts-texture-mode','ts-texture-url'];
+    const PRESET_STRUCTURAL_KEYS=['ts-taper-mode','ts-start-taper','ts-end-taper','ts-min-size','ts-texture-scale','ts-texture-strength','ts-texture-buildup-custom','ts-texture-brightness','ts-texture-contrast','ts-texture-invert','ts-texture-each','ts-texture-mode','ts-texture-url'];
     if(!preset.custom && preset.settings){
       PRESET_STRUCTURAL_KEYS.forEach(k=>{ if(k in preset.settings) savedSettings[k]=preset.settings[k]; });
     }
@@ -2800,14 +2799,14 @@ function applyToolPreset(json){
 
     // Build a merged settings object: preset.settings as base, then any user-saved
     // tweaks on top, so the preset remembers whatever the user last set on it.
-    const savedSettings = Object.assign({},p.settings||{},_presetSettings[_presetSettingsKey(p.id,targetTool)]||{});
+    const savedSettings = normalizeBrushSettings(Object.assign({},p.settings||{},_presetSettings[_presetSettingsKey(p.id,targetTool)]||{}));
     // For non-custom (built-in / pack) presets, structural settings defined
     // in the preset itself always win over any stale localStorage capture.
     // This prevents a user accidentally turning off taper on Hard Round and
     // having that stick permanently across sessions — the preset definition
     // is authoritative for these, while cosmetic slider values (size,
     // hardness, flow, opacity) are still freely remembered per-user.
-    const PRESET_STRUCTURAL_KEYS=['ts-taper-mode','ts-start-taper','ts-end-taper','ts-min-size','ts-spacing-mode','ts-texture-scale','ts-texture-strength','ts-texture-buildup-custom','ts-texture-brightness','ts-texture-contrast','ts-texture-invert','ts-texture-each','ts-texture-mode','ts-texture-url'];
+    const PRESET_STRUCTURAL_KEYS=['ts-taper-mode','ts-start-taper','ts-end-taper','ts-min-size','ts-texture-scale','ts-texture-strength','ts-texture-buildup-custom','ts-texture-brightness','ts-texture-contrast','ts-texture-invert','ts-texture-each','ts-texture-mode','ts-texture-url'];
     if(!p.custom && p.settings){
       PRESET_STRUCTURAL_KEYS.forEach(k=>{ if(k in p.settings) savedSettings[k]=p.settings[k]; });
     }
@@ -2955,13 +2954,12 @@ function applyToolPreset(json){
     const hardness = Math.round(brushHardness*100);
     const opacity = Math.round(brushOpacity*100);
     const flow = Math.round(brushFlow*100);
-    const density = Math.round(brushDensity*100);
     const spacing = spEl ? +spEl.value : 12;
     const roundness = rdEl ? +rdEl.value : 100;
     const preset = {
       id, name, custom:true,
       preview:{ shape: roundness<60?'ellipse':'circle', hardness: hardness/100, aliased:!brushAA },
-      settings:{ 'ts-size':size, 'ts-hardness':hardness, 'ts-opacity':opacity, 'ts-flow':flow, 'ts-density':density, 'ts-spacing':spacing, 'ts-spacing-mode':document.getElementById('ts-spacing-mode')?.value||'fixed', 'ts-rotation-mode':document.getElementById('ts-rotation-mode')?.value||'fixed-rotation', 'ts-angle':+(document.getElementById('ts-angle')?.value||0), 'ts-tip-roundness':+(document.getElementById('ts-tip-roundness')?.value||100), 'ts-tip-flip-x':!!document.getElementById('ts-tip-flip-x')?.checked, 'ts-tip-flip-y':!!document.getElementById('ts-tip-flip-y')?.checked, 'ts-scatter-enabled':!!document.getElementById('ts-scatter-enabled')?.checked, 'ts-scatter-amount':+(document.getElementById('ts-scatter-amount')?.value||0), 'ts-scatter-count':+(document.getElementById('ts-scatter-count')?.value||1), 'ts-roundness':roundness, 'ts-aa':!!brushAA, 'ts-aa-mode':(window.brushAAMode&&window.brushAAMode!=='none'?window.brushAAMode:'medium') }
+      settings:{ 'ts-size':size, 'ts-hardness':hardness, 'ts-opacity':opacity, 'ts-flow':flow, 'ts-spacing':spacing, 'ts-spacing-mode':document.getElementById('ts-spacing-mode')?.value||'fixed', 'ts-rotation-mode':document.getElementById('ts-rotation-mode')?.value||'fixed-rotation', 'ts-angle':+(document.getElementById('ts-angle')?.value||0), 'ts-tip-roundness':+(document.getElementById('ts-tip-roundness')?.value||100), 'ts-tip-flip-x':!!document.getElementById('ts-tip-flip-x')?.checked, 'ts-tip-flip-y':!!document.getElementById('ts-tip-flip-y')?.checked, 'ts-scatter-enabled':!!document.getElementById('ts-scatter-enabled')?.checked, 'ts-scatter-amount':+(document.getElementById('ts-scatter-amount')?.value||0), 'ts-scatter-count':+(document.getElementById('ts-scatter-count')?.value||1), 'ts-roundness':roundness, 'ts-aa':!!brushAA, 'ts-aa-mode':(window.brushAAMode&&window.brushAAMode!=='none'?window.brushAAMode:'medium') }
     };
     _customPresets.push(preset);
     _seedPresetSettings(preset); // give it its own settings slot immediately
@@ -4002,12 +4000,6 @@ function showABRImportResults(brushes, filename, onContinue) {
     }
     unsupported.push(features[key] ? (f.label+' - detected, no equivalent in this app') : (f.label+' - no equivalent in this app'));
   }
-
-  // Flow/Density are fully implemented in this app but Photoshop doesn't
-  // store per-brush values for them in .abr files, so they never have
-  // anything to import; always surface that plainly rather than silently
-  // leaving them out of the report.
-  partial.push('Density - not stored in ABR files, left at current setting');
 
   let overlay = document.getElementById('modal-abr-results');
   if (!overlay) {

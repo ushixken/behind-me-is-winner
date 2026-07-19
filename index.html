@@ -793,15 +793,7 @@
                     <button type="button" class="ts-simple-settings-btn ts-simple-only" data-simple-settings="flow" title="Flow settings">⚙</button>
                   </div>
                 </div>
-                <div class="ts-field" data-eye="density">
-                  <div class="ts-divider" style="margin:6px 0;"></div>
-                  <div class="ts-row" title="How much paint each stamp/stroke lays down. Lower density builds up lighter, more transparent paint; higher density lays down more solid paint per pass — like Flow/Density controls in Photoshop or Clip Studio.">
-                    <button type="button" class="ts-eye-btn ts-advanced-only" data-eye-btn="density" title="Show/hide in Simple tab">👁</button>
-                    <span class="ts-label">Density (Coming Soon)</span>
-                    <input type="range" class="ts-range" id="ts-density" min="0" max="100" value="100" disabled/>
-                    <span class="ts-val" id="ts-density-val">100</span>
-                  </div>
-                </div>
+
                 <div class="ts-field" data-eye="hardness">
                   <div class="ts-divider" style="margin:6px 0;"></div>
                   <div class="ts-row">
@@ -817,7 +809,7 @@
                     <div class="ts-row">
                       <button type="button" class="ts-eye-btn ts-advanced-only" data-eye-btn="spacing" title="Show/hide in Simple tab">👁</button>
                       <span class="ts-label">Spacing Mode</span>
-                      <select class="ts-select" id="ts-spacing-mode"><option value="fixed" selected>Fixed Distance</option><option value="auto" title="Auto spacing automatically adjusts spacing for smoother brush strokes.">Auto</option><option value="velocity" disabled title="Coming Soon � This spacing mode will be available in a future update.">Velocity (Coming Soon)</option><option value="pen-pressure" disabled title="Coming Soon � This spacing mode will be available in a future update.">Pen Pressure (Coming Soon)</option></select>
+                      <select class="ts-select" id="ts-spacing-mode"><option value="fixed" selected>Fixed Distance</option><option value="velocity">Velocity</option><option value="pen-pressure" disabled title="Coming Soon — This spacing mode will be available in a future update.">Pen Pressure (Coming Soon)</option></select>
                     </div>
                     <div class="ts-row" id="ts-spacing-manual-row">
                       <span class="ts-label">Spacing</span>
@@ -864,11 +856,11 @@
                 <div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-opacity"><button type="button" class="ts-eye-btn" data-eye-btn="opacity">👁</button><span class="ts-label">Opacity</span><input type="range" class="ts-range" min="1" max="100"><span class="ts-val ts-value-edit" data-value-target="ts-opacity" tabindex="0"></span></div>
                 <div class="ts-divider"></div>
                 <div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-flow"><button type="button" class="ts-eye-btn" data-eye-btn="flow">👁</button><span class="ts-label">Flow</span><input type="range" class="ts-range" min="1" max="100"><span class="ts-val ts-value-edit" data-value-target="ts-flow" tabindex="0"></span></div>
-                <div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-density"><button type="button" class="ts-eye-btn" data-eye-btn="density">👁</button><span class="ts-label">Brush Density</span><input type="range" class="ts-range" min="1" max="100"><span class="ts-val ts-value-edit" data-value-target="ts-density" tabindex="0"></span></div>
+
                 <div class="ts-divider"></div>
                 <div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-hardness"><button type="button" class="ts-eye-btn" data-eye-btn="hardness">👁</button><span class="ts-label">Hardness</span><input type="range" class="ts-range" min="0" max="100"><span class="ts-val ts-value-edit" data-value-target="ts-hardness" tabindex="0"></span></div>
                 <div class="ts-divider"></div>
-                <div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-spacing-mode"><button type="button" class="ts-eye-btn" data-eye-btn="spacing">👁</button><span class="ts-label">Spacing Mode</span><select class="ts-select"><option value="fixed" selected>Fixed Distance</option><option value="auto" title="Auto spacing automatically adjusts spacing for smoother brush strokes.">Auto</option><option value="velocity" disabled title="Coming Soon This spacing mode will be available in a future update.">Velocity (Coming Soon)</option><option value="pen-pressure" disabled title="Coming Soon This spacing mode will be available in a future update.">Pen Pressure (Coming Soon)</option></select></div><div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-spacing" data-mirror-suffix="%" id="ts-advanced-spacing-manual-row"><span class="ts-label">Spacing</span><input type="range" class="ts-range" min="1" max="200"><span class="ts-val ts-value-edit" data-value-target="ts-spacing" tabindex="0"></span></div>
+                <div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-spacing-mode"><button type="button" class="ts-eye-btn" data-eye-btn="spacing">👁</button><span class="ts-label">Spacing Mode</span><select class="ts-select"><option value="fixed" selected>Fixed Distance</option><option value="velocity">Velocity</option><option value="pen-pressure" disabled title="Coming Soon — This spacing mode will be available in a future update.">Pen Pressure (Coming Soon)</option></select></div><div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-spacing" data-mirror-suffix="%" id="ts-advanced-spacing-manual-row"><span class="ts-label">Spacing</span><input type="range" class="ts-range" min="1" max="200"><span class="ts-val ts-value-edit" data-value-target="ts-spacing" tabindex="0"></span></div>
                 <div class="ts-divider"></div>
                 <div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-aa"><button type="button" class="ts-eye-btn" data-eye-btn="aa">👁</button><label class="ts-label-sm ts-mirror-check-label"><input type="checkbox" class="ts-check"> Anti-aliasing</label></div>
                 <div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-aa-mode" id="ts-advanced-aa-mode-row"><span class="ts-label">Antialiasing</span><select class="ts-select"><option value="weak">Weak</option><option value="medium" selected>Medium</option><option value="strong">Strong</option></select></div>

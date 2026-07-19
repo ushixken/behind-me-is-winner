@@ -78,7 +78,6 @@ That's it — no code changes required.
     "ts-hardness": 70,
     "ts-opacity": 100,
     "ts-flow": 75,
-    "ts-density": 85,
     "ts-spacing": 10,
     "ts-spacing-mode": "fixed",
     "ts-rotation-mode": "fixed-rotation",

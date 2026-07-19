@@ -9,7 +9,6 @@
     "ts-hardness": 100,
     "ts-opacity": 100,
     "ts-flow": 100,
-    "ts-density": 90,
     "ts-spacing": 8,
     "ts-spacing-mode": "fixed-distance",
     "ts-rotation-mode": "fixed-rotation",

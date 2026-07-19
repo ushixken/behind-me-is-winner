@@ -30,18 +30,6 @@ function getPos(e){
 }
 
 function getBrushSize(){return toolSizes[tool]||6;}
-// Brush Density (Photoshop/CSP "Density"/"Flow build-up" style control).
-// Distinct from brushOpacity (Flow): opacity/flow sets the ceiling alpha a
-// single dab can reach; density scales how much of that ceiling each
-// individual stamp actually deposits. At 100% a dab lays down its full
-// opacity-driven alpha in one pass (current/legacy behavior, unchanged).
-// Below 100%, each dab is proportionally lighter/more transparent, so
-// solid coverage only appears after enough overlapping dabs/strokes
-// accumulate Ã¢â‚¬â€ the same "build up density" feel as professional apps.
-// Declared here (not core-state.js) but shared globally across all
-// non-module <script> tags on the page, same as brushOpacity/brushHardness.
-let brushDensity = 1;
-
 //  Brush Tip Image (ABR / custom upload)
 // When non-null, this canvas holds a grayscale alpha mask that replaces the
 // default circle/gradient dab shape.  The tip image is stored at its native
@@ -2083,28 +2071,20 @@ function _strokeTaperFactor(baseSize){
   return progress*progress*(3-2*progress);
 }
 
-// Resolve the spacing FRACTION (of effective diameter) to use for the dab
-// currently being placed. This used to be duplicated inline in both
-// _strokeSegment and _stampQuadCurve Ã¢â‚¬â€ centralized here so both call sites
-// stay in sync. Spacing is always fixed: it never widens or narrows based
-// on stroke velocity or acceleration, only on the Spacing slider (and the
-// airbrush cap).
+// Resolve the spacing fraction used for the current dab. Fixed Distance
+// uses the manual value directly; Velocity widens it modestly from the
+// existing smoothed stroke velocity while preserving the same interpolation.
 function _effectiveSpacingFrac(settings){
   const fromSettings=!!settings;
-  const modeValue=fromSettings?settings['ts-spacing-mode']:document.getElementById('ts-spacing-mode')?.value;
+  const mode=fromSettings?settings['ts-spacing-mode']:document.getElementById('ts-spacing-mode')?.value;
   const isAirbrush=fromSettings?!!settings['ts-airbrush']:!!window._brushAirbrush;
-  const hasCustomTip=fromSettings?!!(settings['ts-tip-dataurl']||settings['ts-tip-url']):!!window.brushTipCanvas;
-  const activeTool=fromSettings?'brush':tool;
-  const isAuto=modeValue==='auto'&&activeTool==='brush'&&!isAirbrush;
-  // Auto mode forces dabs dense enough to form a continuous stroke. Both
-  // procedural and imported tips use the same tight automatic spacing.
-  const hardness=fromSettings?Math.max(0,Math.min(1,(Number(settings['ts-hardness'])||0)/100)):brushHardness;
-  if(isAuto&&!hasCustomTip&&hardness>=0.995) return 0.01;
-  if(isAuto&&hasCustomTip) return 0.01;
   const raw=fromSettings?Number(settings['ts-spacing'])/100:((typeof window!=='undefined'&&window._tsSpacing!=null)?Number(window._tsSpacing):NaN);
-  // Airbrush uses the live spacing value for movement. Its built-in 2% is
-  // only a preset default; stationary spraying keeps its independent rate.
-  return Number.isFinite(raw)&&raw>0?raw:(isAirbrush?0.02:0.12);
+  const base=Number.isFinite(raw)&&raw>0?raw:(isAirbrush?0.02:0.12);
+  if(mode==='velocity'&&!fromSettings){
+    const velocity=Math.max(0,Math.min(1,_strokeVelocity/2));
+    return base*(1+0.75*velocity);
+  }
+  return base;
 }
 window._resolveBrushSpacingFrac=_effectiveSpacingFrac;
 let _hardRoundTailCoverageOnly=false;
@@ -2658,12 +2638,6 @@ function _computeEffectiveParams(e){
     }
   }
 
-  // Brush Density controls the procedural Airbrush tip strength separately
-  // from Flow, before spacing compensation preserves transmittance.
-  if(window._brushAirbrush&&!window.brushTipCanvas){
-    baseAlpha*=Math.max(0,Math.min(1,brushDensity));
-    alpha=baseAlpha;
-  }
 
   if(_flowSpacingRatio!==1&&alpha<1){
     alpha=1-Math.pow(1-alpha,_flowSpacingRatio);
