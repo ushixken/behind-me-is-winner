@@ -39,6 +39,19 @@
     frame.meta.indexToStyleId[index]=styleId;
     return index;
   }
+  function getStyleIdAt(li,fi,x,y){
+    var layer=layers[li];
+    if(!layer||layer.type!=='smart-raster'||!layer.smartStyleFrames)return null;
+    var frame=layer.smartStyleFrames[fi];
+    if(!frame||!(frame.styleIds instanceof Uint16Array)||!frame.meta)return null;
+    var px=Math.floor(Number(x)),py=Math.floor(Number(y));
+    if(!Number.isFinite(px)||!Number.isFinite(py)||px<0||py<0||px>=frame.width||py>=frame.height)return null;
+    var index=frame.styleIds[py*frame.width+px];
+    if(!index)return null;
+    var styleId=frame.meta.indexToStyleId&&frame.meta.indexToStyleId[index];
+    if(!styleId||String(styleId).indexOf('__deleted__:')===0)return null;
+    return styleId;
+  }
   function artworkCanvas(li,fi){
     var layer=layers[li];
     return li===curLayer&&fi===curFrame?activeC:layer&&layer.frames&&layer.frames[fi];
@@ -249,5 +262,5 @@
   }
 
 
-  window.SmartRasterLayer=Object.assign(window.SmartRasterLayer||{},{ensureFrame:ensureFrame,resetFrame:resetFrame,cloneMeta:cloneMeta,getFrameBundle:getFrameBundle,restoreFrameBundle:restoreFrameBundle,ensureStyleIndex:ensureStyleIndex,commitBrushMask:commitBrushMask,applyDiff:applyDiff,clearWhereTransparent:clearWhereTransparent,rerenderAll:rerenderAll,rerenderStyle:rerenderStyle,resizeAllFrames:resizeAllFrames,markDeleted:markDeleted,serializeLayer:serializeLayer,deserializeLayer:deserializeLayer});
+  window.SmartRasterLayer=Object.assign(window.SmartRasterLayer||{},{ensureFrame:ensureFrame,resetFrame:resetFrame,cloneMeta:cloneMeta,getFrameBundle:getFrameBundle,restoreFrameBundle:restoreFrameBundle,ensureStyleIndex:ensureStyleIndex,getStyleIdAt:getStyleIdAt,commitBrushMask:commitBrushMask,applyDiff:applyDiff,clearWhereTransparent:clearWhereTransparent,rerenderAll:rerenderAll,rerenderStyle:rerenderStyle,resizeAllFrames:resizeAllFrames,markDeleted:markDeleted,serializeLayer:serializeLayer,deserializeLayer:deserializeLayer});
 })();

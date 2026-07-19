@@ -2884,11 +2884,20 @@ function _sampleVisibleCanvasColor(e){
   const p=getPos(e),x=Math.floor(p.x),y=Math.floor(p.y);
   if(x<0||y<0||x>=CW||y>=CH)return;
   const pixel=compCtx.getImageData(x,y,1,1).data;
-  if(pixel[3]===0)return;
   const hex='#'+[pixel[0],pixel[1],pixel[2]].map(value=>value.toString(16).padStart(2,'0')).join('');
   if(typeof colorTarget!=='undefined')colorTarget='fg';
-  if(typeof _applyColorLive==='function')_applyColorLive(hex);
+  const palette=window.PaletteDocker;
+  if(palette&&typeof palette.setForegroundFromSample==='function')palette.setForegroundFromSample(hex);
+  else if(typeof _applyColorLive==='function')_applyColorLive(hex);
   else{color=hex;const input=document.getElementById('color-input');if(input){input.value=hex;input.dispatchEvent(new Event('input',{bubbles:true}));}}
+  let selectedOwnedStyle=false;
+  const layer=layers[curLayer];
+  const layerVisible=layer&&layer.visible!==false&&(typeof _layerGroupChainVisible!=='function'||_layerGroupChainVisible(layer));
+  if(layerVisible&&layer.type==='smart-raster'&&window.SmartRasterLayer&&typeof window.SmartRasterLayer.getStyleIdAt==='function'&&palette&&typeof palette.selectAdvancedStyleById==='function'){
+    const styleId=window.SmartRasterLayer.getStyleIdAt(curLayer,curFrame,x,y);
+    if(styleId)selectedOwnedStyle=palette.selectAdvancedStyleById(styleId);
+  }
+  if(!selectedOwnedStyle&&palette&&typeof palette.selectMatchingRgba==='function')palette.selectMatchingRgba(pixel[0],pixel[1],pixel[2],pixel[3]);
 }
 
 

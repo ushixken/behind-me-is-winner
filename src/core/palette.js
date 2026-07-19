@@ -386,6 +386,7 @@
       if(stat) stat.textContent='Color: '+displayHex(safeHex);
     }
   }
+  function setForegroundFromSample(hex){setForeground(hex,false,true);}
   function clampSwatchSize(value){
     const numeric=Number.isFinite(+value)?+value:SWATCH_SIZE_DEFAULT;
     const stepped=Math.round(numeric/SWATCH_SIZE_STEP)*SWATCH_SIZE_STEP;
@@ -965,6 +966,34 @@
     if(setBrush!==false) syncAdvancedStyleToColorPanel(style);
     if(selectionChanged) scheduleAdvancedSelectionPersist();
   }
+  function selectMatchingRgba(red,green,blue,alpha){
+    if(![red,green,blue,alpha].every(Number.isInteger))return false;
+    const equal=rgba=>rgba[0]===red&&rgba[1]===green&&rgba[2]===blue&&rgba[3]===alpha;
+    syncActiveRefs();
+    if(currentPaletteDockerMode()==='advanced'){
+      syncAdvancedRefs();
+      const match=advancedStyles.find(style=>!isAdvancedSeparator(style)&&equal(style.rgba));
+      if(!match)return false;
+      selectStyle(match.id,true,activePaletteId);render();return true;
+    }
+    const palette=activePalette();
+    const match=palette&&palette.swatches.find(item=>isSwatch(item)&&equal(rgbaArray(item.hex)));
+    if(!match)return false;
+    activatePaletteSwatch(match.id,{select:true,setForeground:true});
+    render();
+    return true;
+  }
+  function selectAdvancedStyleById(styleId){
+    if(!styleId)return false;
+    syncActiveRefs();
+    syncAdvancedRefs();
+    const style=advancedStyles.find(item=>!isAdvancedSeparator(item)&&item.id===styleId);
+    if(!style)return false;
+    selectStyle(style.id,true,activePaletteId);
+    render();
+    return true;
+  }
+
   function createAdvancedStyle(){
     syncAdvancedRefs();
     const style=makeAdvancedStyle(rgbaArray(currentForegroundHex()),null,nextAdvancedStyleName());
@@ -2598,6 +2627,6 @@
     const style=advancedColorPanelStyleId&&advancedColorPanelStyleId===activeAdvancedStyleId?findAdvancedStyleById(activeAdvancedStyleId):null;
     return style&&!style.locked&&Array.isArray(style.rgba)?style.rgba.slice():null;
   }
-  window.PaletteDocker={serialize,load,reset(){load(null);},renderCurrentColors:render,refresh:render,isAdvancedPalettePaintingEnabled,getActiveAdvancedPaletteStyleId,getActiveAdvancedStyleColorForHistory,findAdvancedStyleById,updateActiveAdvancedStyleFromColorPanel};
+  window.PaletteDocker={serialize,load,reset(){load(null);},renderCurrentColors:render,refresh:render,isAdvancedPalettePaintingEnabled,getActiveAdvancedPaletteStyleId,getActiveAdvancedStyleColorForHistory,findAdvancedStyleById,updateActiveAdvancedStyleFromColorPanel,selectAdvancedStyleById,selectMatchingRgba,setForegroundFromSample};
   document.addEventListener('DOMContentLoaded',()=>{bind();loadPersisted();});
 })();
