@@ -1,12 +1,36 @@
 ﻿// ════════════════════════════════════════════════════════════════
 // ONION SKIN
 // ════════════════════════════════════════════════════════════════
+const ONION_SKIN_PREF_KEY='animator_onion_skin_enabled';
 function updateOnion(){
   octx.clearRect(0,0,CW,CH);
   if(!document.getElementById('onion-chk').checked) return;
   const p=getHeldKey(curLayer,curFrame-1);if(p){octx.globalAlpha=0.28;octx.drawImage(p,0,0);octx.globalAlpha=1;}
   const n=getExactKey(curLayer,curFrame+1);if(n){octx.globalAlpha=0.15;octx.drawImage(n,0,0);octx.globalAlpha=1;}
 }
+function setOnionSkinEnabled(enabled,{persist=true}={}){
+  const checkbox=document.getElementById('onion-chk');
+  checkbox.checked=!!enabled;
+  if(persist){
+    try{localStorage.setItem(ONION_SKIN_PREF_KEY,checkbox.checked?'true':'false');}catch(_){}
+  }
+  updateOnion();
+}
+function toggleOnionSkin(){setOnionSkinEnabled(!document.getElementById('onion-chk').checked);}
+window.setOnionSkinEnabled=setOnionSkinEnabled;
+window.toggleOnionSkin=toggleOnionSkin;
+(function initOnionSkinPreference(){
+  let enabled=false;
+  try{
+    const saved=localStorage.getItem(ONION_SKIN_PREF_KEY);
+    if(saved!==null)enabled=saved==='true';
+  }catch(_){}
+  setOnionSkinEnabled(enabled,{persist:false});
+  document.getElementById('onion-chk').addEventListener('change',event=>setOnionSkinEnabled(event.currentTarget.checked));
+  window.addEventListener('local-storage-preference-removed',event=>{
+    if(event.detail&&event.detail.key===ONION_SKIN_PREF_KEY)setOnionSkinEnabled(false,{persist:false});
+  });
+})();
 
 // ════════════════════════════════════════════════════════════════
 // UNDO / REDO

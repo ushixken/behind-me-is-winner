@@ -17,6 +17,7 @@
     'animator_renderer':{name:'Renderer Preference',description:'Resets the selected brush renderer.'},
     'brushSizeUnit':{name:'Brush Size Unit',description:'Resets the displayed brush size unit to pixels.'},
     'brushBlendMode':{name:'Brush Blend Mode',description:'Resets the saved compositing mode for the Brush tool.'},
+    'animator_onion_skin_enabled':{name:'Onion Skin',description:'Resets Onion Skin to off.'},
     'animator_kfexp_amount':{name:'Keyframe Exposure Amount'},
     'animator_kfexp_bypass':{name:'Keyframe Exposure Bypass'},
     'animator_kfsw_step':{name:'Keyframe Switcher Step'},
@@ -159,7 +160,10 @@
       try{
         localStorage.removeItem(key);
         if(localStorage.getItem(key)!==null) failed.push(_meta(key).name);
-        else selectedKeys.delete(key);
+        else{
+          selectedKeys.delete(key);
+          window.dispatchEvent(new CustomEvent('local-storage-preference-removed',{detail:{key}}));
+        }
       }catch(error){failed.push(_meta(key).name);}
     });
     render();

@@ -291,6 +291,7 @@ document.addEventListener('keydown',e=>{
     if(matchBind(e,'deleteLayer')){e.preventDefault();deleteLayer(curLayer);return;}
   }
   const toolShortcutBlocked=!!(shortcutTarget&&(shortcutTarget.isContentEditable||shortcutTarget.closest('input,textarea,select,[contenteditable="true"]')))||document.querySelector('.modal-overlay.visible');
+  if(!toolShortcutBlocked&&!e.repeat&&matchBind(e,'toggleOnionSkin')){e.preventDefault();toggleOnionSkin();return;}
   if(!toolShortcutBlocked&&typeof handleToolGroupKeybind==='function'&&handleToolGroupKeybind(e)){e.preventDefault();return;}
   if(!toolShortcutBlocked&&(!window.ToolGroups||typeof ToolGroups.getGroups!=='function')){
     const toolMap={toolBrush:['brush','Brush'],toolEraser:['eraser','Eraser'],toolFill:['fill','Fill'],toolLine:['line','Line'],toolTransform:['transform','Transform']};

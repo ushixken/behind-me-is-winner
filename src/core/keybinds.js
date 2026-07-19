@@ -34,6 +34,7 @@ const KEYBIND_DEFAULTS={
   zoomOut:     {label:'Zoom Out',           key:'-',          ctrl:true,  shift:false, alt:false},
   zoomReset:   {label:'Reset Zoom',         key:'0',          ctrl:true,  shift:false, alt:false},
   rotateReset: {label:'Reset Rotation',     key:'0',          ctrl:true,  shift:true,  alt:false},
+  toggleOnionSkin:{label:'Toggle Onion Skin', key:'d',          ctrl:false, shift:false, alt:false},
   flipHorizontal: {label:'Flip Horizontal', key:'h',          ctrl:false, shift:false, alt:false},
   flipVertical:   {label:'Flip Vertical',   key:'v',          ctrl:false, shift:false, alt:false},
   brushResize:    {label:'Resize Brush (hold + drag)', key:'s', ctrl:false, shift:false, alt:false},
@@ -72,7 +73,7 @@ const KEYBIND_CATEGORIES=[
   {name:'Selection',      actions:['selectLinkedPixels']},
   {name:'Tool Controls',   actions:['brushResize']},
   {name:'Frames & Keyframes', actions:['newFrame','delKeyframe','nextFrame','prevFrame','flipperBypass','increaseExposure','decreaseExposure']},
-  {name:'View',           actions:['zoomIn','zoomOut','zoomReset','rotateReset']},
+  {name:'View',           actions:['toggleOnionSkin','zoomIn','zoomOut','zoomReset','rotateReset']},
   {name:'Transform',      actions:['flipHorizontal','flipVertical']},
 ];
 
