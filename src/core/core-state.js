@@ -144,6 +144,8 @@ function makeBlankLayer(layerType,extra){
     indexFrames:{},
     indexMeta:{},
     type,
+    renderMode:'legacy',
+    smartRasterV4Native:type==='smart-raster',
     opacity:1,
     stencil:'none',
     clipTo:null,

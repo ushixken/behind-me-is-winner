@@ -170,6 +170,7 @@ function _insertFramesAtStart(amount){
       Object.keys(l.smartStyleFrames).forEach(f=>{shiftedSmart[+f+amount]=l.smartStyleFrames[f];});
       l.smartStyleFrames=shiftedSmart;
     }
+    if(window.SmartRasterV4Document&&typeof window.SmartRasterV4Document.shiftFrames==='function')window.SmartRasterV4Document.shiftFrames(l,amount,0);
   });
   TOTAL+=amount;
   rangeStart+=amount;rangeEnd+=amount;
@@ -280,7 +281,8 @@ function _snapshotFrameMaps(layerIndices){
       // no longer written by smart-raster-layer.js; snapshot only the live fields.
       indexFrames: indexFramesSnap,
       indexMeta: _deepCopyStyleFrameMeta(l.indexMeta),
-      smartStyleFrames: _deepCopySmartStyleFrames(l.smartStyleFrames)
+      smartStyleFrames: _deepCopySmartStyleFrames(l.smartStyleFrames),
+      v4Snapshot: window.SmartRasterV4Document&&typeof window.SmartRasterV4Document.captureLayer==='function'?window.SmartRasterV4Document.captureLayer(l):null
     };
   });
   return snapshot;
@@ -302,6 +304,7 @@ function _restoreFrameMaps(snapshot){
     l.indexFrames=indexFramesRestore;
     l.indexMeta=_deepCopyStyleFrameMeta(s.indexMeta);
     l.smartStyleFrames=_deepCopySmartStyleFrames(s.smartStyleFrames);
+    if(window.SmartRasterV4Document&&typeof window.SmartRasterV4Document.restoreLayer==='function')window.SmartRasterV4Document.restoreLayer(l,s.v4Snapshot);
   });
 }
 // Shallow-copy the per-frame meta objects so snapshot entries are independent
@@ -474,6 +477,7 @@ function _trimLeadingBlanks(){
       Object.keys(l.smartStyleFrames).forEach(f=>{const nf=+f-trimmable;if(nf>=0) shiftedSmart[nf]=l.smartStyleFrames[f];});
       l.smartStyleFrames=shiftedSmart;
     }
+    if(window.SmartRasterV4Document&&typeof window.SmartRasterV4Document.shiftFrames==='function')window.SmartRasterV4Document.shiftFrames(l,-trimmable,0);
   });
   TOTAL-=trimmable;
   rangeStart-=trimmable; rangeEnd-=trimmable;

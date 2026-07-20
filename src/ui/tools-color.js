@@ -101,7 +101,9 @@ function _undoSmartRasterDuplicateLayer(action){
   renderLayerPanel();renderTimeline();recomposite(curLayer,curFrame);
 }
 function _redoSmartRasterDuplicateLayer(action){
-  layers.splice(Math.min(action.index,layers.length),0,_deepCopyLayer(action.layerSnapshot));
+  const restored=_deepCopyLayer(action.layerSnapshot);
+  layers.splice(Math.min(action.index,layers.length),0,restored);
+  if(window.SmartRasterV4Document&&typeof window.SmartRasterV4Document.restoreLayer==='function')window.SmartRasterV4Document.restoreLayer(restored);
   curLayer=Math.min(action.index,layers.length-1);
   selectedLayerIndices.clear();
   loadFrame(curLayer,curFrame);
@@ -110,7 +112,9 @@ function _redoSmartRasterDuplicateLayer(action){
 function _undoLayerCut(action){
   if(action.wasOnlyLayer&&layers.length===1)layers.splice(0,1);
   const index=Math.max(0,Math.min(action.index,layers.length));
-  layers.splice(index,0,_deepCopyLayer(action.layerSnapshot));
+  const restored=_deepCopyLayer(action.layerSnapshot);
+  layers.splice(index,0,restored);
+  if(window.SmartRasterV4Document&&typeof window.SmartRasterV4Document.restoreLayer==='function')window.SmartRasterV4Document.restoreLayer(restored);
   curLayer=index;
   selectedLayerIndices.clear();
   _reanchorAllStencils();
@@ -120,9 +124,22 @@ function _redoLayerCut(action){
   const index=Math.max(0,Math.min(action.index,layers.length-1));
   _doDeleteLayer(index);
 }
-function undo(){
+function _restoreStyleLayeringToggle(action,direction){
+  const snapshot=direction==="before"?action.beforeLayer:action.afterLayer,index=Math.max(0,Math.min(action.layerIndex,layers.length-1));
+  if(!snapshot||typeof _deepCopyLayer!=="function")return false;
+  const restored=_deepCopyLayer(snapshot);layers[index]=restored;
+  if(window.SmartRasterV4Document&&typeof window.SmartRasterV4Document.restoreLayer==="function")window.SmartRasterV4Document.restoreLayer(restored);
+  if(index===curLayer)loadFrame(curLayer,curFrame);
+  recomposite(curLayer,curFrame);renderLayerPanel();renderTimeline();window.dispatchEvent(new CustomEvent("smart-raster-style-layering-changed",{detail:{layer:restored,enabled:restored.renderMode==="style-layering"}}));return true;
+}
+function _restoreStyleLayeringOrder(snapshot){
+  if(!window.PaletteDocker||typeof window.PaletteDocker.restoreAdvancedStyleOrder!=='function')return false;
+  window.PaletteDocker.restoreAdvancedStyleOrder(snapshot);recomposite(curLayer,curFrame);return true;
+}function undo(){
   if(!undoStack.length)return;
   const action=undoStack.pop();
+  if(action.type==='smart-raster-style-layering-toggle'){if(_restoreStyleLayeringToggle(action,"before"))redoStack.push(action);return;}
+  if(action.type==='smart-raster-style-order'){if(_restoreStyleLayeringOrder(action.before))redoStack.push(action);return;}
   if(action.type==='layer-cut'){
     _undoLayerCut(action);
     redoStack.push(action);return;
@@ -145,6 +162,8 @@ function undo(){
 function redo(){
   if(!redoStack.length)return;
   const action=redoStack.pop();
+  if(action.type==='smart-raster-style-layering-toggle'){if(_restoreStyleLayeringToggle(action,"after"))undoStack.push(action);return;}
+  if(action.type==='smart-raster-style-order'){if(_restoreStyleLayeringOrder(action.after))undoStack.push(action);return;}
   if(action.type==='layer-cut'){
     _redoLayerCut(action);
     undoStack.push(action);return;

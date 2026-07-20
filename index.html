@@ -443,6 +443,11 @@
     </div>
     <div id="palette-side-menu" class="palette-side-menu hidden" aria-label="Palette settings menu">
       <div class="palette-menu-actions">
+        <label class="palette-style-layering-control" title="Render Smart Raster styles in Advanced Palette order.">
+          <input id="palette-style-layering" name="palette_style_layering" type="checkbox" />
+          <span>Style Layering</span>
+        </label>
+        <div class="palette-menu-sep" role="separator"></div>
         <button id="palette-new" type="button">New Palette</button>
         <button id="palette-rename" type="button">Rename Palette</button>
         <div class="palette-menu-sep" role="separator"></div>
@@ -1469,8 +1474,10 @@
 <script src="src/brush/brush-engine.js"></script>
 <script src="src/smart-raster/smart-raster-cm.js"></script>
 <script src="src/smart-raster/smart-raster-layer.js"></script>
+<script src="src/smart-raster/smart-raster-v4.js"></script>
 <script src="src/ui/panels.js"></script>
 <script src="src/smart-raster/smart-raster-typed.js"></script>
+<script src="src/smart-raster/smart-raster-v4-shadow.js"></script>
 <script src="src/ui/tools-color.js"></script>
 <script src="src/core/palette.js"></script>
 <script src="src/brush/brush-presets.js"></script>

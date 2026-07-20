@@ -226,7 +226,7 @@ function pasteFrame(){
   ensureKey();
   ctx.clearRect(0,0,CW,CH);
   ctx.drawImage(clipboard,0,0);
-  if(isSmartRaster)_pasteSmartRasterClipboardOwnership(curLayer,curFrame,clipboard,styleClipboard,0,0);
+  if(isSmartRaster){_pasteSmartRasterClipboardOwnership(curLayer,curFrame,clipboard,styleClipboard,0,0);if(window.SmartRasterV4Document&&typeof window.SmartRasterV4Document.restoreFrame==='function')window.SmartRasterV4Document.restoreFrame(layer,curFrame,styleClipboard&&styleClipboard.v4||null);}
   saveActiveToKey();recomposite(curLayer,curFrame);
 }
 function _captureSmartRasterFrameSlot(li,fi){
@@ -362,9 +362,11 @@ function _deepCopyLayer(l){
   }
   if(l.smartStyleFrames){
     Object.entries(l.smartStyleFrames).forEach(([f,frame])=>{
-      copy.smartStyleFrames[f]={width:frame.width,height:frame.height,styleIds:frame.styleIds.slice(),meta:SmartRasterLayer.cloneMeta(frame.meta)};
+      const underlays={};Object.keys(frame.underlays||{}).forEach(key=>{underlays[key]=(frame.underlays[key]||[]).map(entry=>({index:entry.index,rgba:(entry.rgba||[]).slice()}));});
+      copy.smartStyleFrames[f]={width:frame.width,height:frame.height,styleIds:frame.styleIds.slice(),underlays,meta:SmartRasterLayer.cloneMeta(frame.meta)};
     });
   }
+  if(window.SmartRasterV4Document&&typeof window.SmartRasterV4Document.cloneLayer==='function')window.SmartRasterV4Document.cloneLayer(l,copy);
   return copy;
 }
 
@@ -391,6 +393,7 @@ function pasteLayer(targetIdx){
   copy.groupId=null; // paste at top level
   const insertAt=(targetIdx!=null?targetIdx:curLayer)+1;
   layers.splice(insertAt,0,copy);
+  if(window.SmartRasterV4Document&&typeof window.SmartRasterV4Document.restoreLayer==='function')window.SmartRasterV4Document.restoreLayer(copy);
   curLayer=insertAt;
   selectedLayerIndices.clear();
   loadFrame(curLayer,curFrame);renderLayerPanel();renderTimeline();
@@ -401,6 +404,7 @@ function duplicateLayer(idx){
   const copy=_deepCopyLayer(layer);
   copy.name=layer.name+' Copy';
   layers.splice(idx+1,0,copy);
+  if(window.SmartRasterV4Document&&typeof window.SmartRasterV4Document.restoreLayer==='function')window.SmartRasterV4Document.restoreLayer(copy);
   curLayer=idx+1;
   selectedLayerIndices.clear();
   if(layer.type==='smart-raster'){
@@ -434,7 +438,7 @@ function _deepCopyGroupData(gid){
     return {...g,id:idMap.get(id),parentId:g.parentId&&idMap.has(g.parentId)?idMap.get(g.parentId):null};
   });
   const memberLayers=layers.filter(l=>l.groupId&&idSet.has(l.groupId))
-    .map(l=>_deepCopyLayer({...l,groupId:idMap.get(l.groupId)}));
+    .map(l=>{const copy=_deepCopyLayer(l);copy.groupId=idMap.get(l.groupId);return copy;});
   return {rootId:idMap.get(gid),groups:groupCopies,layers:memberLayers};
 }
 
@@ -470,8 +474,9 @@ document.getElementById('layer-ctx-paste-group').onclick=()=>{
     const isRoot=g.id===_groupObjClipboard.rootId;
     groups.push({...g,id:idMap.get(g.id),parentId:g.parentId&&idMap.has(g.parentId)?idMap.get(g.parentId):null,name:isRoot?g.name+rootSuffix:g.name});
   });
-  const newLayers=_groupObjClipboard.layers.map(l=>_deepCopyLayer({...l,groupId:idMap.get(l.groupId)}));
+  const newLayers=_groupObjClipboard.layers.map(l=>{const copy=_deepCopyLayer(l);copy.groupId=idMap.get(l.groupId);return copy;});
   layers.push(...newLayers);
+  if(window.SmartRasterV4Document&&typeof window.SmartRasterV4Document.restoreLayer==='function')newLayers.forEach(layer=>window.SmartRasterV4Document.restoreLayer(layer));
   renderLayerPanel();renderTimeline();
   hideAllMenus();
 };
@@ -483,8 +488,9 @@ document.getElementById('layer-ctx-duplicate-group').onclick=()=>{
     const isRoot=g.id===data.rootId;
     groups.push({...g,id:idMap.get(g.id),parentId:g.parentId&&idMap.has(g.parentId)?idMap.get(g.parentId):null,name:isRoot?g.name+' Copy':g.name});
   });
-  const newLayers=data.layers.map(l=>_deepCopyLayer({...l,groupId:idMap.get(l.groupId)}));
+  const newLayers=data.layers.map(l=>{const copy=_deepCopyLayer(l);copy.groupId=idMap.get(l.groupId);return copy;});
   layers.push(...newLayers);
+  if(window.SmartRasterV4Document&&typeof window.SmartRasterV4Document.restoreLayer==='function')newLayers.forEach(layer=>window.SmartRasterV4Document.restoreLayer(layer));
   renderLayerPanel();renderTimeline();
   hideAllMenus();
 };

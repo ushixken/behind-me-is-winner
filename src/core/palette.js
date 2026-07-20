@@ -1,4 +1,4 @@
-﻿(function(){
+(function(){
   const STORE_KEY='animatorPaletteV1';
   const VIEW_KEY='animatorPaletteViewV1';
   const NORMAL_SWATCH_SIZE_KEY='palette.normalSwatchSize';
@@ -11,7 +11,6 @@
   const SWATCH_SIZE_DEFAULT=28;
   const ADVANCED_PALETTE_VERSION=2;
   const PALETTE_REORDER_HOLD_MS=260;
-  function paletteReorderMoveTolerance(pointerType){return pointerType==='touch'?12:8;}
   let palettes=[];
   let activePaletteId=null;
   let swatches=[];
@@ -717,9 +716,18 @@
     menu.classList.remove('hidden');
     if(button){button.classList.add('active');button.setAttribute('aria-expanded','true');}
     renderPaletteSelector();
+    syncStyleLayeringControl();
     positionSideMenu();
   }
-  function closeSideMenu(){
+  function syncStyleLayeringControl(){
+    const input=document.getElementById('palette-style-layering');
+    if(!input) return;
+    const state=window.SmartRasterStyleLayering?window.SmartRasterStyleLayering.getActiveState():{enabled:false,available:false,reason:'Style Layering is unavailable.'};
+    input.checked=!!state.enabled;
+    input.disabled=!state.enabled&&!state.available;
+    const control=input.closest('.palette-style-layering-control');
+    if(control) control.title=state.enabled?'Render this Smart Raster layer in Advanced Palette order.':(state.available?'Render this Smart Raster layer in Advanced Palette order.':('Unavailable: '+String(state.reason||'the active layer is not compatible.')));
+  }  function closeSideMenu(){
     const menu=sideMenu();
     const button=settingsButton();
     sideMenuOpen=false;
@@ -1121,6 +1129,7 @@
     if(idx<0) return;
     const moved=advancedStyles.splice(idx,1)[0];
     advancedStyles.splice(toEnd?advancedStyles.length:0,0,moved);
+    notifyAdvancedStyleOrderChanged();
     render();
     persist();
   }
@@ -1237,24 +1246,18 @@
     requestAnimationFrame(processAdvancedStyleDragMove);
   }
   function activateAdvancedStyleDrag(state){
-    if(!state||advancedStyleDrag!==state||state.active||state.holdCancelled)return;
+    if(!state||advancedStyleDrag!==state||state.active)return;
     state.active=true;advancedStyleSuppressClick=true;state.source.classList.add('dragging');
     state.oldUserSelect=document.documentElement.style.userSelect||'';state.oldCursor=document.documentElement.style.cursor||'';
     document.documentElement.style.userSelect='none';document.documentElement.style.cursor='grabbing';
     try{state.source.setPointerCapture(state.pointerId);state.captured=true;}catch(e){}
+    if(state.lastMove&&!state.rafPending){state.rafPending=true;requestAnimationFrame(processAdvancedStyleDragMove);}
   }
   function processAdvancedStyleDragMove(){
     const state=advancedStyleDrag;if(!state||!state.lastMove)return;
     state.rafPending=false;
     const event=state.lastMove;
-    if(!state.active){
-      const distance=Math.hypot(event.clientX-state.startX,event.clientY-state.startY);
-      if(distance>paletteReorderMoveTolerance(state.pointerType)){
-        state.holdCancelled=true;
-        clearTimeout(state.holdTimer);
-      }
-      return;
-    }
+    if(!state.active)return;
     const grid=document.getElementById('palette-grid');
     const gridRect=grid&&grid.getBoundingClientRect();
     if(!gridRect||event.clientX<gridRect.left||event.clientX>gridRect.right||event.clientY<gridRect.top||event.clientY>gridRect.bottom){
@@ -1284,11 +1287,14 @@
       const from=advancedStyles.findIndex(item=>item&&item.id===state.id);
       const over=advancedStyles.findIndex(item=>item&&item.id===state.target.id);
       if(from>=0&&over>=0){
+        const beforeOrder=advancedStyles.map(item=>item.id);
         const moved=advancedStyles.splice(from,1)[0];
         let to=advancedStyles.findIndex(item=>item&&item.id===state.target.id);
         if(state.target.side==='after')to++;
         advancedStyles.splice(Math.max(0,to),0,moved);
+        notifyAdvancedStyleOrderChanged();
         render();persist();
+        if(layers.some(layer=>layer&&layer.renderMode==='style-layering')&&typeof undoStack!=='undefined'){undoStack.push({type:'smart-raster-style-order',before:beforeOrder,after:advancedStyles.map(item=>item.id)});if(typeof redoStack!=='undefined')redoStack.length=0;}
       }
     }
     if(state.active||advancedStyleSuppressClick)setTimeout(()=>{advancedStyleSuppressClick=false;},0);
@@ -1301,7 +1307,9 @@
     if(advancedStyleDrag)finishAdvancedStyleDrag(null,true);
     const pointerType=event.pointerType||'mouse';
     if(!isAdvancedSeparator(style)){selectStyle(style.id,true);advancedStyleSuppressClick=true;}
-    advancedStyleDrag={id:style.id,pointerId:event.pointerId,pointerType:pointerType,startX:event.clientX,startY:event.clientY,source:card,selectable:!isAdvancedSeparator(style),active:false,captured:false,target:null,rafPending:false,lastMove:null,holdCancelled:false,holdTimer:null};
+    event.preventDefault();
+    advancedStyleDrag={id:style.id,pointerId:event.pointerId,pointerType:pointerType,startX:event.clientX,startY:event.clientY,source:card,selectable:!isAdvancedSeparator(style),active:false,captured:false,target:null,rafPending:false,lastMove:null,holdTimer:null};
+    try{card.setPointerCapture(event.pointerId);advancedStyleDrag.captured=true;}catch(e){}
     const pendingDrag=advancedStyleDrag;
     advancedStyleDrag.holdTimer=setTimeout(()=>activateAdvancedStyleDrag(pendingDrag),PALETTE_REORDER_HOLD_MS);
     document.addEventListener('pointermove',updateAdvancedStyleDrag,{passive:false});
@@ -2115,10 +2123,12 @@
   function beginDrag(event,swatch,el){
     if(event.isPrimary===false) return;
     if(event.button!==undefined&&event.button!==0) return;
+    event.preventDefault();
     hideContextMenu();
     activatePaletteSwatch(swatch.id,{select:true,setForeground:true});
     const rect=el.getBoundingClientRect();
-    dragState={id:swatch.id,startX:event.clientX,startY:event.clientY,grabOffsetX:event.clientX-rect.left,grabOffsetY:event.clientY-rect.top,swatchWidth:rect.width,swatchHeight:rect.height,pointerType:event.pointerType||'mouse',active:false,overId:swatch.id,side:'after',targetGroupIndex:null,targetLocalIndex:null,targetGlobalIndex:null,targetSeparatorSide:null,targetSeparatorId:null,rafPending:false,lastMove:null,pointerId:event.pointerId,sourceEl:el,captured:false,holdCancelled:false,holdTimer:null};
+    dragState={id:swatch.id,startX:event.clientX,startY:event.clientY,grabOffsetX:event.clientX-rect.left,grabOffsetY:event.clientY-rect.top,swatchWidth:rect.width,swatchHeight:rect.height,pointerType:event.pointerType||'mouse',active:false,overId:swatch.id,side:'after',targetGroupIndex:null,targetLocalIndex:null,targetGlobalIndex:null,targetSeparatorSide:null,targetSeparatorId:null,rafPending:false,lastMove:null,pointerId:event.pointerId,sourceEl:el,captured:false,holdTimer:null};
+    try{el.setPointerCapture(event.pointerId);dragState.captured=true;}catch(e){}
     const pendingDrag=dragState;
     dragState.holdTimer=setTimeout(()=>activatePaletteDrag(pendingDrag),PALETTE_REORDER_HOLD_MS);
     document.addEventListener('pointermove',onDragMove);
@@ -2142,7 +2152,7 @@
     requestAnimationFrame(processDragMove);
   }
   function activatePaletteDrag(state){
-    if(!state||dragState!==state||state.active||state.holdCancelled)return;
+    if(!state||dragState!==state||state.active)return;
     state.active=true;
     suppressClick=true;
     if(state.sourceEl&&!state.captured){
@@ -2150,20 +2160,15 @@
     }
     const dragged=document.querySelector('.palette-swatch[data-id="'+CSS.escape(state.id)+'"]');
     if(dragged)dragged.classList.add('dragging');
+    if(state.lastMove&&!state.rafPending){state.rafPending=true;requestAnimationFrame(processDragMove);}
   }
   function processDragMove(){
     if(!dragState||!dragState.lastMove)return;
     dragState.rafPending=false;
     const event=dragState.lastMove;
     if(event.pointerId!==dragState.pointerId)return;
-    if(!dragState.active){
-      const distance=Math.hypot(event.clientX-dragState.startX,event.clientY-dragState.startY);
-      if(distance>paletteReorderMoveTolerance(dragState.pointerType)){
-        dragState.holdCancelled=true;
-        clearTimeout(dragState.holdTimer);
-      }
-      return;
-    }
+    if(!dragState.active)return;
+
     const dragX=event.clientX-dragState.grabOffsetX;
     const dragY=event.clientY-dragState.grabOffsetY;
     const dragCenterX=dragX+(dragState.swatchWidth||swatchSize)/2;
@@ -2631,6 +2636,7 @@
     const deleteBtn=document.getElementById('palette-delete');
     const toolbarToggle=document.getElementById('palette-toolbar-toggle');
     const advancedToggle=document.getElementById('palette-advanced-toggle');
+    const styleLayeringToggle=document.getElementById('palette-style-layering');
     const renameInput=document.getElementById('palette-rename-inline-input');
     const renameOk=document.getElementById('palette-rename-inline-ok');
     const renameCancel=document.getElementById('palette-rename-inline-cancel');
@@ -2651,6 +2657,13 @@
     if(deleteBtn) deleteBtn.addEventListener('click',deletePalette);
     if(toolbarToggle) toolbarToggle.addEventListener('click',event=>{event.stopPropagation();toggleToolbarPaletteSubmenu();});
     if(advancedToggle) advancedToggle.addEventListener('click',toggleAdvancedPalette);
+    if(styleLayeringToggle) styleLayeringToggle.addEventListener('change',()=>{
+      const layer=layers[curLayer],requested=styleLayeringToggle.checked,before=!!(layer&&layer.renderMode==='style-layering'),beforeLayer=typeof _deepCopyLayer==='function'?_deepCopyLayer(layer):null;
+      const result=window.SmartRasterStyleLayering&&window.SmartRasterStyleLayering.setEnabled(layer,requested);
+      if(!result||!result.success) styleLayeringToggle.checked=before;
+      else if(result.changed&&typeof undoStack!=='undefined'){undoStack.push({type:'smart-raster-style-layering-toggle',layerIndex:curLayer,beforeLayer,afterLayer:typeof _deepCopyLayer==='function'?_deepCopyLayer(layer):null});if(typeof redoStack!=='undefined')redoStack.length=0;}
+      syncStyleLayeringControl();
+    });
     if(renameOk) renameOk.addEventListener('click',applyInlineRename);
     if(renameCancel) renameCancel.addEventListener('click',()=>{hidePaletteInlinePanels();positionSideMenu();});
     if(renameInput) renameInput.addEventListener('keydown',event=>{if(event.key==='Enter') applyInlineRename(); if(event.key==='Escape'){hidePaletteInlinePanels();positionSideMenu();}});
@@ -2682,6 +2695,9 @@
     applyViewSettings(false);
     bindPalettePopupListeners();
   }
+  function getAdvancedStyleOrder(){return advancedStyles.filter(item=>item&&!isAdvancedSeparator(item)&&item.type==='style').map(item=>item.id);}
+  function restoreAdvancedStyleOrder(snapshot){const byId=new Map(advancedStyles.map(item=>[item.id,item])),ordered=(Array.isArray(snapshot)?snapshot:[]).map(id=>byId.get(id)).filter(Boolean),seen=new Set(ordered.map(item=>item.id));advancedStyles=ordered.concat(advancedStyles.filter(item=>!seen.has(item.id)));syncAdvancedRefs();notifyAdvancedStyleOrderChanged();render();persist();}
+  function notifyAdvancedStyleOrderChanged(){window.dispatchEvent(new CustomEvent('advanced-palette-order-changed',{detail:{styleIds:getAdvancedStyleOrder()}}));}
   function isAdvancedPalettePaintingEnabled(){return activeLayerUsesAdvancedPalette();}
   function getActiveAdvancedPaletteStyleId(){const style=activeAdvancedStyle();return activeLayerUsesAdvancedPalette()&&style?style.id:null;}
   window.isAdvancedPalettePaintingEnabled=isAdvancedPalettePaintingEnabled;
@@ -2690,7 +2706,9 @@
     const style=advancedColorPanelStyleId&&advancedColorPanelStyleId===activeAdvancedStyleId?findAdvancedStyleById(activeAdvancedStyleId):null;
     return style&&!style.locked&&Array.isArray(style.rgba)?style.rgba.slice():null;
   }
-  window.PaletteDocker={serialize,load,reset(){load(null);},renderCurrentColors:render,refresh:render,synchronizeActiveContext,isAdvancedPalettePaintingEnabled,getActiveAdvancedPaletteStyleId,getActiveAdvancedStyleColorForHistory,findAdvancedStyleById,updateActiveAdvancedStyleFromColorPanel,selectAdvancedStyleById,selectMatchingRgba,setForegroundFromSample};
-  window.addEventListener('active-artwork-changed',()=>synchronizeActiveContext(true));
+  window.PaletteDocker={serialize,load,reset(){load(null);},renderCurrentColors:render,refresh:render,synchronizeActiveContext,isAdvancedPalettePaintingEnabled,getActiveAdvancedPaletteStyleId,getActiveAdvancedStyleColorForHistory,findAdvancedStyleById,getAdvancedStyleOrder,restoreAdvancedStyleOrder,updateActiveAdvancedStyleFromColorPanel,selectAdvancedStyleById,selectMatchingRgba,setForegroundFromSample};
+  window.addEventListener('active-artwork-changed',()=>{synchronizeActiveContext(true);syncStyleLayeringControl();});
+  window.addEventListener('active-layer-changed',syncStyleLayeringControl);
+  window.addEventListener('smart-raster-style-layering-changed',syncStyleLayeringControl);
   document.addEventListener('DOMContentLoaded',()=>{bind();loadPersisted();});
 })();

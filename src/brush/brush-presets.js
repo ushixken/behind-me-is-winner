@@ -41,12 +41,15 @@
   }catch(_){}
   window.brushBlendMode=savedBrushBlendMode;
   let blendMenu=null,blendOptions=[],blendMenuOpen=false;
-  function updateBlendModeUI(){
-    const mode=BRUSH_BLEND_MODES.has(window.brushBlendMode)?window.brushBlendMode:'normal';
-    if(brushBlendModeValueEl)brushBlendModeValueEl.textContent=BRUSH_BLEND_MODE_LABELS.get(mode)||'Normal';
-    blendOptions.forEach(el=>{const on=el.dataset.mode===mode;el.classList.toggle('is-selected',on);el.setAttribute('aria-selected',String(on));});
+  function styleLayeringActive(){return !!(layers[curLayer]&&layers[curLayer].type==='smart-raster'&&layers[curLayer].renderMode==='style-layering');}
+function updateBlendModeUI(){
+    if(styleLayeringActive()&&window.brushBlendMode!=="normal"){window.brushBlendMode="normal";try{localStorage.setItem(BRUSH_BLEND_MODE_STORAGE_KEY,"normal");}catch(_){}}
+    const mode=BRUSH_BLEND_MODES.has(window.brushBlendMode)?window.brushBlendMode:"normal",locked=styleLayeringActive();
+    if(brushBlendModeValueEl)brushBlendModeValueEl.textContent=BRUSH_BLEND_MODE_LABELS.get(mode)||"Normal";
+    if(brushBlendModeEl){brushBlendModeEl.disabled=locked;brushBlendModeEl.setAttribute("aria-disabled",String(locked));brushBlendModeEl.title=locked?"Style Layering uses Normal brush compositing. Draw Behind is unavailable.":"Controls how brush paint combines with existing artwork.";}
+    blendOptions.forEach(el=>{const on=el.dataset.mode===mode;el.classList.toggle("is-selected",on);el.setAttribute("aria-selected",String(on));el.disabled=locked&&el.dataset.mode!=="normal";});
   }
-  function setBlendMode(mode){window.brushBlendMode=BRUSH_BLEND_MODES.has(mode)?mode:'normal';try{localStorage.setItem(BRUSH_BLEND_MODE_STORAGE_KEY,window.brushBlendMode);}catch(_){}updateBlendModeUI();}
+  function setBlendMode(mode){window.brushBlendMode=styleLayeringActive()?"normal":(BRUSH_BLEND_MODES.has(mode)?mode:"normal");try{localStorage.setItem(BRUSH_BLEND_MODE_STORAGE_KEY,window.brushBlendMode);}catch(_){}updateBlendModeUI();}
   function buildBlendMenu(){
     if(blendMenu||!brushBlendModeEl)return;
     blendMenu=document.createElement('div');blendMenu.id='ts-brush-blend-mode-menu';blendMenu.className='ts-brush-blend-mode-menu';blendMenu.role='listbox';blendMenu.setAttribute('aria-label','Brush blend mode');blendMenu.tabIndex=-1;blendMenu.hidden=true;
@@ -62,7 +65,7 @@
     const gap=8,below=innerHeight-r.bottom-gap,above=r.top-gap,up=below<280&&above>below;
     blendMenu.style.maxHeight=Math.max(120,Math.min(340,(up?above:below)-4))+'px';blendMenu.style.width=Math.max(210,r.width)+'px';blendMenu.style.left=Math.max(gap,Math.min(r.left,innerWidth-blendMenu.offsetWidth-gap))+'px';blendMenu.style.top=(up?Math.max(gap,r.top-blendMenu.offsetHeight-4):r.bottom+4)+'px';
   }
-  function openBlendMenu(){buildBlendMenu();if(!blendMenu||brushBlendModeField?.hidden||tool!=='brush')return;blendMenuOpen=true;blendMenu.hidden=false;brushBlendModeEl.setAttribute('aria-expanded','true');positionBlendMenu();const selected=blendOptions.find(el=>el.dataset.mode===window.brushBlendMode)||blendOptions[0];selected?.focus({preventScroll:true});selected?.scrollIntoView({block:'nearest'});}
+  function openBlendMenu(){buildBlendMenu();if(!blendMenu||brushBlendModeField?.hidden||tool!=='brush'||styleLayeringActive())return;blendMenuOpen=true;blendMenu.hidden=false;brushBlendModeEl.setAttribute('aria-expanded','true');positionBlendMenu();const selected=blendOptions.find(el=>el.dataset.mode===window.brushBlendMode)||blendOptions[0];selected?.focus({preventScroll:true});selected?.scrollIntoView({block:'nearest'});}
   function closeBlendMenu(focus){if(!blendMenu)return;blendMenuOpen=false;blendMenu.hidden=true;brushBlendModeEl?.setAttribute('aria-expanded','false');if(focus)brushBlendModeEl?.focus({preventScroll:true});}
   function blendOptionKeydown(e){
     const i=Math.max(0,blendOptions.indexOf(e.currentTarget));let next=null;
@@ -77,6 +80,9 @@
   updateBlendModeUI();
   function syncBrushBlendModeVisibility(){if(brushBlendModeField)brushBlendModeField.hidden=tool!=='brush';if(tool!=='brush')closeBlendMenu(false);}
   window.addEventListener('tool-changed',syncBrushBlendModeVisibility);syncBrushBlendModeVisibility();
+  window.addEventListener('smart-raster-style-layering-changed',()=>{closeBlendMenu(false);updateBlendModeUI();});
+  window.addEventListener('active-artwork-changed',updateBlendModeUI);
+  window.addEventListener('active-layer-changed',updateBlendModeUI);
 
   const ERASER_MODE_STORAGE_KEY='eraserMode';
   const eraserModeField=document.getElementById('ts-eraser-mode-field');

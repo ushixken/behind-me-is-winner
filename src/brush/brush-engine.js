@@ -170,15 +170,25 @@ function _beginColorEraserStroke(){
     _colorEraserOwnership=window.SmartRasterLayer.beginStyleErase(curLayer,curFrame,styleId);
   }
 }
-function _filterColorEraserRegion(centerX,centerY,radiusX,radiusY){
-  if(!_colorEraserBase||tool!=='eraser'||window.eraserMode!=='color')return;
+function _colorEraserDabRect(centerX,centerY,radiusX,radiusY){
   const pad=3,x=Math.max(0,Math.floor(centerX-radiusX-pad)),y=Math.max(0,Math.floor(centerY-radiusY-pad));
   const right=Math.min(CW,Math.ceil(centerX+radiusX+pad)),bottom=Math.min(CH,Math.ceil(centerY+radiusY+pad));
-  const width=right-x,height=bottom-y;if(width<=0||height<=0)return;
-  const image=ctx.getImageData(x,y,width,height),ownership=_colorEraserOwnership;
+  return right>x&&bottom>y?{x,y,w:right-x,h:bottom-y}:null;
+}
+function _captureColorEraserDab(centerX,centerY,radiusX,radiusY){
+  if(!_colorEraserBase||tool!=='eraser'||window.eraserMode!=='color'||!layers[curLayer]||layers[curLayer].renderMode!=='style-layering')return null;
+  const rect=_colorEraserDabRect(centerX,centerY,radiusX,radiusY);
+  return rect?{rect,image:ctx.getImageData(rect.x,rect.y,rect.w,rect.h)}:null;
+}
+function _filterColorEraserRegion(centerX,centerY,radiusX,radiusY,beforeDab){
+  if(!_colorEraserBase||tool!=='eraser'||window.eraserMode!=='color')return;
+  const rect=_colorEraserDabRect(centerX,centerY,radiusX,radiusY);if(!rect)return;
+  const image=ctx.getImageData(rect.x,rect.y,rect.w,rect.h),ownership=_colorEraserOwnership;
   if(!ownership||!window.SmartRasterLayer||typeof window.SmartRasterLayer.applyStyleEraseRegion!=='function')return;
-  window.SmartRasterLayer.applyStyleEraseRegion(ownership,{x,y,w:width,h:height},image,_colorEraserBase);
-  ctx.putImageData(image,x,y);
+  const exactBefore=beforeDab&&beforeDab.rect.x===rect.x&&beforeDab.rect.y===rect.y&&beforeDab.rect.w===rect.w&&beforeDab.rect.h===rect.h?beforeDab.image:null;
+  window.SmartRasterLayer.applyStyleEraseRegion(ownership,rect,image,_colorEraserBase,exactBefore);
+  ctx.putImageData(image,rect.x,rect.y);
+  if(layers[curLayer]&&layers[curLayer].renderMode==='style-layering'&&typeof window.SmartRasterV4LiveColorErasePreview==='function')window.SmartRasterV4LiveColorErasePreview({styleId:ownership.styleId,coverage:ownership.coverage,dabIndexes:ownership.lastDabChanged,rect:rect});
 }
 function _endColorEraserStroke(){if(_colorEraserOwnership&&window.SmartRasterLayer&&typeof window.SmartRasterLayer.finishStyleErase==='function')window.SmartRasterLayer.finishStyleErase(_colorEraserOwnership);_colorEraserBase=null;_colorEraserOwnership=null;}
 let _replayingTaper = false;
@@ -327,6 +337,14 @@ function _getLiveStrokePreview(){
       && advancedPalettePaintingEnabled();
 
     let strokeSrc = src; // default: raw stroke canvas (bitmap layers, eraser, etc.)
+
+    if(isSmartRaster&&layers[curLayer]&&layers[curLayer].renderMode==='style-layering'&&typeof window.SmartRasterV4LivePaintPreview==='function'){
+      let liveMask=src;if(window.SelectionScope)liveMask=SelectionScope.clipCanvas(liveMask);
+      const dirty=_strokeDirty;
+      const rect=dirty?{x:Math.max(0,Math.floor(dirty.minX)),y:Math.max(0,Math.floor(dirty.minY)),w:Math.min(w,Math.ceil(dirty.maxX))-Math.max(0,Math.floor(dirty.minX)),h:Math.min(h,Math.ceil(dirty.maxY))-Math.max(0,Math.floor(dirty.minY))}:null;
+      const live=window.SmartRasterV4LivePaintPreview({maskCanvas:liveMask,targetCanvas:_strokePreviewCanvas,styleId,opacity:brushOpacity,rect});
+      if(live&&live.success)return _strokePreviewCanvas;
+    }
 
     if(isSmartRaster){
       // Resolve the active style's RGBA from the palette once per preview frame.
@@ -1797,16 +1815,9 @@ function _drawAutoHardRoundSegment(d){
   }
   dc.restore();
   return true;
-}function _drawDabNow(d){
-  _activeDabRotation=window.brushTipCanvas?(d.rotation||0):0;
-  _activeDabRoundness=window.brushTipCanvas&&d.roundness!=null?d.roundness:null;
-  // Track current dab color so _applyTextureToDabDirect can use it for alpha-only masking.
-  _lastDabRGB=d.rgb;
-  if(!_drawAutoHardRoundSegment(d)){
-    if(brushAA) _dabAA(d.x,d.y,d.r,d.rgb,d.alpha,d.composite);
-    else _dabAliased(d.x,d.y,d.r,d.rgb,d.alpha,d.composite);
-  }
-  let dirtyRadiusX=d.r,dirtyRadiusY=d.r;
+}
+function _dabDirtyRadii(d){
+  let x=d.r,y=d.r;
   if(window.brushTipCanvas){
     const tipW=window.brushTipCanvas.width||1,tipH=window.brushTipCanvas.height||1;
     const reference=Math.max(tipW,tipH);
@@ -1815,29 +1826,35 @@ function _drawAutoHardRoundSegment(d){
     const width=tipW*((d.r*2)/reference)*(compressWidth?roundness:1);
     const height=tipH*((d.r*2)/reference)*(compressWidth?1:roundness);
     const cosine=Math.abs(Math.cos(_activeDabRotation)),sine=Math.abs(Math.sin(_activeDabRotation));
-    dirtyRadiusX=(width*cosine+height*sine)/2;
-    dirtyRadiusY=(width*sine+height*cosine)/2;
+    x=(width*cosine+height*sine)/2;
+    y=(width*sine+height*cosine)/2;
+  }
+  return {x,y};
+}
+function _drawDabNow(d){
+  _activeDabRotation=window.brushTipCanvas?(d.rotation||0):0;
+  _activeDabRoundness=window.brushTipCanvas&&d.roundness!=null?d.roundness:null;
+  const dirtyRadius=_dabDirtyRadii(d);
+  // Capture the exact destination rectangle before this destructive eraser
+  // dab. The same rectangle is reused for coverage measurement and upload.
+  const colorEraserBefore=_captureColorEraserDab(d.x,d.y,dirtyRadius.x,dirtyRadius.y);
+  // Track current dab color so _applyTextureToDabDirect can use it for alpha-only masking.
+  _lastDabRGB=d.rgb;
+  if(!_drawAutoHardRoundSegment(d)){
+    if(brushAA) _dabAA(d.x,d.y,d.r,d.rgb,d.alpha,d.composite);
+    else _dabAliased(d.x,d.y,d.r,d.rgb,d.alpha,d.composite);
   }
   _activeDabRotation=0;
   _activeDabRoundness=null;
   // Texture is NO LONGER masked per-dab here. Masking every dab individually
   // meant reading back the stroke canvas and re-applying the texture mask to
-  // pixels that earlier, overlapping dabs had already been masked against —
-  // each overlap multiplied the mask into the same pixels again, so coverage
-  // decayed the more a stroke overlapped itself (the "too faint" bug), and
-  // the per-dab readback/clip/redraw was the main real-time-drawing lag
-  // source on fast strokes. Instead, while inside a buffered stroke we only
-  // grow the texture dirty-rect here; the actual masking happens once per
-  // changed region in _getLiveStrokePreview (for the live preview) and once
-  // more at _commitStrokeCanvas (stroke end) — see _getTexturedStrokeCanvas.
-  // Direct-to-ctx dabs (composite!=='erase' but not inside a stroke buffer,
-  // a rare path with no stroke canvas to defer to) still mask immediately.
+  // pixels that earlier, overlapping dabs had already been masked against.
   if(window.brushTextureEnabled && window.brushTextureCanvas && d.composite!=='erase'){
-    _growTexDirtyRect(d.x,d.y,dirtyRadiusX,dirtyRadiusY);
+    _growTexDirtyRect(d.x,d.y,dirtyRadius.x,dirtyRadius.y);
     if(!_inStroke) _applyTextureToDabDirect(ctx,d.x,d.y,d.r,d.alpha);
   }
-  _filterColorEraserRegion(d.x,d.y,dirtyRadiusX,dirtyRadiusY);
-  _growDirtyRect(d.x,d.y,dirtyRadiusX,dirtyRadiusY);
+  _filterColorEraserRegion(d.x,d.y,dirtyRadius.x,dirtyRadius.y,colorEraserBefore);
+  _growDirtyRect(d.x,d.y,dirtyRadius.x,dirtyRadius.y);
 }
 function _taperDistance(amount){return 320*amount;}
 function _queueDab(d){
