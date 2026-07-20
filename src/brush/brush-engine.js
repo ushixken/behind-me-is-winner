@@ -157,6 +157,16 @@ let _strokeReplayBase = null;
 let _selectionScopeBase = null;
 let _colorEraserBase = null;
 let _colorEraserOwnership = null;
+// A stroke owns the artwork slot captured on pointer-down. Frame/layer
+// navigation finalizes that slot before active artwork state may change.
+let _strokeOwnerLayer=-1,_strokeOwnerFrame=-1,_endingForArtworkChange=false;
+let _strokeSessionSerial=0,_activeStrokeSession=0;
+function _traceStrokeLifecycle(event,detail){
+  if(!window.debugStrokeLifecycle)return;
+  const trace=window.__strokeLifecycleTrace||(window.__strokeLifecycleTrace=[]);
+  trace.push(Object.assign({event,sessionId:_activeStrokeSession,time:performance.now(),activeLayer:curLayer,activeFrame:curFrame},detail||{}));
+  if(trace.length>100)trace.splice(0,trace.length-100);
+}
 
 function _beginColorEraserStroke(){
   _colorEraserBase=null;_colorEraserOwnership=null;
@@ -2404,22 +2414,43 @@ function _flushCurveTail(e){
 // That full-stack re-flatten on every single input event is the main
 // reason this felt laggy compared to TVPaint even WITH antialiasing on.
 // Fix: coalesce to at most one recomposite per animation frame.
-let _recompRAF=false;
+let _recompRAF=false,_recompGeneration=0;
 function _scheduleRecomposite(){
   if(_recompRAF) return;
   _recompRAF=true;
+  // Capture immutable artwork ownership now. This callback may run after
+  // pointerup and after the timeline has already selected another frame.
+  const generation=_recompGeneration;
+  const layerIndex=curLayer,frameIndex=curFrame,sessionId=_activeStrokeSession;
+  _traceStrokeLifecycle('recomposite-scheduled',{sessionId,sourceLayer:layerIndex,sourceFrame:frameIndex});
   requestAnimationFrame(()=>{
+    if(generation!==_recompGeneration){_traceStrokeLifecycle('recomposite-rejected',{sessionId,reason:'generation',sourceLayer:layerIndex,sourceFrame:frameIndex});return;}
     _recompRAF=false;
-    // Only hand recomposite() a dirty rect while a stroke is actually being
-    // painted (drawing/_inStroke). Outside of that Ã¢â‚¬â€ first frame after a
-    // tool switch, undo, layer visibility change, etc. Ã¢â‚¬â€ pass no rect so
-    // recomposite() keeps its original full-canvas behavior untouched.
+    // activeC represents exactly one artwork slot. loadFrame() has already
+    // rendered any newly selected destination, so an obsolete callback must
+    // never overwrite it.
+    if(curLayer!==layerIndex||curFrame!==frameIndex){_traceStrokeLifecycle('recomposite-rejected',{sessionId,reason:'artwork-changed',sourceLayer:layerIndex,sourceFrame:frameIndex});return;}
     const rect = (drawing||_inStroke) ? _consumeDirtyRect() : null;
     _flushLiveColorEraserPreview();
-    recomposite(curLayer,curFrame,rect);
+
+    recomposite(layerIndex,frameIndex,rect);
+
   });
 }
 
+function _completePostStrokePresentation(layerIndex,frameIndex){
+  _traceStrokeLifecycle('pointerup-barrier',{sourceLayer:layerIndex,sourceFrame:frameIndex});
+  // Pointerup is the authoritative barrier: invalidate every preview frame
+  // queued while the stroke was moving, then present the committed source
+  // synchronously before pointerup returns.
+  _recompGeneration++;_recompRAF=false;
+  _flushLiveColorEraserPreview();
+  if(_strokeCtx&&_strokeCanvas)_strokeCtx.clearRect(0,0,_strokeCanvas.width,_strokeCanvas.height);
+  if(_strokePreviewCtx&&_strokePreviewCanvas)_strokePreviewCtx.clearRect(0,0,_strokePreviewCanvas.width,_strokePreviewCanvas.height);
+  if(_srPreviewTintCtx&&_srPreviewTintCanvas)_srPreviewTintCtx.clearRect(0,0,_srPreviewTintCanvas.width,_srPreviewTintCanvas.height);
+  _frameDirty=null;_strokeDirty=null;
+  if(layerIndex>=0&&frameIndex>=0&&curLayer===layerIndex&&curFrame===frameIndex)recomposite(layerIndex,frameIndex);
+}
 // BUG FIX ("brush turns into an eraser / smears the canvas after
 // switching tabs and back"): the old code only cleared the `drawing`
 // flag on a 'mouseup'/'mouseleave' fired ON THE CANVAS ITSELF. If you
@@ -2453,13 +2484,34 @@ function _endStroke(pointerId){
   _strokeCompletionStarted=true;
   _stopAirbrushSpray();
   _autoHardRoundPrevDab=null;
-  if(drawing){drawing=false;_flushStrokeTail();if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();if(!_isStyleLayeringColorErase())_scheduleRecomposite();}_endColorEraserStroke();
+  if(drawing){drawing=false;_flushStrokeTail();if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();}_endColorEraserStroke();_completePostStrokePresentation(_strokeOwnerLayer,_strokeOwnerFrame);
   lineStart=null;
   _pendingDabs.length=0;
   _curveP0=null;_curveP1=null;
   _strokeSegCarryOver=0;
   _activeStrokePointerId=null;
+  _strokeOwnerLayer=-1;_strokeOwnerFrame=-1;
 }
+window.finishActiveDrawingBeforeArtworkChange=function(nextLayer,nextFrame){
+  const active=drawing||_inStroke||lineStart||_colorEraserOwnership;
+  if(!active){
+    _recompGeneration++;_recompRAF=false;_frameDirty=null;_strokeDirty=null;
+    if(_strokePreviewCtx&&_strokePreviewCanvas)_strokePreviewCtx.clearRect(0,0,_strokePreviewCanvas.width,_strokePreviewCanvas.height);
+    return false;
+  }
+  const destinationLayer=nextLayer,destinationFrame=nextFrame;
+  _endingForArtworkChange=true;
+  try{
+    if(_strokeOwnerLayer>=0)curLayer=_strokeOwnerLayer;
+    if(_strokeOwnerFrame>=0)curFrame=_strokeOwnerFrame;
+    _endStroke(_activeStrokePointerId);
+  }finally{
+    _endingForArtworkChange=false;
+    _recompGeneration++;_recompRAF=false;_frameDirty=null;_strokeDirty=null;
+    curLayer=destinationLayer;curFrame=destinationFrame;
+  }
+  return true;
+};
 document.addEventListener('visibilitychange',()=>{
   if(document.hidden){_endStroke();}
   else{
@@ -2993,6 +3045,8 @@ activeC.addEventListener('pointerdown',e=>{
   _updateVelocity(p.x, p.y, e.timeStamp);
   if(tool==='fill'){pushUndo();ensureKey();floodFill(p.x,p.y,color);saveActiveToKey();recomposite(curLayer,curFrame);return;}
   _activeStrokePointerId=e.pointerId;
+  _strokeOwnerLayer=curLayer;_strokeOwnerFrame=curFrame;_activeStrokeSession=++_strokeSessionSerial;
+  _traceStrokeLifecycle('stroke-start',{sourceLayer:curLayer,sourceFrame:curFrame});
   _strokeCompletionStarted=false;
   if(tool==='line'){lineStart=p;return;}
   activeC.setPointerCapture(e.pointerId);
@@ -3072,19 +3126,21 @@ function _pointerEndStroke(e){
     _strokeSegment(lineStart.x,lineStart.y,p.x,p.y,e,currentPressure,currentPressure);
     _flushStrokeTail();
     if(_inStroke){_inStroke=false;_commitStrokeCanvas();}
-    _cleanupErasedSmartOwnership();lineStart=null;saveActiveToKey();recomposite(curLayer,curFrame);
+    _cleanupErasedSmartOwnership();lineStart=null;saveActiveToKey();
   }else if(drawing){
     drawing=false;
     _flushCurveTail(e);
     _flushStrokeTail();
     if(_inStroke){_inStroke=false;_commitStrokeCanvas();}
-    _restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();if(!_isStyleLayeringColorErase())_scheduleRecomposite();
+    _restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();
   }
   _endColorEraserStroke();
+  _completePostStrokePresentation(_strokeOwnerLayer,_strokeOwnerFrame);
   _pendingDabs.length=0;
   _curveP0=null;_curveP1=null;
   _strokeSegCarryOver=0;
   _activeStrokePointerId=null;
+  _strokeOwnerLayer=-1;_strokeOwnerFrame=-1;
 }
 activeC.addEventListener('pointerup',e=>{
   if(e.pointerId===_eyedropperPointerId){_eyedropperPointerId=null;if(activeC.hasPointerCapture(e.pointerId))activeC.releasePointerCapture(e.pointerId);return;}

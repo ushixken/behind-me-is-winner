@@ -225,18 +225,26 @@ function createBlankKey(){
 function ensureKey(){
   if(!layers[curLayer].frames[curFrame]){
     layers[curLayer].frames[curFrame]=mkLayerCanvas();
+    // activeC may currently contain the held exposure from an earlier key.
+    // Clear it and invalidate the complete presentation before the first dab
+    // is allowed to enter the dirty-rectangle live compositor.
     ctx.clearRect(0,0,CW,CH);
+    recomposite(curLayer,curFrame);
+    updateOnion();
     renderTimeline();updateStatus();
+    return true;
   }
+  return false;
 }
 function saveActiveToKey(){
-  const kf=layers[curLayer].frames[curFrame];if(!kf) return;
+  const kf=layers[curLayer].frames[curFrame];if(!kf)return;
   const kctx=kf.getContext('2d');kctx.clearRect(0,0,CW,CH);kctx.drawImage(activeC,0,0);
 }
 
 function loadFrame(li,fi){
+  if(typeof window.finishActiveDrawingBeforeArtworkChange==='function')window.finishActiveDrawingBeforeArtworkChange(li,fi);
   ctx.clearRect(0,0,CW,CH);
-  const k=getHeldKey(li,fi);if(k) ctx.drawImage(k,0,0);
+  const k=getHeldKey(li,fi);if(k)ctx.drawImage(k,0,0);
   recomposite(li,fi);updateOnion();updatePlayhead();
   document.getElementById('frame-info').textContent=frameLabel(fi)+' / '+frameLabel(TOTAL-1);
   updateStatus();
