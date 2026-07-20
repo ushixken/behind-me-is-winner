@@ -14,6 +14,9 @@
   var HISTORY_LIMIT=40;
   var nextCommandId=1;
   var liveEraserSession=null;
+  var palettePriorityCache=null;
+  var resolvedStyleCache=new Map();
+  var compositionVersion=0;
   var documentReport={lastOperation:null,operations:[],validationErrors:[]};
   var serializationReport={serializationVersion:v4.SERIALIZATION_VERSION,formatRevision:v4.FORMAT_REVISION,serializedFrameCount:0,loadedFrameCount:0,rejectedFrames:[],validationWarnings:[],legacyLayers:0,serializedBytes:0,rebuiltIndexes:0,lifecycleStates:{}};
 
@@ -73,13 +76,17 @@
     var palette=root.PaletteDocker;
     var style=palette&&typeof palette.findAdvancedStyleById==='function'?palette.findAdvancedStyleById(styleId):null;
     if(!style||style.type!=='style'||!Array.isArray(style.rgba)||style.rgba.length<4)throw new Error('Smart Raster v4 style is missing or non-renderable: '+styleId);
+    var signature=style.rgba.slice(0,4).join(','),cached=resolvedStyleCache.get(styleId);if(cached&&cached.signature===signature)return cached.value;
     var rgba=style.rgba.slice(0,4).map(function(value){return Math.max(0,Math.min(255,Math.round(Number(value)||0)));});
-    return {id:styleId,rgba:rgba,colorEncoding:'straight-rgba8'};
+    var value={id:styleId,rgba:rgba,colorEncoding:'straight-rgba8'};resolvedStyleCache.set(styleId,{signature:signature,value:value});return value;
+  }
+  function palettePriority(){
+    if(palettePriorityCache)return palettePriorityCache;
+    var palette=root.PaletteDocker,ids=palette&&typeof palette.getAdvancedStyleOrder==='function'?palette.getAdvancedStyleOrder():[],priority=new Map();ids.forEach(function(id,index){priority.set(String(id),index);});
+    palettePriorityCache={ids:ids,priority:priority};return palettePriorityCache;
   }
   function orderedContributors(frame,state,key,tile){
-    var palette=root.PaletteDocker,ids=palette&&typeof palette.getAdvancedStyleOrder==='function'?palette.getAdvancedStyleOrder():[];
-    var priority=new Map();ids.forEach(function(id,index){priority.set(String(id),index);});
-    var contributors=[];tile.styleChannels.forEach(function(channel,index){var styleId=v4.getStyleId(frame,index);if(!styleId)throw new Error('Smart Raster v4 style index has no stable ID: '+index);if(!priority.has(styleId))throw new Error('Smart Raster v4 style is absent from the Advanced Palette: '+styleId);contributors.push({styleIndex:index,style:resolveStyle(styleId),coverage:channel,priority:priority.get(styleId)});});
+    var priority=palettePriority().priority,contributors=[];tile.styleChannels.forEach(function(channel,index){var styleId=v4.getStyleId(frame,index);if(!styleId)throw new Error('Smart Raster v4 style index has no stable ID: '+index);if(!priority.has(styleId))throw new Error('Smart Raster v4 style is absent from the Advanced Palette: '+styleId);contributors.push({styleIndex:index,style:resolveStyle(styleId),coverage:channel,priority:priority.get(styleId)});});
     contributors.sort(function(a,b){return b.priority-a.priority;});
     var order=state.tileOrder.get(key),reasons=[],chronology=order?order.runs.filter(function(index,pos,list){return list.indexOf(index)===pos&&tile.styleChannels.has(index);}):[];
     var rendered=contributors.map(function(item){return item.styleIndex;});
@@ -91,37 +98,26 @@
     var point=v4.parseTileKey(key),x=point.x*TILE_SIZE,y=point.y*TILE_SIZE;
     return {x:x,y:y,width:Math.min(TILE_SIZE,frame.width-x),height:Math.min(TILE_SIZE,frame.height-y)};
   }
-  function compositeTile(frame,state,key,tile){
-    var dimensions=tileDimensions(frame,key),ordered=orderedContributors(frame,state,key,tile);
-    var pixels=dimensions.width*dimensions.height;
-    var premul=new Float32Array(pixels*4),owner=new Uint16Array(TILE_SIZE*TILE_SIZE);
+  function compositeTile(frame,state,key,tile,scratch,orderedOverride){
+    var dimensions=tileDimensions(frame,key),ordered=orderedOverride||orderedContributors(frame,state,key,tile),pixels=dimensions.width*dimensions.height;
+    scratch=scratch||{};
+    var premul=scratch.premul;if(!(premul instanceof Float32Array)||premul.length<pixels*4)premul=scratch.premul=new Float32Array(pixels*4);else premul.fill(0,0,pixels*4);
+    var owner=scratch.owner;if(!(owner instanceof Uint16Array)||owner.length!==TILE_SIZE*TILE_SIZE)owner=scratch.owner=new Uint16Array(TILE_SIZE*TILE_SIZE);else owner.fill(0);
     ordered.contributors.forEach(function(contributor){
-      var rgba=contributor.style.rgba,styleAlpha=rgba[3]/255;
-      var red=rgba[0]/255,green=rgba[1]/255,blue=rgba[2]/255,coverage=contributor.coverage;
+      var rgba=contributor.style.rgba,styleAlpha=rgba[3]/255,red=rgba[0]/255,green=rgba[1]/255,blue=rgba[2]/255,coverage=contributor.coverage;
       for(var y=0;y<dimensions.height;y++)for(var x=0;x<dimensions.width;x++){
-        var tileOffset=y*TILE_SIZE+x,c=coverage[tileOffset]/v4.MAX_COVERAGE;
-        var sourceAlpha=c*styleAlpha;if(sourceAlpha<=0)continue;
+        var tileOffset=y*TILE_SIZE+x,c=coverage[tileOffset]/v4.MAX_COVERAGE,sourceAlpha=c*styleAlpha;if(sourceAlpha<=0)continue;
         var local=(y*dimensions.width+x)*4,destAlpha=premul[local+3],remaining=1-sourceAlpha;
-        premul[local]=red*sourceAlpha+premul[local]*remaining;
-        premul[local+1]=green*sourceAlpha+premul[local+1]*remaining;
-        premul[local+2]=blue*sourceAlpha+premul[local+2]*remaining;
-        premul[local+3]=sourceAlpha+destAlpha*remaining;
-        owner[tileOffset]=contributor.styleIndex;
+        premul[local]=red*sourceAlpha+premul[local]*remaining;premul[local+1]=green*sourceAlpha+premul[local+1]*remaining;premul[local+2]=blue*sourceAlpha+premul[local+2]*remaining;premul[local+3]=sourceAlpha+destAlpha*remaining;owner[tileOffset]=contributor.styleIndex;
       }
     });
-    var rgbaTile=new Uint8ClampedArray(TILE_SIZE*TILE_SIZE*4);
+    var rgbaTile=scratch.rgba;if(!(rgbaTile instanceof Uint8ClampedArray)||rgbaTile.length!==TILE_SIZE*TILE_SIZE*4)rgbaTile=scratch.rgba=new Uint8ClampedArray(TILE_SIZE*TILE_SIZE*4);else rgbaTile.fill(0);
     for(var y=0;y<dimensions.height;y++)for(var x=0;x<dimensions.width;x++){
       var local=(y*dimensions.width+x)*4,tileOffset=(y*TILE_SIZE+x)*4,alpha=premul[local+3];
-      if(alpha>0){
-        rgbaTile[tileOffset]=Math.round(Math.max(0,Math.min(1,premul[local]/alpha))*255);
-        rgbaTile[tileOffset+1]=Math.round(Math.max(0,Math.min(1,premul[local+1]/alpha))*255);
-        rgbaTile[tileOffset+2]=Math.round(Math.max(0,Math.min(1,premul[local+2]/alpha))*255);
-        rgbaTile[tileOffset+3]=Math.round(Math.max(0,Math.min(1,alpha))*255);
-      }
+      if(alpha>0){rgbaTile[tileOffset]=Math.round(Math.max(0,Math.min(1,premul[local]/alpha))*255);rgbaTile[tileOffset+1]=Math.round(Math.max(0,Math.min(1,premul[local+1]/alpha))*255);rgbaTile[tileOffset+2]=Math.round(Math.max(0,Math.min(1,premul[local+2]/alpha))*255);rgbaTile[tileOffset+3]=Math.round(Math.max(0,Math.min(1,alpha))*255);}
     }
-    return {rgba:rgbaTile,owner:owner,dimensions:dimensions,supported:ordered.supported,reasons:ordered.reasons,order:ordered.contributors.map(function(item){return item.styleIndex;})};
-  }
-  function authoritativeCanvas(state){
+    var result=scratch.result||{};scratch.result=result;result.rgba=rgbaTile;result.owner=owner;result.dimensions=dimensions;result.supported=ordered.supported;result.reasons=ordered.reasons;result.order=ordered.contributors.map(function(item){return item.styleIndex;});return result;
+  }  function authoritativeCanvas(state){
     if(typeof curLayer!=='undefined'&&typeof curFrame!=='undefined'&&state.layerIndex===curLayer&&state.frameIndex===curFrame&&typeof activeC!=='undefined')return activeC;
     return state.layer&&state.layer.frames&&state.layer.frames[state.frameIndex]||null;
   }
@@ -343,7 +339,7 @@
     liveEraserSession=null;
     if(changedPixels)refreshVisibleLayer(layer);
     return recordEditDiagnostic('color-erase',{layerIndex:edit.layerIndex,frameIndex:edit.frameIndex,styleId:edit.styleId,changedPixels:changedPixels,changedTiles:Array.from(changedTiles),deletedChannels:beforeChannels-afterChannels,deletedTiles:beforeTiles-frame.tiles.size,ownershipInvalidations:changedTiles.size,compositeInvalidations:invalidated,liveCommitComparison:liveComparison,lifecycle:v4.lifecycleSummary(frame)});
-  }  function recolorStyle(styleId){
+  }  function recolorStyle(styleId){resolvedStyleCache.delete(styleId);compositionVersion++;
     var command=createHistoryCommand('rgb-recolor'),framesChanged=[],totalTiles=0,totalInvalidations=0;
     trackedLayers.forEach(function(layer){var frames=framesByLayer.get(layer);if(!frames)return;frames.forEach(function(frame,frameIndex){
       var styleIndex=v4.getStyleIndex(frame,styleId);if(!styleIndex)return;var keys=v4.dirtyStyle(frame,styleIndex);if(!keys.length)return;
@@ -354,7 +350,7 @@
     if(command.entries.length)pushHistory(command);
     var activeList=currentLayers(),activeLayer=activeList&&typeof curLayer!=='undefined'?activeList[curLayer]:null;if(activeLayer&&activeLayer.renderMode==='style-layering')refreshVisibleLayer(activeLayer);
     return recordEditDiagnostic('rgb-recolor',{styleId:styleId,frames:framesChanged,recolorDirtiedTiles:totalTiles,ownershipInvalidations:0,compositeInvalidations:totalInvalidations});
-  }  function deleteStyle(styleId){
+  }  function deleteStyle(styleId){resolvedStyleCache.delete(styleId);compositionVersion++;
     var command=createHistoryCommand('style-delete'),framesChanged=[],deletedChannels=0,deletedTiles=0,invalidations=0;
     trackedLayers.forEach(function(layer){var frames=framesByLayer.get(layer);if(!frames)return;frames.forEach(function(frame,frameIndex){
       var styleIndex=v4.getStyleIndex(frame,styleId);if(!styleIndex)return;var usage=v4.styleUsage(frame,styleIndex),keys=new Set(usage.tileKeys),beforeTiles=frame.tiles.size;
@@ -416,12 +412,12 @@
   function cloneTransientTile(source){
     var tile={styleChannels:new Map(),styleCounts:new Map()};if(source){source.styleChannels.forEach(function(channel,index){tile.styleChannels.set(index,channel);});source.styleCounts.forEach(function(count,index){tile.styleCounts.set(index,count);});}return tile;
   }
-  function uploadPreviewTile(target,rendered){
-    if(!target||typeof target.getContext!=='function')return false;var d=rendered.dimensions,ctx=target.getContext('2d'),image=ctx.createImageData(d.width,d.height);
+  function uploadPreviewTile(target,rendered,reusableImage){
+    if(!target||typeof target.getContext!=='function')return null;var d=rendered.dimensions,ctx=target.getContext('2d'),image=reusableImage;
+    if(!image||image.width!==d.width||image.height!==d.height)image=ctx.createImageData(d.width,d.height);
     for(var y=0;y<d.height;y++)for(var x=0;x<d.width;x++){var source=(y*TILE_SIZE+x)*4,dest=(y*d.width+x)*4;image.data[dest]=rendered.rgba[source];image.data[dest+1]=rendered.rgba[source+1];image.data[dest+2]=rendered.rgba[source+2];image.data[dest+3]=rendered.rgba[source+3];}
-    ctx.putImageData(image,d.x,d.y);return true;
-  }
-  function livePaintPreview(options){
+    ctx.putImageData(image,d.x,d.y);return image;
+  }  function livePaintPreview(options){
     options=options||{};var frame=activeShadowFrame(),state=frame&&stateByFrame.get(frame),layer=state&&state.layer;
     if(!frame||!state||!layer||layer.renderMode!=='style-layering'||!options.maskCanvas||!options.targetCanvas||!options.styleId)return {success:false,reason:'style-layering-preview-unavailable'};
     var rect=clippedRect(frame,options.rect);if(!rect)return {success:true,tiles:[]};var styleIndex=v4.ensureStyleIndex(frame,options.styleId),mask=options.maskCanvas.getContext('2d',{willReadFrequently:true}).getImageData(rect.x,rect.y,rect.width,rect.height).data,opacity=Math.max(0,Math.min(1,Number(options.opacity))),renderedKeys=[];
@@ -433,39 +429,38 @@
     root.__smartRasterV4LastLivePreview={type:'paint',rect:rect,tileKeys:renderedKeys.slice(),styleId:options.styleId};return {success:true,tiles:renderedKeys,rect:rect};
   }
   function liveColorErasePreview(options){
+    var started=typeof performance!=='undefined'&&performance.now?performance.now():Date.now();
     options=options||{};var frame=activeShadowFrame(),state=frame&&stateByFrame.get(frame),layer=state&&state.layer;
     if(!frame||!state||!layer||layer.renderMode!=='style-layering'||!options.coverage||!options.styleId)return {success:false,reason:'style-layering-eraser-preview-unavailable'};
     var rect=clippedRect(frame,options.rect),styleIndex=v4.getStyleIndex(frame,options.styleId);if(!rect||!styleIndex)return {success:true,tiles:[]};
-    if(!liveEraserSession||liveEraserSession.frame!==frame||liveEraserSession.styleId!==options.styleId||liveEraserSession.coverage!==options.coverage)liveEraserSession={frame:frame,styleId:options.styleId,coverage:options.coverage,tiles:new Map(),changedIndexes:new Set()};
-    var dabIndexes=Array.isArray(options.dabIndexes)?options.dabIndexes:[],rectRight=rect.x+rect.width,rectBottom=rect.y+rect.height,affectedKeySet=new Set();
+    if(!liveEraserSession||liveEraserSession.frame!==frame||liveEraserSession.styleId!==options.styleId||liveEraserSession.coverage!==options.coverage)liveEraserSession={frame:frame,styleId:options.styleId,coverage:options.coverage,tiles:new Map(),changedIndexes:new Set(),workTiles:new Map(),indexGroups:new Map(),calls:0,totalMs:0,worstMs:0,totalTiles:0,bufferAllocations:0};
+    var session=liveEraserSession,dabIndexes=options.dabIndexes&&typeof options.dabIndexes.forEach==='function'?options.dabIndexes:[],rectRight=rect.x+rect.width,rectBottom=rect.y+rect.height,debug=root.smartRasterV4DebugAssertions===true;
+    session.indexGroups.forEach(function(group){group.length=0;});
     dabIndexes.forEach(function(index){
-      var x=index%frame.width,y=Math.floor(index/frame.width);
-      if(root.smartRasterV4DebugAssertions===true&&(x<rect.x||x>=rectRight||y<rect.y||y>=rectBottom))throw new Error('Smart Raster v4 eraser changed coverage outside the current dab rectangle');
-      liveEraserSession.changedIndexes.add(index);affectedKeySet.add(v4.pixelLocation(frame,x,y).key);
+      var x=index%frame.width,y=Math.floor(index/frame.width);if(debug&&(x<rect.x||x>=rectRight||y<rect.y||y>=rectBottom))throw new Error('Smart Raster v4 eraser changed coverage outside the current dab rectangle');
+      session.changedIndexes.add(index);var key=v4.pixelLocation(frame,x,y).key,group=session.indexGroups.get(key);if(!group){group=[];session.indexGroups.set(key,group);}group.push(index);
     });
-    var renderedKeys=[],diagnostic=[];
-    Array.from(affectedKeySet).forEach(function(key){
-      var original=frame.tiles.get(key),base=original&&original.styleChannels.get(styleIndex);if(!base)return;
-      var dimensions=tileDimensions(frame,key),tile=cloneTransientTile(original),channel=base.slice(),changedIndexes=[];
-      // Rebuild the COMPLETE tile from permanent channels plus every eraser
-      // contribution accumulated so far in this stroke. Limiting this loop to
-      // the newest dab rectangle caused the full-tile upload to overwrite the
-      // earlier live result elsewhere in the same tile.
-      for(var y=dimensions.y;y<dimensions.y+dimensions.height;y++)for(var x=dimensions.x;x<dimensions.x+dimensions.width;x++){
-        var global=y*frame.width+x,erase=Math.max(0,Math.min(1,Number(options.coverage[global])||0));if(!erase)continue;
-        var local=(y-dimensions.y)*TILE_SIZE+x-dimensions.x,next=Math.round(base[local]*(1-erase));
-        if(next!==channel[local]){channel[local]=next;changedIndexes.push(global);}
+    var workTilesBefore=session.workTiles.size,renderedKeys=[],diagnostic=debug?[]:null;
+    session.indexGroups.forEach(function(indexes,key){
+      if(!indexes.length)return;var original=frame.tiles.get(key),base=original&&original.styleChannels.get(styleIndex);if(!base)return;
+      var work=session.workTiles.get(key);
+      if(!work){
+        var tile=cloneTransientTile(original),channel=base.slice();tile.styleChannels.set(styleIndex,channel);
+        work={tile:tile,base:base,channel:channel,scratch:{},ordered:null,orderVersion:-1,imageData:null};session.workTiles.set(key,work);session.bufferAllocations+=5;
       }
-      if(!changedIndexes.length)return;
-      tile.styleChannels.set(styleIndex,channel);
-      if(root.smartRasterV4DebugAssertions===true){
-        original.styleChannels.forEach(function(originalChannel,index){if(index!==styleIndex&&tile.styleChannels.get(index)!==originalChannel)throw new Error('Smart Raster v4 eraser modified a non-target style channel');});
-        for(var local=0;local<base.length;local++){var gx=dimensions.x+local%TILE_SIZE,gy=dimensions.y+Math.floor(local/TILE_SIZE);if(gx>=frame.width||gy>=frame.height)continue;var global=gy*frame.width+gx;if(!options.coverage[global]&&channel[local]!==base[local])throw new Error('Smart Raster v4 eraser modified coverage outside the accumulated eraser mask');}
+      if(work.orderVersion!==compositionVersion){work.ordered=orderedContributors(frame,state,key,work.tile);work.orderVersion=compositionVersion;}
+      var dimensions=tileDimensions(frame,key),changed=debug?[]:null,changedCount=0;
+      for(var n=0;n<indexes.length;n++){
+        var global=indexes[n],x=global%frame.width,y=Math.floor(global/frame.width),local=(y-dimensions.y)*TILE_SIZE+x-dimensions.x,erase=Math.max(0,Math.min(1,Number(options.coverage[global])||0)),next=Math.round(work.base[local]*(1-erase));
+        if(next!==work.channel[local]){work.channel[local]=next;changedCount++;if(debug)changed.push(global);}
       }
-      var result=compositeTile(frame,state,key,tile);uploadPreviewTile(typeof activeC!=='undefined'?activeC:null,result);liveEraserSession.tiles.set(key,result.rgba.slice());renderedKeys.push(key);diagnostic.push({tileKey:key,changedCoverageIndexes:changedIndexes});
+      if(!changedCount)return;
+      if(debug){original.styleChannels.forEach(function(originalChannel,index){if(index!==styleIndex&&work.tile.styleChannels.get(index)!==originalChannel)throw new Error('Smart Raster v4 eraser modified a non-target style channel');});}
+      var result=compositeTile(frame,state,key,work.tile,work.scratch,work.ordered);work.imageData=uploadPreviewTile(typeof activeC!=='undefined'?activeC:null,result,work.imageData);session.tiles.set(key,result.rgba);renderedKeys.push(key);if(debug)diagnostic.push({tileKey:key,changedCoverageIndexes:changed});
     });
-    if(renderedKeys.length&&typeof recomposite==='function')recomposite(curLayer,curFrame,{x:rect.x,y:rect.y,w:rect.width,h:rect.height});
-    root.__smartRasterV4LastLivePreview={type:'color-erase',rect:rect,tileKeys:renderedKeys.slice(),styleId:options.styleId,dabChangedCoverageIndexes:dabIndexes.slice(),tiles:diagnostic};return {success:true,tiles:renderedKeys,rect:rect};
+    var elapsed=(typeof performance!=='undefined'&&performance.now?performance.now():Date.now())-started;session.calls++;session.totalMs+=elapsed;session.worstMs=Math.max(session.worstMs,elapsed);session.totalTiles+=renderedKeys.length;
+    root.__smartRasterV4ColorEraserPerformance={calls:session.calls,averagePointerFrameMs:session.totalMs/session.calls,worstPointerFrameMs:session.worstMs,averageTilesPerFrame:session.totalTiles/session.calls,lastTiles:renderedKeys.length,reusedTileBuffers:session.workTiles.size,typedBufferAllocationsThisFrame:(session.workTiles.size-workTilesBefore)*5,typedBufferAllocationsThisStroke:session.bufferAllocations,estimatedRetainedScratchBytes:session.workTiles.size*114688};
+    root.__smartRasterV4LastLivePreview={type:'color-erase',rect:rect,tileKeys:renderedKeys.slice(),styleId:options.styleId,dabChangedCoverageCount:options.dabIndexes&&options.dabIndexes.size!=null?options.dabIndexes.size:options.dabIndexes&&options.dabIndexes.length||0,tiles:diagnostic};return {success:true,tiles:renderedKeys,rect:rect,renderTimeMs:elapsed};
   }  function ensureCanvasForState(state){
     var layer=state.layer;if(!layer)return null;if(!layer.frames)layer.frames={};var canvas=layer.frames[state.frameIndex];
     if(!canvas&&typeof document!=='undefined'){canvas=document.createElement('canvas');canvas.width=state.frame.width;canvas.height=state.frame.height;layer.frames[state.frameIndex]=canvas;}
@@ -646,6 +641,6 @@ function refreshVisibleLayer(layer){
   root.undoSmartRasterV4Debug=undoDebug;
   root.redoSmartRasterV4Debug=redoDebug;
   root.addEventListener('advanced-palette-style-color-changed',function(event){var styleId=event&&event.detail&&event.detail.styleId;if(styleId)recolorStyle(styleId);});
-  root.addEventListener('advanced-palette-order-changed',function(){trackedLayers.forEach(function(layer){var map=framesByLayer.get(layer);if(map)map.forEach(function(frame){frame.tiles.forEach(function(tile,key){frame.dirtyTiles.add(key);});});});renderAllFrames();var list=currentLayers(),active=list&&typeof curLayer!=='undefined'?list[curLayer]:null;if(active&&active.renderMode==='style-layering')refreshVisibleLayer(active);});
+  root.addEventListener('advanced-palette-order-changed',function(){palettePriorityCache=null;compositionVersion++;trackedLayers.forEach(function(layer){var map=framesByLayer.get(layer);if(map)map.forEach(function(frame){frame.tiles.forEach(function(tile,key){frame.dirtyTiles.add(key);});});});renderAllFrames();var list=currentLayers(),active=list&&typeof curLayer!=='undefined'?list[curLayer]:null;if(active&&active.renderMode==='style-layering')refreshVisibleLayer(active);});
   root.addEventListener('active-artwork-changed',function(){liveEraserSession=null;renderFrame(activeShadowFrame());});
 })(typeof window!=='undefined'?window:globalThis);

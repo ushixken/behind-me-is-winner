@@ -180,7 +180,22 @@ function _captureColorEraserDab(centerX,centerY,radiusX,radiusY){
   const rect=_colorEraserDabRect(centerX,centerY,radiusX,radiusY);
   return rect?{rect,image:ctx.getImageData(rect.x,rect.y,rect.w,rect.h)}:null;
 }
-function _filterColorEraserRegion(centerX,centerY,radiusX,radiusY,beforeDab){
+function _queueLiveColorEraserPreview(ownership,rect){
+  if(!ownership||!ownership.lastDabChanged||!ownership.lastDabChanged.length)return;
+  for(let i=0;i<ownership.lastDabChanged.length;i++)ownership.previewIndexes.add(ownership.lastDabChanged[i]);
+  const pending=ownership.previewRect,right=rect.x+rect.w,bottom=rect.y+rect.h;
+  if(!pending)ownership.previewRect={x:rect.x,y:rect.y,w:rect.w,h:rect.h};
+  else{const nextRight=Math.max(pending.x+pending.w,right),nextBottom=Math.max(pending.y+pending.h,bottom);pending.x=Math.min(pending.x,rect.x);pending.y=Math.min(pending.y,rect.y);pending.w=nextRight-pending.x;pending.h=nextBottom-pending.y;}
+}
+function _flushLiveColorEraserPreview(){
+  const ownership=_colorEraserOwnership;
+  if(!ownership||!ownership.previewIndexes||!ownership.previewIndexes.size||!ownership.previewRect)return false;
+  if(!layers[curLayer]||layers[curLayer].renderMode!=='style-layering'||typeof window.SmartRasterV4LiveColorErasePreview!=='function'){ownership.previewIndexes.clear();ownership.previewRect=null;return false;}
+  const indexes=ownership.previewIndexes,rect=ownership.previewRect;
+  window.SmartRasterV4LiveColorErasePreview({styleId:ownership.styleId,coverage:ownership.coverage,dabIndexes:indexes,rect});
+  indexes.clear();ownership.previewRect=null;
+  return true;
+}function _filterColorEraserRegion(centerX,centerY,radiusX,radiusY,beforeDab){
   if(!_colorEraserBase||tool!=='eraser'||window.eraserMode!=='color')return;
   const rect=_colorEraserDabRect(centerX,centerY,radiusX,radiusY);if(!rect)return;
   const image=ctx.getImageData(rect.x,rect.y,rect.w,rect.h),ownership=_colorEraserOwnership;
@@ -188,9 +203,9 @@ function _filterColorEraserRegion(centerX,centerY,radiusX,radiusY,beforeDab){
   const exactBefore=beforeDab&&beforeDab.rect.x===rect.x&&beforeDab.rect.y===rect.y&&beforeDab.rect.w===rect.w&&beforeDab.rect.h===rect.h?beforeDab.image:null;
   window.SmartRasterLayer.applyStyleEraseRegion(ownership,rect,image,_colorEraserBase,exactBefore);
   ctx.putImageData(image,rect.x,rect.y);
-  if(layers[curLayer]&&layers[curLayer].renderMode==='style-layering'&&typeof window.SmartRasterV4LiveColorErasePreview==='function')window.SmartRasterV4LiveColorErasePreview({styleId:ownership.styleId,coverage:ownership.coverage,dabIndexes:ownership.lastDabChanged,rect:rect});
+  if(layers[curLayer]&&layers[curLayer].renderMode==='style-layering')_queueLiveColorEraserPreview(ownership,rect);
 }
-function _endColorEraserStroke(){if(_colorEraserOwnership&&window.SmartRasterLayer&&typeof window.SmartRasterLayer.finishStyleErase==='function')window.SmartRasterLayer.finishStyleErase(_colorEraserOwnership);_colorEraserBase=null;_colorEraserOwnership=null;}
+function _endColorEraserStroke(){_flushLiveColorEraserPreview();if(_colorEraserOwnership&&window.SmartRasterLayer&&typeof window.SmartRasterLayer.finishStyleErase==='function')window.SmartRasterLayer.finishStyleErase(_colorEraserOwnership);_colorEraserBase=null;_colorEraserOwnership=null;}
 let _replayingTaper = false;
 
 function _beginEndTaperCapture(){
@@ -2400,6 +2415,7 @@ function _scheduleRecomposite(){
     // tool switch, undo, layer visibility change, etc. Ã¢â‚¬â€ pass no rect so
     // recomposite() keeps its original full-canvas behavior untouched.
     const rect = (drawing||_inStroke) ? _consumeDirtyRect() : null;
+    _flushLiveColorEraserPreview();
     recomposite(curLayer,curFrame,rect);
   });
 }
@@ -2428,13 +2444,16 @@ function _restoreSelectionScopePixels(){
   if(_selectionScopeBase&&window.SelectionScope)SelectionScope.restoreProtectedPixels(ctx,_selectionScopeBase);
   _selectionScopeBase=null;
 }
+function _isStyleLayeringColorErase(){
+  return tool==='eraser'&&window.eraserMode==='color'&&layers[curLayer]&&layers[curLayer].renderMode==='style-layering';
+}
 function _endStroke(pointerId){
   if(_strokeCompletionStarted) return;
   if(pointerId!=null&&_activeStrokePointerId!=null&&pointerId!==_activeStrokePointerId) return;
   _strokeCompletionStarted=true;
   _stopAirbrushSpray();
   _autoHardRoundPrevDab=null;
-  if(drawing){drawing=false;_flushStrokeTail();if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();_scheduleRecomposite();}_endColorEraserStroke();
+  if(drawing){drawing=false;_flushStrokeTail();if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();if(!_isStyleLayeringColorErase())_scheduleRecomposite();}_endColorEraserStroke();
   lineStart=null;
   _pendingDabs.length=0;
   _curveP0=null;_curveP1=null;
@@ -3059,7 +3078,7 @@ function _pointerEndStroke(e){
     _flushCurveTail(e);
     _flushStrokeTail();
     if(_inStroke){_inStroke=false;_commitStrokeCanvas();}
-    _restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();_scheduleRecomposite();
+    _restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();if(!_isStyleLayeringColorErase())_scheduleRecomposite();
   }
   _endColorEraserStroke();
   _pendingDabs.length=0;

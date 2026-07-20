@@ -68,7 +68,7 @@
   }
   function beginStyleErase(li,fi,styleId){
     var frame=ensureFrame(li,fi),index=frame&&frame.meta&&Number(frame.meta.styleIdToIndex[styleId])||0;
-    return index?{frame:frame,index:index,layerIndex:li,frameIndex:fi,styleId:styleId,coverage:new Float32Array(frame.width*frame.height),touched:[],lastDabChanged:[]}:null;
+    return index?{frame:frame,index:index,layerIndex:li,frameIndex:fi,styleId:styleId,coverage:new Float32Array(frame.width*frame.height),touched:[],lastDabChanged:[],previewIndexes:new Set(),previewRect:null}:null;
   }
   function blendSnapshot(data,local,top,under,amount){
     var topA=top[3]/255,underA=under[3]/255,outA=topA+(underA-topA)*amount;
@@ -82,7 +82,7 @@
     if(!state||!rect||!imageData||!strokeBase)return false;
     var frame=state.frame,data=imageData.data,base=strokeBase.data||strokeBase,before=dabBefore&&(dabBefore.data||dabBefore),width=rect.w,height=rect.h;
     var layer=layers[state.layerIndex],layering=!!(layer&&layer.renderMode==='style-layering'&&before);
-    state.lastDabChanged=[];
+    state.lastDabChanged.length=0;
     for(var row=0;row<height;row++)for(var col=0;col<width;col++){
       var offset=(rect.y+row)*frame.width+rect.x+col,local=(row*width+col)*4,source=offset*4;
       // Style Layering erases a contribution plane, not the flattened v3
