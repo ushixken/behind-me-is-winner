@@ -160,8 +160,8 @@
     if(!screenPath)return;
     var now=(typeof performance!=='undefined'&&performance.now)?performance.now():Date.now();
     var dashOffset=screenContourTiny?0:-((now-antsEpoch)*0.024); // device pixels per millisecond
-    var dash=4/dpr,phase=dashOffset/dpr;
-    c.setTransform(dpr,0,0,dpr,0,0);c.lineCap='butt';c.lineJoin='miter';c.setLineDash([dash,dash]);c.lineWidth=1/dpr;
+    var dash=4,phase=dashOffset/dpr;
+    c.setTransform(dpr,0,0,dpr,0,0);c.lineCap='butt';c.lineJoin='miter';c.setLineDash([dash,dash]);c.lineWidth=1;
     c.lineDashOffset=phase;c.strokeStyle='#000';c.stroke(screenPath);
     c.lineDashOffset=phase+dash;c.strokeStyle='#fff';c.stroke(screenPath);
     if(!document.hidden&&overlayVisible&&selectionActive)overlayRaf=requestAnimationFrame(renderSelection);

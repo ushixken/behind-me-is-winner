@@ -14,6 +14,8 @@
 // ════════════════════════════════════════════════════════════════
 const transformC=document.getElementById('transform-canvas');
 const tfCtx=transformC.getContext('2d');
+const tfUiC=document.getElementById('transform-ui-canvas');
+const tfUiCtx=tfUiC.getContext('2d');
 
 // ── Perspective guide overlay (VPs / horizon line) ─────────────────
 // Drawn on a SEPARATE canvas sized to the canvas-area viewport, not to
@@ -25,10 +27,16 @@ const perspGuideC=document.getElementById('perspective-guide-canvas');
 const perspGuideCtx=perspGuideC.getContext('2d');
 
 function _tfResizeGuideCanvas(){
-  const r=canvasArea.getBoundingClientRect();
-  const w=Math.max(1,Math.round(r.width)), h=Math.max(1,Math.round(r.height));
-  if(perspGuideC.width!==w) perspGuideC.width=w;
-  if(perspGuideC.height!==h) perspGuideC.height=h;
+  const r=canvasArea.getBoundingClientRect(),dpr=Math.max(1,window.devicePixelRatio||1);
+  const w=Math.max(1,Math.round(r.width*dpr)),h=Math.max(1,Math.round(r.height*dpr));
+  if(perspGuideC.width!==w)perspGuideC.width=w;if(perspGuideC.height!==h)perspGuideC.height=h;
+  if(tfUiC.width!==w)tfUiC.width=w;if(tfUiC.height!==h)tfUiC.height=h;
+  perspGuideCtx.setTransform(dpr,0,0,dpr,0,0);tfUiCtx.setTransform(dpr,0,0,dpr,0,0);
+  return{width:r.width,height:r.height,dpr};
+}
+function _tfClearUi(){
+  tfUiCtx.setTransform(1,0,0,1,0,0);tfUiCtx.clearRect(0,0,tfUiC.width,tfUiC.height);
+  const dpr=Math.max(1,window.devicePixelRatio||1);tfUiCtx.setTransform(dpr,0,0,dpr,0,0);
 }
 window.addEventListener('resize',_tfResizeGuideCanvas);
 _tfResizeGuideCanvas();
@@ -655,6 +663,7 @@ function commitTransformTool(){
   tfActive=false;
   transformC.classList.remove('tf-active');
   tfCtx.clearRect(0,0,CW,CH);
+  _tfClearUi();
   perspGuideCtx.clearRect(0,0,perspGuideC.width,perspGuideC.height);
   _tfSyncGuideCanvasActive();
 
@@ -715,6 +724,7 @@ function cancelTransformTool(){
   tfActive=false;
   transformC.classList.remove('tf-active');
   tfCtx.clearRect(0,0,CW,CH);
+  _tfClearUi();
   perspGuideCtx.clearRect(0,0,perspGuideC.width,perspGuideC.height);
   _tfSyncGuideCanvasActive();
 
@@ -828,95 +838,23 @@ function _tfRotateHandlePos(){
 }
 
 function _tfDrawHandles(clearFirst){
-  const corners=_tfCorners();
-  const rHandle=_tfRotateHandlePos();
-  const c=_tfCenter();
-  if(clearFirst) tfCtx.clearRect(0,0,CW,CH);
-  tfCtx.save();
-  tfCtx.strokeStyle=tfGroupMode?'#ff9f4d':'#4da3ff';
-  tfCtx.lineWidth=Math.max(1,1.5/zoom);
-  tfCtx.setLineDash([6/zoom,4/zoom]);
-  tfCtx.beginPath();
-  corners.forEach((p,i)=>{ i===0?tfCtx.moveTo(p.x,p.y):tfCtx.lineTo(p.x,p.y); });
-  tfCtx.closePath();
-  tfCtx.stroke();
-  tfCtx.setLineDash([]);
-  const topMid={x:(corners[0].x+corners[1].x)/2,y:(corners[0].y+corners[1].y)/2};
-  tfCtx.beginPath();tfCtx.moveTo(topMid.x,topMid.y);tfCtx.lineTo(rHandle.x,rHandle.y);tfCtx.stroke();
-  const hr=TF_HANDLE_R/zoom;
-  tfCtx.fillStyle='#fff';
-  corners.forEach(p=>{
-    tfCtx.beginPath();tfCtx.rect(p.x-hr/2,p.y-hr/2,hr,hr);tfCtx.fill();tfCtx.stroke();
-  });
-  tfCtx.beginPath();tfCtx.arc(rHandle.x,rHandle.y,hr/2,0,Math.PI*2);tfCtx.fill();tfCtx.stroke();
-  _tfDrawPivotHandle();
-  tfCtx.restore();
+  _tfResizeGuideCanvas();const corners=_tfCorners().map(_tfToViewportPoint),rHandle=_tfToViewportPoint(_tfRotateHandlePos());_tfClearUi();
+  const c=tfUiCtx;c.save();c.strokeStyle=tfGroupMode?'#ff9f4d':'#4da3ff';c.lineWidth=1.5;c.lineJoin='round';c.lineCap='round';c.setLineDash([6,4]);
+  c.beginPath();corners.forEach((p,i)=>{i?c.lineTo(p.x,p.y):c.moveTo(p.x,p.y);});c.closePath();c.stroke();c.setLineDash([]);
+  const topMid={x:(corners[0].x+corners[1].x)/2,y:(corners[0].y+corners[1].y)/2};c.beginPath();c.moveTo(topMid.x,topMid.y);c.lineTo(rHandle.x,rHandle.y);c.stroke();
+  const hr=TF_HANDLE_R;c.fillStyle='#fff';corners.forEach(p=>{c.beginPath();c.rect(p.x-hr/2,p.y-hr/2,hr,hr);c.fill();c.stroke();});c.beginPath();c.arc(rHandle.x,rHandle.y,hr/2,0,Math.PI*2);c.fill();c.stroke();_tfDrawPivotHandle();c.restore();
 }
 
-// Pivot handle — a small circled crosshair, drawn distinctly (yellow) from
-// the corner/rotate handles so it reads as "the origin", not another
-// resize control. Shared by every mode that has a rotate/scale pivot;
-// currently only Free transform draws it, but the drawing + hit-test logic
-// live here so Perspective/Warp can opt in later without duplicating this.
 function _tfDrawPivotHandle(){
-  if(!tfPivot) return;
-  const p=_tfPivotWorld();
-  const hr=TF_HANDLE_R/zoom;
-  tfCtx.save();
-  tfCtx.strokeStyle='#ffd24d';
-  tfCtx.fillStyle='rgba(255,210,77,0.25)';
-  tfCtx.lineWidth=Math.max(1,1.5/zoom);
-  tfCtx.beginPath();tfCtx.arc(p.x,p.y,hr*0.7,0,Math.PI*2);tfCtx.fill();tfCtx.stroke();
-  tfCtx.beginPath();tfCtx.moveTo(p.x-hr/2,p.y);tfCtx.lineTo(p.x+hr/2,p.y);
-  tfCtx.moveTo(p.x,p.y-hr/2);tfCtx.lineTo(p.x,p.y+hr/2);tfCtx.stroke();
-  tfCtx.restore();
+  if(!tfPivot)return;const p=_tfToViewportPoint(_tfPivotWorld()),hr=TF_HANDLE_R,c=tfUiCtx;c.save();c.strokeStyle='#ffd24d';c.fillStyle='rgba(255,210,77,0.25)';c.lineWidth=1.5;c.lineCap='round';
+  c.beginPath();c.arc(p.x,p.y,hr*.7,0,Math.PI*2);c.fill();c.stroke();c.beginPath();c.moveTo(p.x-hr/2,p.y);c.lineTo(p.x+hr/2,p.y);c.moveTo(p.x,p.y-hr/2);c.lineTo(p.x,p.y+hr/2);c.stroke();c.restore();
 }
 
-// Perspective-mode handle drawing: the quad outline, its 4 independently-
-// draggable corner handles (square), and 4 edge-midpoint handles (diamond)
-// that move+adjust a whole edge at once. No rotate handle or pivot —
-// corner/edge dragging alone covers move/scale/skew/perspective.
 function _tfDrawHandlesPerspective(clearFirst){
-  if(clearFirst) tfCtx.clearRect(0,0,CW,CH);
-  _tfResizeGuideCanvas();
-  perspGuideCtx.clearRect(0,0,perspGuideC.width,perspGuideC.height);
-  if(tfOptionValues.perspectiveGuidesEnabled){
-    // Detected fresh from the *current* quad every redraw — never from
-    // which handle was last touched — so it's always in sync, and shows
-    // nothing at all once the quad is back to an unconverged rectangle.
-    // Analyzed in local canvas coords, then re-expressed in viewport coords
-    // and drawn on the viewport-sized overlay canvas, so VPs/horizon can
-    // render out past the artwork edge and only get clipped at the visible
-    // workspace edge (canvas-area), not the artwork's own bounds. Points
-    // are already in on-screen pixel units after the transform, so scale:1
-    // here (zoom compensation happens implicitly via _tfToViewportPoint).
-    const analysis=PerspectiveController.analyze(tfCorners);
-    const viewAnalysis=_tfAnalysisToViewport(analysis);
-    PerspectiveController.draw(perspGuideCtx,viewAnalysis,{scale:1,width:perspGuideC.width,height:perspGuideC.height});
-  }
-  tfCtx.save();
-  tfCtx.strokeStyle=tfGroupMode?'#ff9f4d':'#a24dff';
-  tfCtx.lineWidth=Math.max(1,1.5/zoom);
-  tfCtx.setLineDash([6/zoom,4/zoom]);
-  tfCtx.beginPath();
-  tfCorners.forEach((p,i)=>{ i===0?tfCtx.moveTo(p.x,p.y):tfCtx.lineTo(p.x,p.y); });
-  tfCtx.closePath();
-  tfCtx.stroke();
-  tfCtx.setLineDash([]);
-  const hr=TF_HANDLE_R/zoom;
-  tfCtx.fillStyle='#fff';
-  tfCorners.forEach(p=>{
-    tfCtx.beginPath();tfCtx.rect(p.x-hr/2,p.y-hr/2,hr,hr);tfCtx.fill();tfCtx.stroke();
-  });
-  const mids=_tfPolyEdgeMidpoints(tfCorners);
-  const dr=hr*0.62;
-  mids.forEach(p=>{
-    tfCtx.beginPath();
-    tfCtx.moveTo(p.x,p.y-dr);tfCtx.lineTo(p.x+dr,p.y);
-    tfCtx.lineTo(p.x,p.y+dr);tfCtx.lineTo(p.x-dr,p.y);
-    tfCtx.closePath();tfCtx.fill();tfCtx.stroke();
-  });
-  tfCtx.restore();
+  const geometry=_tfResizeGuideCanvas();_tfClearUi();perspGuideCtx.setTransform(1,0,0,1,0,0);perspGuideCtx.clearRect(0,0,perspGuideC.width,perspGuideC.height);perspGuideCtx.setTransform(geometry.dpr,0,0,geometry.dpr,0,0);
+  if(tfOptionValues.perspectiveGuidesEnabled){const analysis=PerspectiveController.analyze(tfCorners),viewAnalysis=_tfAnalysisToViewport(analysis);PerspectiveController.draw(perspGuideCtx,viewAnalysis,{scale:1,width:geometry.width,height:geometry.height});}
+  const corners=tfCorners.map(_tfToViewportPoint),c=tfUiCtx,hr=TF_HANDLE_R;c.save();c.strokeStyle=tfGroupMode?'#ff9f4d':'#a24dff';c.lineWidth=1.5;c.lineJoin='round';c.lineCap='round';c.setLineDash([6,4]);c.beginPath();corners.forEach((p,i)=>{i?c.lineTo(p.x,p.y):c.moveTo(p.x,p.y);});c.closePath();c.stroke();c.setLineDash([]);c.fillStyle='#fff';corners.forEach(p=>{c.beginPath();c.rect(p.x-hr/2,p.y-hr/2,hr,hr);c.fill();c.stroke();});
+  const mids=_tfPolyEdgeMidpoints(corners),dr=hr*.62;mids.forEach(p=>{c.beginPath();c.moveTo(p.x,p.y-dr);c.lineTo(p.x+dr,p.y);c.lineTo(p.x,p.y+dr);c.lineTo(p.x-dr,p.y);c.closePath();c.fill();c.stroke();});c.restore();
 }
 
 function _tfDist(ax,ay,bx,by){ return Math.hypot(ax-bx,ay-by); }
@@ -1290,6 +1228,6 @@ function _tfSetPerspective(on){
 // (same pattern as brush-size-cursor.js's loop) keeps it pixel-locked to
 // the artwork no matter what moved the view.
 (function _tfGuideSyncLoop(){
-  if(tfActive&&tfPerspective) _tfDrawHandlesPerspective(true);
+  if(tfActive){if(tfPerspective)_tfDrawHandlesPerspective(true);else _tfDrawHandles(true);}
   requestAnimationFrame(_tfGuideSyncLoop);
 })();
