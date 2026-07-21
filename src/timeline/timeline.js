@@ -523,7 +523,7 @@ function onKFDragUp(){
   dragKF=null;
   renderTimeline();
 }
-function renderTimeline(){renderRuler();renderRows();renderLabelCol();updatePlayhead();updateStatus();updateRangeOverlay();updateTlHScroll();}
+function renderTimeline(){const profiler=window.BrushLatencyProfiler&&window.BrushLatencyProfiler.enabled?window.BrushLatencyProfiler:null,total=profiler?performance.now():0,marksBefore=typeof _drawingMarkLookupCount==='number'?_drawingMarkLookupCount:0,markDurationBefore=typeof _drawingMarkLookupDuration==='number'?_drawingMarkLookupDuration:0;renderRuler();const rowsStart=profiler?performance.now():0;renderRows();if(profiler){const lookups=(typeof _drawingMarkLookupCount==='number'?_drawingMarkLookupCount:marksBefore)-marksBefore,markDuration=(typeof _drawingMarkLookupDuration==='number'?_drawingMarkLookupDuration:markDurationBefore)-markDurationBefore;profiler.measure('timeline-rows-render',rowsStart,{drawingMarkLookups:lookups});profiler.recordDuration('drawing-mark-lookup-work',markDuration,{lookups,updates:0});}renderLabelCol();updatePlayhead();updateStatus();updateRangeOverlay();updateTlHScroll();if(profiler)profiler.measure('timeline-refresh-total',total);}
 
 // ── Shared Timeline zoom state helpers ──────────────────────────────────────
 // Single source of truth for the safe zoom range and for "zoom to a given

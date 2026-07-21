@@ -88,11 +88,11 @@ function getMarkDef(markId) {
  * Falls back to DRAWING_MARK_DEFAULT for drawings that pre-date
  * this system or that have never been explicitly marked.
  */
+let _drawingMarkLookupCount=0,_drawingMarkLookupDuration=0;
 function getDrawingMark(li, fi) {
-  const layer = layers[li];
-  if (!layer) return DRAWING_MARK_DEFAULT;
-  const meta = layer.frameMeta && layer.frameMeta[fi];
-  return (meta && meta.markType) ? meta.markType : DRAWING_MARK_DEFAULT;
+  const started=performance.now();_drawingMarkLookupCount++;
+  const layer=layers[li],meta=layer&&layer.frameMeta&&layer.frameMeta[fi];
+  const result=(meta&&meta.markType)?meta.markType:DRAWING_MARK_DEFAULT;_drawingMarkLookupDuration+=performance.now()-started;return result;
 }
 
 /**

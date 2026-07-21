@@ -418,17 +418,22 @@
     for(var y=0;y<d.height;y++)for(var x=0;x<d.width;x++){var source=(y*TILE_SIZE+x)*4,dest=(y*d.width+x)*4;image.data[dest]=rendered.rgba[source];image.data[dest+1]=rendered.rgba[source+1];image.data[dest+2]=rendered.rgba[source+2];image.data[dest+3]=rendered.rgba[source+3];}
     ctx.putImageData(image,d.x,d.y);return image;
   }  function livePaintPreview(options){
+    var prof=root.BrushLatencyProfiler&&root.BrushLatencyProfiler.enabled?root.BrushLatencyProfiler:null,totalStart=prof?performance.now():0,started=prof?performance.now():0;
     options=options||{};var frame=activeShadowFrame(),state=frame&&stateByFrame.get(frame),layer=state&&state.layer;
+    if(prof)prof.measure('smart-raster-preview-state-resolution',started,{frame:!!frame,state:!!state,layer:!!layer});
     if(!frame||!state||!layer||layer.renderMode!=='style-layering'||!options.maskCanvas||!options.targetCanvas||!options.styleId)return {success:false,reason:'style-layering-preview-unavailable'};
-    var rect=clippedRect(frame,options.rect);if(!rect)return {success:true,tiles:[]};var styleIndex=v4.ensureStyleIndex(frame,options.styleId),mask=options.maskCanvas.getContext('2d',{willReadFrequently:true}).getImageData(rect.x,rect.y,rect.width,rect.height).data,opacity=Math.max(0,Math.min(1,Number(options.opacity))),renderedKeys=[];
-    tileKeysForRect(frame,rect).forEach(function(key){var dimensions=tileDimensions(frame,key),tile=cloneTransientTile(frame.tiles.get(key)),base=tile.styleChannels.get(styleIndex),channel=base?base.slice():new Uint16Array(TILE_SIZE*TILE_SIZE),changed=false;
+    started=prof?performance.now():0;var rect=clippedRect(frame,options.rect);if(prof)prof.measure('smart-raster-preview-rect-clipping',started,{rect:rect});if(!rect)return {success:true,tiles:[]};
+    started=prof?performance.now():0;var styleIndex=options.nonDestructive?v4.getStyleIndex(frame,options.styleId):v4.ensureStyleIndex(frame,options.styleId);if(prof)prof.measure('smart-raster-style-bundle-synchronization',started,{styleId:options.styleId,styleIndex:styleIndex,nonDestructive:!!options.nonDestructive});if(!styleIndex)return {success:false,reason:'style-not-registered-for-nondestructive-preview'};
+    started=prof?performance.now():0;var mask=options.maskCanvas.getContext('2d',{willReadFrequently:true}).getImageData(rect.x,rect.y,rect.width,rect.height).data;if(prof)prof.measure('smart-raster-preview-mask-readback',started,{rect:rect,pixels:rect.width*rect.height});
+    var opacity=Math.max(0,Math.min(1,Number(options.opacity))),renderedKeys=[],keys=tileKeysForRect(frame,rect),indexUpdateMs=0,ownershipMs=0,uploadMs=0;
+    keys.forEach(function(key){var dimensions=tileDimensions(frame,key),tile=cloneTransientTile(frame.tiles.get(key)),base=tile.styleChannels.get(styleIndex),channel=base?base.slice():new Uint16Array(TILE_SIZE*TILE_SIZE),changed=false,part=performance.now();
       var ix0=Math.max(rect.x,dimensions.x),iy0=Math.max(rect.y,dimensions.y),ix1=Math.min(rect.x+rect.width,dimensions.x+dimensions.width),iy1=Math.min(rect.y+rect.height,dimensions.y+dimensions.height);
       for(var y=iy0;y<iy1;y++)for(var x=ix0;x<ix1;x++){var maskOffset=((y-rect.y)*rect.width+x-rect.x)*4+3,source=v4.coverageFromUnit((mask[maskOffset]/255)*opacity);if(!source)continue;var local=(y-dimensions.y)*TILE_SIZE+x-dimensions.x,previous=channel[local],next=previous+Math.round((v4.MAX_COVERAGE-previous)*source/v4.MAX_COVERAGE);if(next!==previous){channel[local]=next;changed=true;}}
-      if(!changed)return;tile.styleChannels.set(styleIndex,channel);var result=compositeTile(frame,state,key,tile);uploadPreviewTile(options.targetCanvas,result);renderedKeys.push(key);
+      indexUpdateMs+=performance.now()-part;if(!changed)return;tile.styleChannels.set(styleIndex,channel);part=performance.now();var result=compositeTile(frame,state,key,tile);ownershipMs+=performance.now()-part;part=performance.now();uploadPreviewTile(options.targetCanvas,result);uploadMs+=performance.now()-part;renderedKeys.push(key);
     });
+    if(prof){prof.recordDuration('smart-raster-style-index-canvas-update',indexUpdateMs,{tiles:keys.length});prof.recordDuration('smart-raster-preview-ownership-resolution',ownershipMs,{tiles:renderedKeys.length});prof.recordDuration('smart-raster-preview-canvas-upload',uploadMs,{tiles:renderedKeys.length});prof.measure('smart-raster-preview-generation-total',totalStart,{rect:rect,tiles:renderedKeys.length});}
     root.__smartRasterV4LastLivePreview={type:'paint',rect:rect,tileKeys:renderedKeys.slice(),styleId:options.styleId};return {success:true,tiles:renderedKeys,rect:rect};
-  }
-  function liveColorErasePreview(options){
+  }  function liveColorErasePreview(options){
     var started=typeof performance!=='undefined'&&performance.now?performance.now():Date.now();
     options=options||{};var frame=activeShadowFrame(),state=frame&&stateByFrame.get(frame),layer=state&&state.layer;
     if(!frame||!state||!layer||layer.renderMode!=='style-layering'||!options.coverage||!options.styleId)return {success:false,reason:'style-layering-eraser-preview-unavailable'};
@@ -622,6 +627,7 @@ function refreshVisibleLayer(layer){
   function documentDiagnostics(){return {lastOperation:documentReport.lastOperation,operationCount:documentReport.operations.length,validationErrors:documentReport.validationErrors.slice()};}  root.SmartRasterStyleLayering={setEnabled:setStyleLayering,getActiveState:activeStyleLayeringState,getEligibility:styleLayeringEligibility};
   root.SmartRasterV4Document={captureFrame:captureFrameSnapshot,restoreFrame:restoreFrameSnapshot,deleteFrame:deleteV4Frame,shiftFrames:shiftLayerFrames,moveFrame:moveLayerFrame,captureLayer:captureLayerSnapshot,storeLayerSnapshot:storeLayerSnapshot,restoreLayer:restoreLayerSnapshot,cloneLayer:cloneLayerSnapshot,resizeAllFrames:resizeV4Frames};
   root.SmartRasterV4Serialization={serializeLayer:serializeV4Layer,deserializeLayer:deserializeV4Layer,markLegacyLayer:legacyV4Layer};
+  root.SmartRasterV4DebugDigest=function(){var frame=activeShadowFrame();if(!frame)return null;var value=JSON.stringify(v4.serializeFrame(frame)),hash=2166136261;for(var i=0;i<value.length;i++){hash^=value.charCodeAt(i);hash=Math.imul(hash,16777619);}return{hash:(hash>>>0).toString(16),length:value.length,tileCount:frame.tiles.size};};
   root.SmartRasterV4LivePaintPreview=livePaintPreview;
   root.SmartRasterV4LiveColorErasePreview=liveColorErasePreview;
   root.SmartRasterV4ShadowRecorder=recordShadow;

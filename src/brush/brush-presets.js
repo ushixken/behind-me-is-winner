@@ -1018,8 +1018,8 @@ function updateBlendModeUI(){
         URL.revokeObjectURL(url);
         const c=document.createElement('canvas');
         c.width=img.naturalWidth; c.height=img.naturalHeight;
-        c.getContext('2d').drawImage(img,0,0);
-        if(typeof window.setBrushTip==='function') window.setBrushTip(c);
+        c.getContext('2d',window.TipReadbackExperiment?window.TipReadbackExperiment.contextOptions():undefined).drawImage(img,0,0);
+        if(typeof window.setBrushTip==='function') window.setBrushTip(c,null,'manual-tip-upload');
         const fn=document.getElementById('ts-tip-filename');
         if(fn){ fn.textContent=file.name; fn.style.display=''; }
         window._syncTipUI();
@@ -1057,7 +1057,7 @@ function updateBlendModeUI(){
         window.brushTipMode=tipModeEl.value;
         // Bust caches so the new mode takes effect on the next dab.
         if(typeof window.setBrushTip==='function' && window.brushTipCanvas)
-          window.setBrushTip(window.brushTipCanvas);
+          window.setBrushTip(window.brushTipCanvas,null,'tip-setting-change');
         if(typeof window._captureActiveBrushPreset==='function') window._captureActiveBrushPreset(true);
       };
     }
@@ -1065,7 +1065,7 @@ function updateBlendModeUI(){
       tipSoftEl.onchange=()=>{
         window.brushTipSoftAlpha=tipSoftEl.checked;
         if(typeof window.setBrushTip==='function' && window.brushTipCanvas)
-          window.setBrushTip(window.brushTipCanvas);
+          window.setBrushTip(window.brushTipCanvas,null,'tip-setting-change');
         if(typeof window._captureActiveBrushPreset==='function') window._captureActiveBrushPreset(true);
       };
     }
@@ -1355,13 +1355,14 @@ function getToolPreset(options){
 }
 
 // Load a data-URL string into a canvas; returns a Promise<HTMLCanvasElement>.
-function _dataURLToCanvas(dataURL){
+function _dataURLToCanvas(dataURL,brushTipReadback=false){
   return new Promise((resolve,reject)=>{
     const img=new Image();
     img.onload=()=>{
-      const c=document.createElement('canvas');
+      const started=performance.now(),c=document.createElement('canvas');
       c.width=img.naturalWidth; c.height=img.naturalHeight;
-      c.getContext('2d').drawImage(img,0,0);
+      const context=c.getContext('2d',brushTipReadback&&window.TipReadbackExperiment?window.TipReadbackExperiment.contextOptions():undefined);context.drawImage(img,0,0);
+      if(brushTipReadback&&window.TipReadbackExperiment)window.TipReadbackExperiment.record('tip-canvas-created',{width:c.width,height:c.height,duration:performance.now()-started,requestedWillReadFrequently:window.TipReadbackExperiment.mode==='A',actualWillReadFrequently:typeof context.getContextAttributes==='function'&&context.getContextAttributes().willReadFrequently});
       resolve(c);
     };
     img.onerror=()=>reject(new Error('Failed to decode data URL'));
@@ -1395,9 +1396,9 @@ function applyToolPreset(json){
   const tipLoadGeneration=(window._brushTipLoadGeneration||0)+1;
   window._brushTipLoadGeneration=tipLoadGeneration;
   if(json['ts-tip-dataurl']){
-    _dataURLToCanvas(json['ts-tip-dataurl']).then(c=>{
+    _dataURLToCanvas(json['ts-tip-dataurl'],true).then(c=>{
       if(window._brushTipLoadGeneration!==tipLoadGeneration) return;
-      if(typeof window.setBrushTip==='function') window.setBrushTip(c,json['ts-tip-reference-diameter']);
+      if(typeof window.setBrushTip==='function') window.setBrushTip(c,json['ts-tip-reference-diameter'],'json-tip-import');
       if(json['ts-tip-mode']) window.brushTipMode=json['ts-tip-mode'];
       if(json['ts-tip-soft-alpha']!==undefined) window.brushTipSoftAlpha=!!json['ts-tip-soft-alpha'];
       if(typeof _syncTipUI==='function') _syncTipUI();
@@ -2735,13 +2736,13 @@ function applyToolPreset(json){
     if(tipSrc){
       const commitTip=c=>{
         if(activationVersion!==_brushRuntimeActivationVersion||window._brushTipLoadGeneration!==tipLoadGeneration) return;
-        if(typeof window.setBrushTip==='function') window.setBrushTip(c,s['ts-tip-reference-diameter']);
+        if(typeof window.setBrushTip==='function') window.setBrushTip(c,s['ts-tip-reference-diameter'],'preset-activation');
         if(s['ts-tip-mode']) window.brushTipMode=s['ts-tip-mode'];
         if(s['ts-tip-soft-alpha']!==undefined) window.brushTipSoftAlpha=!!s['ts-tip-soft-alpha'];
         if(typeof window._syncTipUI==='function') window._syncTipUI();
       };
       if(runtimeAssets&&runtimeAssets.tipSrc===tipSrc&&runtimeAssets.tipCanvas) commitTip(runtimeAssets.tipCanvas);
-      else if(typeof _dataURLToCanvas==='function') pendingAssets.push(_dataURLToCanvas(tipSrc).then(commitTip));
+      else if(typeof _dataURLToCanvas==='function') pendingAssets.push(_dataURLToCanvas(tipSrc,true).then(commitTip));
     } else {
       if(typeof window.clearBrushTip==='function') window.clearBrushTip();
       if(typeof window._syncTipUI==='function') window._syncTipUI();
@@ -2955,7 +2956,7 @@ function applyToolPreset(json){
         const tipSrc=settings['ts-tip-dataurl']||settings['ts-tip-url']||null;
         const textureSrc=settings['ts-texture-dataurl']||settings['ts-texture-url']||null;
         const [tipCanvas,textureCanvas]=await Promise.all([
-          tipSrc?_dataURLToCanvas(tipSrc).catch(()=>null):Promise.resolve(null),
+          tipSrc?_dataURLToCanvas(tipSrc,true).catch(()=>null):Promise.resolve(null),
           textureSrc?_dataURLToCanvas(textureSrc).catch(()=>null):Promise.resolve(null)
         ]);
         Object.defineProperty(preset,'_runtimeAssets',{value:{tipSrc,tipCanvas,textureSrc,textureCanvas},enumerable:false});
@@ -4223,7 +4224,7 @@ function showABRPicker(brushes, filename, onImport) {
       }
 
       // Tool Settings imports do not create presets, so retain live apply.
-      if(typeof window.setBrushTip==='function') window.setBrushTip(b.canvas,b.referenceDiameter);
+      if(typeof window.setBrushTip==='function') window.setBrushTip(b.canvas,b.referenceDiameter,'abr-tip-selection');
       const mapped=_mapABRValuesToSettings(b.values,b.features);
       const clampedSize=_applyABRSettingsToUI(b.size,b.spacing,mapped);
       const fn=document.getElementById('ts-tip-filename');

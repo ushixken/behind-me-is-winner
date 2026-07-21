@@ -23,8 +23,8 @@
     "ts-aa": false,
     "ts-aa-mode": "medium",
     "ts-texture-strength": 100,
-    "ts-texture-scale": 175,
+    "ts-texture-scale": 80,
     "ts-texture-brightness": 65,
-    "ts-texture-contrast": 20
+    "ts-texture-contrast": 16
   }
 }

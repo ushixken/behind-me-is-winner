@@ -37,6 +37,39 @@ function getBrushSize(){return toolSizes[tool]||6;}
 // brushTipVersion is bumped whenever the canvas is replaced so that every
 // stamp cache that keyed on it is automatically invalidated without a
 // manual cache.clear() call at the use site.
+const TipReadbackExperiment=(function(){
+  const requested=(new URLSearchParams(location.search)).get('tipReadback')||'control';
+  const mode=['control','A','B','C','D'].includes(requested)?requested:'control',records=[];
+  let strokeSerial=0,activeStroke=0;const reportedHits=new Set();
+  function record(type,detail){const item=Object.assign({type,mode,time:performance.now(),strokeId:activeStroke,visibility:document.visibilityState,focused:document.hasFocus()},detail||{});records.push(item);return item;}
+  return{
+    mode,record,strokeStart(){activeStroke=++strokeSerial;record('stroke-start');return activeStroke;},strokeEnd(){record('stroke-end');activeStroke=0;},
+    contextOptions(){return mode==='A'?{willReadFrequently:true}:undefined;},cacheHit(version){const key=activeStroke+'|'+version;if(reportedHits.has(key))return;reportedHits.add(key);record('tip-alpha-cache-hit',{tipVersion:version});},
+    results(){return JSON.parse(JSON.stringify(records));},labelNextStroke(label){window.BrushLatencyProfiler.enable(true);return window.BrushLatencyProfiler.labelNextStroke(label);},report(){return window.BrushLatencyProfiler.results().map(stroke=>{const get=name=>stroke.stages.find(stage=>stage.name===name);const display=stroke.points.find(point=>point.name==='first-display-presented');return{id:stroke.id,scenario:stroke.scenario,idleMs:stroke.idleMs,pointerdownToDisplay:display&&display.fromPointerDown,tipGetImageData:get('tip-get-image-data')?.duration||0,tipInitialization:get('tip-alpha-buffer-initialization')?.duration||0,firstDab:get('first-dab-pipeline-total')?.duration||0,rafWait:get('raf-wakeup-wait')?.duration||0,presentation:get('presentation-total')?.duration||0};});},clear(){records.length=0;reportedHits.clear();strokeSerial=0;activeStroke=0;return true;},
+    reloadUrls(){const base=location.href.replace(/([?&])tipReadback=[^&]*&?/,'$1').replace(/[?&]$/,'');return Object.fromEntries(['control','A','B','C','D'].map(value=>[value,base+(base.includes('?')?'&':'?')+'tipReadback='+value+'&brushPerf=1']));}
+  };
+})();
+window.TipReadbackExperiment=TipReadbackExperiment;
+const CustomTipCacheTrace=(function(){
+  let enabled=(new URLSearchParams(location.search)).get('tipCacheTrace')==='1',strokeSerial=0,activeStroke=0,lastCallAt=0,serial=0;
+  const records=[],ids=new WeakMap();
+  function objectId(value,prefix){if(!value||typeof value!=='object')return null;if(!ids.has(value))ids.set(value,(prefix||'object')+'-'+(++serial));return ids.get(value);}
+  function record(type,detail){if(!enabled)return null;const now=performance.now(),item=Object.assign({type,time:now,strokeId:activeStroke,presetId:window._activeBrushPresetId||null,visibility:document.visibilityState,focused:document.hasFocus()},detail||{});records.push(item);return item;}
+  function tipCall(detail){if(!enabled)return;const now=performance.now();record('get-tip-alpha-buffer',Object.assign({timeSincePreviousCall:lastCallAt?now-lastCallAt:null},detail));lastCallAt=now;}
+  function lifecycle(type){record('lifecycle',{event:type,tipVersion:window.brushTipVersion||0,tipCanvasId:objectId(window.brushTipCanvas,'tip-canvas')});}
+  document.addEventListener('visibilitychange',()=>lifecycle('visibilitychange-'+document.visibilityState));window.addEventListener('blur',()=>lifecycle('blur'));window.addEventListener('focus',()=>lifecycle('focus'));window.addEventListener('pageshow',()=>lifecycle('pageshow'));window.addEventListener('resize',()=>lifecycle('resize'));
+  return{
+    get enabled(){return enabled;},enable(value=true){enabled=!!value;return enabled;},record,tipCall,objectId,lifecycle,
+    strokeStart(){activeStroke=++strokeSerial;record('stroke-start',{tipVersion:window.brushTipVersion||0,tipCanvasId:objectId(window.brushTipCanvas,'tip-canvas')});},
+    strokeEnd(){record('stroke-end');activeStroke=0;},
+    invalidated(detail){record('cache-invalidated',detail);},
+    results(){return JSON.parse(JSON.stringify(records));},clear(){records.length=0;strokeSerial=0;activeStroke=0;lastCallAt=0;return true;},
+    summary(){const calls=records.filter(item=>item.type==='get-tip-alpha-buffer');return calls.map(item=>({time:item.time,strokeId:item.strokeId,presetId:item.presetId,tipVersion:item.tipVersion,cacheKey:item.cacheKey,cacheHit:item.cacheHit,invalidationReason:item.invalidationReason,alphaBufferId:item.alphaBufferId,tipCanvasId:item.tipCanvasId,width:item.width,height:item.height,getImageDataDuration:item.getImageDataDuration,alphaExtractionDuration:item.alphaExtractionDuration,timeSincePreviousCall:item.timeSincePreviousCall,visibility:item.visibility,focused:item.focused}));},
+    export(){return{calls:this.summary(),events:this.results(),strokes:window.TipReadbackExperiment?window.TipReadbackExperiment.report():[]};},
+    reloadUrl(){const url=new URL(location.href);url.searchParams.set('tipCacheTrace','1');url.searchParams.set('brushPerf','1');return url.href;}
+  };
+})();
+window.CustomTipCacheTrace=CustomTipCacheTrace;
 window.brushTipCanvas   = null;   // HTMLCanvasElement | null
 window.brushTipVersion  = 0;      // integer, incremented on each tip change
 window.brushTipReferenceDiameter = null;
@@ -168,6 +201,8 @@ function _traceStrokeLifecycle(event,detail){
   if(trace.length>100)trace.splice(0,trace.length-100);
 }
 
+function _brushPerf(){return window.BrushLatencyProfiler&&window.BrushLatencyProfiler.enabled?window.BrushLatencyProfiler:null;}
+
 function _beginColorEraserStroke(){
   _colorEraserBase=null;_colorEraserOwnership=null;
   if(tool!=='eraser'||window.eraserMode!=='color')return;
@@ -229,7 +264,9 @@ function _beginEndTaperCapture(){
 }
 
 function _ensureStrokeCanvas(){
+  const perf=_brushPerf(),started=perf?performance.now():0;
   const w = activeC.width, h = activeC.height;
+  const allocatedOrResized=!_strokeCanvas||_strokeCanvas.width!==w||_strokeCanvas.height!==h;
   if(!_strokeCanvas || _strokeCanvas.width !== w || _strokeCanvas.height !== h){
     _strokeCanvas = document.createElement('canvas');
     _strokeCanvas.width  = w;
@@ -239,6 +276,7 @@ function _ensureStrokeCanvas(){
     _strokeCtx.clearRect(0, 0, w, h);
   }
   if(typeof _resetTexturedStrokeCanvas==='function') _resetTexturedStrokeCanvas();
+  if(perf)perf.measure('scratch-canvas-preparation',started,perf.canvasDetail(_strokeCanvas,_strokeCtx,{allocatedOrResized,willReadFrequently:true,getImageData:false}));
 }
 
 // Composite the stroke scratch canvas onto activeC with stroke-level opacity,
@@ -283,6 +321,7 @@ function _drawBrushComposite(targetCtx,src){
     targetCtx.globalAlpha=alpha;
   }
 }
+
 
 function _commitStrokeCanvas(){
   if(!_strokeCanvas) return;
@@ -330,8 +369,12 @@ let _strokePreviewCtx    = null;
 // so we never allocate inside the per-frame preview path.
 let _srPreviewTintCanvas = null;
 let _srPreviewTintCtx    = null;
+let _disposableDabPrewarm = false;
 function _getLiveStrokePreview(){
+  const perf=_brushPerf(),previewTotalStart=perf?performance.now():0;
   const w = activeC.width, h = activeC.height;
+  const previewAllocated=!_strokePreviewCanvas||_strokePreviewCanvas.width!==w||_strokePreviewCanvas.height!==h;
+  const previewBufferStart=perf?performance.now():0;
   if(!_strokePreviewCanvas || _strokePreviewCanvas.width !== w || _strokePreviewCanvas.height !== h){
     _strokePreviewCanvas = document.createElement('canvas');
     _strokePreviewCanvas.width  = w;
@@ -341,8 +384,11 @@ function _getLiveStrokePreview(){
     _strokePreviewCtx.clearRect(0, 0, w, h);
   }
   _strokePreviewCtx.drawImage(activeC, 0, 0);
+  if(perf)perf.measure('live-preview-buffer-preparation',previewBufferStart,perf.canvasDetail(_strokePreviewCanvas,_strokePreviewCtx,{allocatedOrResized:previewAllocated,source:'activeC',getImageData:false}));
   if(_strokeCanvas){
+    const textureStart=perf?performance.now():0,textureCanvasExisted=!!_texturedStrokeCanvas;
     const src = _getTexturedStrokeCanvas(_strokeCanvas, false);
+    if(perf)perf.measure('texture-mask-processing',textureStart,{canvas:'textured-stroke',width:src.width,height:src.height,enabled:!!window.brushTextureEnabled,cacheHit:!window.brushTextureEnabled||textureCanvasExisted,getImageData:!!window.brushTextureEnabled});
 
     // Smart Raster live preview fix:
     // _commitStrokeCanvas routes through commitSmartRasterBrush which calls
@@ -355,8 +401,10 @@ function _getLiveStrokePreview(){
     // the stroke coverage with the active palette style's RGBA before
     // compositing into the preview — making the preview match the final
     // committed render exactly.
+    const smartStyleStart=perf?performance.now():0;
     const styleId = typeof activeAdvancedStyleIdForPainting === 'function'
       ? activeAdvancedStyleIdForPainting() : null;
+    if(perf&&layers[curLayer]&&layers[curLayer].type==='smart-raster')perf.measure('smart-raster-active-style-resolution',smartStyleStart,{styleId});
     const isSmartRaster = tool === 'brush' && !!styleId
       && typeof advancedPalettePaintingEnabled === 'function'
       && advancedPalettePaintingEnabled();
@@ -364,11 +412,15 @@ function _getLiveStrokePreview(){
     let strokeSrc = src; // default: raw stroke canvas (bitmap layers, eraser, etc.)
 
     if(isSmartRaster&&layers[curLayer]&&layers[curLayer].renderMode==='style-layering'&&typeof window.SmartRasterV4LivePaintPreview==='function'){
-      let liveMask=src;if(window.SelectionScope)liveMask=SelectionScope.clipCanvas(liveMask);
+      let liveMask=src;const selectionStart=perf?performance.now():0;if(window.SelectionScope)liveMask=SelectionScope.clipCanvas(liveMask);
+      if(perf)perf.measure('selection-clipping',selectionStart,{active:!!window.SelectionScope,width:w,height:h,getImageData:false});
       const dirty=_strokeDirty;
       const rect=dirty?{x:Math.max(0,Math.floor(dirty.minX)),y:Math.max(0,Math.floor(dirty.minY)),w:Math.min(w,Math.ceil(dirty.maxX))-Math.max(0,Math.floor(dirty.minX)),h:Math.min(h,Math.ceil(dirty.maxY))-Math.max(0,Math.floor(dirty.minY))}:null;
-      const live=window.SmartRasterV4LivePaintPreview({maskCanvas:liveMask,targetCanvas:_strokePreviewCanvas,styleId,opacity:brushOpacity,rect});
-      if(live&&live.success)return _strokePreviewCanvas;
+      const smartStart=perf?performance.now():0;
+      const live=window.SmartRasterV4LivePaintPreview({maskCanvas:liveMask,targetCanvas:_strokePreviewCanvas,styleId,opacity:brushOpacity,rect,nonDestructive:_disposableDabPrewarm});
+      if(perf)perf.measure('smart-raster-contribution-preview',smartStart,{styleId,rect,getImageData:true,tiles:live&&live.tiles&&live.tiles.length||0});
+      const previewSwapStart=perf?performance.now():0;
+      if(live&&live.success){if(perf){perf.measure('smart-raster-preview-canvas-swap',previewSwapStart,{target:'stroke-preview',tiles:live&&live.tiles&&live.tiles.length||0});perf.measure('live-preview-total',previewTotalStart,{path:'smart-raster-v4',width:w,height:h});}return _strokePreviewCanvas;}
     }
 
     if(isSmartRaster){
@@ -418,15 +470,98 @@ function _getLiveStrokePreview(){
       // wrong color — better than a blank preview.
     }
 
+    const selectionStart=perf?performance.now():0;
     if(window.SelectionScope)strokeSrc=SelectionScope.clipCanvas(strokeSrc);
+    if(perf)perf.measure('selection-clipping',selectionStart,{active:!!window.SelectionScope,width:w,height:h,getImageData:false});
+    const blendStart=perf?performance.now():0;
     _strokePreviewCtx.save();
     _strokePreviewCtx.globalAlpha = Math.max(0, Math.min(1, brushOpacity));
     _drawBrushComposite(_strokePreviewCtx,strokeSrc);
     _strokePreviewCtx.restore();
+    if(perf)perf.measure('live-stroke-compositing',blendStart,{blendMode:tool==='brush'?window.brushBlendMode:'eraser',opacity:brushOpacity,width:w,height:h});
   }
+  if(perf)perf.measure('live-preview-total',previewTotalStart,{path:'normal-raster-or-v3',width:w,height:h});
   return _strokePreviewCanvas;
 }
 window._getLiveStrokePreview = _getLiveStrokePreview;
+
+// Exercise the same clipped live-stroke composition branch used by the first
+// painted dab without changing artwork or stroke state. CompositionPrewarm
+// calls this between strokes; the empty scratch mask makes the recomposited
+// pixel identical while still touching the persistent preview/texture/tint
+// surfaces that Chromium otherwise initializes on the first real dab.
+function _prewarmLiveStrokeComposition(){
+  if(_inStroke||drawing||!activeC||typeof recomposite!=='function')return false;
+  const previousFrameDirty=_frameDirty;
+  const previousStrokeDirty=_strokeDirty;
+  const previousTexPending=_texPendingRect;
+  const previousInStroke=_inStroke;
+  try{
+    _ensureStrokeCanvas();
+    const x=Math.max(0,Math.min(activeC.width-1,Math.floor(activeC.width/2)));
+    const y=Math.max(0,Math.min(activeC.height-1,Math.floor(activeC.height/2)));
+    _strokeDirty={minX:x,minY:y,maxX:x+1,maxY:y+1};
+    _inStroke=true;
+    recomposite(curLayer,curFrame,{x,y,w:1,h:1});
+    return true;
+  }finally{
+    _inStroke=previousInStroke;
+    _frameDirty=previousFrameDirty;
+    _strokeDirty=previousStrokeDirty;
+    _texPendingRect=previousTexPending;
+    if(_strokeCtx&&_strokeCanvas)_strokeCtx.clearRect(0,0,_strokeCanvas.width,_strokeCanvas.height);
+    if(_strokePreviewCtx&&_strokePreviewCanvas)_strokePreviewCtx.clearRect(0,0,_strokePreviewCanvas.width,_strokePreviewCanvas.height);
+    if(_srPreviewTintCtx&&_srPreviewTintCanvas)_srPreviewTintCtx.clearRect(0,0,_srPreviewTintCanvas.width,_srPreviewTintCanvas.height);
+    if(_texturedStrokeCtx&&_texturedStrokeCanvas)_texturedStrokeCtx.clearRect(0,0,_texturedStrokeCanvas.width,_texturedStrokeCanvas.height);
+  }
+}
+window._prewarmLiveStrokeComposition=_prewarmLiveStrokeComposition;
+// Debug-only A/B hook: one production brush stamp on the disposable live
+// stroke surfaces, followed by a clipped presentation and immediate restore.
+function _prewarmRealDisposableDab(){
+  if(_inStroke||drawing||tool!=='brush'||!activeC||typeof recomposite!=='function')return{success:false,error:'Select Brush and finish the active stroke first.'};
+  const perf=_brushPerf(),totalStart=performance.now();
+  const saved={frameDirty:_frameDirty,strokeDirty:_strokeDirty,texPending:_texPendingRect,inStroke:_inStroke,flowSpacing:_flowSpacingRatio,isPen:_isDrawingWithPen,currentPressure,_smoothedPressure,lastKnownPressure:_lastKnownPressure,strokeFirstSample:_strokeFirstSample,strokeDabCount:_strokeDabCount,strokeDist:_strokeDistSoFar,autoPrev:_autoHardRoundPrevDab,rotationValid:_rotationPrevValid,rotationPrevX:_rotationPrevX,rotationPrevY:_rotationPrevY,rotationDirection:_rotationDirection,disposablePrewarm:_disposableDabPrewarm};
+  let rect=null,alphaPixels=0;
+  try{
+    const prepareStart=perf?performance.now():0;
+    _ensureStrokeCanvas();_disposableDabPrewarm=true;_frameDirty=null;_strokeDirty=null;_texPendingRect=null;_autoHardRoundPrevDab=null;_strokeReplayDabs.length=0;_inStroke=true;
+    _isDrawingWithPen=false;currentPressure=1;_smoothedPressure=1;_lastKnownPressure=1;_strokeFirstSample=true;_strokeDabCount=0;_strokeDistSoFar=0;_rotationPrevValid=false;
+    const synthetic={pointerType:'mouse',pressure:0.5,buttons:1,timeStamp:performance.now()};
+    const size=Math.max(1,getBrushSize()),margin=Math.min(Math.max(4,Math.ceil(size*2)),Math.max(4,Math.floor(Math.min(activeC.width,activeC.height)/2)));
+    const x=Math.max(margin,Math.min(activeC.width-margin,Math.floor(activeC.width/2))),y=Math.max(margin,Math.min(activeC.height-margin,Math.floor(activeC.height/2)));
+    _flowSpacingRatio=_initialDabSpacingRatio(synthetic,1);
+    if(perf)perf.measure('real-dab-preparation',prepareStart,{size,hardness:brushHardness,opacity:brushOpacity,flow:brushFlow,spacing:window.brushSpacing,tip:!!window.brushTipCanvas,texture:!!window.brushTextureEnabled,blendMode:window.brushBlendMode});
+    _stampDab(x,y,synthetic);
+    if(!_strokeDirty)throw new Error('Production stamp produced no dirty bounds.');
+    rect={x:Math.max(0,Math.floor(_strokeDirty.minX)),y:Math.max(0,Math.floor(_strokeDirty.minY))};rect.w=Math.min(activeC.width,Math.ceil(_strokeDirty.maxX))-rect.x;rect.h=Math.min(activeC.height,Math.ceil(_strokeDirty.maxY))-rect.y;
+    const verifyStart=perf?performance.now():0,pixels=_strokeCtx.getImageData(rect.x,rect.y,rect.w,rect.h).data;
+    for(let i=3;i<pixels.length;i+=4)if(pixels[i])alphaPixels++;
+    if(perf)perf.measure('real-dab-alpha-verification',verifyStart,{rect,alphaPixels,getImageData:true});
+    if(!alphaPixels)throw new Error('Production stamp did not produce non-zero alpha.');
+    // V4 Smart Raster replaces the ordinary preview blend with its tint/index
+    // preview. Touch _drawBrushComposite on the same live preview surface too,
+    // without feeding that extra disposable draw into the presentation.
+    if(layers[curLayer]&&layers[curLayer].type==='smart-raster'){
+      const preview=_getLiveStrokePreview(),src=_getTexturedStrokeCanvas(_strokeCanvas,false),blendStart=perf?performance.now():0;
+      _strokePreviewCtx.save();_strokePreviewCtx.globalAlpha=Math.max(0,Math.min(1,brushOpacity));_drawBrushComposite(_strokePreviewCtx,src);_strokePreviewCtx.restore();
+      if(perf)perf.measure('live-stroke-compositing',blendStart,{path:'smart-raster-disposable-explicit',width:preview.width,height:preview.height});
+    }
+    recomposite(curLayer,curFrame,rect);
+    return{success:true,rect,alphaPixels,duration:performance.now()-totalStart};
+  }catch(error){return{success:false,rect,alphaPixels,error:String(error&&error.message||error),duration:performance.now()-totalStart};}
+  finally{
+    _inStroke=false;
+    if(_strokeCtx&&_strokeCanvas)_strokeCtx.clearRect(0,0,_strokeCanvas.width,_strokeCanvas.height);
+    if(_strokePreviewCtx&&_strokePreviewCanvas)_strokePreviewCtx.clearRect(0,0,_strokePreviewCanvas.width,_strokePreviewCanvas.height);
+    if(_srPreviewTintCtx&&_srPreviewTintCanvas)_srPreviewTintCtx.clearRect(0,0,_srPreviewTintCanvas.width,_srPreviewTintCanvas.height);
+    if(_texturedStrokeCtx&&_texturedStrokeCanvas)_texturedStrokeCtx.clearRect(0,0,_texturedStrokeCanvas.width,_texturedStrokeCanvas.height);
+    if(rect)recomposite(curLayer,curFrame,rect);
+    _frameDirty=saved.frameDirty;_strokeDirty=saved.strokeDirty;_texPendingRect=saved.texPending;_inStroke=saved.inStroke;_flowSpacingRatio=saved.flowSpacing;_isDrawingWithPen=saved.isPen;currentPressure=saved.currentPressure;_smoothedPressure=saved.smoothedPressure;_lastKnownPressure=saved.lastKnownPressure;_strokeFirstSample=saved.strokeFirstSample;_strokeDabCount=saved.strokeDabCount;_strokeDistSoFar=saved.strokeDist;_autoHardRoundPrevDab=saved.autoPrev;_rotationPrevValid=saved.rotationValid;_rotationPrevX=saved.rotationPrevX;_rotationPrevY=saved.rotationPrevY;_rotationDirection=saved.rotationDirection;_disposableDabPrewarm=saved.disposablePrewarm;
+    if(perf)perf.measure('real-dab-prewarm-total',totalStart,{rect,alphaPixels});
+  }
+}
+window._prewarmRealDisposableDab=_prewarmRealDisposableDab;
 //
 // TVPAINT / CLIP STUDIO STYLE BRUSH ENGINE
 //
@@ -664,6 +799,7 @@ function _buildSoftRoundMask(rRaw){
   const aaMode=_currentAAMode();
   const key=diameter.toFixed(2)+'|'+hardness.toFixed(3)+'|aa'+aaMode;
   const cached=_softRoundMaskCache.get(key);
+  const softPerf=_brushPerf();if(softPerf)softPerf.point(cached?'soft-round-mask-cache-hit':'soft-round-mask-cache-miss',{key});
   if(cached) return cached;
   const pad=Math.max(2,Math.ceil(_AA_MODE_EDGE_MAX_PX[aaMode]||2));
   const size=Math.ceil(diameter)+pad*2+1;
@@ -740,6 +876,7 @@ function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   const key=r.toFixed(2)+'|'+rgb.join(',')+'|'+alpha.toFixed(2)+'|'+composite+'|'+
             hardness.toFixed(2)+'|t'+tipV+'|'+(softAlpha?'s':'h')+'|'+tipMode+'|rd'+tipRoundness.toFixed(3);
   const hit=_tipDabCache.get(key);
+  const tipPerf=_brushPerf();if(tipPerf)tipPerf.point(hit?'tip-stamp-cache-hit':'tip-stamp-cache-miss',{key});
   if(hit) return hit;
 
   const rr=Math.max(0.05,r);
@@ -792,7 +929,9 @@ function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   let legacyAlphaOnlyMask=false;
   try{
     const sourceCtx=tipC.getContext('2d',{willReadFrequently:true});
+    const sourceReadStart=performance.now();
     const sourceData=sourceCtx.getImageData(0,0,tipNativeW,tipNativeH).data;
+    if(window.CustomTipCacheTrace)window.CustomTipCacheTrace.record('direct-tip-source-read',{path:'_buildTipStamp',tipVersion:window.brushTipVersion||0,tipCanvasId:window.CustomTipCacheTrace.objectId(tipC,'tip-canvas'),width:tipNativeW,height:tipNativeH,getImageDataDuration:performance.now()-sourceReadStart});
     let maximumVisibleLuminance=0;
     for(let p=0;p<sourceData.length;p+=4){
       if(sourceData[p+3]===0) continue;
@@ -803,7 +942,6 @@ function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   }catch(error){
     legacyAlphaOnlyMask=false;
   }
-
   const output=tc.createImageData(w,h); const outputData=output.data;
   // Apply the SAME radial hardness falloff every other brush already gets
   // (see _roundBrushFalloff/_effectiveInnerFrac used by the procedural
@@ -858,7 +996,9 @@ function _getTipPixelsForStamp(w,h){
   const tmp=document.createElement('canvas'); tmp.width=w; tmp.height=h;
   const tc=tmp.getContext('2d');
   tc.drawImage(tipC,0,0,tipC.width||tipC.naturalWidth||w,tipC.height||tipC.naturalHeight||h,0,0,w,h);
-  return tc.getImageData(0,0,w,h).data;
+  const readStart=performance.now(),data=tc.getImageData(0,0,w,h).data;
+  if(window.CustomTipCacheTrace)window.CustomTipCacheTrace.record('direct-tip-source-read',{path:'_getTipPixelsForStamp',tipVersion:window.brushTipVersion||0,tipCanvasId:window.CustomTipCacheTrace.objectId(tipC,'tip-canvas'),width:w,height:h,getImageDataDuration:performance.now()-readStart});
+  return data;
 }
 function _buildAAStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   const r=_quant(rRaw,_Q_R), alpha=_quantAlpha(alphaRaw);
@@ -874,6 +1014,7 @@ function _buildAAStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   const alphaKey=alpha<=0.25?alpha.toFixed(4):alpha.toFixed(2);
   const key=r.toFixed(2)+'|'+rgb.join(',')+'|'+alphaKey+'|'+composite+'|'+hardness.toFixed(2)+'|'+(isAirbrush?'ab':'n')+'|tv'+tipV+'|aa'+aaMode;
   const hit=_aaDabCache.get(key);
+  const aaPerf=_brushPerf();if(aaPerf)aaPerf.point(hit?'analytic-stamp-cache-hit':'analytic-stamp-cache-miss',{key});
   if(hit) return hit;
   const rr=Math.max(0.05,r);
   // Padding must cover the widest possible edge band (Strong mode can push
@@ -1186,33 +1327,34 @@ function _dabAATinyCoverage(x,y,r,rgb,alpha,composite){
 // rotation, so the pale appearance comes from genuine fractional-pixel
 // coverage -- identical in spirit to Hard Round, just sampling a tip mask
 // instead of an analytic circle.
-let _tipAlphaBuf=null,_tipAlphaBufVersion=-1,_tipAlphaBufW=0,_tipAlphaBufH=0,_tipAlphaBufLegacy=false;
+let _tipAlphaBuf=null,_tipAlphaBufVersion=-1,_tipAlphaBufW=0,_tipAlphaBufH=0,_tipAlphaBufLegacy=false,_tipAlphaSeedPixels=null,_tipReadbackCanvas=null,_tipReadbackCtx=null,_tipAlphaInvalidationReason='initial-unbuilt';
+function _tipAlphaFromPixels(d,w,h){
+  let maxLum=0;for(let p=0;p<d.length;p+=4){if(d[p+3]===0)continue;const lum=(d[p]*.2126+d[p+1]*.7152+d[p+2]*.0722)/255;if(lum>maxLum)maxLum=lum;}
+  const legacy=maxLum<.01,buf=new Float32Array(w*h);for(let i=0,p=0;p<d.length;p+=4,i++){const a=d[p+3]/255,lum=(d[p]*.2126+d[p+1]*.7152+d[p+2]*.0722)/255;buf[i]=legacy?a:a*lum;}return{buf,legacy};
+}
 function _getTipAlphaBuffer(){
-  const tipC=window.brushTipCanvas;
-  if(!tipC) return null;
-  const v=window.brushTipVersion||0;
-  if(_tipAlphaBufVersion!==v){
-    const w=tipC.width||1,h=tipC.height||1;
-    const sctx=tipC.getContext('2d',{willReadFrequently:true});
-    const d=sctx.getImageData(0,0,w,h).data;
-    // Same legacy-mask detection as _buildTipStamp: if the source has no
-    // real luminance variation (a pure alpha-channel mask, RGB≈white),
-    // treat alpha alone as the mask instead of alpha*luminance.
-    let maxLum=0;
-    for(let p=0;p<d.length;p+=4){
-      if(d[p+3]===0) continue;
-      const lum=(d[p]*0.2126+d[p+1]*0.7152+d[p+2]*0.0722)/255;
-      if(lum>maxLum) maxLum=lum;
+  const callStarted=performance.now(),tipC=window.brushTipCanvas;if(!tipC)return null;
+  const v=window.brushTipVersion||0,w=tipC.width||1,h=tipC.height||1,trace=window.CustomTipCacheTrace,tipCanvasId=trace?trace.objectId(tipC,'tip-canvas'):null,cacheKey=v+'|'+tipCanvasId+'|'+w+'x'+h;
+  const hit=_tipAlphaBufVersion===v&&_tipAlphaBufW===w&&_tipAlphaBufH===h,priorBuffer=_tipAlphaBuf,priorVersion=_tipAlphaBufVersion;let getImageDataDuration=0,alphaExtractionDuration=0,source='cached',allocated=false,resized=false;
+  if(!hit){
+    const perf=_brushPerf(),experiment=window.TipReadbackExperiment,totalStart=performance.now();let d;
+    if(experiment&&experiment.mode==='D'&&_tipAlphaSeedPixels&&_tipAlphaSeedPixels.version===v&&_tipAlphaSeedPixels.w===w&&_tipAlphaSeedPixels.h===h){d=_tipAlphaSeedPixels.data;source='normalization-image-data';}
+    else if(experiment&&experiment.mode==='B'){
+      source='dedicated-readback';allocated=!_tipReadbackCanvas;if(!_tipReadbackCanvas){_tipReadbackCanvas=document.createElement('canvas');_tipReadbackCtx=_tipReadbackCanvas.getContext('2d',{willReadFrequently:true});}
+      resized=_tipReadbackCanvas.width!==w||_tipReadbackCanvas.height!==h;if(resized){_tipReadbackCanvas.width=w;_tipReadbackCanvas.height=h;}
+      const copyStart=performance.now();_tipReadbackCtx.clearRect(0,0,w,h);_tipReadbackCtx.drawImage(tipC,0,0);const readStart=performance.now();d=_tipReadbackCtx.getImageData(0,0,w,h).data;getImageDataDuration=performance.now()-readStart;
+      if(perf){perf.measure('tip-readback-copy',copyStart,{width:w,height:h,dedicated:true});perf.recordDuration('tip-get-image-data',getImageDataDuration,{width:w,height:h,source,willReadFrequently:true});}
+    }else{
+      source='tip-canvas';const contextStart=performance.now(),sctx=tipC.getContext('2d',{willReadFrequently:true}),attributes=typeof sctx.getContextAttributes==='function'?sctx.getContextAttributes():null,readStart=performance.now();d=sctx.getImageData(0,0,w,h).data;getImageDataDuration=performance.now()-readStart;
+      if(perf){perf.measure('tip-readback-context-access',contextStart,{width:w,height:h,requestedWillReadFrequently:true,actualWillReadFrequently:attributes&&attributes.willReadFrequently});perf.recordDuration('tip-get-image-data',getImageDataDuration,{width:w,height:h,source,requestedWillReadFrequently:true});}
     }
-    const legacy=maxLum<0.01;
-    const buf=new Float32Array(w*h);
-    for(let i=0,p=0;p<d.length;p+=4,i++){
-      const a=d[p+3]/255;
-      const lum=(d[p]*0.2126+d[p+1]*0.7152+d[p+2]*0.0722)/255;
-      buf[i]=legacy?a:a*lum;
-    }
-    _tipAlphaBuf=buf;_tipAlphaBufW=w;_tipAlphaBufH=h;_tipAlphaBufVersion=v;_tipAlphaBufLegacy=legacy;
+    const processStart=performance.now(),built=_tipAlphaFromPixels(d,w,h);alphaExtractionDuration=performance.now()-processStart;_tipAlphaBuf=built.buf;_tipAlphaBufW=w;_tipAlphaBufH=h;_tipAlphaBufVersion=v;_tipAlphaBufLegacy=built.legacy;
+    if(perf){perf.recordDuration('tip-alpha-buffer-processing',alphaExtractionDuration,{width:w,height:h,pixels:w*h});perf.measure('tip-alpha-buffer-initialization',totalStart,{width:w,height:h,source,mode:experiment&&experiment.mode||'control',allocated,resized});}
+    if(experiment)experiment.record('tip-alpha-buffer-initialized',{tipVersion:v,width:w,height:h,source,allocated,resized,totalDuration:performance.now()-totalStart});
   }
+  const alphaBufferId=trace?trace.objectId(_tipAlphaBuf,'alpha-buffer'):null;
+  if(trace)trace.tipCall({tipVersion:v,cacheKey,cacheHit:hit,invalidationReason:hit?null:_tipAlphaInvalidationReason,priorTipVersion:priorVersion,priorAlphaBufferId:trace.objectId(priorBuffer,'alpha-buffer'),alphaBufferId,alphaBufferReplaced:priorBuffer!==_tipAlphaBuf,tipCanvasId,width:w,height:h,getImageDataDuration,alphaExtractionDuration,source,totalCallDuration:performance.now()-callStarted});
+  if(hit&&window.TipReadbackExperiment)window.TipReadbackExperiment.cacheHit(v);else _tipAlphaInvalidationReason=null;
   return{data:_tipAlphaBuf,w:_tipAlphaBufW,h:_tipAlphaBufH};
 }
 function _sampleTipAlphaBilinear(buf,w,h,u,v){
@@ -1857,6 +1999,7 @@ function _dabDirtyRadii(d){
   return {x,y};
 }
 function _drawDabNow(d){
+  const perf=_brushPerf(),perfStart=perf?performance.now():0;
   _activeDabRotation=window.brushTipCanvas?(d.rotation||0):0;
   _activeDabRoundness=window.brushTipCanvas&&d.roundness!=null?d.roundness:null;
   const dirtyRadius=_dabDirtyRadii(d);
@@ -1879,7 +2022,10 @@ function _drawDabNow(d){
     if(!_inStroke) _applyTextureToDabDirect(ctx,d.x,d.y,d.r,d.alpha);
   }
   _filterColorEraserRegion(d.x,d.y,dirtyRadius.x,dirtyRadius.y,colorEraserBefore);
+  const dirtyStart=perf?performance.now():0;
   _growDirtyRect(d.x,d.y,dirtyRadius.x,dirtyRadius.y);
+  if(perf)perf.measure('dirty-rectangle-expansion',dirtyStart,{radiusX:dirtyRadius.x,radiusY:dirtyRadius.y,rect:_frameDirty&&{minX:_frameDirty.minX,minY:_frameDirty.minY,maxX:_frameDirty.maxX,maxY:_frameDirty.maxY}});
+  if(perf)perf.measure('dab-rasterization',perfStart,{dabNumber:_strokeDabCount,radius:d.r,alpha:d.alpha,tip:!!window.brushTipCanvas,airbrush:!!window._brushAirbrush});
 }
 function _taperDistance(amount){return 320*amount;}
 function _queueDab(d){
@@ -2011,10 +2157,14 @@ function _resolveDabRotation(x,y){
 }
 
 function _stampDab(x,y,e){
+  const perf=_brushPerf(),paramsStart=perf?performance.now():0;
   const {r,alpha}=_getEffectiveBrushParams(e);
+  if(perf)perf.measure('brush-parameter-resolution',paramsStart,{dabNumber:_strokeDabCount});
   const isErase=tool==='eraser';
   const rgb=isErase?[0,0,0]:_hexToRGB(color);
+  const blendSetupStart=perf?performance.now():0;
   const composite=isErase?'erase':'paint';
+  if(perf)perf.measure('blend-mode-setup',blendSetupStart,{tool,brushBlendMode:tool==='brush'?window.brushBlendMode:null,composite});
   const rotation=_resolveDabRotation(x,y);
   const scatterEnabled=!!window._tsScatterEnabled;
   const count=scatterEnabled?Math.min(50,Math.max(1,Math.round(window._tsScatterCount||1))):1;
@@ -2414,36 +2564,48 @@ function _flushCurveTail(e){
 // That full-stack re-flatten on every single input event is the main
 // reason this felt laggy compared to TVPaint even WITH antialiasing on.
 // Fix: coalesce to at most one recomposite per animation frame.
-let _recompRAF=false,_recompGeneration=0;
-function _scheduleRecomposite(){
-  if(_recompRAF) return;
-  _recompRAF=true;
-  // Capture immutable artwork ownership now. This callback may run after
-  // pointerup and after the timeline has already selected another frame.
-  const generation=_recompGeneration;
-  const layerIndex=curLayer,frameIndex=curFrame,sessionId=_activeStrokeSession;
+let _recompRAF=false,_recompRAFHandle=0,_recompGeneration=0,_recompCoalescedRequests=0;
+function _scheduleRecomposite(options){
+  const firstDab=!!(options&&options.firstDab),perf=_brushPerf(),firstDabExperiment=window.BrushFirstDabExperiment,legacyExperiment=window.KeyframeLatencyExperiment&&window.KeyframeLatencyExperiment.active?window.KeyframeLatencyExperiment:window.BrushRafExperiment,experiment=firstDabExperiment||legacyExperiment;
+  if(perf)perf.point('recomposite-requested',{firstDab,rafAlreadyPending:_recompRAF,visibility:document.visibilityState,focused:document.hasFocus(),framePhaseMs:performance.now()%16.67});
+  if(experiment)experiment.noteRecompositeRequest({firstDab,rafAlreadyPending:_recompRAF});
+  const decision=firstDabExperiment?firstDabExperiment.decide({firstDab,rafAlreadyPending:_recompRAF}):null;
+  const immediate=decision?decision.immediate:experiment&&experiment.shouldPresentImmediately({firstDab,rafAlreadyPending:_recompRAF});
+  if(immediate){
+    let scheduledWork='none';
+    if(_recompRAF&&_recompRAFHandle){cancelAnimationFrame(_recompRAFHandle);_recompRAFHandle=0;_recompRAF=false;_recompCoalescedRequests=0;scheduledWork='cancelled-and-merged';}
+    const rect=(drawing||_inStroke)?_consumeDirtyRect():null;
+    if(perf)perf.point('first-dab-immediate-recomposite',{mode:firstDabExperiment?firstDabExperiment.mode:experiment.mode,rect,scheduledWork});
+    const immediateStart=performance.now();_flushLiveColorEraserPreview();recomposite(curLayer,curFrame,rect);const immediateDuration=performance.now()-immediateStart;
+    if(perf)perf.recordDuration('synchronous-first-dab-recomposite',immediateDuration,{rect,scheduledWork});
+    if(firstDabExperiment)firstDabExperiment.notePresentation({kind:'synchronous-first-dab',rect,duration:immediateDuration,scheduledWork});return;
+  }
+  if(_recompRAF){_recompCoalescedRequests++;if(firstDabExperiment&&firstDab)firstDabExperiment.noteScheduledDisposition('reused');if(experiment)experiment.noteCoalescedRequest();return;}
+  _recompRAF=true;_recompCoalescedRequests=0;
+  const generation=_recompGeneration,layerIndex=curLayer,frameIndex=curFrame,sessionId=_activeStrokeSession;
   _traceStrokeLifecycle('recomposite-scheduled',{sessionId,sourceLayer:layerIndex,sourceFrame:frameIndex});
-  requestAnimationFrame(()=>{
+  const scheduleProfiler=_brushPerf(),scheduledAt=performance.now(),phase=scheduledAt%16.67,estimatedNextDeadlineMs=16.67-phase;
+  if(scheduleProfiler)scheduleProfiler.point('recomposite-raf-scheduled',{firstDab,rafAlreadyPending:false,visibility:document.visibilityState,focused:document.hasFocus(),framePhaseMs:phase,estimatedNextDeadlineMs,intentionallyDeferred:!!firstDab});
+  const rafState=experiment?experiment.rafState():null;
+  _recompRAFHandle=requestAnimationFrame(()=>{
+    const callbackAt=performance.now(),wait=callbackAt-scheduledAt,coalesced=_recompCoalescedRequests;
+    if(scheduleProfiler){scheduleProfiler.point('recomposite-raf-callback-begin',{waitMs:wait,coalescedRequests:coalesced,framePhaseMs:callbackAt%16.67,estimatedMissedUpcomingDeadline:wait>estimatedNextDeadlineMs+1,anotherAppRafCallbackRanFirst:experiment?experiment.anotherRafRanFirst(rafState):null});scheduleProfiler.measure('raf-wakeup-wait',scheduledAt,{coalescedRequests:coalesced});}
+    if(experiment)experiment.noteRafCallback({scheduledAt,callbackAt,waitMs:wait,coalescedRequests:coalesced,estimatedNextDeadlineMs,estimatedMissedUpcomingDeadline:wait>estimatedNextDeadlineMs+1,anotherAppRafCallbackRanFirst:experiment.anotherRafRanFirst(rafState)});
     if(generation!==_recompGeneration){_traceStrokeLifecycle('recomposite-rejected',{sessionId,reason:'generation',sourceLayer:layerIndex,sourceFrame:frameIndex});return;}
-    _recompRAF=false;
-    // activeC represents exactly one artwork slot. loadFrame() has already
-    // rendered any newly selected destination, so an obsolete callback must
-    // never overwrite it.
+    _recompRAF=false;_recompRAFHandle=0;_recompCoalescedRequests=0;
     if(curLayer!==layerIndex||curFrame!==frameIndex){_traceStrokeLifecycle('recomposite-rejected',{sessionId,reason:'artwork-changed',sourceLayer:layerIndex,sourceFrame:frameIndex});return;}
-    const rect = (drawing||_inStroke) ? _consumeDirtyRect() : null;
-    _flushLiveColorEraserPreview();
-
-    recomposite(layerIndex,frameIndex,rect);
-
+    const rect=(drawing||_inStroke)?_consumeDirtyRect():null;
+    const scheduledStart=performance.now();_flushLiveColorEraserPreview();recomposite(layerIndex,frameIndex,rect);const scheduledDuration=performance.now()-scheduledStart;
+    if(scheduleProfiler)scheduleProfiler.recordDuration('scheduled-recomposite-duration',scheduledDuration,{rect,firstDab});
+    if(firstDabExperiment&&firstDab)firstDabExperiment.notePresentation({kind:'scheduled-first-dab',rect,duration:scheduledDuration,scheduledWork:'used'});
   });
 }
-
 function _completePostStrokePresentation(layerIndex,frameIndex){
   _traceStrokeLifecycle('pointerup-barrier',{sourceLayer:layerIndex,sourceFrame:frameIndex});
   // Pointerup is the authoritative barrier: invalidate every preview frame
   // queued while the stroke was moving, then present the committed source
   // synchronously before pointerup returns.
-  _recompGeneration++;_recompRAF=false;
+  _recompGeneration++;if(_recompRAFHandle)cancelAnimationFrame(_recompRAFHandle);_recompRAFHandle=0;_recompRAF=false;
   _flushLiveColorEraserPreview();
   if(_strokeCtx&&_strokeCanvas)_strokeCtx.clearRect(0,0,_strokeCanvas.width,_strokeCanvas.height);
   if(_strokePreviewCtx&&_strokePreviewCanvas)_strokePreviewCtx.clearRect(0,0,_strokePreviewCanvas.width,_strokePreviewCanvas.height);
@@ -2495,7 +2657,7 @@ function _endStroke(pointerId){
 window.finishActiveDrawingBeforeArtworkChange=function(nextLayer,nextFrame){
   const active=drawing||_inStroke||lineStart||_colorEraserOwnership;
   if(!active){
-    _recompGeneration++;_recompRAF=false;_frameDirty=null;_strokeDirty=null;
+    _recompGeneration++;if(_recompRAFHandle)cancelAnimationFrame(_recompRAFHandle);_recompRAFHandle=0;_recompRAF=false;_frameDirty=null;_strokeDirty=null;
     if(_strokePreviewCtx&&_strokePreviewCanvas)_strokePreviewCtx.clearRect(0,0,_strokePreviewCanvas.width,_strokePreviewCanvas.height);
     return false;
   }
@@ -2507,7 +2669,7 @@ window.finishActiveDrawingBeforeArtworkChange=function(nextLayer,nextFrame){
     _endStroke(_activeStrokePointerId);
   }finally{
     _endingForArtworkChange=false;
-    _recompGeneration++;_recompRAF=false;_frameDirty=null;_strokeDirty=null;
+    _recompGeneration++;if(_recompRAFHandle)cancelAnimationFrame(_recompRAFHandle);_recompRAFHandle=0;_recompRAF=false;_frameDirty=null;_strokeDirty=null;
     curLayer=destinationLayer;curFrame=destinationFrame;
   }
   return true;
@@ -2930,37 +3092,43 @@ window._setBrushTipShape=function(roundness,flipX,flipY){
 // already assumes for the luminance factor, so both renderers agree, and a
 // brush tip painted the intuitive way (light shape on dark background)
 // stops rendering as an inverted blob / solid box.
+let _lastNormalizedTipPixels=null;
 function _normalizeTipAlpha(canvas){
   if(!canvas || !canvas.width || !canvas.height) return canvas;
   const w=canvas.width, h=canvas.height;
-  const c2d=canvas.getContext('2d',{willReadFrequently:true});
+  const normalizeStart=performance.now(),c2d=canvas.getContext('2d',{willReadFrequently:true}),readStart=performance.now();
   let id;
-  try{ id=c2d.getImageData(0,0,w,h); }catch(e){ return canvas; } // tainted canvas (cross-origin) — leave as-is
+  try{ id=c2d.getImageData(0,0,w,h);if(window.TipReadbackExperiment)window.TipReadbackExperiment.record('tip-normalization-read',{width:w,height:h,duration:performance.now()-readStart,totalDuration:performance.now()-normalizeStart}); }catch(e){ return canvas; } // tainted canvas (cross-origin) — leave as-is
   const d=id.data;
   let minA=255,maxA=0;
   for(let i=3;i<d.length;i+=4){ const a=d[i]; if(a<minA)minA=a; if(a>maxA)maxA=a; }
   // Real transparency already present (e.g. a proper alpha-masked tip, or
   // this function already having run on it) — leave it untouched.
-  if(maxA-minA>4) return canvas;
+  if(maxA-minA>4){_lastNormalizedTipPixels={data:new Uint8ClampedArray(d),w,h};return canvas;}
   for(let i=0;i<d.length;i+=4){
     const lum=(d[i]+d[i+1]+d[i+2])/3;
     d[i]=d[i+1]=d[i+2]=255; // colour is irrelevant to the mask, keep it neutral
     d[i+3]=Math.round(lum);  // white shape -> opaque, black background -> transparent
   }
   c2d.putImageData(id,0,0);
+  _lastNormalizedTipPixels={data:new Uint8ClampedArray(d),w,h};
   return canvas;
 }
-window.setBrushTip=function(canvas,referenceDiameter){
-  window.brushTipCanvas=canvas?_normalizeTipAlpha(canvas):null;
+window.setBrushTip=function(canvas,referenceDiameter,invalidationReason){
+  const trace=window.CustomTipCacheTrace,previousCanvas=window.brushTipCanvas,previousVersion=window.brushTipVersion||0,previousAlphaBuffer=_tipAlphaBuf;
+  _lastNormalizedTipPixels=null;window.brushTipCanvas=canvas?_normalizeTipAlpha(canvas):null;
   window.brushTipSpacingBasis=canvas?'image-width':'diameter';
   window.brushTipReferenceDiameter=canvas&&Number.isFinite(Number(referenceDiameter))&&Number(referenceDiameter)>0?Number(referenceDiameter):null;
   window.brushTipVersion=(window.brushTipVersion||0)+1;
+  _tipAlphaSeedPixels=window.TipReadbackExperiment&&window.TipReadbackExperiment.mode==='D'&&_lastNormalizedTipPixels?{data:_lastNormalizedTipPixels.data,w:_lastNormalizedTipPixels.w,h:_lastNormalizedTipPixels.h,version:window.brushTipVersion}:null;
   _tipDabCache.clear();
   _aaDabCache.clear();
   _stampCache.clear();
+  _tipAlphaInvalidationReason=invalidationReason||'setBrushTip-call';
+  if(trace)trace.invalidated({reason:_tipAlphaInvalidationReason,previousVersion,tipVersion:window.brushTipVersion,previousTipCanvasId:trace.objectId(previousCanvas,'tip-canvas'),tipCanvasId:trace.objectId(window.brushTipCanvas,'tip-canvas'),sameCanvas:previousCanvas===window.brushTipCanvas,alphaBufferId:trace.objectId(previousAlphaBuffer,'alpha-buffer'),stack:(new Error()).stack});
 };
 window.clearBrushTip=function(){
-  window.setBrushTip(null);
+  window.setBrushTip(null,null,'clearBrushTip');
 };
 window.setBrushTexture=function(canvas){
   window.brushTextureCanvas=canvas||null;
@@ -3026,6 +3194,16 @@ activeC.addEventListener('pointerdown',e=>{
   if(tool!=='brush'&&tool!=='eraser'&&tool!=='fill'&&tool!=='line') return;
   // Prevent browser from hijacking tablet/stylus events (scroll, pan, zoom)
   e.preventDefault();
+  if(window.CompositionPrewarm)window.CompositionPrewarm.beforeStroke();
+  const latencyProfiler=_brushPerf();
+  if(latencyProfiler)latencyProfiler.startStroke({tool,pointerType:e.pointerType,presetId:window._activeBrushPresetId||null,size:getBrushSize(),flow:brushFlow,opacity:brushOpacity,hardness:brushHardness,tip:!!window.brushTipCanvas,texture:!!window.brushTextureEnabled,airbrush:!!window._brushAirbrush,layerType:layers[curLayer]&&layers[curLayer].type,caches:{analytic:_aaDabCache.size,softRound:_softRoundMaskCache.size,tip:_tipDabCache.size},buffers:{stroke:!!_strokeCanvas,preview:!!_strokePreviewCanvas}});
+  if(window.TipReadbackExperiment)window.TipReadbackExperiment.strokeStart();
+  if(window.CustomTipCacheTrace)window.CustomTipCacheTrace.strokeStart();
+  if(latencyProfiler){latencyProfiler.point('pointerdown-received',{visibility:document.visibilityState,focused:document.hasFocus(),framePhaseMs:performance.now()%16.67});latencyProfiler.point('stroke-initialization-begins');}
+  if(window.BrushRafExperiment)window.BrushRafExperiment.strokeBegins({layerIndex:curLayer,frameIndex:curFrame,layerType:layers[curLayer]&&layers[curLayer].type});
+  if(window.BrushFirstDabExperiment)window.BrushFirstDabExperiment.strokeBegins({layerIndex:curLayer,frameIndex:curFrame,layerType:layers[curLayer]&&layers[curLayer].type});
+  if(window.KeyframeLatencyExperiment)window.KeyframeLatencyExperiment.strokeBegins({layerIndex:curLayer,frameIndex:curFrame,layerType:layers[curLayer]&&layers[curLayer].type});
+  const inputStateStart=latencyProfiler?performance.now():0;
   _isDrawingWithPen = (e.pointerType === 'pen');
   _strokeFirstSample = true; // this stroke's first _getPressure() call snaps immediately, no de-jitter clamping
   currentPressure=_getPressure(e);
@@ -3043,6 +3221,7 @@ activeC.addEventListener('pointerdown',e=>{
   _rotationPrevValid=false;
   _resetSmoothing(p.x,p.y,e.timeStamp||performance.now());
   _updateVelocity(p.x, p.y, e.timeStamp);
+  if(latencyProfiler)latencyProfiler.measure('pointer-and-dynamics-init',inputStateStart);
   if(tool==='fill'){pushUndo();ensureKey();floodFill(p.x,p.y,color);saveActiveToKey();recomposite(curLayer,curFrame);return;}
   _activeStrokePointerId=e.pointerId;
   _strokeOwnerLayer=curLayer;_strokeOwnerFrame=curFrame;_activeStrokeSession=++_strokeSessionSerial;
@@ -3050,18 +3229,37 @@ activeC.addEventListener('pointerdown',e=>{
   _strokeCompletionStarted=false;
   if(tool==='line'){lineStart=p;return;}
   activeC.setPointerCapture(e.pointerId);
-  pushUndo();ensureKey();_beginColorEraserStroke();_beginEndTaperCapture();_selectionScopeBase=tool==='eraser'&&window.SelectionScope?SelectionScope.captureArtwork(activeC):null;drawing=true;lx=p.x;ly=p.y;
+const strokeSetupStart=latencyProfiler?performance.now():0;
+  let stageStart=latencyProfiler?performance.now():0;pushUndo();
+  if(latencyProfiler)latencyProfiler.point('push-undo-complete');
+  if(latencyProfiler)latencyProfiler.measure('undo-snapshot-setup',stageStart,{canvas:{width:CW,height:CH},snapshotMethod:layers[curLayer]&&layers[curLayer].type==='smart-raster'?'style-bundle-copy':'canvas-drawImage',getImageData:false,layerIndex:curLayer,frameIndex:curFrame});
+  stageStart=latencyProfiler?performance.now():0;const autoCreatedKey=ensureKey();
+  if(latencyProfiler&&layers[curLayer]&&layers[curLayer].type==='smart-raster')latencyProfiler.measure('smart-raster-ensure-key',stageStart,{autoCreatedKey:!!autoCreatedKey,layerIndex:curLayer,frameIndex:curFrame});
+  if(window.BrushRafExperiment)window.BrushRafExperiment.noteKeyCheck({autoCreatedKey:!!autoCreatedKey,duration:performance.now()-stageStart});
+  if(window.KeyframeLatencyExperiment)window.KeyframeLatencyExperiment.noteKeyCheck({autoCreatedKey:!!autoCreatedKey,duration:performance.now()-stageStart});
+  if(latencyProfiler)latencyProfiler.measure('keyframe-and-session-binding',stageStart,{autoCreatedKey:!!autoCreatedKey,layerIndex:curLayer,frameIndex:curFrame});
+  stageStart=latencyProfiler?performance.now():0;_beginColorEraserStroke();
+  if(latencyProfiler)latencyProfiler.measure('color-eraser-session-setup',stageStart,{active:tool==='eraser'&&window.eraserMode==='color',getImageData:tool==='eraser'&&window.eraserMode==='color'});
+  stageStart=latencyProfiler?performance.now():0;_beginEndTaperCapture();
+  if(latencyProfiler)latencyProfiler.measure('taper-buffer-preparation',stageStart,{active:!!_strokeReplayBase,canvas:{width:CW,height:CH}});
+  stageStart=latencyProfiler?performance.now():0;_selectionScopeBase=tool==='eraser'&&window.SelectionScope?SelectionScope.captureArtwork(activeC):null;
+  if(latencyProfiler)latencyProfiler.measure('selection-scope-setup',stageStart,{active:!!window.SelectionScope,captured:!!_selectionScopeBase,getImageData:!!_selectionScopeBase});
+  drawing=true;lx=p.x;ly=p.y;
   _autoHardRoundPrevDab=null;
   _resetCurve(p.x,p.y,currentPressure);
   _lastPointerEvent=e;
+  stageStart=latencyProfiler?performance.now():0;
   if(tool!=='eraser'){_ensureStrokeCanvas();_inStroke=true;}
+  if(latencyProfiler){latencyProfiler.measure('stroke-live-buffer-activation',stageStart,{active:tool!=='eraser',canvas:{width:_strokeCanvas&&_strokeCanvas.width||0,height:_strokeCanvas&&_strokeCanvas.height||0}});latencyProfiler.measure('pointerdown-setup-total',strokeSetupStart,{tool});}
   // Pointer-down uses the same spacing-derived transmittance ratio as every
   // arc-walked movement dab, so Flow is identical for isolated stamps.
   const previousSpacingRatio=_flowSpacingRatio;
   _flowSpacingRatio=_initialDabSpacingRatio(e,currentPressure);
+  const firstDabStart=latencyProfiler?performance.now():0;if(latencyProfiler)latencyProfiler.point('first-dab-rasterization-start');
   try{_stampDab(p.x,p.y,e);}
   finally{_flowSpacingRatio=previousSpacingRatio;}
-  _scheduleRecomposite();
+  if(latencyProfiler){latencyProfiler.point('first-dab-rasterization-finish');latencyProfiler.measure('first-dab-pipeline-total',firstDabStart,{dirtyRect:_frameDirty?{minX:_frameDirty.minX,minY:_frameDirty.minY,maxX:_frameDirty.maxX,maxY:_frameDirty.maxY}:null,blendMode:tool==='brush'?window.brushBlendMode:'eraser'});latencyProfiler.point('first-dab-generated');}
+  _scheduleRecomposite({firstDab:true});
   if(window._brushAirbrush&&window._brushContinuousSpraying) _startAirbrushSpray();
 });
 // _handleMoveEvent: shared by pointermove + pointerrawupdate.
@@ -3136,6 +3334,13 @@ function _pointerEndStroke(e){
   }
   _endColorEraserStroke();
   _completePostStrokePresentation(_strokeOwnerLayer,_strokeOwnerFrame);
+  const latencyProfiler=_brushPerf();if(latencyProfiler)latencyProfiler.finishStroke({tool,sourceLayer:_strokeOwnerLayer,sourceFrame:_strokeOwnerFrame});
+  if(window.CompositionPrewarm)window.CompositionPrewarm.noteStrokeComplete();
+  if(window.BrushRafExperiment)window.BrushRafExperiment.strokeEnds({dabCount:_strokeDabCount});
+  if(window.BrushFirstDabExperiment)window.BrushFirstDabExperiment.strokeEnds({dabCount:_strokeDabCount});
+  if(window.KeyframeLatencyExperiment)window.KeyframeLatencyExperiment.strokeEnds({dabCount:_strokeDabCount});
+  if(window.TipReadbackExperiment)window.TipReadbackExperiment.strokeEnd();
+  if(window.CustomTipCacheTrace)window.CustomTipCacheTrace.strokeEnd();
   _pendingDabs.length=0;
   _curveP0=null;_curveP1=null;
   _strokeSegCarryOver=0;
