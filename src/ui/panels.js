@@ -657,14 +657,21 @@ const KeyframeLatencyExperiment=(function(){
   return{prepareTrial,clear,stop,results(){return records.map(clone);},table,get active(){return!!pending;},get pending(){return pending&&clone(pending);},get preparing(){return preparing;},strokeBegins,noteKeyCheck,noteRecompositeRequest,noteCoalescedRequest,shouldPresentImmediately,rafState,anotherRafRanFirst,noteRafCallback,noteRecompositeBegin,strokeEnds};
 })();
 window.KeyframeLatencyExperiment=KeyframeLatencyExperiment;
-function goToFrame(f,addSel,noSel){
+function goToFrame(f,addSel,noSel,selectionOnly){
   saveActiveToKey();curFrame=Math.max(0,Math.min(TOTAL-1,f));
   if(!noSel){if(!addSel) selectedFrames.clear();selectedFrames.add(curFrame);}
-  loadFrame(curLayer,curFrame);renderTimeline();
+  loadFrame(curLayer,curFrame);
+  if(selectionOnly&&typeof refreshTimelineSelection==='function')refreshTimelineSelection();
+  else renderTimeline();
 }
-function switchLayer(li){
+function switchLayer(li,options){
+  options=options||{};
   saveActiveToKey();curLayer=li;activeGroupId=null;selectedGroupIds.clear();layerShiftAnchor=li;groupShiftAnchor=null;
-  loadFrame(curLayer,curFrame);syncOpacityControls();renderLayerPanel();renderTimeline();
+  if(!options.preserveTimelineSelection&&typeof syncTimelineSelectionToActiveLayer==='function')syncTimelineSelectionToActiveLayer();
+  if(!options.skipLoadFrame)loadFrame(curLayer,curFrame);
+  syncOpacityControls();renderLayerPanel();
+  if(options.skipTimelineRender&&typeof refreshTimelineSelection==='function')refreshTimelineSelection();
+  else renderTimeline();
   if(window.PaletteDocker&&typeof window.PaletteDocker.refresh==='function') window.PaletteDocker.refresh();
   window.dispatchEvent(new CustomEvent('active-layer-changed',{detail:{layerIndex:curLayer,layer:layers[curLayer]}}));
 }

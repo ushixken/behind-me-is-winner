@@ -189,7 +189,7 @@ rulerEl.addEventListener('pointerdown',e=>{
   const x=e.clientX-r.left+tlScroll.scrollLeft;
   if(Math.abs(x-(rangeStart*CellW+CellW/2))<10){draggingStart=true;return;}
   if(Math.abs(x-(rangeEnd*CellW+CellW/2))<10){draggingEnd=true;return;}
-  scrubbing=true;const f=frameFromX(e.clientX);goToFrame(f,false,false);
+  scrubbing=true;const f=frameFromX(e.clientX);goToFrame(f,false,false,true);
 });
 rulerEl.addEventListener('contextmenu',e=>{
   e.preventDefault();e.stopPropagation();
@@ -200,7 +200,7 @@ rulerEl.addEventListener('contextmenu',e=>{
   m.classList.add('visible');
 });
 document.addEventListener('pointermove',e=>{
-  if(scrubbing){const f=frameFromX(e.clientX);goToFrame(f,false,false);}
+  if(scrubbing){const f=frameFromX(e.clientX);if(f!==curFrame)goToFrame(f,false,false,true);}
   if(draggingStart){rangeStart=Math.min(frameFromX(e.clientX),rangeEnd);clampRange();renderTimeline();updateStatus();}
   if(draggingEnd){rangeEnd=Math.max(frameFromX(e.clientX),rangeStart);clampRange();renderTimeline();updateStatus();}
 });
@@ -222,6 +222,40 @@ document.getElementById('ruler-ctx-reset').onclick=()=>{rangeStart=0;rangeEnd=TO
 let dragKF=null;
 let kfSelectionAnchor=null;
 let selectedRowLayers=new Set([curLayer]); // which layer indices should show the "selected" cell background band
+
+function timelineSelectionInteractionActive(){
+  return !!(dragKF||tlSelDrag||tlLbSelecting||dragTlLabelIdx!==null||
+    selectedFrames.size>1||selectedRowLayers.size>1||selectedKFs.size>1||selectedTlLabelIndices.size>1);
+}
+
+function syncTimelineSelectionToActiveLayer(){
+  if(timelineSelectionInteractionActive())return false;
+  selectedRowLayers=new Set([curLayer]);
+  return true;
+}
+
+function refreshTimelineSelection(){
+  const rows=document.getElementById('tl-rows-wrap');
+  if(!rows)return;
+  rows.querySelectorAll('.tl-cell.selected').forEach(cell=>cell.classList.remove('selected'));
+  selectedRowLayers.forEach(layerIndex=>selectedFrames.forEach(frameIndex=>{
+    const cell=rows.querySelector('.tl-cell[data-layer-idx="'+layerIndex+'"][data-frame-idx="'+frameIndex+'"]');
+    if(cell)cell.classList.add('selected');
+  }));
+  rows.querySelectorAll('.tl-cell.cur-col').forEach(cell=>cell.classList.remove('cur-col'));
+  const current=rows.querySelector('.tl-cell[data-layer-idx="'+curLayer+'"][data-frame-idx="'+curFrame+'"]');
+  if(current)current.classList.add('cur-col');
+  rows.querySelectorAll('.kf-block.selected').forEach(block=>block.classList.remove('selected'));
+  selectedKFs.forEach(key=>{
+    const block=rows.querySelector('.kf-block[data-kk="'+key+'"]');
+    if(block)block.classList.add('selected');
+  });
+  document.querySelectorAll('.tl-layer-lbl.active').forEach(label=>label.classList.remove('active'));
+  const activeLabel=document.querySelector('.tl-layer-lbl[data-idx="'+curLayer+'"]');
+  if(activeLabel&&!activeGroupId)activeLabel.classList.add('active');
+  updatePlayhead();renderRulerHighlight();updateStatus();
+  document.getElementById('frame-info').textContent=frameLabel(curFrame)+' / '+frameLabel(TOTAL-1);
+}
 
 // Returns the actual layer indices (not display-order indices) spanning between
 // anchorLayerIndex and targetLayerIndex in the timeline's current display order.
@@ -1043,14 +1077,17 @@ function renderLabelCol(){
   });
 
   // Click/mousedown on blank area of label column: clear selection or start rubber-band
-  el.addEventListener('pointerdown',ev=>{
-    const onRow=ev.target.closest('.tl-layer-lbl[data-idx]');
-    if(onRow) return;
-    if(ev.button!==0) return;
-    selectedTlLabelIndices.clear();tlLabelLastClicked=null;
-    renderLabelCol();
-    startTlLabelRubberBand(ev);
-  });
+  if(!el.dataset.blankSelectionBound){
+    el.dataset.blankSelectionBound='1';
+    el.addEventListener('pointerdown',ev=>{
+      const onRow=ev.target.closest('.tl-layer-lbl[data-idx]');
+      if(onRow) return;
+      if(ev.button!==0) return;
+      selectedTlLabelIndices.clear();tlLabelLastClicked=null;
+      renderLabelCol();
+      startTlLabelRubberBand(ev);
+    });
+  }
 }
 
 function onTlLabelDragMove(ev){
@@ -1143,12 +1180,13 @@ function renderRows(){
       if(selectedFrames.has(f)&&selectedRowLayers.has(i)) cls+=' selected';
       cell.className=cls;cell.style.cssText='left:'+(f*CellW)+'px;position:absolute;width:'+CellW+'px;height:'+CellH+'px;';
       cell.dataset.layerIdx=i;
+      cell.dataset.frameIdx=f;
       cell.addEventListener('pointerdown',ev=>{
         ev.stopPropagation();
         if(!ev.shiftKey)clearKeyframeSelection();
-        if(ev.shiftKey){const anchor=kfSelectionAnchor||{layerIndex:curLayer,frameIndex:curFrame};selectKeyframeRange(anchor,{layerIndex:i,frameIndex:f});selectedRowLayers=new Set(_rowSpanLayers(anchor.layerIndex,i));const lo=Math.min(anchor.frameIndex,f),hi=Math.max(anchor.frameIndex,f);selectedFrames.clear();for(let ff=lo;ff<=hi;ff++)selectedFrames.add(ff);if(i!==curLayer)switchLayer(i);curFrame=f;loadFrame(curLayer,curFrame);renderTimeline();}
-        else if(ev.ctrlKey||ev.metaKey){if(selectedFrames.has(f))selectedFrames.delete(f);else selectedFrames.add(f);selectedRowLayers.add(i);if(i!==curLayer)switchLayer(i);curFrame=f;loadFrame(curLayer,curFrame);renderTimeline();}
-        else{selectedFrames.clear();selectedFrames.add(f);selectedKFs.clear();selectedRowLayers=new Set([i]);kfSelectionAnchor={layerIndex:i,frameIndex:f};document.querySelectorAll('.kf-block.selected').forEach(b=>b.classList.remove('selected'));tlSelDrag={startF:f,anchorLayer:i};if(i!==curLayer)switchLayer(i);goToFrame(f);}
+        if(ev.shiftKey){const anchor=kfSelectionAnchor||{layerIndex:curLayer,frameIndex:curFrame};selectKeyframeRange(anchor,{layerIndex:i,frameIndex:f});selectedRowLayers=new Set(_rowSpanLayers(anchor.layerIndex,i));const lo=Math.min(anchor.frameIndex,f),hi=Math.max(anchor.frameIndex,f);selectedFrames.clear();for(let ff=lo;ff<=hi;ff++)selectedFrames.add(ff);if(i!==curLayer)switchLayer(i,{skipTimelineRender:true,skipLoadFrame:true,preserveTimelineSelection:true});curFrame=f;loadFrame(curLayer,curFrame);refreshTimelineSelection();}
+        else if(ev.ctrlKey||ev.metaKey){if(selectedFrames.has(f))selectedFrames.delete(f);else selectedFrames.add(f);selectedRowLayers.add(i);if(i!==curLayer)switchLayer(i,{skipTimelineRender:true,skipLoadFrame:true,preserveTimelineSelection:true});curFrame=f;loadFrame(curLayer,curFrame);refreshTimelineSelection();}
+        else{selectedFrames.clear();selectedFrames.add(f);selectedKFs.clear();selectedRowLayers=new Set([i]);kfSelectionAnchor={layerIndex:i,frameIndex:f};document.querySelectorAll('.kf-block.selected').forEach(b=>b.classList.remove('selected'));tlSelDrag={startF:f,anchorLayer:i};if(i!==curLayer)switchLayer(i,{skipTimelineRender:true,skipLoadFrame:true,preserveTimelineSelection:true});goToFrame(f,false,false,true);}
       });
       row.appendChild(cell);
     }
@@ -1188,9 +1226,8 @@ function renderRows(){
           kfSelectionAnchor={layerIndex:i,frameIndex:f};
         }
         startKFDrag(i,f,ev);
-        if(i!==curLayer)switchLayer(i);curFrame=f;if(!ev.shiftKey){selectedFrames.clear();selectedFrames.add(f);}loadFrame(curLayer,curFrame);renderTimeline();
+        if(i!==curLayer)switchLayer(i,{skipTimelineRender:true,skipLoadFrame:true,preserveTimelineSelection:true});curFrame=f;if(!ev.shiftKey){selectedFrames.clear();selectedFrames.add(f);}loadFrame(curLayer,curFrame);refreshTimelineSelection();
       });
-      block.addEventListener('click',ev=>{ev.stopPropagation();if(i!==curLayer)switchLayer(i);selectedFrames.clear();selectedFrames.add(f);goToFrame(f);});
       row.appendChild(block);
     });
     rowWrap.appendChild(row);
@@ -1199,7 +1236,7 @@ function renderRows(){
 
   // Rubber-band selection in timeline (visual rectangle for selecting frames)
   let tlRbSelecting=false,tlRbStartX=0,tlRbStartY=0,tlRbBoxEl=null;
-  rowWrap.addEventListener('pointerdown',ev=>{
+  if(!rowWrap.dataset.selectionHandlersBound)rowWrap.addEventListener('pointerdown',ev=>{
     if(ev.button!==0) return;
     // Only start rubber-band when clicking on empty row area (not on kf-block)
     if(ev.target.classList.contains('kf-block')) return;
@@ -1235,7 +1272,7 @@ function renderRows(){
     }
   });
 
-  rowWrap.addEventListener('pointermove',e=>{
+  if(!rowWrap.dataset.selectionHandlersBound)rowWrap.addEventListener('pointermove',e=>{
     if(!tlSelDrag) return;
     const r=tlScroll.getBoundingClientRect();
     const f2=Math.max(0,Math.min(TOTAL-1,Math.floor((e.clientX-r.left+tlScroll.scrollLeft)/CellW)));
@@ -1257,11 +1294,10 @@ function renderRows(){
       selectKeyframeRange(kfSelectionAnchor,{layerIndex:li,frameIndex:f2});
     }
 
-    curFrame=f2;loadFrame(curLayer,curFrame);
-    document.querySelectorAll('.tl-cell').forEach(c=>{const cf=parseInt(c.style.left)/CellW;const isSel=selectedRowLayers.has(parseInt(c.dataset.layerIdx));c.classList.toggle('selected',isSel&&selectedFrames.has(cf));c.classList.toggle('cur-col',parseInt(c.dataset.layerIdx)===curLayer&&cf===curFrame);});
-    document.querySelectorAll('.kf-block').forEach(b=>{b.classList.toggle('selected',selectedKFs.has(b.dataset.kk));});
-    updatePlayhead();document.getElementById('frame-info').textContent=frameLabel(curFrame)+' / '+frameLabel(TOTAL-1);
+    const frameChanged=f2!==curFrame;curFrame=f2;if(frameChanged)loadFrame(curLayer,curFrame);
+    refreshTimelineSelection();
   });
+  rowWrap.dataset.selectionHandlersBound='1';
 }
 
 function updateRangeOverlay(){
@@ -2924,6 +2960,7 @@ function _doAddLayer(placement,layerType){
   // Re-anchor all stencils to their visual neighbor below after the insertion.
   _reanchorAllStencils();
   curLayer=insertAt;selectedLayerIndices.clear();activeGroupId=null;
+  syncTimelineSelectionToActiveLayer();
   loadFrame(curLayer,curFrame);renderLayerPanel();renderTimeline();
   if(window.PaletteDocker&&typeof window.PaletteDocker.refresh==='function') window.PaletteDocker.refresh();
 }
