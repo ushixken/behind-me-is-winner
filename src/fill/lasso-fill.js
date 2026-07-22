@@ -13,33 +13,10 @@
   function cancel(){if(!active)return false;active=false;pointerId=null;points=[];if(previewRaf){cancelAnimationFrame(previewRaf);previewRaf=0;}clearPreview();if(preview)preview.style.display='none';return true;}
   function bounds(){if(!points.length)return null;var minX=points[0].x,minY=points[0].y,maxX=minX,maxY=minY;for(var i=1;i<points.length;i++){var p=points[i];if(p.x<minX)minX=p.x;if(p.y<minY)minY=p.y;if(p.x>maxX)maxX=p.x;if(p.y>maxY)maxY=p.y;}var x=Math.max(0,Math.floor(minX-1)),y=Math.max(0,Math.floor(minY-1)),ex=Math.min(CW,Math.ceil(maxX+1)),ey=Math.min(CH,Math.ceil(maxY+1));return{x:x,y:y,w:Math.max(0,ex-x),h:Math.max(0,ey-y)};}
   function meaningful(){if(points.length<3)return false;var rect=bounds();return !!(rect&&rect.w>=2&&rect.h>=2);}
-  function midpoint(a,b){return{x:(a.x+b.x)/2,y:(a.y+b.y)/2};}
-  function turnAngle(a,b,c){
-    var ax=b.x-a.x,ay=b.y-a.y,bx=c.x-b.x,by=c.y-b.y,al=Math.hypot(ax,ay),bl=Math.hypot(bx,by);
-    if(al<0.001||bl<0.001)return 0;
-    return Math.acos(Math.max(-1,Math.min(1,(ax*bx+ay*by)/(al*bl))))*180/Math.PI;
-  }
-  function isIntentionalCorner(source,index){
-    var count=source.length,previous=source[(index-1+count)%count],current=source[index],next=source[(index+1)%count];
-    var immediate=turnAngle(previous,current,next);if(immediate<65)return false;
-    // Wider neighbors prevent slow-stroke sampling jitter from becoming corners.
-    var outerPrevious=source[(index-2+count)%count],outerNext=source[(index+2)%count];
-    return turnAngle(outerPrevious,current,outerNext)>=60;
-  }
-  function buildSmoothedPath(source){
-    var count=source.length,commands=[];if(count<3)return null;
-    var start=midpoint(source[count-1],source[0]);commands.push({type:'move',x:start.x,y:start.y});
-    for(var i=0;i<count;i++){
-      var current=source[i],next=source[(i+1)%count],end=midpoint(current,next);
-      if(isIntentionalCorner(source,i)){commands.push({type:'line',x:current.x,y:current.y});commands.push({type:'line',x:end.x,y:end.y});}
-      else commands.push({type:'quadratic',cx:current.x,cy:current.y,x:end.x,y:end.y});
-    }
-    commands.push({type:'close'});return commands;
-  }
   function commit(){
     if(!meaningful()){cancel();return;}var rect=bounds();if(!rect||!rect.w||!rect.h){cancel();return;}
     // Keep the captured samples intact; construct the fitted path only once on commit.
-    var samples=points.map(function(point){return{x:point.x,y:point.y};}),path=buildSmoothedPath(samples);cancel();if(path&&window.FillMaskEngine)FillMaskEngine.applyPath(path,rect,{source:'lasso-fill'});
+    var samples=points.map(function(point){return{x:point.x,y:point.y};}),path=window.FreehandClosedPath&&FreehandClosedPath.build(samples);cancel();if(path&&window.FillMaskEngine)FillMaskEngine.applyPath(path,rect,{source:'lasso-fill'});
   }
   function pointerDown(event){if(tool!=='lasso-fill'||activeGroupId||panning||spaceHeld)return;if(event.pointerType==='mouse'?event.button!==0:(!(event.buttons&1)&&event.pointerType!=='touch'))return;event.preventDefault();event.stopImmediatePropagation();ensurePreview();preview.style.display='block';active=true;pointerId=event.pointerId;points=[getPos(event)];activeC.setPointerCapture(event.pointerId);schedulePreview();}
   function pointerMove(event){if(!active||event.pointerId!==pointerId)return;event.preventDefault();event.stopImmediatePropagation();var p=getPos(event),last=points[points.length-1];if(Math.hypot(p.x-last.x,p.y-last.y)>=1){points.push(p);schedulePreview();}}

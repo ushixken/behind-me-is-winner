@@ -22,7 +22,8 @@
   function pathBounds(padding){if(!points.length)return null;var minX=points[0].x,minY=points[0].y,maxX=minX,maxY=minY;for(var i=1;i<points.length;i++){var p=points[i];if(p.x<minX)minX=p.x;if(p.x>maxX)maxX=p.x;if(p.y<minY)minY=p.y;if(p.y>maxY)maxY=p.y;}return{x:Math.floor(minX-padding),y:Math.floor(minY-padding),w:Math.ceil(maxX-minX+padding*2),h:Math.ceil(maxY-minY+padding*2)};}
   function commit(){
     if(!meaningfulArea()){cancel();return;}var bounds=pathBounds(1),x=Math.max(0,bounds.x),y=Math.max(0,bounds.y),ex=Math.min(CW,bounds.x+bounds.w),ey=Math.min(CH,bounds.y+bounds.h);if(ex<=x||ey<=y){cancel();return;}
-    var maskCanvas=document.createElement('canvas');maskCanvas.width=CW;maskCanvas.height=CH;var maskContext=maskCanvas.getContext('2d');maskContext.fillStyle='#fff';maskContext.beginPath();maskContext.moveTo(points[0].x,points[0].y);for(var i=1;i<points.length;i++)maskContext.lineTo(points[i].x,points[i].y);maskContext.closePath();maskContext.fill();
+    var path=window.FreehandClosedPath&&FreehandClosedPath.build(points);if(!path){cancel();return;}
+    var maskCanvas=document.createElement('canvas');maskCanvas.width=CW;maskCanvas.height=CH;var maskContext=maskCanvas.getContext('2d');maskContext.fillStyle='#fff';FreehandClosedPath.trace(maskContext,path);maskContext.fill('nonzero');
     var image=maskContext.getImageData(x,y,ex-x,ey-y).data,incoming=new Uint8ClampedArray(CW*CH),width=ex-x,height=ey-y;for(var row=0;row<height;row++)for(var col=0;col<width;col++)if(image[(row*width+col)*4+3]>0)incoming[(y+row)*CW+x+col]=255;
     var selectedMode=mode;cancel();if(window.PixelSelection)PixelSelection.applyMask(incoming,CW,CH,selectedMode,'lasso');
   }
