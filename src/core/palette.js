@@ -805,6 +805,7 @@
   function beginPaletteListPointer(event,id,el){
     if(event.isPrimary===false) return;
     if(event.button!==undefined&&event.button!==0) return;
+    if(paletteDragState) finishPaletteListPointer(null,true);
     paletteDragState={id,startX:event.clientX,startY:event.clientY,active:false,overId:id,side:'after',pointerId:event.pointerId,sourceEl:el,captured:false};
     document.addEventListener('pointermove',onPaletteListPointerMove);
     document.addEventListener('pointerup',onPaletteListPointerEnd);
@@ -834,19 +835,24 @@
   }
   function onPaletteListPointerEnd(event){
     if(!paletteDragState||event.pointerId!==paletteDragState.pointerId) return;
+    finishPaletteListPointer(event,event.type==='pointercancel');
+  }
+  function finishPaletteListPointer(event,cancelled){
+    if(!paletteDragState) return;
     const state=paletteDragState;
     paletteDragState=null;
     document.removeEventListener('pointermove',onPaletteListPointerMove);
     document.removeEventListener('pointerup',onPaletteListPointerEnd);
     document.removeEventListener('pointercancel',onPaletteListPointerEnd);
-    if(state.sourceEl&&state.captured){try{state.sourceEl.releasePointerCapture(event.pointerId);}catch(e){}}
+    if(state.sourceEl&&state.captured){try{if(!state.sourceEl.hasPointerCapture||state.sourceEl.hasPointerCapture(state.pointerId))state.sourceEl.releasePointerCapture(state.pointerId);}catch(e){}}
     clearPaletteListIndicators();
     document.querySelectorAll('.palette-list-item.dragging').forEach(node=>node.classList.remove('dragging'));
     if(state.active&&!cancelled){
-      event.preventDefault();
+      if(event)event.preventDefault();
       if(state.overId&&state.overId!==state.id) reorderPalette(state.id,state.overId,state.side);
       return;
     }
+    if(cancelled)return;
     switchPalette(state.id);
     closePaletteDropdown();
   }
@@ -1330,10 +1336,6 @@
     document.addEventListener('pointerup',onAdvancedStylePointerUp);
     document.addEventListener('pointercancel',onAdvancedStylePointerCancel);
   }
-  // Safety net only (not a normal end-of-drag path): if the window loses
-  // focus entirely mid-drag (alt-tab, OS gesture, etc.) with no pointerup/
-  // pointercancel ever arriving, force-cancel so state can't get stuck.
-  window.addEventListener('blur',()=>{ if(advancedStyleDrag) finishAdvancedStyleDrag(null,true); });
   function renderAdvancedPalette(grid){
     syncAdvancedRefs();
     grid.classList.add('advanced-palette-grid');
@@ -2139,6 +2141,7 @@
     if(event.button!==undefined&&event.button!==0) return;
     event.preventDefault();
     hideContextMenu();
+    if(dragState) finishPaletteDrag(null,true);
     activatePaletteSwatch(swatch.id,{select:true,setForeground:true});
     const rect=el.getBoundingClientRect();
     dragState={id:swatch.id,startX:event.clientX,startY:event.clientY,grabOffsetX:event.clientX-rect.left,grabOffsetY:event.clientY-rect.top,swatchWidth:rect.width,swatchHeight:rect.height,pointerType:event.pointerType||'mouse',active:false,overId:swatch.id,side:'after',targetGroupIndex:null,targetLocalIndex:null,targetGlobalIndex:null,targetSeparatorSide:null,targetSeparatorId:null,rafPending:false,lastMove:null,pointerId:event.pointerId,sourceEl:el,captured:false,holdTimer:null};
@@ -2200,6 +2203,10 @@
   }
   function onDragEnd(event){
     if(!dragState||event.pointerId!==dragState.pointerId) return;
+    finishPaletteDrag(event,event.type==='pointercancel');
+  }
+  function finishPaletteDrag(event,cancelled){
+    if(!dragState)return;
     const state=dragState;
     dragState=null;
     document.removeEventListener('pointermove',onDragMove);
@@ -2207,19 +2214,19 @@
     document.removeEventListener('pointercancel',onDragEnd);
     clearTimeout(state.holdTimer);
     if(state.sourceEl&&state.captured){
-      try{state.sourceEl.releasePointerCapture(event.pointerId);}catch(e){}
+      try{if(!state.sourceEl.hasPointerCapture||state.sourceEl.hasPointerCapture(state.pointerId))state.sourceEl.releasePointerCapture(state.pointerId);}catch(e){}
     }
-    const cancelled=event.type==='pointercancel';
     clearInsertIndicators();
     document.querySelectorAll('.palette-swatch.dragging').forEach(node=>node.classList.remove('dragging'));
     if(state.active&&!cancelled){
-      event.preventDefault();
+      if(event)event.preventDefault();
       if(state.lineMode==='slot'&&Number.isInteger(state.targetGroupStart)&&Number.isInteger(state.targetGroupEnd)&&Number.isInteger(state.targetLocalSlot)) reorderSwatchToSlot(state.id,state.targetGroupStart,state.targetGroupEnd,state.targetLocalSlot);
       else if(state.overId&&state.overId!==state.id) reorderSwatch(state.id,state.overId,state.side);
       setTimeout(()=>{suppressClick=false;},0);
       return;
     }
-    if(state.active) setTimeout(()=>{suppressClick=false;},0);
+    if(cancelled)suppressClick=false;
+    else if(state.active)setTimeout(()=>{suppressClick=false;},0);
   }
   function paletteDropItems(grid){
     return Array.from(grid.querySelectorAll('.palette-swatch:not(.dragging)')).filter(node=>!node.classList.contains('palette-drop-placeholder'));
@@ -2709,6 +2716,15 @@
     applyViewSettings(false);
     bindPalettePopupListeners();
   }
+  function cancelInterruptedPaletteInteraction(){
+    finishPaletteDrag(null,true);
+    finishPaletteListPointer(null,true);
+    if(advancedStyleDrag)finishAdvancedStyleDrag(null,true);
+    advancedStyleSuppressClick=false;
+  }
+  window.addEventListener('blur',cancelInterruptedPaletteInteraction);
+  window.addEventListener('pagehide',cancelInterruptedPaletteInteraction);
+  document.addEventListener('visibilitychange',()=>{if(document.hidden)cancelInterruptedPaletteInteraction();});
   function getAdvancedStyleOrder(){return advancedStyles.filter(item=>item&&!isAdvancedSeparator(item)&&item.type==='style').map(item=>item.id);}
   function restoreAdvancedStyleOrder(snapshot){const byId=new Map(advancedStyles.map(item=>[item.id,item])),ordered=(Array.isArray(snapshot)?snapshot:[]).map(id=>byId.get(id)).filter(Boolean),seen=new Set(ordered.map(item=>item.id));advancedStyles=ordered.concat(advancedStyles.filter(item=>!seen.has(item.id)));syncAdvancedRefs();notifyAdvancedStyleOrderChanged();render();persist();}
   function notifyAdvancedStyleOrderChanged(){window.dispatchEvent(new CustomEvent('advanced-palette-order-changed',{detail:{styleIds:getAdvancedStyleOrder()}}));}
