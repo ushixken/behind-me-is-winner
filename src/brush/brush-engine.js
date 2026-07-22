@@ -546,6 +546,11 @@ function _getLiveStrokePreview(){
   return _strokePreviewCanvas;
 }
 window._getLiveStrokePreview = _getLiveStrokePreview;
+window.addEventListener('project-loaded',()=>{
+  _aaDabCache.clear();_softRoundMaskCache.clear();_tipDabCache.clear();_stampCache.clear();
+  if(typeof window._invalidateTextureCache==='function')window._invalidateTextureCache();
+  _pendingDabs.length=0;_frameDirty=null;_strokeDirty=null;
+});
 
 // Exercise the same clipped live-stroke composition branch used by the first
 // painted dab without changing artwork or stroke state. CompositionPrewarm

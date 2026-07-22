@@ -77,12 +77,16 @@
   <div class="mb-item" id="mb-file">File
     <div class="dropdown" id="dd-file">
       <div class="dd-item" id="dd-new">New Project</div>
+      <div class="dd-item" id="dd-open-project">Open Project…</div>
+      <div class="dd-item" id="dd-export-project">Save Project…</div>
       <div class="dd-sep"></div>
       <div class="dd-item" id="dd-import-image">Import Image…</div>
       <div class="dd-sep"></div>
       <div class="dd-item" id="dd-export">Export PNG Sequence</div>
     </div>
   </div>
+
+  <input id="project-file-input" type="file" accept=".awproj,application/zip" hidden />
 
   <div class="mb-item" id="mb-edit">Edit
     <div class="dropdown" id="dd-edit">
@@ -1485,6 +1489,7 @@
 <script src="src/brush/brush-presets.js"></script>
 <script src="src/timeline/timeline.js"></script>
 <script src="src/core/layers.js"></script>
+<script src="src/core/project-io.js"></script>
 <script src="src/timeline/keyframe-switcher.js"></script>
 <script src="src/timeline/keyframe-exposure.js"></script>
 <script src="src/core/keybinds.js"></script>

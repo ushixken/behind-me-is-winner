@@ -327,7 +327,7 @@
     rememberSelection();
     return {version:2,palettes:palettes.map(p=>({id:p.id,name:p.name,advancedName:p.advancedName,swatches:p.swatches.map(exportSwatchData),selectedId:p.selectedId||null})),activePaletteId,advancedPalette:{version:ADVANCED_PALETTE_VERSION,enabled:advancedPaletteEnabled,styles:advancedStyles,activeStyleId:activeAdvancedStyleId},view:{normalPaletteSwatchSize:swatchSize,advancedPaletteSwatchSize,scrollTop:savedScrollTop,toolbarPaletteAttachment:toolbarPaletteAttachment?Object.assign({},toolbarPaletteAttachment):null,toolbarPaletteVisible,advancedPaletteEnabled}};
   }
-  function load(data){
+  function load(data,options){
     const payload=data&&typeof data==='object'?data:null;
     if(payload&&Array.isArray(payload.palettes)){
       palettes=payload.palettes.map((p,i)=>makePalette(p&&p.name||('Palette '+(i+1)),p&&p.swatches,p&&p.id,p&&p.selectedId,true,p&&p.advancedName)).filter(Boolean);
@@ -1154,7 +1154,7 @@
       if(neighbor)syncAdvancedStyleToColorPanel(neighbor);
     }
     render();
-    persist();
+    if(!options||options.persist!==false)persist();
     return true;
   }
   function toggleAdvancedStyleLock(style){
