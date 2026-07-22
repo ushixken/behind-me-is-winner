@@ -206,6 +206,7 @@ function setTool(t,lbl){
   // before the new tool takes over.
   if(tool==='transform'&&t!=='transform'&&typeof commitTransformTool==='function') commitTransformTool();
   if(tool==='lasso'&&t!=='lasso'&&window.LassoSelection) LassoSelection.cancel();
+  if(tool==='lasso-fill'&&t!=='lasso-fill'&&window.LassoFill) LassoFill.cancel();
   tool=t;
   if((t==='eyedropper'||previousTool==='eyedropper')&&typeof _baseCursorCSS==='function')activeC.style.cursor=_baseCursorCSS();
   _syncBrushPresetsDocker(t);
