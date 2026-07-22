@@ -16,6 +16,8 @@ function floodFill(x,y,fc){
 
   const pixelCount=CW*CH;
   const visited=new Uint8Array(pixelCount);
+  const region=new Uint8Array(pixelCount);
+  let minFillX=CW,minFillY=CH,maxFillX=-1,maxFillY=-1;
   const queue=new Int32Array(pixelCount);
   let head=0,tail=0;
   const start=py*CW+px;
@@ -33,7 +35,7 @@ function floodFill(x,y,fc){
       d[j]===tr&&d[j+1]===tg&&d[j+2]===tb&&d[j+3]===ta;
     if(!matches) continue;
 
-    d[j]=fr;d[j+1]=fg;d[j+2]=fb;d[j+3]=255;
+    region[pixel]=1;if(cx<minFillX)minFillX=cx;if(cx>maxFillX)maxFillX=cx;if(cy<minFillY)minFillY=cy;if(cy>maxFillY)maxFillY=cy;
 
     if(cx>0){
       const left=pixel-1;
@@ -51,6 +53,15 @@ function floodFill(x,y,fc){
       const down=pixel+CW;
       if(!visited[down]){visited[down]=1;queue[tail++]=down;}
     }
+  }
+  if(maxFillX<minFillX||maxFillY<minFillY)return;
+  const dirtyBounds={x:minFillX,y:minFillY,w:maxFillX-minFillX+1,h:maxFillY-minFillY+1};
+  const fillSettings=window.FillMaskEngine?FillMaskEngine.getSettings():null;
+  if(fillSettings&&fillSettings.antialiasing&&window.BucketFillAA){
+    BucketFillAA.apply(region,dirtyBounds,fc);return;
+  }
+  for(let row=minFillY;row<=maxFillY;row++)for(let col=minFillX;col<=maxFillX;col++)if(region[row*CW+col]){
+    const offset=(row*CW+col)*4;d[offset]=fr;d[offset+1]=fg;d[offset+2]=fb;d[offset+3]=255;
   }
   ctx.putImageData(img,0,0);
   if(beforeSmartFill&&typeof applyStyleDiffFromBefore==='function'){

@@ -192,14 +192,14 @@
   }
 
   function renderFillOptions(body,group,activeSubTool){
-    const state=window.FillMaskEngine?FillMaskEngine.getSettings():{antialiasing:false,quality:'medium'},bucket=!!(activeSubTool&&activeSubTool.id==='bucket-fill');
+    const state=window.FillMaskEngine?FillMaskEngine.getSettings():{antialiasing:true,quality:'medium'};
     const section=document.createElement('div');section.className='tool-group-inline-options tool-aa-controls';
     const row=document.createElement('label');row.className='tool-group-option-row compact tool-aa-toggle';
-    const input=document.createElement('input');input.type='checkbox';input.className='ts-check';input.checked=!!state.antialiasing;input.disabled=bucket;
-    const text=document.createElement('span');text.textContent='Anti-alias (AA)';row.title=bucket?'Bucket Fill keeps its existing edge behavior.':'Smooths only the artwork edge; shape masks remain binary.';row.append(input,text);
+    const input=document.createElement('input');input.type='checkbox';input.className='ts-check';input.checked=!!state.antialiasing;
+    const text=document.createElement('span');text.textContent='Anti-alias (AA)';row.title='Smooths only the painted edge; shape and selection masks remain binary.';row.append(input,text);
     const select=document.createElement('select');select.className='ts-select tool-aa-quality';select.setAttribute('aria-label','Fill antialiasing quality');
     [['weak','Weak'],['medium','Medium'],['strong','Strong']].forEach(([value,label])=>{const option=document.createElement('option');option.value=value;option.textContent=label;select.appendChild(option);});
-    select.value=state.quality||'medium';select.disabled=bucket||!input.checked;
+    select.value=state.quality||'medium';select.disabled=!input.checked;
     input.onchange=()=>{select.disabled=!input.checked;if(window.FillMaskEngine)FillMaskEngine.setAntialiasing(input.checked);};select.onchange=()=>{if(window.FillMaskEngine)FillMaskEngine.setQuality(select.value);};
     section.append(row,select);body.appendChild(section);
   }
