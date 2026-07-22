@@ -523,7 +523,20 @@ function onKFDragUp(){
   dragKF=null;
   renderTimeline();
 }
-function renderTimeline(){const profiler=window.BrushLatencyProfiler&&window.BrushLatencyProfiler.enabled?window.BrushLatencyProfiler:null,total=profiler?performance.now():0,marksBefore=typeof _drawingMarkLookupCount==='number'?_drawingMarkLookupCount:0,markDurationBefore=typeof _drawingMarkLookupDuration==='number'?_drawingMarkLookupDuration:0;renderRuler();const rowsStart=profiler?performance.now():0;renderRows();if(profiler){const lookups=(typeof _drawingMarkLookupCount==='number'?_drawingMarkLookupCount:marksBefore)-marksBefore,markDuration=(typeof _drawingMarkLookupDuration==='number'?_drawingMarkLookupDuration:markDurationBefore)-markDurationBefore;profiler.measure('timeline-rows-render',rowsStart,{drawingMarkLookups:lookups});profiler.recordDuration('drawing-mark-lookup-work',markDuration,{lookups,updates:0});}renderLabelCol();updatePlayhead();updateStatus();updateRangeOverlay();updateTlHScroll();if(profiler)profiler.measure('timeline-refresh-total',total);}
+function renderTimeline(){
+  const profiler=window.BrushLatencyProfiler&&window.BrushLatencyProfiler.enabled?window.BrushLatencyProfiler:null,total=profiler?performance.now():0,probe=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?window.FirstDabLatencyProbe:null,probeTotal=probe?performance.now():0,marksBefore=typeof _drawingMarkLookupCount==='number'?_drawingMarkLookupCount:0,markDurationBefore=typeof _drawingMarkLookupDuration==='number'?_drawingMarkLookupDuration:0;
+  let stage=probe?performance.now():0;renderRuler();if(probe)probe.renderTimelineStage('renderTimelineGridDrawing',stage);
+  const rowsStart=profiler?performance.now():0;stage=probe?performance.now():0;renderRows();
+  const lookups=(typeof _drawingMarkLookupCount==='number'?_drawingMarkLookupCount:marksBefore)-marksBefore,markDuration=(typeof _drawingMarkLookupDuration==='number'?_drawingMarkLookupDuration:markDurationBefore)-markDurationBefore;
+  if(probe){const rowsDuration=performance.now()-stage;probe.renderTimelineStage('renderTimelineDrawingMarks',stage,Math.min(rowsDuration,Math.max(0,markDuration)));probe.renderTimelineStage('renderTimelineFrameDrawing',stage,Math.max(0,rowsDuration-markDuration));}
+  if(profiler){profiler.measure('timeline-rows-render',rowsStart,{drawingMarkLookups:lookups});profiler.recordDuration('drawing-mark-lookup-work',markDuration,{lookups,updates:0});}
+  stage=probe?performance.now():0;renderLabelCol();if(probe)probe.renderTimelineStage('renderTimelineLayerDrawing',stage);
+  stage=probe?performance.now():0;updatePlayhead();if(probe)probe.renderTimelineStage('renderTimelinePlayhead',stage);
+  stage=probe?performance.now():0;updateStatus();if(probe)probe.renderTimelineStage('renderTimelineTextRendering',stage);
+  stage=probe?performance.now():0;updateRangeOverlay();if(probe)probe.renderTimelineStage('renderTimelineSelectionsHighlights',stage);
+  stage=probe?performance.now():0;updateTlHScroll();if(probe)probe.renderTimelineStage('renderTimelineScrollbarRendering',stage);
+  if(probe)probe.finishRenderTimeline(probeTotal);if(profiler)profiler.measure('timeline-refresh-total',total);
+}
 
 // ── Shared Timeline zoom state helpers ──────────────────────────────────────
 // Single source of truth for the safe zoom range and for "zoom to a given

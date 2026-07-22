@@ -1410,32 +1410,30 @@ function applyToolPreset(json){
     if(typeof _syncTipUI==='function') _syncTipUI();
   }
 
-  //  Restore texture image
+  // Restore texture image with an independent generation guard. Clear first
+  // so a failed or superseded load cannot leave another preset's texture live.
+  const textureLoadGeneration=(window._brushTextureLoadGeneration||0)+1;
+  window._brushTextureLoadGeneration=textureLoadGeneration;
+  if(typeof window.clearBrushTexture==='function') window.clearBrushTexture();
+  if(typeof _syncTextureUI==='function') _syncTextureUI();
   if(json['ts-texture-dataurl']){
     _dataURLToCanvas(json['ts-texture-dataurl']).then(c=>{
+      if(window._brushTextureLoadGeneration!==textureLoadGeneration)return;
       if(typeof window.setBrushTexture==='function') window.setBrushTexture(c);
       const strengthValue=json['ts-texture-strength']??json['ts-texture-depth-custom']??json['ts-texture-depth'];
-      const strength=strengthValue!=null?(+strengthValue/100):1.0;
-      window.brushTextureStrength=strength;
-      // Restore buildup — default 1.0 (100%) for legacy presets
-      const buildup=json['ts-texture-buildup-custom']!=null?(+json['ts-texture-buildup-custom']/100):1.0;
-      window.brushTextureBuildup=buildup;
-      // Restore texture scale — default to 1.0 (100%) for legacy presets
-      if(json['ts-texture-scale']!=null){
-        window.brushTextureScale=+json['ts-texture-scale']/100;
-      } else {
-        window.brushTextureScale=1.0;
-      }
-      // Restore invert/brightness/contrast — default to neutral for legacy presets
-      window.brushTextureInvert = !!json['ts-texture-invert'];
-      window.brushTextureBrightness = json['ts-texture-brightness']!=null?+json['ts-texture-brightness']:0;
-      window.brushTextureContrast = json['ts-texture-contrast']!=null?+json['ts-texture-contrast']:0;
+      window.brushTextureStrength=strengthValue!=null?(+strengthValue/100):1.0;
+      window.brushTextureBuildup=json['ts-texture-buildup-custom']!=null?(+json['ts-texture-buildup-custom']/100):1.0;
+      window.brushTextureScale=json['ts-texture-scale']!=null?(+json['ts-texture-scale']/100):1.0;
+      window.brushTextureInvert=!!json['ts-texture-invert'];
+      window.brushTextureBrightness=json['ts-texture-brightness']!=null?+json['ts-texture-brightness']:0;
+      window.brushTextureContrast=json['ts-texture-contrast']!=null?+json['ts-texture-contrast']:0;
       if(typeof window._invalidateTextureCache==='function') window._invalidateTextureCache();
       if(typeof window._syncTextureUI==='function') window._syncTextureUI();
-    }).catch(()=>{});
-  } else {
-    if(typeof window.clearBrushTexture==='function') window.clearBrushTexture();
-    if(typeof window._syncTextureUI==='function') window._syncTextureUI();
+    },()=>{
+      if(window._brushTextureLoadGeneration!==textureLoadGeneration)return;
+      if(typeof window.clearBrushTexture==='function') window.clearBrushTexture();
+      if(typeof window._syncTextureUI==='function') window._syncTextureUI();
+    });
   }
 }
 
@@ -1640,8 +1638,21 @@ function applyToolPreset(json){
       }
       if(ps['ts-texture-url'] && !existing['ts-texture-dataurl']){
         existing['ts-texture-url'] = ps['ts-texture-url'];
+      } else if(!ps['ts-texture-url']&&!ps['ts-texture-dataurl']&&!preset.custom){
+        delete existing['ts-texture-url'];
+        delete existing['ts-texture-dataurl'];
       }
     }
+  }
+  function _isPresetTextureDeclared(preset){
+    const settings=preset&&preset.settings||{};
+    return !!(settings['ts-texture-dataurl']||settings['ts-texture-url']);
+  }
+  function _isolatePresetTextureSettings(preset,settings){
+    if(!preset||preset.custom||_isPresetTextureDeclared(preset))return settings;
+    delete settings['ts-texture-dataurl'];
+    delete settings['ts-texture-url'];
+    return settings;
   }
   // Seed built-ins immediately
   BRUSH_PRESETS.forEach(_seedPresetSettings);
@@ -2748,10 +2759,13 @@ function applyToolPreset(json){
       if(typeof window._syncTipUI==='function') window._syncTipUI();
     }
 
-    // Texture image: same pattern.
+    // Texture state is preset-owned. Clear the outgoing texture before any
+    // asynchronous work so a missing/slow asset can never render stale grain.
+    if(typeof window.clearBrushTexture==='function') window.clearBrushTexture();
+    if(typeof window._syncTextureUI==='function') window._syncTextureUI();
     if(textureSrc){
       const commitTexture=c=>{
-        if(activationVersion!==_brushRuntimeActivationVersion) return;
+        if(activationVersion!==_brushRuntimeActivationVersion) return false;
         if(typeof window.setBrushTexture==='function') window.setBrushTexture(c);
         const depth=s['ts-texture-strength']!=null?(+s['ts-texture-strength']/100):1.0;
         window.brushTextureStrength=depth;
@@ -2763,12 +2777,16 @@ function applyToolPreset(json){
         window.brushTextureContrast=s['ts-texture-contrast']!=null?+s['ts-texture-contrast']:0;
         if(typeof window._invalidateTextureCache==='function') window._invalidateTextureCache();
         if(typeof window._syncTextureUI==='function') window._syncTextureUI();
+        return true;
+      };
+      const failTexture=()=>{
+        if(activationVersion!==_brushRuntimeActivationVersion) return false;
+        if(typeof window.clearBrushTexture==='function') window.clearBrushTexture();
+        if(typeof window._syncTextureUI==='function') window._syncTextureUI();
+        return false;
       };
       if(runtimeAssets&&runtimeAssets.textureSrc===textureSrc&&runtimeAssets.textureCanvas) commitTexture(runtimeAssets.textureCanvas);
-      else if(typeof _dataURLToCanvas==='function') pendingAssets.push(_dataURLToCanvas(textureSrc).then(commitTexture));
-    } else {
-      if(typeof window.clearBrushTexture==='function') window.clearBrushTexture();
-      if(typeof window._syncTextureUI==='function') window._syncTextureUI();
+      else if(typeof _dataURLToCanvas==='function') pendingAssets.push(_dataURLToCanvas(textureSrc).then(commitTexture,failTexture));
     }
     const completeActivation=()=>{
       if(activationVersion!==_brushRuntimeActivationVersion) return false;
@@ -2828,7 +2846,7 @@ function applyToolPreset(json){
     _seedPresetSettings(preset,t);
     _activePresetId=presetId;
     window._activeBrushPresetId = _activePresetId;
-    const savedSettings=normalizeBrushSettings(Object.assign({},preset.settings||{},_presetSettings[_presetSettingsKey(presetId,t)]||{}));
+    const savedSettings=_isolatePresetTextureSettings(preset,normalizeBrushSettings(Object.assign({},preset.settings||{},_presetSettings[_presetSettingsKey(presetId,t)]||{})));
     // Non-custom presets: structural settings always come from the preset definition.
     const PRESET_STRUCTURAL_KEYS=['ts-taper-mode','ts-start-taper','ts-end-taper','ts-min-size','ts-texture-scale','ts-texture-strength','ts-texture-buildup-custom','ts-texture-brightness','ts-texture-contrast','ts-texture-invert','ts-texture-each','ts-texture-mode','ts-texture-url'];
     if(!preset.custom && preset.settings){
@@ -2865,7 +2883,7 @@ function applyToolPreset(json){
 
     // Build a merged settings object: preset.settings as base, then any user-saved
     // tweaks on top, so the preset remembers whatever the user last set on it.
-    const savedSettings = normalizeBrushSettings(Object.assign({},p.settings||{},_presetSettings[_presetSettingsKey(p.id,targetTool)]||{}));
+    const savedSettings = _isolatePresetTextureSettings(p,normalizeBrushSettings(Object.assign({},p.settings||{},_presetSettings[_presetSettingsKey(p.id,targetTool)]||{})));
     // For non-custom (built-in / pack) presets, structural settings defined
     // in the preset itself always win over any stale localStorage capture.
     // This prevents a user accidentally turning off taper on Hard Round and
@@ -2942,11 +2960,9 @@ function applyToolPreset(json){
         if(allPresets().some(p=>p.id===id)) continue; // already loaded (e.g. hot-reload)
         const settings=builtinBrushSettings(Object.assign({},json.settings||{}));
         if(json.hasTip!==false) settings['ts-tip-url']=base+(json.tipFile||'tip.png');
-        if(json.hasTexture!==false && (json.hasTexture||json.textureFile||true)){
-          // hasTexture defaults to "try it, ignore failure" since the
-          // texture loader below already .catch()es a missing file quietly.
-          settings['ts-texture-url']=base+(json.textureFile||'texture.png');
-        }
+        const hasTexture=json.hasTexture===true||(json.hasTexture==null&&!!json.textureFile);
+        if(hasTexture) settings['ts-texture-url']=base+(json.textureFile||'texture.png');
+        else { delete settings['ts-texture-url']; delete settings['ts-texture-dataurl']; }
         const preset={
           id, name:json.name||slug, custom:false, pack:slug,
           preview:{ shape:(json.settings&&json.settings['ts-roundness']<60)?'ellipse':'circle',

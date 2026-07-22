@@ -70,6 +70,68 @@ const CustomTipCacheTrace=(function(){
   };
 })();
 window.CustomTipCacheTrace=CustomTipCacheTrace;
+const CustomFirstDabTrace=(function(){
+  let enabled=false,strokeSerial=0,active=null,nextLabel=null,dab=null,objectSerial=0;const strokes=[],ids=new WeakMap();
+  function objectId(value){if(!value||typeof value!=='object')return null;if(!ids.has(value))ids.set(value,'tip-'+(++objectSerial));return ids.get(value);}
+  function now(){return performance.now();}
+  function beginStroke(detail){if(!enabled)return;const t=now();active={id:++strokeSerial,label:nextLabel,startedAt:detail.entryAt||t,brush:detail.tip?'custom-tip':'procedural',presetId:detail.presetId||null,tipId:objectId(window.brushTipCanvas),tipVersion:window.brushTipVersion||0,timeline:[{name:'pointerdown-handler-entry',at:detail.entryAt||t},{name:'preset-settings-resolved',at:t,detail:detail.settings||null}],samples:[],samplesBeforeFirstDab:0,movementSamplesBeforeFirstDab:0,firstDabDispatched:false,dabs:[]};nextLabel=null;}
+  function endStroke(){if(!active)return;const prof=window.BrushLatencyProfiler&&window.BrushLatencyProfiler.latest?window.BrushLatencyProfiler.latest():null,visible=prof&&prof.points&&prof.points.find(point=>point.name==='first-display-presented');active.firstVisibleAt=visible?active.startedAt+visible.fromPointerDown:null;active.pointerdownToFirstVisible=visible?visible.fromPointerDown:null;active.duration=now()-active.startedAt;strokes.push(active);active=null;dab=null;}
+  function beginDab(detail){if(!active)return;dab={index:active.dabs.length+1,startedAt:now(),detail,stages:[]};active.dabs.push(dab);}
+  function endDab(){if(!dab)return;dab.duration=now()-dab.startedAt;dab=null;}
+  function stage(name,start,detail){if(!dab)return;dab.stages.push({name,duration:now()-start,detail:detail||null});}
+  function instant(name,detail){if(!dab)return;dab.stages.push({name,duration:0,detail:detail||null});}
+  function event(name,detail){if(!active)return;if(name==='brush-parameters-resolved'&&active.timeline.some(item=>item.name===name))return;const t=now();active.timeline.push({name,at:t,fromPointerdown:t-active.startedAt,detail:detail||null});}
+  function sample(detail){if(!active)return;const item=Object.assign({at:now(),fromPointerdown:now()-active.startedAt},detail||{});active.samples.push(item);if(!active.firstDabDispatched){active.samplesBeforeFirstDab++;if(item.source!=='pointerdown')active.movementSamplesBeforeFirstDab++;}}
+  function firstDabDispatch(detail){if(!active)return;active.firstDabDispatched=true;active.timeline.push({name:'first-dab-dispatch',at:now(),fromPointerdown:now()-active.startedAt,detail:Object.assign({samplesBeforeFirstDab:active.samplesBeforeFirstDab,movementSamplesBeforeFirstDab:active.movementSamplesBeforeFirstDab},detail||{})});}
+  function clear(){strokes.length=0;strokeSerial=0;active=null;dab=null;enabled=true;if(window.BrushLatencyProfiler){window.BrushLatencyProfiler.enable(true);window.BrushLatencyProfiler.clear();}return true;}
+  function compare(){const groups={};strokes.forEach(stroke=>{const key=stroke.brush+'|'+(stroke.label||'unlabelled'),first=stroke.dabs[0];if(!first)return;const group=groups[key]||(groups[key]={brush:stroke.brush,label:stroke.label||'unlabelled',trials:0,stages:{}});group.trials++;first.stages.forEach(item=>(group.stages[item.name]||(group.stages[item.name]=[])).push(item.duration));});return Object.values(groups).map(group=>{const out={brush:group.brush,label:group.label,trials:group.trials,stages:{}};Object.keys(group.stages).forEach(name=>{const a=group.stages[name].slice().sort((x,y)=>x-y);out.stages[name]={median:a[Math.ceil(a.length*.5)-1],min:a[0],max:a[a.length-1],p90:a[Math.ceil(a.length*.9)-1]};});return out;});}
+  return{clear,export(){return JSON.parse(JSON.stringify(strokes));},compare,labelNext(label){nextLabel=String(label);return nextLabel;},enable(value=true){enabled=!!value;return enabled;},beginStroke,endStroke,beginDab,endDab,stage,instant,event,sample,firstDabDispatch,objectId,get enabled(){return enabled;}};
+})();
+window.CustomFirstDabTrace=CustomFirstDabTrace;
+// Diagnostic-only first-dab latency probe. Disabled by default and never
+// changes cache, scheduling, or rendering decisions.
+const FirstDabLatencyProbe=(function(){
+  let enabled=false,serial=0,current=null,lastStrokeAt=0,tipPending=false,visiblePending=false;
+  const reports=[];
+  function now(){return performance.now();}
+  function begin(detail){
+    if(!enabled)return;
+    const at=detail&&detail.pointerdownAt||now(),idleMs=lastStrokeAt?at-lastStrokeAt:null;
+    current={stroke:++serial,timestamp:new Date().toISOString(),trigger:visiblePending?'tab-restore':tipPending?'preset-switch':idleMs!=null&&idleMs>=15000?'idle':serial>1?'warm':'unknown',idleMs,visibility:document.visibilityState,firstAfterVisible:visiblePending,firstAfterSetBrushTip:tipPending,presetId:window._activeBrushPresetId||null,tipVersion:window.brushTipVersion||0,layerType:detail&&detail.layerType||null,renderer:'unknown',tipCache:null,measurements:{},setupDetails:{},pointerdownAt:at,capturingDab:false,readyForPresentation:false};
+    visiblePending=false;tipPending=false;
+  }
+  function firstDabStart(){if(!current)return 0;current.capturingDab=true;current.firstDabAt=now();return current.firstDabAt;}
+  function firstDabEnd(start){if(!current||!current.capturingDab)return;current.measurements.stampDab=now()-start;current.firstDabGeneratedAt=now();current.capturingDab=false;}
+  function cache(detail){if(current&&current.capturingDab)current.tipCache=detail;}
+  function renderer(name,detail){if(current&&current.capturingDab){current.renderer=name;if(detail)Object.assign(current,detail);}}
+  function measure(name,start){if(current&&current.capturingDab&&start)current.measurements[name]=now()-start;}
+  function setupMeasure(name,start,detail){if(!current||!start)return;current.measurements[name]=(current.measurements[name]||0)+(now()-start);if(detail)Object.assign(current.setupDetails,detail);}
+  function ensureKeyStage(name,start){if(current&&start)current.measurements[name]=(current.measurements[name]||0)+(now()-start);}
+  function renderTimelineStage(name,start,duration){if(!current||!start)return;current.measurements[name]=(current.measurements[name]||0)+(duration==null?now()-start:duration);}
+  function finishRenderTimeline(start){if(!current||!start)return;const total=now()-start,names=['renderTimelineCanvasClear','renderTimelineBackgroundDrawing','renderTimelineGridDrawing','renderTimelineFrameDrawing','renderTimelineLayerDrawing','renderTimelineThumbnails','renderTimelineDrawingMarks','renderTimelinePlayhead','renderTimelineSelectionsHighlights','renderTimelineTextRendering','renderTimelineScrollbarRendering','renderTimelineOverlays'];names.forEach(name=>{if(current.measurements[name]==null)current.measurements[name]=0;});const measured=names.reduce((sum,name)=>sum+current.measurements[name],0),classified=Math.min(total,measured);current.measurements.renderTimeline=total;current.measurements.renderTimelineClassifiedTotal=classified;current.measurements.renderTimelineUnclassified=total-classified;}
+  function finishEnsureKey(start,created){if(!current||!start)return;const total=now()-start,names=['ensureKeyCanvasAllocation','ensureKeyFrameMapInsertion','ensureKeyActiveCanvasClear','ensureKeyCanvasCopyDrawImage','ensureKeyRecompose','ensureKeyUpdateOnion','ensureKeyRenderTimeline','ensureKeyUpdateStatus'];names.forEach(name=>{if(current.measurements[name]==null)current.measurements[name]=0;});const classified=names.reduce((sum,name)=>sum+current.measurements[name],0);current.measurements.ensureKey=total;current.measurements.ensureKeyClassifiedTotal=classified;current.measurements.ensureKeyUnclassified=Math.max(0,total-classified);current.setupDetails.ensureKeyCreatedNewKeyframe=!!created;}
+  function finalizeSetup(at){if(!current)return;const end=at||now(),total=end-current.pointerdownAt,names=['eventValidationAndPreventDefault','pendingPrewarmCancellation','latencyHooksInitialization','pressureAndStateInitialization','coordinateMappingAndTransforms','setPointerCapture','pushUndo','ensureKey','eraserSetup','taperSetup','selectionSetup','ensureStrokeCanvas','spacingAndFlowInitialization'],classified=names.reduce((sum,name)=>sum+(current.measurements[name]||0),0);current.measurements.pointerdownToStampDabStart=total;current.measurements.unclassifiedSetup=Math.max(0,total-classified);current.measurements.classifiedSetupTotal=classified;}
+  function beforeSchedule(){if(!current)return;const at=now();current.measurements.pointerdownToScheduleRecomposite=at-current.pointerdownAt;current.measurements.firstDabToScheduleRecomposite=current.firstDabGeneratedAt?at-current.firstDabGeneratedAt:null;current.readyForPresentation=true;}
+  function rafScheduled(at){if(current&&current.readyForPresentation)current.rafScheduledAt=at;}
+  function rafCallback(at){if(current&&current.readyForPresentation)current.measurements.rafWait=at-(current.rafScheduledAt||at);}
+  function recomposeStart(){return current&&current.readyForPresentation?now():0;}
+  function displayComplete(recomposeStart,displayBlit){
+    if(!current||!current.readyForPresentation)return;
+    current.measurements.compCToDisplayCDrawImage=displayBlit;
+    current.measurements.recompose=now()-recomposeStart;
+    current.measurements.totalToDisplayDrawImageReturn=now()-current.pointerdownAt;
+    const report=current;current=null;reports.push(report);
+    const cacheState=report.tipCache?(report.tipCache.hit?'HIT':'MISS'):'N/A',m=report.measurements;
+    console.groupCollapsed('[BrushLatency] stroke #'+report.stroke+' | trigger='+report.trigger);
+    console.log(report);
+    console.table(Object.assign({renderer:report.renderer,tipCache:cacheState},m));
+    console.log('[BrushLatencySummary] trigger='+report.trigger+' renderer='+report.renderer+' tipCache='+cacheState+' buildTipStamp='+(m.buildTipStamp||0).toFixed(3)+' stampDraw='+(m.cachedStampDrawImage||0).toFixed(3)+' pointerdownToSchedule='+(m.pointerdownToScheduleRecomposite||0).toFixed(3)+' rafWait='+(m.rafWait||0).toFixed(3)+' recompose='+(m.recompose||0).toFixed(3)+' displayBlit='+(m.compCToDisplayCDrawImage||0).toFixed(3)+' totalToDisplayCall='+(m.totalToDisplayDrawImageReturn||0).toFixed(3));
+    console.groupEnd();
+  }
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)visiblePending=true;});
+  return{enable(value=true){enabled=!!value;return enabled;},get enabled(){return enabled;},begin,firstDabStart,firstDabEnd,cache,renderer,measure,setupMeasure,ensureKeyStage,finishEnsureKey,renderTimelineStage,finishRenderTimeline,finalizeSetup,beforeSchedule,rafScheduled,rafCallback,recomposeStart,displayComplete,tipChanged(){if(enabled)tipPending=true;},strokeComplete(){if(enabled)lastStrokeAt=now();},reports(){return JSON.parse(JSON.stringify(reports));},clear(){reports.length=0;serial=0;current=null;lastStrokeAt=0;tipPending=false;visiblePending=false;return true;}};
+})();
+window.FirstDabLatencyProbe=FirstDabLatencyProbe;
 window.brushTipCanvas   = null;   // HTMLCanvasElement | null
 window.brushTipVersion  = 0;      // integer, incremented on each tip change
 window.brushTipReferenceDiameter = null;
@@ -853,6 +915,8 @@ const _TIP_DAB_CACHE_MAX=32;
 // Build a stamp canvas pre-shaped by the current brushTipCanvas.
 // Returns {canvas,w,h} Ã¢â‚¬â€ same contract as _buildAAStamp.
 function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
+  const latencyProbe=window.FirstDabLatencyProbe,latencyBuildStart=latencyProbe&&latencyProbe.enabled?performance.now():0;
+  const trace=window.CustomFirstDabTrace,lookupStart=trace&&trace.enabled?performance.now():0,generationStart=lookupStart;
   const tipC=window.brushTipCanvas;
   const tipV=tipC?(window.brushTipVersion||0):-1;
   const softAlpha=!!window.brushTipSoftAlpha;
@@ -876,8 +940,10 @@ function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   const key=r.toFixed(2)+'|'+rgb.join(',')+'|'+alpha.toFixed(2)+'|'+composite+'|'+
             hardness.toFixed(2)+'|t'+tipV+'|'+(softAlpha?'s':'h')+'|'+tipMode+'|rd'+tipRoundness.toFixed(3);
   const hit=_tipDabCache.get(key);
+  if(latencyProbe&&latencyProbe.enabled)latencyProbe.cache({key,hit:!!hit,sizeBeforeLookup:_tipDabCache.size});
+  if(trace&&trace.enabled){trace.stage('custom-tip-cache-lookup',lookupStart,{tipId:trace.objectId(tipC),tipVersion:tipV,invalidationReason:hit?null:(_tipAlphaInvalidationReason||'stamp-key-miss')});trace.instant('stamp-cache-lookup',{hit:!!hit,key,scaleBucket:r.toFixed(2),rotationBucket:Math.round(_viewAdjustedTipRotation()*180/Math.PI),roundnessBucket:tipRoundness.toFixed(3)});}
   const tipPerf=_brushPerf();if(tipPerf)tipPerf.point(hit?'tip-stamp-cache-hit':'tip-stamp-cache-miss',{key});
-  if(hit) return hit;
+  if(hit){if(latencyProbe&&latencyProbe.enabled){latencyProbe.renderer('custom-stamp',{effectiveRadius:r,stampWidth:hit.w,stampHeight:hit.h});latencyProbe.measure('buildTipStamp',latencyBuildStart);}return hit;}
 
   const rr=Math.max(0.05,r);
   // Preserve the tip's native aspect ratio instead of forcing it into a
@@ -923,14 +989,17 @@ function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   const maskCtx=maskCanvas.getContext('2d',{willReadFrequently:true});
   maskCtx.imageSmoothingEnabled=true;
   maskCtx.imageSmoothingQuality='high';
-  maskCtx.drawImage(tipC,0,0,tipNativeW,tipNativeH,(w-dabW)/2,(h-dabH)/2,dabW,dabH);
-  const maskData=maskCtx.getImageData(0,0,w,h).data;
+  const scaleStart=trace&&trace.enabled?performance.now():0;maskCtx.drawImage(tipC,0,0,tipNativeW,tipNativeH,(w-dabW)/2,(h-dabH)/2,dabW,dabH);
+  if(trace&&trace.enabled)trace.stage('tip-scaling-resampling',scaleStart,{sourceWidth:tipNativeW,sourceHeight:tipNativeH,dabWidth:dabW,dabHeight:dabH,stampWidth:w,stampHeight:h,scaleBucket:r.toFixed(2)});
+  const maskReadStart=trace&&trace.enabled?performance.now():0,maskData=maskCtx.getImageData(0,0,w,h).data;
+  if(trace&&trace.enabled)trace.stage('get-image-data',maskReadStart,{source:'scaled-mask',width:w,height:h});
 
   let legacyAlphaOnlyMask=false;
   try{
     const sourceCtx=tipC.getContext('2d',{willReadFrequently:true});
     const sourceReadStart=performance.now();
     const sourceData=sourceCtx.getImageData(0,0,tipNativeW,tipNativeH).data;
+    if(trace&&trace.enabled)trace.stage('get-image-data',sourceReadStart,{source:'tip-source',width:tipNativeW,height:tipNativeH});
     if(window.CustomTipCacheTrace)window.CustomTipCacheTrace.record('direct-tip-source-read',{path:'_buildTipStamp',tipVersion:window.brushTipVersion||0,tipCanvasId:window.CustomTipCacheTrace.objectId(tipC,'tip-canvas'),width:tipNativeW,height:tipNativeH,getImageDataDuration:performance.now()-sourceReadStart});
     let maximumVisibleLuminance=0;
     for(let p=0;p<sourceData.length;p+=4){
@@ -979,11 +1048,14 @@ function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
     outputData[p]=cr; outputData[p+1]=cg; outputData[p+2]=cb;
     outputData[p+3]=Math.round(Math.min(1,alpha*tipAlpha)*255);
   }
-  tc.putImageData(output,0,0);
+  const outputCopyStart=trace&&trace.enabled?performance.now():0;tc.putImageData(output,0,0);
+  if(trace&&trace.enabled)trace.stage('temporary-canvas-copy',outputCopyStart,{operation:'putImageData',width:w,height:h});
 
   const stamp={canvas:tmp,w,h};
   if(_tipDabCache.size>=_TIP_DAB_CACHE_MAX) _tipDabCache.delete(_tipDabCache.keys().next().value);
   _tipDabCache.set(key,stamp);
+  if(latencyProbe&&latencyProbe.enabled){latencyProbe.renderer('custom-stamp',{effectiveRadius:r,stampWidth:w,stampHeight:h});latencyProbe.measure('buildTipStamp',latencyBuildStart);}
+  if(trace&&trace.enabled)trace.stage('stamp-generation',generationStart,{key,stampWidth:w,stampHeight:h,scaleBucket:r.toFixed(2),rotationBucket:Math.round(_viewAdjustedTipRotation()*180/Math.PI)});
   return stamp;
 }
 
@@ -1087,8 +1159,11 @@ function _strokeDabComposite(composite){
   return 'source-over';
 }
 function _drawUnifiedTipStamp(x,y,r,rgb,alpha,composite){
+  const trace=window.CustomFirstDabTrace,identityStart=trace&&trace.enabled?performance.now():0;
   const dc=(_inStroke && composite!=='erase')?_strokeCtx:ctx;
+  if(trace&&trace.enabled)trace.stage('custom-tip-identity-lookup',identityStart,{tipId:trace.objectId(window.brushTipCanvas),tipVersion:window.brushTipVersion||0});
   const stamp=_buildTipStamp(r,rgb,alpha,composite,brushHardness);
+  const transformStart=trace&&trace.enabled?performance.now():0;
   dc.save();
   dc.globalCompositeOperation=_strokeDabComposite(composite);
   dc.imageSmoothingEnabled=true;
@@ -1096,7 +1171,11 @@ function _drawUnifiedTipStamp(x,y,r,rgb,alpha,composite){
   const adjustedRotation=_viewAdjustedTipRotation();
   if(adjustedRotation) dc.rotate(adjustedRotation);
   if(window.brushTipFlipX||window.brushTipFlipY) dc.scale(window.brushTipFlipX?-1:1,window.brushTipFlipY?-1:1);
-  dc.drawImage(stamp.canvas,-stamp.w/2,-stamp.h/2);
+  if(trace&&trace.enabled)trace.stage('transformed-tip-generation',transformStart,{rotation:adjustedRotation,rotationBucket:Math.round(adjustedRotation*180/Math.PI),stampWidth:stamp.w,stampHeight:stamp.h});
+  const latencyDrawStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
+  const blendStart=trace&&trace.enabled?performance.now():0;dc.drawImage(stamp.canvas,-stamp.w/2,-stamp.h/2);
+  if(window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled)window.FirstDabLatencyProbe.measure('cachedStampDrawImage',latencyDrawStart);
+  if(trace&&trace.enabled)trace.stage('blend-dab-into-stroke-canvas',blendStart,{operation:'drawImage',stampWidth:stamp.w,stampHeight:stamp.h});
   dc.restore();
 }
 function _dabAAGpu(x,y,r,rgb,alpha,composite){
@@ -1333,6 +1412,7 @@ function _tipAlphaFromPixels(d,w,h){
   const legacy=maxLum<.01,buf=new Float32Array(w*h);for(let i=0,p=0;p<d.length;p+=4,i++){const a=d[p+3]/255,lum=(d[p]*.2126+d[p+1]*.7152+d[p+2]*.0722)/255;buf[i]=legacy?a:a*lum;}return{buf,legacy};
 }
 function _getTipAlphaBuffer(){
+  const alphaTrace=window.CustomFirstDabTrace,alphaLookupStart=alphaTrace&&alphaTrace.enabled?performance.now():0;
   const callStarted=performance.now(),tipC=window.brushTipCanvas;if(!tipC)return null;
   const v=window.brushTipVersion||0,w=tipC.width||1,h=tipC.height||1,trace=window.CustomTipCacheTrace,tipCanvasId=trace?trace.objectId(tipC,'tip-canvas'):null,cacheKey=v+'|'+tipCanvasId+'|'+w+'x'+h;
   const hit=_tipAlphaBufVersion===v&&_tipAlphaBufW===w&&_tipAlphaBufH===h,priorBuffer=_tipAlphaBuf,priorVersion=_tipAlphaBufVersion;let getImageDataDuration=0,alphaExtractionDuration=0,source='cached',allocated=false,resized=false;
@@ -1353,6 +1433,7 @@ function _getTipAlphaBuffer(){
     if(experiment)experiment.record('tip-alpha-buffer-initialized',{tipVersion:v,width:w,height:h,source,allocated,resized,totalDuration:performance.now()-totalStart});
   }
   const alphaBufferId=trace?trace.objectId(_tipAlphaBuf,'alpha-buffer'):null;
+  if(alphaTrace&&alphaTrace.enabled)alphaTrace.stage('alpha-buffer-cache-lookup',alphaLookupStart,{hit,tipVersion:v,width:w,height:h,bufferId:alphaTrace.objectId(_tipAlphaBuf),invalidationReason:hit?null:_tipAlphaInvalidationReason,getImageDataDuration,alphaExtractionDuration});
   if(trace)trace.tipCall({tipVersion:v,cacheKey,cacheHit:hit,invalidationReason:hit?null:_tipAlphaInvalidationReason,priorTipVersion:priorVersion,priorAlphaBufferId:trace.objectId(priorBuffer,'alpha-buffer'),alphaBufferId,alphaBufferReplaced:priorBuffer!==_tipAlphaBuf,tipCanvasId,width:w,height:h,getImageDataDuration,alphaExtractionDuration,source,totalCallDuration:performance.now()-callStarted});
   if(hit&&window.TipReadbackExperiment)window.TipReadbackExperiment.cacheHit(v);else _tipAlphaInvalidationReason=null;
   return{data:_tipAlphaBuf,w:_tipAlphaBufW,h:_tipAlphaBufH};
@@ -1367,6 +1448,7 @@ function _sampleTipAlphaBilinear(buf,w,h,u,v){
   return top+(bot-top)*fy;
 }
 function _dabTipTinyCoverage(x,y,r,rgb,alpha,composite){
+  if(window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled)window.FirstDabLatencyProbe.renderer('tiny-custom-tip',{effectiveRadius:r});
   const tipInfo=_getTipAlphaBuffer();
   if(!tipInfo){_dabAATinyCoverage(x,y,r,rgb,alpha,composite);return;}
   const dc=(_inStroke&&composite!=='erase')?_strokeCtx:ctx;
@@ -1542,8 +1624,14 @@ function _dabAliased(x,y,r,rgb,alpha,composite){
     dc.translate(x,y);
     if(adjustedRotation) dc.rotate(adjustedRotation);
     if(window.brushTipFlipX||window.brushTipFlipY) dc.scale(window.brushTipFlipX?-1:1,window.brushTipFlipY?-1:1);
+    const latencyDrawStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled&&window.brushTipCanvas?performance.now():0;
     dc.drawImage(stamp.canvas,-stamp.w/2,-stamp.h/2);
-  } else dc.drawImage(stamp.canvas,x0,y0);
+    if(latencyDrawStart)window.FirstDabLatencyProbe.measure('cachedStampDrawImage',latencyDrawStart);
+  } else {
+    const latencyDrawStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled&&window.brushTipCanvas?performance.now():0;
+    dc.drawImage(stamp.canvas,x0,y0);
+    if(latencyDrawStart)window.FirstDabLatencyProbe.measure('cachedStampDrawImage',latencyDrawStart);
+  }
   dc.restore();
 }
 
@@ -1999,9 +2087,12 @@ function _dabDirtyRadii(d){
   return {x,y};
 }
 function _drawDabNow(d){
+  const customTrace=window.CustomFirstDabTrace,customTraceStart=customTrace&&customTrace.enabled?performance.now():0;
+  if(customTrace&&customTrace.enabled)customTrace.beginDab({custom:!!window.brushTipCanvas,radius:d.r,rotation:d.rotation||0,roundness:d.roundness,tipId:customTrace.objectId(window.brushTipCanvas),tipVersion:window.brushTipVersion||0});
   const perf=_brushPerf(),perfStart=perf?performance.now():0;
   _activeDabRotation=window.brushTipCanvas?(d.rotation||0):0;
   _activeDabRoundness=window.brushTipCanvas&&d.roundness!=null?d.roundness:null;
+  if(window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled)window.FirstDabLatencyProbe.renderer(window.brushTipCanvas?'other-custom-tip-path':'procedural',{effectiveRadius:d.r});
   const dirtyRadius=_dabDirtyRadii(d);
   // Capture the exact destination rectangle before this destructive eraser
   // dab. The same rectangle is reused for coverage measurement and upload.
@@ -2026,6 +2117,7 @@ function _drawDabNow(d){
   _growDirtyRect(d.x,d.y,dirtyRadius.x,dirtyRadius.y);
   if(perf)perf.measure('dirty-rectangle-expansion',dirtyStart,{radiusX:dirtyRadius.x,radiusY:dirtyRadius.y,rect:_frameDirty&&{minX:_frameDirty.minX,minY:_frameDirty.minY,maxX:_frameDirty.maxX,maxY:_frameDirty.maxY}});
   if(perf)perf.measure('dab-rasterization',perfStart,{dabNumber:_strokeDabCount,radius:d.r,alpha:d.alpha,tip:!!window.brushTipCanvas,airbrush:!!window._brushAirbrush});
+  if(customTrace&&customTrace.enabled){customTrace.stage(window.brushTipCanvas?'custom-tip-dab-rasterization':'procedural-dab-rasterization',customTraceStart,{radius:d.r});customTrace.endDab();}
 }
 function _taperDistance(amount){return 320*amount;}
 function _queueDab(d){
@@ -2157,8 +2249,10 @@ function _resolveDabRotation(x,y){
 }
 
 function _stampDab(x,y,e){
+  const startTrace=window.CustomFirstDabTrace,startTraceAt=startTrace&&startTrace.enabled?performance.now():0;
   const perf=_brushPerf(),paramsStart=perf?performance.now():0;
   const {r,alpha}=_getEffectiveBrushParams(e);
+  if(startTrace&&startTrace.enabled)startTrace.event('brush-parameters-resolved',{duration:performance.now()-startTraceAt,radius:r,alpha});
   if(perf)perf.measure('brush-parameter-resolution',paramsStart,{dabNumber:_strokeDabCount});
   const isErase=tool==='eraser';
   const rgb=isErase?[0,0,0]:_hexToRGB(color);
@@ -2564,9 +2658,16 @@ function _flushCurveTail(e){
 // That full-stack re-flatten on every single input event is the main
 // reason this felt laggy compared to TVPaint even WITH antialiasing on.
 // Fix: coalesce to at most one recomposite per animation frame.
-let _recompRAF=false,_recompRAFHandle=0,_recompGeneration=0,_recompCoalescedRequests=0;
+let _recompRAF=false,_recompRAFHandle=0,_recompGeneration=0,_recompCoalescedRequests=0,_deferredKeyVisualRefreshAfterNextPresentation=false;
+function _flushDeferredKeyVisualRefreshAfterPresentation(){
+  if(!_deferredKeyVisualRefreshAfterNextPresentation)return;
+  _deferredKeyVisualRefreshAfterNextPresentation=false;
+  if(window._scheduleDeferredKeyVisualRefreshAfterPresentation)window._scheduleDeferredKeyVisualRefreshAfterPresentation();
+}
 function _scheduleRecomposite(options){
   const firstDab=!!(options&&options.firstDab),perf=_brushPerf(),firstDabExperiment=window.BrushFirstDabExperiment,legacyExperiment=window.KeyframeLatencyExperiment&&window.KeyframeLatencyExperiment.active?window.KeyframeLatencyExperiment:window.BrushRafExperiment,experiment=firstDabExperiment||legacyExperiment;
+  if(firstDab)_deferredKeyVisualRefreshAfterNextPresentation=true;
+  if(firstDab&&window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled)window.FirstDabLatencyProbe.beforeSchedule();
   if(perf)perf.point('recomposite-requested',{firstDab,rafAlreadyPending:_recompRAF,visibility:document.visibilityState,focused:document.hasFocus(),framePhaseMs:performance.now()%16.67});
   if(experiment)experiment.noteRecompositeRequest({firstDab,rafAlreadyPending:_recompRAF});
   const decision=firstDabExperiment?firstDabExperiment.decide({firstDab,rafAlreadyPending:_recompRAF}):null;
@@ -2577,6 +2678,7 @@ function _scheduleRecomposite(options){
     const rect=(drawing||_inStroke)?_consumeDirtyRect():null;
     if(perf)perf.point('first-dab-immediate-recomposite',{mode:firstDabExperiment?firstDabExperiment.mode:experiment.mode,rect,scheduledWork});
     const immediateStart=performance.now();_flushLiveColorEraserPreview();recomposite(curLayer,curFrame,rect);const immediateDuration=performance.now()-immediateStart;
+    _flushDeferredKeyVisualRefreshAfterPresentation();
     if(perf)perf.recordDuration('synchronous-first-dab-recomposite',immediateDuration,{rect,scheduledWork});
     if(firstDabExperiment)firstDabExperiment.notePresentation({kind:'synchronous-first-dab',rect,duration:immediateDuration,scheduledWork});return;
   }
@@ -2585,17 +2687,20 @@ function _scheduleRecomposite(options){
   const generation=_recompGeneration,layerIndex=curLayer,frameIndex=curFrame,sessionId=_activeStrokeSession;
   _traceStrokeLifecycle('recomposite-scheduled',{sessionId,sourceLayer:layerIndex,sourceFrame:frameIndex});
   const scheduleProfiler=_brushPerf(),scheduledAt=performance.now(),phase=scheduledAt%16.67,estimatedNextDeadlineMs=16.67-phase;
+  if(firstDab&&window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled)window.FirstDabLatencyProbe.rafScheduled(scheduledAt);
   if(scheduleProfiler)scheduleProfiler.point('recomposite-raf-scheduled',{firstDab,rafAlreadyPending:false,visibility:document.visibilityState,focused:document.hasFocus(),framePhaseMs:phase,estimatedNextDeadlineMs,intentionallyDeferred:!!firstDab});
   const rafState=experiment?experiment.rafState():null;
   _recompRAFHandle=requestAnimationFrame(()=>{
     const callbackAt=performance.now(),wait=callbackAt-scheduledAt,coalesced=_recompCoalescedRequests;
+    if(firstDab&&window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled)window.FirstDabLatencyProbe.rafCallback(callbackAt);
     if(scheduleProfiler){scheduleProfiler.point('recomposite-raf-callback-begin',{waitMs:wait,coalescedRequests:coalesced,framePhaseMs:callbackAt%16.67,estimatedMissedUpcomingDeadline:wait>estimatedNextDeadlineMs+1,anotherAppRafCallbackRanFirst:experiment?experiment.anotherRafRanFirst(rafState):null});scheduleProfiler.measure('raf-wakeup-wait',scheduledAt,{coalescedRequests:coalesced});}
     if(experiment)experiment.noteRafCallback({scheduledAt,callbackAt,waitMs:wait,coalescedRequests:coalesced,estimatedNextDeadlineMs,estimatedMissedUpcomingDeadline:wait>estimatedNextDeadlineMs+1,anotherAppRafCallbackRanFirst:experiment.anotherRafRanFirst(rafState)});
-    if(generation!==_recompGeneration){_traceStrokeLifecycle('recomposite-rejected',{sessionId,reason:'generation',sourceLayer:layerIndex,sourceFrame:frameIndex});return;}
+    if(generation!==_recompGeneration){_traceStrokeLifecycle('recomposite-rejected',{sessionId,reason:'generation',sourceLayer:layerIndex,sourceFrame:frameIndex});_flushDeferredKeyVisualRefreshAfterPresentation();return;}
     _recompRAF=false;_recompRAFHandle=0;_recompCoalescedRequests=0;
-    if(curLayer!==layerIndex||curFrame!==frameIndex){_traceStrokeLifecycle('recomposite-rejected',{sessionId,reason:'artwork-changed',sourceLayer:layerIndex,sourceFrame:frameIndex});return;}
+    if(curLayer!==layerIndex||curFrame!==frameIndex){_traceStrokeLifecycle('recomposite-rejected',{sessionId,reason:'artwork-changed',sourceLayer:layerIndex,sourceFrame:frameIndex});_flushDeferredKeyVisualRefreshAfterPresentation();return;}
     const rect=(drawing||_inStroke)?_consumeDirtyRect():null;
     const scheduledStart=performance.now();_flushLiveColorEraserPreview();recomposite(layerIndex,frameIndex,rect);const scheduledDuration=performance.now()-scheduledStart;
+    _flushDeferredKeyVisualRefreshAfterPresentation();
     if(scheduleProfiler)scheduleProfiler.recordDuration('scheduled-recomposite-duration',scheduledDuration,{rect,firstDab});
     if(firstDabExperiment&&firstDab)firstDabExperiment.notePresentation({kind:'scheduled-first-dab',rect,duration:scheduledDuration,scheduledWork:'used'});
   });
@@ -3126,6 +3231,7 @@ window.setBrushTip=function(canvas,referenceDiameter,invalidationReason){
   _stampCache.clear();
   _tipAlphaInvalidationReason=invalidationReason||'setBrushTip-call';
   if(trace)trace.invalidated({reason:_tipAlphaInvalidationReason,previousVersion,tipVersion:window.brushTipVersion,previousTipCanvasId:trace.objectId(previousCanvas,'tip-canvas'),tipCanvasId:trace.objectId(window.brushTipCanvas,'tip-canvas'),sameCanvas:previousCanvas===window.brushTipCanvas,alphaBufferId:trace.objectId(previousAlphaBuffer,'alpha-buffer'),stack:(new Error()).stack});
+  if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.tipChanged();
 };
 window.clearBrushTip=function(){
   window.setBrushTip(null,null,'clearBrushTip');
@@ -3185,6 +3291,8 @@ function _sampleVisibleCanvasColor(e){
 
 
 activeC.addEventListener('pointerdown',e=>{
+  const diagnosticPointerdownEntry=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
+  const customTraceEntry=window.CustomFirstDabTrace&&window.CustomFirstDabTrace.enabled?performance.now():0;
   // e.button can be -1 on some tablet drivers for pen primary contact; use e.buttons&1 instead
   if(activeGroupId||panning||(typeof _zoomDrag!=='undefined'&&_zoomDrag)||spaceHeld||tool==='transform') return;
   if(e.pointerType==='pen'?(!(e.buttons&1)):(e.button!==0)) return;
@@ -3194,16 +3302,24 @@ activeC.addEventListener('pointerdown',e=>{
   if(tool!=='brush'&&tool!=='eraser'&&tool!=='fill'&&tool!=='line') return;
   // Prevent browser from hijacking tablet/stylus events (scroll, pan, zoom)
   e.preventDefault();
+  if((tool==='brush'||tool==='eraser')&&window.FirstDabLatencyProbe){window.FirstDabLatencyProbe.begin({layerType:layers[curLayer]&&layers[curLayer].type,pointerdownAt:diagnosticPointerdownEntry});window.FirstDabLatencyProbe.setupMeasure('eventValidationAndPreventDefault',diagnosticPointerdownEntry);}
+  let diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
   if(window.CompositionPrewarm)window.CompositionPrewarm.beforeStroke();
+  if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('pendingPrewarmCancellation',diagnosticSetupStart);
+  diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
   const latencyProfiler=_brushPerf();
   if(latencyProfiler)latencyProfiler.startStroke({tool,pointerType:e.pointerType,presetId:window._activeBrushPresetId||null,size:getBrushSize(),flow:brushFlow,opacity:brushOpacity,hardness:brushHardness,tip:!!window.brushTipCanvas,texture:!!window.brushTextureEnabled,airbrush:!!window._brushAirbrush,layerType:layers[curLayer]&&layers[curLayer].type,caches:{analytic:_aaDabCache.size,softRound:_softRoundMaskCache.size,tip:_tipDabCache.size},buffers:{stroke:!!_strokeCanvas,preview:!!_strokePreviewCanvas}});
   if(window.TipReadbackExperiment)window.TipReadbackExperiment.strokeStart();
+  if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.beginStroke({entryAt:customTraceEntry,tip:!!window.brushTipCanvas,presetId:window._activeBrushPresetId||null,settings:{size:getBrushSize(),spacing:window.brushSpacing,hardness:brushHardness,opacity:brushOpacity,flow:brushFlow,pressureSize:window._brushPressureSize,pressureOpacity:window._brushPressureOpacity,zoom:typeof zoom==='number'?zoom:null}});
+  if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.event('stroke-state-initialization-begins');
   if(window.CustomTipCacheTrace)window.CustomTipCacheTrace.strokeStart();
   if(latencyProfiler){latencyProfiler.point('pointerdown-received',{visibility:document.visibilityState,focused:document.hasFocus(),framePhaseMs:performance.now()%16.67});latencyProfiler.point('stroke-initialization-begins');}
   if(window.BrushRafExperiment)window.BrushRafExperiment.strokeBegins({layerIndex:curLayer,frameIndex:curFrame,layerType:layers[curLayer]&&layers[curLayer].type});
   if(window.BrushFirstDabExperiment)window.BrushFirstDabExperiment.strokeBegins({layerIndex:curLayer,frameIndex:curFrame,layerType:layers[curLayer]&&layers[curLayer].type});
   if(window.KeyframeLatencyExperiment)window.KeyframeLatencyExperiment.strokeBegins({layerIndex:curLayer,frameIndex:curFrame,layerType:layers[curLayer]&&layers[curLayer].type});
+  if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('latencyHooksInitialization',diagnosticSetupStart);
   const inputStateStart=latencyProfiler?performance.now():0;
+  diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
   _isDrawingWithPen = (e.pointerType === 'pen');
   _strokeFirstSample = true; // this stroke's first _getPressure() call snaps immediately, no de-jitter clamping
   currentPressure=_getPressure(e);
@@ -3216,50 +3332,86 @@ activeC.addEventListener('pointerdown',e=>{
   _strokeDirty = null; // begin affected-pixel tracking for this complete stroke
   _strokeVelocity = 0; // reset velocity
   _lastMoveTime = 0;
+  if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('pressureAndStateInitialization',diagnosticSetupStart);
+  if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.event('pressure-input-initialization-complete',{pressure:currentPressure,pointerType:e.pointerType});
   _strokeSegCarryOver = 0; // reset inter-segment dab carry-over
+  diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
   const p=getPos(e);
+  if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('coordinateMappingAndTransforms',diagnosticSetupStart);
+  if(window.CustomFirstDabTrace){window.CustomFirstDabTrace.sample({source:'pointerdown',eventTime:e.timeStamp,x:p.x,y:p.y,pressure:currentPressure});window.CustomFirstDabTrace.event('first-pointer-sample-processed',{x:p.x,y:p.y});}
+  diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
   _rotationPrevValid=false;
   _resetSmoothing(p.x,p.y,e.timeStamp||performance.now());
   _updateVelocity(p.x, p.y, e.timeStamp);
+  if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('pressureAndStateInitialization',diagnosticSetupStart);
   if(latencyProfiler)latencyProfiler.measure('pointer-and-dynamics-init',inputStateStart);
+  diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
   if(tool==='fill'){pushUndo();ensureKey();floodFill(p.x,p.y,color);saveActiveToKey();recomposite(curLayer,curFrame);return;}
   _activeStrokePointerId=e.pointerId;
   _strokeOwnerLayer=curLayer;_strokeOwnerFrame=curFrame;_activeStrokeSession=++_strokeSessionSerial;
   _traceStrokeLifecycle('stroke-start',{sourceLayer:curLayer,sourceFrame:curFrame});
   _strokeCompletionStarted=false;
   if(tool==='line'){lineStart=p;return;}
+  if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('pressureAndStateInitialization',diagnosticSetupStart);
+  diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
   activeC.setPointerCapture(e.pointerId);
+  if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('setPointerCapture',diagnosticSetupStart);
 const strokeSetupStart=latencyProfiler?performance.now():0;
+  diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
   let stageStart=latencyProfiler?performance.now():0;pushUndo();
+  if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('pushUndo',diagnosticSetupStart,{pushUndoSnapshotMethod:layers[curLayer]&&layers[curLayer].type==='smart-raster'?'style-bundle-copy':'canvas-drawImage'});
   if(latencyProfiler)latencyProfiler.point('push-undo-complete');
   if(latencyProfiler)latencyProfiler.measure('undo-snapshot-setup',stageStart,{canvas:{width:CW,height:CH},snapshotMethod:layers[curLayer]&&layers[curLayer].type==='smart-raster'?'style-bundle-copy':'canvas-drawImage',getImageData:false,layerIndex:curLayer,frameIndex:curFrame});
-  stageStart=latencyProfiler?performance.now():0;const autoCreatedKey=ensureKey();
+  diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
+  stageStart=latencyProfiler?performance.now():0;const autoCreatedKey=ensureKey({deferVisualRefresh:true});
+  if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.finishEnsureKey(diagnosticSetupStart,autoCreatedKey);
   if(latencyProfiler&&layers[curLayer]&&layers[curLayer].type==='smart-raster')latencyProfiler.measure('smart-raster-ensure-key',stageStart,{autoCreatedKey:!!autoCreatedKey,layerIndex:curLayer,frameIndex:curFrame});
   if(window.BrushRafExperiment)window.BrushRafExperiment.noteKeyCheck({autoCreatedKey:!!autoCreatedKey,duration:performance.now()-stageStart});
   if(window.KeyframeLatencyExperiment)window.KeyframeLatencyExperiment.noteKeyCheck({autoCreatedKey:!!autoCreatedKey,duration:performance.now()-stageStart});
   if(latencyProfiler)latencyProfiler.measure('keyframe-and-session-binding',stageStart,{autoCreatedKey:!!autoCreatedKey,layerIndex:curLayer,frameIndex:curFrame});
+  diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
   stageStart=latencyProfiler?performance.now():0;_beginColorEraserStroke();
+  if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('eraserSetup',diagnosticSetupStart);
   if(latencyProfiler)latencyProfiler.measure('color-eraser-session-setup',stageStart,{active:tool==='eraser'&&window.eraserMode==='color',getImageData:tool==='eraser'&&window.eraserMode==='color'});
+  diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
   stageStart=latencyProfiler?performance.now():0;_beginEndTaperCapture();
+  if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('taperSetup',diagnosticSetupStart);
   if(latencyProfiler)latencyProfiler.measure('taper-buffer-preparation',stageStart,{active:!!_strokeReplayBase,canvas:{width:CW,height:CH}});
+  diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
   stageStart=latencyProfiler?performance.now():0;_selectionScopeBase=tool==='eraser'&&window.SelectionScope?SelectionScope.captureArtwork(activeC):null;
+  if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('selectionSetup',diagnosticSetupStart);
   if(latencyProfiler)latencyProfiler.measure('selection-scope-setup',stageStart,{active:!!window.SelectionScope,captured:!!_selectionScopeBase,getImageData:!!_selectionScopeBase});
+  diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
   drawing=true;lx=p.x;ly=p.y;
   _autoHardRoundPrevDab=null;
   _resetCurve(p.x,p.y,currentPressure);
+  if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.event('spacing-path-initialization-complete',{carryOver:_strokeSegCarryOver});
   _lastPointerEvent=e;
+  if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('pressureAndStateInitialization',diagnosticSetupStart);
+  diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
   stageStart=latencyProfiler?performance.now():0;
   if(tool!=='eraser'){_ensureStrokeCanvas();_inStroke=true;}
+  if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('ensureStrokeCanvas',diagnosticSetupStart);
+  if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.event('stroke-state-initialization-complete',{strokeCanvas:!!_strokeCanvas,inStroke:_inStroke});
   if(latencyProfiler){latencyProfiler.measure('stroke-live-buffer-activation',stageStart,{active:tool!=='eraser',canvas:{width:_strokeCanvas&&_strokeCanvas.width||0,height:_strokeCanvas&&_strokeCanvas.height||0}});latencyProfiler.measure('pointerdown-setup-total',strokeSetupStart,{tool});}
   // Pointer-down uses the same spacing-derived transmittance ratio as every
   // arc-walked movement dab, so Flow is identical for isolated stamps.
+  diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
   const previousSpacingRatio=_flowSpacingRatio;
   _flowSpacingRatio=_initialDabSpacingRatio(e,currentPressure);
+  if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('spacingAndFlowInitialization',diagnosticSetupStart);
+  if(window.CustomFirstDabTrace){window.CustomFirstDabTrace.event('first-dab-eligibility',{eligible:true,reason:'unconditional-pointerdown-dab',distanceThreshold:0,flowSpacingRatio:_flowSpacingRatio});window.CustomFirstDabTrace.firstDabDispatch({source:'pointerdown',x:p.x,y:p.y});}
+  if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.finalizeSetup(performance.now());
+  const diagnosticDabStart=window.FirstDabLatencyProbe?window.FirstDabLatencyProbe.firstDabStart():0;
   const firstDabStart=latencyProfiler?performance.now():0;if(latencyProfiler)latencyProfiler.point('first-dab-rasterization-start');
   try{_stampDab(p.x,p.y,e);}
   finally{_flowSpacingRatio=previousSpacingRatio;}
+  if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.firstDabEnd(diagnosticDabStart);
+  if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.event('first-dab-rasterization-complete');
   if(latencyProfiler){latencyProfiler.point('first-dab-rasterization-finish');latencyProfiler.measure('first-dab-pipeline-total',firstDabStart,{dirtyRect:_frameDirty?{minX:_frameDirty.minX,minY:_frameDirty.minY,maxX:_frameDirty.maxX,maxY:_frameDirty.maxY}:null,blendMode:tool==='brush'?window.brushBlendMode:'eraser'});latencyProfiler.point('first-dab-generated');}
+  if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.event('recomposite-scheduling-begins');
   _scheduleRecomposite({firstDab:true});
+  if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.event('recomposite-scheduled');
   if(window._brushAirbrush&&window._brushContinuousSpraying) _startAirbrushSpray();
 });
 // _handleMoveEvent: shared by pointermove + pointerrawupdate.
@@ -3276,6 +3428,7 @@ function _handleMoveEvent(e){
     const prevPressure = currentPressure;
     const newPressure = _getPressure(ev);
     const raw=getPos(ev);
+    if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.sample({source:e.type,eventTime:ev.timeStamp,x:raw.x,y:raw.y,pressure:newPressure,coalescedCount:events.length});
     const t=ev.timeStamp || performance.now();
     const p=_smoothPoint(raw.x,raw.y,t);
     _updateVelocity(p.x, p.y, t);
@@ -3321,6 +3474,7 @@ function _pointerEndStroke(e){
   if(tool==='line'&&lineStart){
     pushUndo();ensureKey();_beginEndTaperCapture();const p=getPos(e);
     if(tool!=='eraser'){_ensureStrokeCanvas();_inStroke=true;}
+  if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.event('stroke-state-initialization-complete',{strokeCanvas:!!_strokeCanvas,inStroke:_inStroke});
     _strokeSegment(lineStart.x,lineStart.y,p.x,p.y,e,currentPressure,currentPressure);
     _flushStrokeTail();
     if(_inStroke){_inStroke=false;_commitStrokeCanvas();}
@@ -3340,7 +3494,9 @@ function _pointerEndStroke(e){
   if(window.BrushFirstDabExperiment)window.BrushFirstDabExperiment.strokeEnds({dabCount:_strokeDabCount});
   if(window.KeyframeLatencyExperiment)window.KeyframeLatencyExperiment.strokeEnds({dabCount:_strokeDabCount});
   if(window.TipReadbackExperiment)window.TipReadbackExperiment.strokeEnd();
+  if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.endStroke();
   if(window.CustomTipCacheTrace)window.CustomTipCacheTrace.strokeEnd();
+  if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.strokeComplete();
   _pendingDabs.length=0;
   _curveP0=null;_curveP1=null;
   _strokeSegCarryOver=0;

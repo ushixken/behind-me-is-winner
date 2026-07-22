@@ -222,16 +222,40 @@ function createBlankKey(){
     renderTimeline();updateStatus();
   }
 }
-function ensureKey(){
+let _deferredKeyVisualRefreshPending=false;
+let _deferredKeyVisualRefreshRaf=0;
+function _queueDeferredKeyVisualRefresh(){
+  if(_deferredKeyVisualRefreshRaf){cancelAnimationFrame(_deferredKeyVisualRefreshRaf);_deferredKeyVisualRefreshRaf=0;}
+  _deferredKeyVisualRefreshPending=true;
+}
+function _scheduleDeferredKeyVisualRefreshAfterPresentation(){
+  if(!_deferredKeyVisualRefreshPending||_deferredKeyVisualRefreshRaf)return;
+  _deferredKeyVisualRefreshRaf=requestAnimationFrame(()=>{
+    _deferredKeyVisualRefreshRaf=0;
+    if(!_deferredKeyVisualRefreshPending)return;
+    _deferredKeyVisualRefreshPending=false;
+    updateOnion();
+    renderTimeline();
+    updateStatus();
+  });
+}
+window._scheduleDeferredKeyVisualRefreshAfterPresentation=_scheduleDeferredKeyVisualRefreshAfterPresentation;
+function ensureKey(options){
+  const deferVisualRefresh=!!(options&&options.deferVisualRefresh);
   const profiler=window.BrushLatencyProfiler&&window.BrushLatencyProfiler.enabled?window.BrushLatencyProfiler:null,totalStart=profiler?performance.now():0;
   if(!layers[curLayer].frames[curFrame]){
-    let started=profiler?performance.now():0;const key=mkLayerCanvas();if(profiler)profiler.measure('key-canvas-allocation',started,{width:CW,height:CH});
-    started=profiler?performance.now():0;layers[curLayer].frames[curFrame]=key;if(profiler)profiler.measure('key-frame-map-insertion',started,{layerIndex:curLayer,frameIndex:curFrame});
-    started=profiler?performance.now():0;ctx.clearRect(0,0,CW,CH);if(profiler)profiler.measure('key-initialization-clear',started,{width:CW,height:CH,copiedHeldExposure:false});
-    started=profiler?performance.now():0;recomposite(curLayer,curFrame);if(profiler)profiler.measure('key-creation-recomposite',started,{fullCanvas:true});
-    started=profiler?performance.now():0;updateOnion();if(profiler)profiler.measure('key-creation-onion-update',started);
-    started=profiler?performance.now():0;renderTimeline();if(profiler)profiler.measure('key-creation-timeline-refresh',started);
-    started=profiler?performance.now():0;updateStatus();if(profiler)profiler.measure('key-creation-status-update',started);
+    let diagnosticStarted=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
+    let started=profiler?performance.now():0;const key=mkLayerCanvas();if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.ensureKeyStage('ensureKeyCanvasAllocation',diagnosticStarted);if(profiler)profiler.measure('key-canvas-allocation',started,{width:CW,height:CH});
+    diagnosticStarted=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;started=profiler?performance.now():0;layers[curLayer].frames[curFrame]=key;if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.ensureKeyStage('ensureKeyFrameMapInsertion',diagnosticStarted);if(profiler)profiler.measure('key-frame-map-insertion',started,{layerIndex:curLayer,frameIndex:curFrame});
+    diagnosticStarted=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;started=profiler?performance.now():0;ctx.clearRect(0,0,CW,CH);if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.ensureKeyStage('ensureKeyActiveCanvasClear',diagnosticStarted);if(profiler)profiler.measure('key-initialization-clear',started,{width:CW,height:CH,copiedHeldExposure:false});
+    diagnosticStarted=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;started=profiler?performance.now():0;recomposite(curLayer,curFrame);if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.ensureKeyStage('ensureKeyRecompose',diagnosticStarted);if(profiler)profiler.measure('key-creation-recomposite',started,{fullCanvas:true});
+    if(deferVisualRefresh){
+      _queueDeferredKeyVisualRefresh();
+    }else{
+      diagnosticStarted=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;started=profiler?performance.now():0;updateOnion();if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.ensureKeyStage('ensureKeyUpdateOnion',diagnosticStarted);if(profiler)profiler.measure('key-creation-onion-update',started);
+      diagnosticStarted=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;started=profiler?performance.now():0;renderTimeline();if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.ensureKeyStage('ensureKeyRenderTimeline',diagnosticStarted);if(profiler)profiler.measure('key-creation-timeline-refresh',started);
+      diagnosticStarted=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;started=profiler?performance.now():0;updateStatus();if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.ensureKeyStage('ensureKeyUpdateStatus',diagnosticStarted);if(profiler)profiler.measure('key-creation-status-update',started);
+    }
     if(profiler){const noThumbnailStart=performance.now();profiler.measure('key-thumbnail-work',noThumbnailStart,{performed:false,reason:'timeline has no keyframe thumbnail renderer'});profiler.measure('ensure-key-created-total',totalStart,{created:true});}
     return true;
   }
@@ -266,6 +290,7 @@ function loadFrame(li,fi){
 // same calls are allowed to touch, so compositing, masks, clipping,
 // opacity and blend order are all identical to the full-canvas path.
 function recomposite(li,fi,dirtyRect){
+  const firstDabDiagnosticStart=window.FirstDabLatencyProbe?window.FirstDabLatencyProbe.recomposeStart():0;
   const latencyProfiler=window.BrushLatencyProfiler&&window.BrushLatencyProfiler.enabled?window.BrushLatencyProfiler:null;
   if(latencyProfiler)latencyProfiler.point('recomposite-begins',{dirtyRect:dirtyRect||null});
   if(window.BrushRafExperiment)window.BrushRafExperiment.noteRecompositeBegin();
@@ -405,10 +430,13 @@ function recomposite(li,fi,dirtyRect){
   displayCtx.imageSmoothingEnabled=true;
   displayCtx.imageSmoothingQuality='high';
   displayCtx.filter = _displayBlurPx>0.05 ? `blur(${_displayBlurPx}px)` : 'none';
+  const firstDabDisplayBlitStart=firstDabDiagnosticStart?performance.now():0;
   displayCtx.drawImage(compC,0,0);
+  const firstDabDisplayBlitDuration=firstDabDisplayBlitStart?performance.now()-firstDabDisplayBlitStart:0;
   displayCtx.filter='none';
   if(presentationStart)latencyProfiler.point('display-upload-finishes');
   if(presentationStart){latencyProfiler.measure('canvas-display-upload',displayUploadStart,{width:CW,height:CH,blur:typeof _displayBlurPx==='number'?_displayBlurPx:null});latencyProfiler.presentationEnd(presentationStart,{dirty:!!clip});}
+  if(firstDabDiagnosticStart&&window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.displayComplete(firstDabDiagnosticStart,firstDabDisplayBlitDuration);
   if(window.CompositionPrewarm)window.CompositionPrewarm.noteComposite();
 }
 
