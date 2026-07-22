@@ -343,7 +343,7 @@ function _computeOpaqueBBox(canvas){
   return {x:minX,y:minY,w:(maxX-minX+1),h:(maxY-minY+1)};
 }
 
-function _tfCaptureSmartMove(li,fi,bounds){
+function _tfCaptureSmartMove(li,fi,bounds,styleId){
   const layer=layers[li];
   if(!layer||layer.type!=='smart-raster'||!window.SmartRasterLayer)return null;
   const frame=SmartRasterLayer.ensureFrame(li,fi);
@@ -355,8 +355,18 @@ function _tfCaptureSmartMove(li,fi,bounds){
     height:frame.height,
     bounds:{x:bounds.x,y:bounds.y,w:bounds.w,h:bounds.h},
     styleIds:frame.styleIds.slice(),
-    meta:SmartRasterLayer.cloneMeta(frame.meta)
+    meta:SmartRasterLayer.cloneMeta(frame.meta),
+    contribution:styleId&&typeof window.SmartRasterV4CaptureStyleTransform==='function'?SmartRasterV4CaptureStyleTransform(styleId,layer,fi):null
   };
+}
+
+function _tfCanvasFromRgba(data,width,height){
+  const canvas=mkLayerCanvas(),context=canvas.getContext('2d'),image=context.createImageData(width,height);image.data.set(data);context.putImageData(image,0,0);return canvas;
+}
+function _tfSampleCoverageBilinear(coverage,width,height,x,y){
+  const fx=x-.5,fy=y-.5,x0=Math.floor(fx),y0=Math.floor(fy),tx=fx-x0,ty=fy-y0;
+  function value(px,py){return px>=0&&py>=0&&px<width&&py<height?coverage[py*width+px]:0;}
+  const top=value(x0,y0)*(1-tx)+value(x0+1,y0)*tx,bottom=value(x0,y0+1)*(1-tx)+value(x0+1,y0+1)*tx;return Math.max(0,Math.min(65535,Math.round(top*(1-ty)+bottom*ty)));
 }
 
 function _tfCommitSmartFreeTransform(){
@@ -370,6 +380,7 @@ function _tfCommitSmartFreeTransform(){
   // Walk destination pixels and apply its exact inverse, sampling ownership
   // with nearest-neighbor so style indexes remain integers.
   const outputIds=tfPixelSelection?source.styleIds.slice():new Uint16Array(source.width*source.height);
+  const contribution=source.contribution,outputCoverage=contribution?new Uint16Array(source.width*source.height):null;
   if(tfPixelSelection)for(let p=0;p<tfPixelSelection.mask.length;p++)if(tfPixelSelection.mask[p]===255)outputIds[p]=0;
   const outputRgba=ctx.getImageData(0,0,source.width,source.height).data;
   const sourceRgba=source.previewSourceImage
@@ -397,7 +408,7 @@ function _tfCommitSmartFreeTransform(){
 
   for(let y=minY;y<maxY;y++)for(let x=minX;x<maxX;x++){
     const destinationOffset=y*source.width+x;
-    if(outputRgba[destinationOffset*4+3]===0)continue;
+    if(!contribution&&outputRgba[destinationOffset*4+3]===0)continue;
     const worldX=x+0.5-center.x,worldY=y+0.5-center.y;
     const localX=(worldX*cosR+worldY*sinR)/scale+boxCenterX;
     const localY=(-worldX*sinR+worldY*cosR)/scale+boxCenterY;
@@ -406,10 +417,12 @@ function _tfCommitSmartFreeTransform(){
     if(sourceX<0||sourceX>=source.width||sourceY<0||sourceY>=source.height)continue;
     const sourceOffset=sourceY*source.width+sourceX;
     if(tfPixelSelection&&tfPixelSelection.mask[sourceOffset]!==255)continue;
+    if(contribution){outputCoverage[destinationOffset]=_tfSampleCoverageBilinear(contribution.coverage,source.width,source.height,localX,localY);continue;}
     if(sourceRgba[sourceOffset*4+3]===0)continue;
     outputIds[destinationOffset]=source.styleIds[sourceOffset]||0;
   }
 
+  if(contribution&&typeof window.SmartRasterV4ReplaceStyleTransform==='function'&&SmartRasterV4ReplaceStyleTransform(contribution,layer,source.frame,outputCoverage))return;
   if(!layer.smartStyleFrames)layer.smartStyleFrames={};
   layer.smartStyleFrames[source.frame]={
     width:source.width,
@@ -527,6 +540,7 @@ function _tfCommitSmartPerspectiveTransform(){
   if(!inverse)return;
 
   const outputIds=tfPixelSelection?source.styleIds.slice():new Uint16Array(source.width*source.height);
+  const contribution=source.contribution,outputCoverage=contribution?new Uint16Array(source.width*source.height):null;
   if(tfPixelSelection)for(let p=0;p<tfPixelSelection.mask.length;p++)if(tfPixelSelection.mask[p]===255)outputIds[p]=0;
   const outputRgba=ctx.getImageData(0,0,source.width,source.height).data;
   const sourceRgba=source.previewSourceImage
@@ -539,7 +553,7 @@ function _tfCommitSmartPerspectiveTransform(){
 
   for(let y=minY;y<maxY;y++)for(let x=minX;x<maxX;x++){
     const destinationOffset=y*source.width+x;
-    if(outputRgba[destinationOffset*4+3]===0)continue;
+    if(!contribution&&outputRgba[destinationOffset*4+3]===0)continue;
     const px=x+0.5,py=y+0.5;
     const denominator=inverse.g*px+inverse.h*py+inverse.i;
     if(Math.abs(denominator)<1e-10)continue;
@@ -551,10 +565,12 @@ function _tfCommitSmartPerspectiveTransform(){
     if(sourceX<0||sourceX>=source.width||sourceY<0||sourceY>=source.height)continue;
     const sourceOffset=sourceY*source.width+sourceX;
     if(tfPixelSelection&&tfPixelSelection.mask[sourceOffset]!==255)continue;
+    if(contribution){outputCoverage[destinationOffset]=_tfSampleCoverageBilinear(contribution.coverage,source.width,source.height,source.bounds.x+u*source.bounds.w,source.bounds.y+v*source.bounds.h);continue;}
     if(sourceRgba[sourceOffset*4+3]===0)continue;
     outputIds[destinationOffset]=source.styleIds[sourceOffset]||0;
   }
 
+  if(contribution&&typeof window.SmartRasterV4ReplaceStyleTransform==='function'&&SmartRasterV4ReplaceStyleTransform(contribution,layer,source.frame,outputCoverage))return;
   if(!layer.smartStyleFrames)layer.smartStyleFrames={};
   layer.smartStyleFrames[source.frame]={
     width:source.width,
@@ -622,8 +638,13 @@ function enterTransformTool(){
       tfBox={x:pixelState.bounds.x,y:pixelState.bounds.y,w:pixelState.bounds.width,h:pixelState.bounds.height};
       PixelSelection.clearTransformPreview();PixelSelection.setOverlayVisible(true);
     } else tfBox=_computeOpaqueBBox(tfSnapshot);
-    tfSmartMove=_tfCaptureSmartMove(curLayer,curFrame,tfBox);
+    tfSmartMove=_tfCaptureSmartMove(curLayer,pixelState&&pixelState.frameIndex!=null?pixelState.frameIndex:curFrame,tfBox,pixelState&&pixelState.styleId);
     if(tfSmartMove){
+      if(tfSmartMove.contribution&&tfPixelSelection){
+        tfPixelSelection.source=_tfCanvasFromRgba(tfSmartMove.contribution.sourceRgba,CW,CH);
+        tfPixelSelection.background=_tfCanvasFromRgba(tfSmartMove.contribution.backgroundRgba,CW,CH);
+        tfPixelSelection.above=_tfCanvasFromRgba(tfSmartMove.contribution.aboveRgba,CW,CH);
+      }
       const previewSource=tfPixelSelection?tfPixelSelection.source:tfSnapshot;
       tfSmartMove.previewSourceImage=previewSource.getContext('2d',{willReadFrequently:true}).getImageData(0,0,CW,CH);
       tfSmartMove.previewBackgroundImage=tfPixelSelection?tfPixelSelection.background.getContext('2d',{willReadFrequently:true}).getImageData(0,0,CW,CH):null;
@@ -712,7 +733,7 @@ function commitTransformTool(){
   saveActiveToKey();
   recomposite(curLayer,curFrame);
   renderTimeline();
-  if(tfPixelSelection&&window.PixelSelection){const transformedMask=_tfCurrentSelectionMask();PixelSelection.clearTransformPreview();if(transformedMask)PixelSelection.replaceMask(transformedMask,tfPixelSelection.width||CW,tfPixelSelection.height||CH,'selection-transform');}
+  if(tfPixelSelection&&window.PixelSelection){const transformedMask=_tfCurrentSelectionMask(),selectionIdentity=tfSmartMove&&tfSmartMove.contribution?{layerIndex:tfSmartMove.layer,frameIndex:tfSmartMove.frame,styleId:tfSmartMove.contribution.styleId}:null;PixelSelection.clearTransformPreview();if(transformedMask)PixelSelection.replaceMask(transformedMask,tfPixelSelection.width||CW,tfPixelSelection.height||CH,'selection-transform',selectionIdentity);}
   tfSnapshot=null;tfSmartMove=null;tfPixelSelection=null;tfRasterPerspectivePreview=null;tfPerspectiveFastPreview=null;tfBox=null;tfState=null;tfPivot=null;
   tfPerspective=false;tfCorners=null;
 }
@@ -794,6 +815,7 @@ function _tfRedraw(fastPerspectivePreview){
     } else {
       _tfDrawFreeSource(ctx,transformSource,tfState);
     }
+    if(tfPixelSelection&&tfPixelSelection.above)ctx.drawImage(tfPixelSelection.above,0,0);
     _scheduleRecomposite();
     _tfPreviewSelectionMask();
     if(tfPerspective) _tfDrawHandlesPerspective(true); else _tfDrawHandles(true);

@@ -3,6 +3,7 @@
 
   var selectionMask=null,outlineMask=null,contourSegments=new Float32Array(0),contourPath=null;
   var selectionRevision=0;
+  var styleCycle=null,selectionStyleId=null;
   var selectionWidth=0,selectionHeight=0;
   var selectionBounds=null,selectionActive=false;
   var selectionLayerIndex=-1,selectionFrameIndex=-1;
@@ -93,7 +94,7 @@
     selectionBounds=count?{x:minX,y:minY,width:maxX-minX+1,height:maxY-minY+1}:null;
     rebuildOutlineAndContours(width,height,selectionBounds);selectionRevision++;
     selectionActive=count>0;
-    window.pixelSelectionState={active:selectionActive,mask:selectionMask,maskCanvas:maskCanvas,bounds:selectionBounds,width:width,height:height,count:count,revision:selectionRevision,layerIndex:selectionLayerIndex,frameIndex:selectionFrameIndex};
+    window.pixelSelectionState={active:selectionActive,mask:selectionMask,maskCanvas:maskCanvas,bounds:selectionBounds,width:width,height:height,count:count,revision:selectionRevision,layerIndex:selectionLayerIndex,frameIndex:selectionFrameIndex,styleId:selectionStyleId};
     return count;
   }
 
@@ -193,6 +194,7 @@
 
   function applyCanonicalMask(incoming,width,height,mode,source){
     if(!(incoming instanceof Uint8Array||incoming instanceof Uint8ClampedArray)||incoming.length!==width*height)return false;
+    selectionStyleId=null;
     var incomingCount=0;for(var p=0;p<incoming.length;p++)if(incoming[p]===255)incomingCount++;
     if(!incomingCount)return false;
     var layer=layers[curLayer],targetFrame=layer&&layer.type==='smart-raster'?heldFrameIndex(layer,curFrame):curFrame;
@@ -209,22 +211,23 @@
     var layer=layers[curLayer];
     if(!layer||layer.type!=='smart-raster'||!styleId)return false;
     var frameIndex=heldFrameIndex(layer,curFrame),frame=layer.smartStyleFrames&&layer.smartStyleFrames[frameIndex];
-    if(!frame||!frame.meta||!(frame.styleIds instanceof Uint16Array))return true;
-    var index=Number(frame.meta.styleIdToIndex&&frame.meta.styleIdToIndex[styleId])||0;
-    var width=frame.width||CW,height=frame.height||CH,incoming=new Uint8ClampedArray(width*height);
-    var incomingCount=0;
-    if(index){
-      var rgba=ctx.getImageData(0,0,width,height).data;
-      for(var y=0;y<height;y++)for(var x=0;x<width;x++){
-        var p=y*width+x,o=p*4;if(frame.styleIds[p]===index&&rgba[o+3]>0){incoming[p]=255;incomingCount++;}
+    if(!frame||!frame.meta||!(frame.styleIds instanceof Uint16Array))return true;var width=frame.width||CW,height=frame.height||CH,index=0,incoming=null,incomingCount=0;
+    var v4Coverage=typeof window.SmartRasterV4StyleCoverageMask==='function'?SmartRasterV4StyleCoverageMask(styleId,layer,frameIndex):null;
+    if(v4Coverage){incoming=v4Coverage.mask;width=v4Coverage.width;height=v4Coverage.height;index=v4Coverage.styleIndex;incomingCount=v4Coverage.matchedPixelCount;}
+    else{index=Number(frame.meta.styleIdToIndex&&frame.meta.styleIdToIndex[styleId])||0;incoming=new Uint8ClampedArray(width*height);
+      if(index){var rgba=ctx.getImageData(0,0,width,height).data;
+        for(var y=0;y<height;y++)for(var x=0;x<width;x++){
+          var p=y*width+x,o=p*4;if(frame.styleIds[p]===index&&rgba[o+3]>0){incoming[p]=255;incomingCount++;}
+        }
       }
-    }
+      }
     var binding=keybinds.selectLinkedPixels||{};
     var mode=selectionModeFromEvent(event,binding);
     // An unused style is not an empty geometric selection operation. Leave
     // the canonical selection untouched in every mode.
     if(!incomingCount)return true;
     if(selectionLayerIndex!==curLayer||selectionFrameIndex!==frameIndex)selectionMask=null;
+    selectionStyleId=mode==='replace'?styleId:null;
     selectionWidth=width;selectionHeight=height;selectionLayerIndex=curLayer;selectionFrameIndex=frameIndex;
     combineMask(incoming,mode);var matchedCount=rebuildMaskCanvasAndBounds();
     overlayVisible=true;if(!matchedCount){renderSelection();return true;}scheduleOverlayRender();
@@ -237,25 +240,41 @@
     event.preventDefault();event.stopPropagation();selectLinkedPixels(styleId,event);return true;
   }
 
+  function resetStyleCycle(){styleCycle=null;}
+  function sameStyleStack(stack){if(!styleCycle||styleCycle.styleIds.length!==stack.length)return false;for(var i=0;i<stack.length;i++)if(styleCycle.styleIds[i]!==stack[i].styleId)return false;return true;}
+
   function handleCanvasPointer(event,force){
     if(typeof matchPointerBind!=='function'||!matchPointerBind(event,'selectLinkedPixels',true))return;
-    if(selectionActive&&!force)return;
+    if(selectionActive&&!force&&tool!=='selection')return;
     event.preventDefault();event.stopImmediatePropagation();
     var layer=layers[curLayer];if(!layer||layer.type!=='smart-raster')return;
     var frameIndex=heldFrameIndex(layer,curFrame),frame=layer.smartStyleFrames&&layer.smartStyleFrames[frameIndex];
     if(!frame||!frame.meta||!(frame.styleIds instanceof Uint16Array))return;
     var point=getPos(event),x=Math.floor(point.x),y=Math.floor(point.y),width=frame.width||CW,height=frame.height||CH;
     if(x<0||y<0||x>=width||y>=height)return;
-    var offset=y*width+x,index=frame.styleIds[offset];
-    if(!index||ctx.getImageData(x,y,1,1).data[3]===0)return;
-    var styleId=frame.meta.indexToStyleId&&frame.meta.indexToStyleId[index];if(!styleId)return;
+    var offset=y*width+x,visibleIndex=frame.styleIds[offset],visibleStyleId=frame.meta.indexToStyleId&&frame.meta.indexToStyleId[visibleIndex];if(ctx.getImageData(x,y,1,1).data[3]===0){resetStyleCycle();return;}
+    var stack=typeof window.SmartRasterV4StyleStackAt==='function'?SmartRasterV4StyleStackAt(x,y,layer,frameIndex):[],tolerance=3/Math.max(.0001,zoom||1),styleId=null;
+    var visiblePosition=visibleStyleId?stack.findIndex(function(item){return item.styleId===visibleStyleId;}):-1;
+    if(visiblePosition>0)stack.unshift(stack.splice(visiblePosition,1)[0]);
+    if(stack.length){
+      var same=styleCycle&&styleCycle.layerIndex===curLayer&&styleCycle.frameIndex===frameIndex&&Math.hypot(point.x-styleCycle.x,point.y-styleCycle.y)<=tolerance&&sameStyleStack(stack);
+      var cycleIndex=same?(styleCycle.cycleIndex+1)%stack.length:0;styleId=stack[cycleIndex].styleId;
+      styleCycle={layerIndex:curLayer,frameIndex:frameIndex,x:point.x,y:point.y,cycleIndex:cycleIndex,styleIds:stack.map(function(item){return item.styleId;})};
+    }else{
+      var index=visibleIndex;if(!index){resetStyleCycle();return;}
+      styleId=frame.meta.indexToStyleId&&frame.meta.indexToStyleId[index];if(!styleId){resetStyleCycle();return;}
+      styleCycle={layerIndex:curLayer,frameIndex:frameIndex,x:point.x,y:point.y,cycleIndex:0,styleIds:[styleId]};
+    }
     selectLinkedPixels(styleId,event,'linked-canvas');
   }
   canvasArea.addEventListener('pointerdown',handleCanvasPointer,true);
+  canvasArea.addEventListener('pointermove',function(event){if(!styleCycle)return;var point=getPos(event),tolerance=3/Math.max(.0001,zoom||1);if(Math.hypot(point.x-styleCycle.x,point.y-styleCycle.y)>tolerance)resetStyleCycle();},true);
+
 
   function clearSelection(){
     overlayOffsetX=overlayOffsetY=0;transformPreviewSegments=transformPreviewPath=null;
     selectionMask=null;outlineMask=null;contourSegments=new Float32Array(0);contourPath=null;selectionBounds=null;selectionActive=false;
+    selectionStyleId=null;
     selectionLayerIndex=selectionFrameIndex=-1;
     if(overlayRaf){cancelAnimationFrame(overlayRaf);overlayRaf=0;}
     rebuildMaskCanvasAndBounds();renderSelection();
@@ -348,14 +367,13 @@
     transformPreviewSegments=transformPreviewPath=null;overlayOffsetX=overlayOffsetY=0;
     if(!mask||mask.length!==width*height){clearSelection();return false;}
     selectionMask=new Uint8ClampedArray(mask);selectionWidth=width;selectionHeight=height;
-    if(snapshot){selectionLayerIndex=snapshot.layerIndex;selectionFrameIndex=snapshot.frameIndex;}
-    else{selectionLayerIndex=curLayer;selectionFrameIndex=(layers[curLayer]&&layers[curLayer].type==='smart-raster')?heldFrameIndex(layers[curLayer],curFrame):curFrame;}
+    if(snapshot){selectionLayerIndex=snapshot.layerIndex;selectionFrameIndex=snapshot.frameIndex;selectionStyleId=snapshot.styleId||null;}else{selectionStyleId=null;selectionLayerIndex=curLayer;selectionFrameIndex=(layers[curLayer]&&layers[curLayer].type==='smart-raster')?heldFrameIndex(layers[curLayer],curFrame):curFrame;}
     var count=rebuildMaskCanvasAndBounds();overlayVisible=true;if(count)scheduleOverlayRender();else renderSelection();
     window.dispatchEvent(new CustomEvent('pixel-selection-changed',{detail:{active:count>0,source:source||'selection-transform',mask:selectionMask.slice(),maskCanvas:maskCanvas,bounds:selectionBounds&&Object.assign({},selectionBounds),width:width,height:height,layerIndex:selectionLayerIndex,frameIndex:selectionFrameIndex}}));
     return count>0;
   }
 
-  function captureSelection(){return selectionActive&&selectionMask?{mask:selectionMask.slice(),width:selectionWidth,height:selectionHeight,layerIndex:selectionLayerIndex,frameIndex:selectionFrameIndex}:null;}
+  function captureSelection(){return selectionActive&&selectionMask?{mask:selectionMask.slice(),width:selectionWidth,height:selectionHeight,layerIndex:selectionLayerIndex,frameIndex:selectionFrameIndex,styleId:selectionStyleId}:null;}
   function restoreSelection(snapshot){if(!snapshot){clearSelection();return;}replaceCanonicalMask(snapshot.mask,snapshot.width,snapshot.height,'selection-history',snapshot);}
 
   // Raster editing always clips to the non-empty canonical selection. The
@@ -403,7 +421,9 @@
   },true);
 
   window.addEventListener('canvas-view-transform-changed',scheduleOverlayRender);
-  window.addEventListener('active-artwork-changed',function(){if(selectionActive)clearSelection();});
+  window.addEventListener('active-artwork-changed',function(){resetStyleCycle();if(selectionActive)clearSelection();});
+  window.addEventListener('active-layer-changed',resetStyleCycle);
+  window.addEventListener('tool-changed',function(event){if(!event.detail||event.detail.tool!=='selection')resetStyleCycle();});
   if(typeof ResizeObserver!=='undefined')new ResizeObserver(scheduleOverlayRender).observe(canvasArea);
   document.addEventListener('visibilitychange',function(){if(!document.hidden)scheduleOverlayRender();});
 

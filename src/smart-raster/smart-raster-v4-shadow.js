@@ -546,6 +546,45 @@ function refreshVisibleLayer(layer){
     if(!canvas)return null;
     return Array.from(canvas.getContext('2d',{willReadFrequently:true}).getImageData(x,y,1,1).data);
   }
+  function styleStackAt(x,y,layer,frameIndex){
+    var allLayers=currentLayers();layer=layer||(allLayers&&typeof curLayer!=='undefined'?allLayers[curLayer]:null);
+    if(!layer||layer.type!=='smart-raster')return[];frameIndex=frameIndex==null?(typeof curFrame!=='undefined'?curFrame:0):Number(frameIndex);
+    var frame=existingShadowFrame(layer,frameIndex);if(!frame)return[];x=Math.floor(Number(x));y=Math.floor(Number(y));if(x<0||y<0||x>=frame.width||y>=frame.height)return[];
+    var state=stateByFrame.get(frame),location=v4.pixelLocation(frame,x,y),tile=frame.tiles.get(location.key);if(!tile)return[];
+    var ordered=orderedContributors(frame,state,location.key,tile).contributors,stack=[];
+    for(var i=ordered.length-1;i>=0;i--){var contributor=ordered[i],coverage=contributor.coverage[location.offset],styleAlpha=contributor.style.rgba[3]/255;
+      if(!coverage||styleAlpha<=0)continue;stack.push({styleId:contributor.style.id,styleIndex:contributor.styleIndex,coverage:coverage,coverageUnit:coverage/v4.MAX_COVERAGE,effectiveAlpha:(coverage/v4.MAX_COVERAGE)*styleAlpha});
+    }
+    return stack;
+  }
+  function styleCoverageMask(styleId,layer,frameIndex){
+    var allLayers=currentLayers();layer=layer||(allLayers&&typeof curLayer!=='undefined'?allLayers[curLayer]:null);
+    if(!layer||layer.type!=='smart-raster')return null;frameIndex=frameIndex==null?(typeof curFrame!=='undefined'?curFrame:0):Number(frameIndex);
+    var frame=existingShadowFrame(layer,frameIndex);if(!frame)return null;var styleIndex=v4.getStyleIndex(frame,styleId);if(!styleIndex)return{mask:new Uint8ClampedArray(frame.width*frame.height),width:frame.width,height:frame.height,styleIndex:0,matchedPixelCount:0};
+    var mask=new Uint8ClampedArray(frame.width*frame.height),matched=0;
+    frame.tiles.forEach(function(tile,key){var channel=tile.styleChannels.get(styleIndex);if(!channel)return;var dimensions=tileDimensions(frame,key);
+      for(var y=0;y<dimensions.height;y++)for(var x=0;x<dimensions.width;x++){var tileOffset=y*TILE_SIZE+x;if(!channel[tileOffset])continue;mask[(dimensions.y+y)*frame.width+dimensions.x+x]=255;matched++;}
+    });
+    return{mask:mask,width:frame.width,height:frame.height,styleIndex:styleIndex,matchedPixelCount:matched};
+  }
+  function captureStyleTransform(styleId,layer,frameIndex){
+    var frame=existingShadowFrame(layer,Number(frameIndex));if(!frame)return null;var state=stateByFrame.get(frame),styleIndex=v4.getStyleIndex(frame,styleId);if(!state||!styleIndex)return null;
+    var coverage=new Uint16Array(frame.width*frame.height),source=new Uint8ClampedArray(frame.width*frame.height*4),background=new Uint8ClampedArray(frame.width*frame.height*4),above=new Uint8ClampedArray(frame.width*frame.height*4),style=resolveStyle(styleId),selectedPriority=palettePriority().priority.get(styleId);
+    frame.tiles.forEach(function(tile,key){var dimensions=tileDimensions(frame,key),channel=tile.styleChannels.get(styleIndex),ordered=orderedContributors(frame,state,key,tile),split=ordered.contributors.findIndex(function(item){return item.styleIndex===styleIndex||item.priority<selectedPriority;});if(split<0)split=ordered.contributors.length;var before=ordered.contributors.slice(0,split).filter(function(item){return item.styleIndex!==styleIndex;}),after=ordered.contributors.slice(split).filter(function(item){return item.styleIndex!==styleIndex;});
+      var rendered=compositeTile(frame,state,key,tile,{}, {contributors:before,supported:ordered.supported,reasons:ordered.reasons}),renderedAbove=compositeTile(frame,state,key,tile,{}, {contributors:after,supported:ordered.supported,reasons:ordered.reasons});
+      for(var y=0;y<dimensions.height;y++)for(var x=0;x<dimensions.width;x++){var tileOffset=y*TILE_SIZE+x,pixel=(dimensions.y+y)*frame.width+dimensions.x+x,rgbaOffset=pixel*4,tileRgba=tileOffset*4,value=channel?channel[tileOffset]:0;coverage[pixel]=value;
+        if(value){source[rgbaOffset]=style.rgba[0];source[rgbaOffset+1]=style.rgba[1];source[rgbaOffset+2]=style.rgba[2];source[rgbaOffset+3]=Math.round((value/v4.MAX_COVERAGE)*style.rgba[3]);}
+        background[rgbaOffset]=rendered.rgba[tileRgba];background[rgbaOffset+1]=rendered.rgba[tileRgba+1];background[rgbaOffset+2]=rendered.rgba[tileRgba+2];background[rgbaOffset+3]=rendered.rgba[tileRgba+3];
+        above[rgbaOffset]=renderedAbove.rgba[tileRgba];above[rgbaOffset+1]=renderedAbove.rgba[tileRgba+1];above[rgbaOffset+2]=renderedAbove.rgba[tileRgba+2];above[rgbaOffset+3]=renderedAbove.rgba[tileRgba+3];
+      }
+    });return{styleId:styleId,styleIndex:styleIndex,width:frame.width,height:frame.height,coverage:coverage,sourceRgba:source,backgroundRgba:background,aboveRgba:above};
+  }
+  function replaceStyleTransform(payload,layer,frameIndex,coverage){
+    if(!payload||!layer||!(coverage instanceof Uint16Array))return false;var frame=existingShadowFrame(layer,Number(frameIndex));if(!frame||coverage.length!==frame.width*frame.height)return false;
+    var styleIndex=v4.getStyleIndex(frame,payload.styleId);if(!styleIndex)return false;v4.removeStyleContributions(frame,styleIndex);
+    for(var y=0;y<frame.height;y++)for(var x=0;x<frame.width;x++){var value=coverage[y*frame.width+x];if(value)v4.setCoverage(frame,styleIndex,x,y,value);}
+    renderFrame(frame);return true;
+  }
   function debugPixel(x,y,frame){
     frame=resolveFrame(frame);if(!frame)return null;
     x=Math.floor(Number(x));y=Math.floor(Number(y));
@@ -635,6 +674,10 @@ function refreshVisibleLayer(layer){
   root.SmartRasterV4ShadowRecolorStyle=recolorStyle;
   root.SmartRasterV4ShadowDeleteStyle=deleteStyle;
   root.SmartRasterV4ShadowIsStyleUsed=isStyleUsed;
+  root.SmartRasterV4StyleStackAt=styleStackAt;
+  root.SmartRasterV4StyleCoverageMask=styleCoverageMask;
+  root.SmartRasterV4CaptureStyleTransform=captureStyleTransform;
+  root.SmartRasterV4ReplaceStyleTransform=replaceStyleTransform;
   if(typeof root.smartRasterV4DebugAssertions!=='boolean')root.smartRasterV4DebugAssertions=false;
   root.debugSmartRasterV4=debugFrame;
   root.debugSmartRasterV4Pixel=debugPixel;
