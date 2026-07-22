@@ -191,7 +191,20 @@
     body.appendChild(section);
   }
 
+  function renderFillOptions(body,group,activeSubTool){
+    const state=window.FillMaskEngine?FillMaskEngine.getSettings():{antialiasing:false,quality:'medium'},bucket=!!(activeSubTool&&activeSubTool.id==='bucket-fill');
+    const section=document.createElement('div');section.className='tool-group-inline-options tool-aa-controls';
+    const row=document.createElement('label');row.className='tool-group-option-row compact tool-aa-toggle';
+    const input=document.createElement('input');input.type='checkbox';input.className='ts-check';input.checked=!!state.antialiasing;input.disabled=bucket;
+    const text=document.createElement('span');text.textContent='Anti-alias (AA)';row.title=bucket?'Bucket Fill keeps its existing edge behavior.':'Smooths only the artwork edge; shape masks remain binary.';row.append(input,text);
+    const select=document.createElement('select');select.className='ts-select tool-aa-quality';select.setAttribute('aria-label','Fill antialiasing quality');
+    [['weak','Weak'],['medium','Medium'],['strong','Strong']].forEach(([value,label])=>{const option=document.createElement('option');option.value=value;option.textContent=label;select.appendChild(option);});
+    select.value=state.quality||'medium';select.disabled=bucket||!input.checked;
+    input.onchange=()=>{select.disabled=!input.checked;if(window.FillMaskEngine)FillMaskEngine.setAntialiasing(input.checked);};select.onchange=()=>{if(window.FillMaskEngine)FillMaskEngine.setQuality(select.value);};
+    section.append(row,select);body.appendChild(section);
+  }
   function selectionSettingsFor(subTool){
+
     const definition=subTool&&subTool.selectionSettings,defaults=definition&&definition.defaults||{},savedState=selectionSettingsSaved[subTool&&subTool.id]||{};
     return Object.assign({},defaults,savedState);
   }
@@ -291,7 +304,7 @@
     {id:'style-select',name:'Style Select',icon:'S',section:'Smart Selection',selectionSettings:{renderer:renderSelectionInfo},isAvailable:activeLayerSupportsStyleSelect,unavailableLabel:'Smart Raster Only',activate:toolActivation('selection','Style Select'),settingsDescription:'Use the configured Select Linked Pixels modifier on a Smart Raster swatch or canvas pixel.'},
     Object.assign(placeholder('selection-pen','Selection Pen','P'),{section:'Selection Painting',selectionSettings:{defaults:{combine:'add',scope:'all'},renderer:renderAreaSelectionSettings}}),Object.assign(placeholder('erase-selection','Erase Selection','E'),{section:'Selection Painting'})
   ]});selectionGroup.lastValidSubToolId='lasso-select';
-  registerGroup({id:'fill',name:'Fill',shortcutActionId:'toolFill',icon:'F',defaultSubToolId:'bucket-fill',subTools:[
+  registerGroup({id:'fill',name:'Fill',shortcutActionId:'toolFill',icon:'F',panelRenderer:renderFillOptions,defaultSubToolId:'bucket-fill',subTools:[
     {id:'bucket-fill',name:'Bucket Fill',icon:'F',activate:toolActivation('fill','Fill')},{id:'lasso-fill',name:'Lasso Fill',icon:'L',activate:toolActivation('lasso-fill','Lasso Fill'),settingsDescription:'Draw a freehand boundary and release to fill it with the current color.'},placeholder('rectangle-fill','Rectangle Fill','R'),placeholder('ellipse-fill','Ellipse Fill','O'),placeholder('polyline-fill','Polyline Fill','P'),placeholder('enclose-fill','Enclose and Fill','E'),placeholder('refer-other-layers','Refer Other Layers','A')
   ]});
   registerGroup({id:'line',name:'Line',shortcutActionId:'toolLine',icon:'L',panelTitle:'Line',panelRenderer:renderLineOptions,defaultSubToolId:'straight-line',subTools:[

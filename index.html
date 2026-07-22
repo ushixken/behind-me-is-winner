@@ -832,17 +832,16 @@
                       <button type="button" class="ts-simple-settings-btn ts-simple-only" data-simple-settings="spacing" title="Spacing settings">⚙</button>
                     </div>
                   </div>
-                <div class="ts-field" data-eye="aa">
+                <div class="ts-field tool-aa-controls" data-eye="aa">
                   <div class="ts-divider" style="margin:6px 0;"></div>
-                  <div class="ts-row">
+                  <div class="ts-row tool-aa-toggle">
                     <button type="button" class="ts-eye-btn ts-advanced-only" data-eye-btn="aa" title="Show/hide in Simple tab">👁</button>
                     <label class="ts-label-sm" style="flex:1;display:flex;align-items:center;gap:5px;cursor:pointer;">
                       <input type="checkbox" class="ts-check" id="ts-aa" checked/> Anti-alias (AA)
                     </label>
                   </div>
-                  <div class="ts-row" id="ts-aa-mode-row">
-                    <span class="ts-label">Antialiasing</span>
-                    <select class="ts-select" id="ts-aa-mode" title="None: fully pixel-snapped hard edges, no partial-alpha pixels. Weak: very narrow antialiased edge. Medium: smoother subpixel coverage and tapered ends (default for Hard Round). Strong: strongest edge smoothing, still a hard-cored brush, not a soft/blurry one.">
+                  <div class="ts-row tool-aa-quality-row" id="ts-aa-mode-row">
+                    <select class="ts-select tool-aa-quality" id="ts-aa-mode" aria-label="Brush antialiasing quality" title="Weak: narrow antialiased edge. Medium: balanced smoothing. Strong: widest edge smoothing.">
                       <option value="weak">Weak</option>
                       <option value="medium" selected>Medium</option>
                       <option value="strong">Strong</option>
@@ -884,8 +883,8 @@
                 <div class="ts-divider"></div>
                 <div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-spacing-mode"><button type="button" class="ts-eye-btn" data-eye-btn="spacing">👁</button><span class="ts-label">Spacing Mode</span><select class="ts-select"><option value="fixed" selected>Fixed Distance</option><option value="velocity">Velocity</option><option value="pen-pressure" disabled title="Coming Soon — This spacing mode will be available in a future update.">Pen Pressure (Coming Soon)</option></select></div><div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-spacing" data-mirror-suffix="%" id="ts-advanced-spacing-manual-row"><span class="ts-label">Spacing</span><input type="range" class="ts-range" min="1" max="200"><span class="ts-val ts-value-edit" data-value-target="ts-spacing" tabindex="0"></span></div>
                 <div class="ts-divider"></div>
-                <div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-aa"><button type="button" class="ts-eye-btn" data-eye-btn="aa">👁</button><label class="ts-label-sm ts-mirror-check-label"><input type="checkbox" class="ts-check"> Anti-aliasing</label></div>
-                <div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-aa-mode" id="ts-advanced-aa-mode-row"><span class="ts-label">Antialiasing</span><select class="ts-select"><option value="weak">Weak</option><option value="medium" selected>Medium</option><option value="strong">Strong</option></select></div>
+                <div class="ts-row ts-advanced-mirror-row tool-aa-toggle" data-mirror-target="ts-aa"><button type="button" class="ts-eye-btn" data-eye-btn="aa">👁</button><label class="ts-label-sm ts-mirror-check-label"><input type="checkbox" class="ts-check"> Anti-alias (AA)</label></div>
+                <div class="ts-row ts-advanced-mirror-row tool-aa-quality-row" data-mirror-target="ts-aa-mode" id="ts-advanced-aa-mode-row"><select class="ts-select tool-aa-quality" aria-label="Brush antialiasing quality"><option value="weak">Weak</option><option value="medium" selected>Medium</option><option value="strong">Strong</option></select></div>
                 <div class="ts-divider"></div>
                 <div class="ts-label-sm" style="color:var(--text);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">Tip Image</div>
                 <div style="display:flex;gap:7px;align-items:flex-start;">

@@ -212,11 +212,12 @@ function updateBlendModeUI(){
     const select=document.getElementById('ts-aa-mode');
     if(select) select.value=_lastEnabledAAMode;
     const row=document.getElementById('ts-aa-mode-row');
-    if(row) row.style.display=brushAA?'':'none';
+    if(row) row.style.display='';
+    if(select) select.disabled=!brushAA;
     const advRow=document.getElementById('ts-advanced-aa-mode-row');
-    if(advRow) advRow.style.display=brushAA?'':'none';
+    if(advRow) advRow.style.display='';
     const advSelect=advRow?advRow.querySelector('select'):null;
-    if(advSelect) advSelect.value=_lastEnabledAAMode;
+    if(advSelect){advSelect.value=_lastEnabledAAMode;advSelect.disabled=!brushAA;}
   }
   function _setBrushAA(on){
     const nextAA=!!on;
