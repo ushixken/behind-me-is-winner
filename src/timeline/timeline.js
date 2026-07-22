@@ -1938,7 +1938,7 @@ function renderLayerPanel(){
   syncOpacityControls();
   updateDelBtnLabel();
   // Show not-allowed cursor on canvas when a group folder is selected (can't draw into a group)
-  activeC.style.cursor=activeGroupId?'not-allowed':'crosshair';
+  activeC.style.cursor=activeGroupId?'not-allowed':(typeof _baseCursorCSS==='function'?_baseCursorCSS():'crosshair');
 
   // Remove empty groups (no layers anywhere in their subtree, including nested subgroups)
   groups=groups.filter(g=>_groupHasLayersInSubtree(g.id));

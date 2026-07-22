@@ -442,6 +442,7 @@ document.getElementById('dd-preferences').onclick=()=>{
 document.getElementById('pref-cursor-crosshair').onchange=e=>{ if(e.target.checked) _setCursorStyle('crosshair'); };
 document.getElementById('pref-cursor-point').onchange=e=>{ if(e.target.checked) _setCursorStyle('point'); };
 document.getElementById('pref-cursor-brush').onchange=e=>{ if(e.target.checked) _setCursorStyle('brush'); };
+document.getElementById('pref-cursor-brush-shape').onchange=e=>{ if(e.target.checked) _setCursorStyle('brush-shape'); };
 document.getElementById('modal-preferences-close').onclick=()=>{
   document.getElementById('modal-preferences').classList.remove('visible');
 };
