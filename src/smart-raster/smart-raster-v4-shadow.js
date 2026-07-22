@@ -87,12 +87,16 @@
   }
   function orderedContributors(frame,state,key,tile){
     var priority=palettePriority().priority,contributors=[];tile.styleChannels.forEach(function(channel,index){var styleId=v4.getStyleId(frame,index);if(!styleId)throw new Error('Smart Raster v4 style index has no stable ID: '+index);if(!priority.has(styleId))throw new Error('Smart Raster v4 style is absent from the Advanced Palette: '+styleId);contributors.push({styleIndex:index,style:resolveStyle(styleId),coverage:channel,priority:priority.get(styleId)});});
-    contributors.sort(function(a,b){return b.priority-a.priority;});
     var order=state.tileOrder.get(key),reasons=[],chronology=order?order.runs.filter(function(index,pos,list){return list.indexOf(index)===pos&&tile.styleChannels.has(index);}):[];
+    if(state.layer&&state.layer.renderMode==='style-layering')contributors.sort(function(a,b){return b.priority-a.priority;});
+    else{
+      var chronologicalRank=new Map();chronology.forEach(function(index,rank){chronologicalRank.set(index,rank);});
+      contributors.sort(function(a,b){var ar=chronologicalRank.has(a.styleIndex)?chronologicalRank.get(a.styleIndex):Number.MAX_SAFE_INTEGER,br=chronologicalRank.has(b.styleIndex)?chronologicalRank.get(b.styleIndex):Number.MAX_SAFE_INTEGER;return ar-br||b.priority-a.priority;});
+    }
     var rendered=contributors.map(function(item){return item.styleIndex;});
     if(!order)reasons.push('missing-tile-chronology');
     else if(order.unsupported)reasons=reasons.concat(order.reasons);
-    if(chronology.length!==rendered.length||chronology.some(function(index,pos){return index!==rendered[pos];}))reasons.push('palette-order-differs-from-v3-chronology');
+    if(state.layer&&state.layer.renderMode==='style-layering'&&(chronology.length!==rendered.length||chronology.some(function(index,pos){return index!==rendered[pos];})))reasons.push('palette-order-differs-from-v3-chronology');
     return {contributors:contributors,supported:reasons.length===0,reasons:Array.from(new Set(reasons))};
   }  function tileDimensions(frame,key){
     var point=v4.parseTileKey(key),x=point.x*TILE_SIZE,y=point.y*TILE_SIZE;
@@ -149,17 +153,17 @@
       order:rendered.order.slice()
     };
   }
-  function composeDirtyTiles(frame,state){
+  function composeDirtyTiles(frame,state,forceVisible){
     var started=typeof performance!=='undefined'&&performance.now?performance.now():Date.now(),completed=[],failed=[],skipped=[],cacheRebuilds=0;
     Array.from(frame.dirtyTiles).forEach(function(key){
       try{
         var tile=frame.tiles.get(key);
-        if(!tile){state.compositeTiles.delete(key);state.ownerTiles.delete(key);state.comparisons.delete(key);state.errors.delete(key);if(state.layer&&state.layer.renderMode==='style-layering'){var empty={rgba:new Uint8ClampedArray(TILE_SIZE*TILE_SIZE*4),owner:new Uint16Array(TILE_SIZE*TILE_SIZE),dimensions:tileDimensions(frame,key)};if(!writeVisibleTile(frame,state,key,empty))throw new Error('Style Layering empty tile could not be committed');}frame.dirtyTiles.delete(key);skipped.push(key);cacheRebuilds++;return;}
+        if(!tile){state.compositeTiles.delete(key);state.ownerTiles.delete(key);state.comparisons.delete(key);state.errors.delete(key);if(forceVisible||state.layer&&state.layer.renderMode==='style-layering'){var empty={rgba:new Uint8ClampedArray(TILE_SIZE*TILE_SIZE*4),owner:new Uint16Array(TILE_SIZE*TILE_SIZE),dimensions:tileDimensions(frame,key)};if(!writeVisibleTile(frame,state,key,empty))throw new Error('Smart Raster empty tile could not be committed');}frame.dirtyTiles.delete(key);skipped.push(key);cacheRebuilds++;return;}
         var rendered=compositeTile(frame,state,key,tile),comparison;
         state.compositeTiles.set(key,rendered.rgba);state.ownerTiles.set(key,rendered.owner);
         try{comparison=compareTile(state,key,rendered);}catch(compareError){comparison={tileKey:key,supported:false,unsupportedReasons:['comparison-unavailable'],comparedPixels:0,mismatchedPixels:0,matchedPixels:0,maxChannelDelta:0,totalAbsoluteDelta:0,meanAbsoluteDelta:0,firstMismatch:null,order:rendered.order.slice(),comparisonError:compareError.message||String(compareError)};}
         state.comparisons.set(key,comparison);state.errors.delete(key);
-        if(state.layer&&state.layer.renderMode==='style-layering'&&!writeVisibleTile(frame,state,key,rendered))throw new Error('Style Layering visible tile could not be committed');frame.dirtyTiles.delete(key);completed.push(key);cacheRebuilds++;
+        if((forceVisible||state.layer&&state.layer.renderMode==='style-layering')&&!writeVisibleTile(frame,state,key,rendered))throw new Error('Smart Raster visible tile could not be committed');frame.dirtyTiles.delete(key);completed.push(key);cacheRebuilds++;
       }catch(error){state.errors.set(key,{tileKey:key,message:error&&error.message?error.message:String(error)});failed.push(key);}
     });
     var ended=typeof performance!=='undefined'&&performance.now?performance.now():Date.now();state.renderStats={renderedTileCount:completed.length,dirtyTileCount:frame.dirtyTiles.size,renderTimeMs:ended-started,recomposedTiles:completed.slice(),skippedTiles:skipped.slice(),failedTiles:failed.slice(),cacheRebuilds:cacheRebuilds,lastRenderAt:Date.now()};
@@ -339,17 +343,17 @@
     liveEraserSession=null;
     if(changedPixels)refreshVisibleLayer(layer);
     return recordEditDiagnostic('color-erase',{layerIndex:edit.layerIndex,frameIndex:edit.frameIndex,styleId:edit.styleId,changedPixels:changedPixels,changedTiles:Array.from(changedTiles),deletedChannels:beforeChannels-afterChannels,deletedTiles:beforeTiles-frame.tiles.size,ownershipInvalidations:changedTiles.size,compositeInvalidations:invalidated,liveCommitComparison:liveComparison,lifecycle:v4.lifecycleSummary(frame)});
-  }  function recolorStyle(styleId){resolvedStyleCache.delete(styleId);compositionVersion++;
-    var command=createHistoryCommand('rgb-recolor'),framesChanged=[],totalTiles=0,totalInvalidations=0;
+  }  function recolorStyle(styleId,options){resolvedStyleCache.delete(styleId);compositionVersion++;options=options||{};
+    var command=options.interactive?null:createHistoryCommand('rgb-recolor'),framesChanged=[],totalTiles=0,totalInvalidations=0;
     trackedLayers.forEach(function(layer){var frames=framesByLayer.get(layer);if(!frames)return;frames.forEach(function(frame,frameIndex){
       var styleIndex=v4.getStyleIndex(frame,styleId);if(!styleIndex)return;var keys=v4.dirtyStyle(frame,styleIndex);if(!keys.length)return;
-      var entry=createHistoryEntry(frame,stateByFrame.get(frame),layer,(currentLayers()||[]).indexOf(layer),frameIndex);keys.forEach(function(key){entry.keys.add(key);entry.beforeAux.set(key,{order:cloneOrder(entry.state.tileOrder.get(key)),comparable:entry.state.comparableTiles.has(key)?entry.state.comparableTiles.get(key).slice():null});entry.afterAux.set(key,{order:cloneOrder(entry.state.tileOrder.get(key)),comparable:entry.state.comparableTiles.has(key)?entry.state.comparableTiles.get(key).slice():null});});command.entries.push(entry);
+      var entry=command?createHistoryEntry(frame,stateByFrame.get(frame),layer,(currentLayers()||[]).indexOf(layer),frameIndex):null;if(entry){keys.forEach(function(key){entry.keys.add(key);entry.beforeAux.set(key,{order:cloneOrder(entry.state.tileOrder.get(key)),comparable:entry.state.comparableTiles.has(key)?entry.state.comparableTiles.get(key).slice():null});entry.afterAux.set(key,{order:cloneOrder(entry.state.tileOrder.get(key)),comparable:entry.state.comparableTiles.has(key)?entry.state.comparableTiles.get(key).slice():null});});command.entries.push(entry);}
       v4.noteEdit(frame,'rgb-recolor');var invalidated=invalidateTiles(frame,new Set(keys),false);totalTiles+=keys.length;totalInvalidations+=invalidated;
-      var rendered=composeDirtyTiles(frame,stateByFrame.get(frame));framesChanged.push({frameIndex:frameIndex,dirtyTiles:keys.slice(),recomposedTiles:rendered.completed,lifecycle:v4.lifecycleSummary(frame)});entry.afterMetadata=snapshotMetadata(frame);
+      var rendered=composeDirtyTiles(frame,stateByFrame.get(frame),true);framesChanged.push({frameIndex:frameIndex,dirtyTiles:keys.slice(),recomposedTiles:rendered.completed,lifecycle:v4.lifecycleSummary(frame)});if(entry)entry.afterMetadata=snapshotMetadata(frame);
     });});
-    if(command.entries.length)pushHistory(command);
-    var activeList=currentLayers(),activeLayer=activeList&&typeof curLayer!=='undefined'?activeList[curLayer]:null;if(activeLayer&&activeLayer.renderMode==='style-layering')refreshVisibleLayer(activeLayer);
-    return recordEditDiagnostic('rgb-recolor',{styleId:styleId,frames:framesChanged,recolorDirtiedTiles:totalTiles,ownershipInvalidations:0,compositeInvalidations:totalInvalidations});
+    if(command&&command.entries.length)pushHistory(command);
+    var activeList=currentLayers(),activeLayer=activeList&&typeof curLayer!=='undefined'?activeList[curLayer]:null;if(activeLayer)refreshVisibleLayer(activeLayer,{skipTimeline:!!options.interactive});
+    return recordEditDiagnostic('rgb-recolor',{styleId:styleId,interactive:!!options.interactive,frames:framesChanged,recolorDirtiedTiles:totalTiles,ownershipInvalidations:0,compositeInvalidations:totalInvalidations});
   }  function deleteStyle(styleId){resolvedStyleCache.delete(styleId);compositionVersion++;
     var command=createHistoryCommand('style-delete'),framesChanged=[],deletedChannels=0,deletedTiles=0,invalidations=0;
     trackedLayers.forEach(function(layer){var frames=framesByLayer.get(layer);if(!frames)return;frames.forEach(function(frame,frameIndex){
@@ -494,11 +498,11 @@
     for(var i=0;i<keys.length;i++){var frame=map&&map.get(keys[i]);if(!frame)return {eligible:false,reason:'missing-v4-frame:'+keys[i]};if(!v4.isAuthorityEligible(frame))return {eligible:false,reason:'incomplete-v4-frame:'+keys[i],lifecycle:v4.lifecycleSummary(frame)};var missing=null;frame.indexToStyleId.forEach(function(styleId){if(missing)return;try{resolveStyle(styleId);}catch(error){missing=styleId;}});if(missing)return {eligible:false,reason:'missing-palette-style:'+missing};}
     return {eligible:true,reason:null};
   }
-function refreshVisibleLayer(layer){
+function refreshVisibleLayer(layer,options){
     var li=(currentLayers()||[]).indexOf(layer);
     if(li<0||typeof curLayer==='undefined'||li!==curLayer)return;
     if(typeof recomposite==='function')recomposite(curLayer,typeof curFrame!=='undefined'?curFrame:0);
-    if(typeof renderTimeline==='function')renderTimeline();
+    if(!(options&&options.skipTimeline)&&typeof renderTimeline==='function')renderTimeline();
   }
   function setStyleLayering(layer,enabled){
     enabled=!!enabled;
@@ -569,22 +573,39 @@ function refreshVisibleLayer(layer){
   }
   function captureStyleTransform(styleId,layer,frameIndex){
     var frame=existingShadowFrame(layer,Number(frameIndex));if(!frame)return null;var state=stateByFrame.get(frame),styleIndex=v4.getStyleIndex(frame,styleId);if(!state||!styleIndex)return null;
-    var coverage=new Uint16Array(frame.width*frame.height),source=new Uint8ClampedArray(frame.width*frame.height*4),background=new Uint8ClampedArray(frame.width*frame.height*4),above=new Uint8ClampedArray(frame.width*frame.height*4),style=resolveStyle(styleId),selectedPriority=palettePriority().priority.get(styleId);
-    frame.tiles.forEach(function(tile,key){var dimensions=tileDimensions(frame,key),channel=tile.styleChannels.get(styleIndex),ordered=orderedContributors(frame,state,key,tile),split=ordered.contributors.findIndex(function(item){return item.styleIndex===styleIndex||item.priority<selectedPriority;});if(split<0)split=ordered.contributors.length;var before=ordered.contributors.slice(0,split).filter(function(item){return item.styleIndex!==styleIndex;}),after=ordered.contributors.slice(split).filter(function(item){return item.styleIndex!==styleIndex;});
+    var coverage=new Uint16Array(frame.width*frame.height),source=new Uint8ClampedArray(frame.width*frame.height*4),background=new Uint8ClampedArray(frame.width*frame.height*4),above=new Uint8ClampedArray(frame.width*frame.height*4),style=resolveStyle(styleId),orderBefore=new Set(),orderAfter=new Set();
+    if(layer.renderMode==='style-layering'){
+      var selectedPriority=palettePriority().priority.get(styleId);frame.indexToStyleId.forEach(function(otherId,index){if(index===styleIndex)return;var otherPriority=palettePriority().priority.get(otherId);if(otherPriority>selectedPriority)orderBefore.add(index);else orderAfter.add(index);});
+    }else frame.tiles.forEach(function(tile,key){
+      if(!tile.styleChannels.has(styleIndex))return;var ordered=orderedContributors(frame,state,key,tile),split=ordered.contributors.findIndex(function(item){return item.styleIndex===styleIndex;});if(split<0)return;
+      ordered.contributors.slice(0,split).forEach(function(item){orderBefore.add(item.styleIndex);});ordered.contributors.slice(split+1).forEach(function(item){orderAfter.add(item.styleIndex);});
+    });
+    frame.tiles.forEach(function(tile,key){var dimensions=tileDimensions(frame,key),channel=tile.styleChannels.get(styleIndex),ordered=orderedContributors(frame,state,key,tile),before=[],after=[];ordered.contributors.forEach(function(item){if(item.styleIndex===styleIndex)return;if(orderAfter.has(item.styleIndex))after.push(item);else before.push(item);});
       var rendered=compositeTile(frame,state,key,tile,{}, {contributors:before,supported:ordered.supported,reasons:ordered.reasons}),renderedAbove=compositeTile(frame,state,key,tile,{}, {contributors:after,supported:ordered.supported,reasons:ordered.reasons});
       for(var y=0;y<dimensions.height;y++)for(var x=0;x<dimensions.width;x++){var tileOffset=y*TILE_SIZE+x,pixel=(dimensions.y+y)*frame.width+dimensions.x+x,rgbaOffset=pixel*4,tileRgba=tileOffset*4,value=channel?channel[tileOffset]:0;coverage[pixel]=value;
         if(value){source[rgbaOffset]=style.rgba[0];source[rgbaOffset+1]=style.rgba[1];source[rgbaOffset+2]=style.rgba[2];source[rgbaOffset+3]=Math.round((value/v4.MAX_COVERAGE)*style.rgba[3]);}
         background[rgbaOffset]=rendered.rgba[tileRgba];background[rgbaOffset+1]=rendered.rgba[tileRgba+1];background[rgbaOffset+2]=rendered.rgba[tileRgba+2];background[rgbaOffset+3]=rendered.rgba[tileRgba+3];
         above[rgbaOffset]=renderedAbove.rgba[tileRgba];above[rgbaOffset+1]=renderedAbove.rgba[tileRgba+1];above[rgbaOffset+2]=renderedAbove.rgba[tileRgba+2];above[rgbaOffset+3]=renderedAbove.rgba[tileRgba+3];
       }
-    });return{styleId:styleId,styleIndex:styleIndex,width:frame.width,height:frame.height,coverage:coverage,sourceRgba:source,backgroundRgba:background,aboveRgba:above};
+    });return{styleId:styleId,styleIndex:styleIndex,width:frame.width,height:frame.height,coverage:coverage,sourceRgba:source,backgroundRgba:background,aboveRgba:above,renderMode:layer.renderMode==='style-layering'?'style-layering':'legacy',orderBefore:Array.from(orderBefore),orderAfter:Array.from(orderAfter)};
+  }
+  function syncTransformedTileOrder(frame,state,key,styleIndex,payload){
+    var tile=frame.tiles.get(key),order=state.tileOrder.get(key),runs=order?order.runs.filter(function(index,pos,list){return index!==styleIndex&&list.indexOf(index)===pos&&tile&&tile.styleChannels.has(index);}):[];
+    if(tile&&tile.styleChannels.has(styleIndex)){var before=new Set(payload.orderBefore||[]),after=new Set(payload.orderAfter||[]),lower=0,upper=runs.length;runs.forEach(function(index,pos){if(before.has(index))lower=Math.max(lower,pos+1);if(after.has(index))upper=Math.min(upper,pos);});runs.splice(Math.min(Math.max(lower,0),upper),0,styleIndex);}
+    if(runs.length)state.tileOrder.set(key,{runs:runs,seen:new Set(runs),unsupported:order?order.unsupported:false,reasons:order?order.reasons.slice():[]});else state.tileOrder.delete(key);
   }
   function replaceStyleTransform(payload,layer,frameIndex,coverage){
-    if(!payload||!layer||!(coverage instanceof Uint16Array))return false;var frame=existingShadowFrame(layer,Number(frameIndex));if(!frame||coverage.length!==frame.width*frame.height)return false;
-    var styleIndex=v4.getStyleIndex(frame,payload.styleId);if(!styleIndex)return false;v4.removeStyleContributions(frame,styleIndex);
+    if(!payload||!layer||!(coverage instanceof Uint16Array))return false;var frame=existingShadowFrame(layer,Number(frameIndex)),state=frame&&stateByFrame.get(frame);if(!frame||!state||coverage.length!==frame.width*frame.height)return false;
+    var styleIndex=v4.getStyleIndex(frame,payload.styleId);if(!styleIndex)return false;var affected=new Set(frame.styleTiles.get(styleIndex)||[]);v4.removeStyleContributions(frame,styleIndex);
     for(var y=0;y<frame.height;y++)for(var x=0;x<frame.width;x++){var value=coverage[y*frame.width+x];if(value)v4.setCoverage(frame,styleIndex,x,y,value);}
-    renderFrame(frame);return true;
+    rebuildDerived(frame);var movedKeys=frame.styleTiles.get(styleIndex);if(movedKeys)movedKeys.forEach(function(key){affected.add(key);});
+    affected.forEach(function(key){syncTransformedTileOrder(frame,state,key,styleIndex,payload);});
+    affected.forEach(function(key){frame.dirtyTiles.add(key);});invalidateTiles(frame,affected,true);
+    var rendered=composeDirtyTiles(frame,state,true);
+    root.__smartRasterV4LastStyleTransform={styleId:payload.styleId,frameIndex:Number(frameIndex),renderMode:payload.renderMode,invalidatedTiles:Array.from(affected),recomposedTiles:rendered.completed.slice(),failedTiles:rendered.failed.slice(),bounds:frame.styleBounds.get(styleIndex)||null};
+    return true;
   }
+  function styleIsAuthoritative(layer,frameIndex,styleId){var frame=existingShadowFrame(layer,Number(frameIndex));if(!frame||!v4.isAuthorityEligible(frame))return false;return !!v4.getStyleIndex(frame,styleId);}
   function debugPixel(x,y,frame){
     frame=resolveFrame(frame);if(!frame)return null;
     x=Math.floor(Number(x));y=Math.floor(Number(y));
@@ -610,9 +631,18 @@ function refreshVisibleLayer(layer){
     if(typeof TextEncoder!=='undefined')return new TextEncoder().encode(value).byteLength;
     return unescape(encodeURIComponent(value)).length;
   }
+  function serializeTileOrder(state){var result=[];if(!state)return result;state.tileOrder.forEach(function(order,key){result.push({key:key,runs:order.runs.slice(),unsupported:!!order.unsupported,reasons:order.reasons.slice()});});return result;}
+  function restoreTileOrder(state,saved,frame){
+    state.tileOrder.clear();if(!Array.isArray(saved))return;
+    saved.forEach(function(item){
+      if(!item||typeof item.key!=='string'||!frame.tiles.has(item.key)||!Array.isArray(item.runs))return;
+      var runs=item.runs.map(Number).filter(function(index,pos,list){return Number.isInteger(index)&&index>0&&frame.indexToStyleId.has(index)&&list.indexOf(index)===pos;});
+      if(runs.length)state.tileOrder.set(item.key,{runs:runs,seen:new Set(runs),unsupported:!!item.unsupported,reasons:Array.isArray(item.reasons)?item.reasons.map(String):[]});
+    });
+  }
   function serializeV4Layer(layer){
     var map=framesByLayer.get(layer);if(!map||!map.size)return null;
-    var frames=[];map.forEach(function(frame,frameIndex){if(!v4.isFrame(frame))return;frames.push({frameIndex:Number(frameIndex),frame:v4.serializeFrame(frame)});});frames.sort(function(a,b){return a.frameIndex-b.frameIndex;});
+    var frames=[];map.forEach(function(frame,frameIndex){if(!v4.isFrame(frame))return;frames.push({frameIndex:Number(frameIndex),frame:v4.serializeFrame(frame),tileOrder:serializeTileOrder(stateByFrame.get(frame))});});frames.sort(function(a,b){return a.frameIndex-b.frameIndex;});
     var payload={version:v4.SERIALIZATION_VERSION,formatRevision:v4.FORMAT_REVISION,tileSize:TILE_SIZE,frames:frames};
     serializationReport.serializedFrameCount=frames.length;serializationReport.serializedBytes=utf8Bytes(JSON.stringify(payload));serializationReport.lifecycleStates={};frames.forEach(function(item){var state=item.frame.lifecycle.state;serializationReport.lifecycleStates[state]=(serializationReport.lifecycleStates[state]||0)+1;});return payload;
   }
@@ -632,7 +662,7 @@ function refreshVisibleLayer(layer){
         if(!Number.isInteger(frameIndex)||frameIndex<0||seen.has(frameIndex))throw new Error('Smart Raster v4 frame identity is invalid or duplicated');seen.add(frameIndex);
         var frame=v4.deserializeFrame(item.frame),v3=layer.smartStyleFrames&&layer.smartStyleFrames[frameIndex],artwork=layer.frames&&layer.frames[frameIndex];
         var width=v3&&v3.width||artwork&&artwork.width,height=v3&&v3.height||artwork&&artwork.height;if(width&&height&&(frame.width!==width||frame.height!==height))throw new Error('Smart Raster v4 frame dimensions do not match v3');
-        map.set(frameIndex,frame);createState(frame,layer,(currentLayers()||[]).indexOf(layer),frameIndex);loaded++;rebuilt+=frame.styleTiles.size;
+        map.set(frameIndex,frame);var state=createState(frame,layer,(currentLayers()||[]).indexOf(layer),frameIndex);restoreTileOrder(state,item.tileOrder,frame);loaded++;rebuilt+=frame.styleTiles.size;
       }catch(error){rejected.push({frameIndex:Number.isInteger(frameIndex)?frameIndex:null,reason:error&&error.message?error.message:String(error)});}
     });
     if(map.size){framesByLayer.set(layer,map);trackedLayers.add(layer);}else{framesByLayer.delete(layer);trackedLayers.delete(layer);}
@@ -643,11 +673,11 @@ function refreshVisibleLayer(layer){
     cleanupTrackedLayers();var frames=0,tiles=0,styles=0,lifecycle={},liveLegacy=0;(currentLayers()||[]).forEach(function(layer){if(legacyStateByLayer.has(layer))liveLegacy++;});trackedLayers.forEach(function(layer){var map=framesByLayer.get(layer);if(!map)return;map.forEach(function(frame){frames++;tiles+=frame.tiles.size;styles+=frame.styleTiles.size;var state=frame.lifecycle.state;lifecycle[state]=(lifecycle[state]||0)+1;});});
     return Object.assign({},serializationReport,{liveFrameCount:frames,liveLegacyLayerCount:liveLegacy,tileCount:tiles,styleCount:styles,lifecycleStates:lifecycle,rejectedFrames:serializationReport.rejectedFrames.slice(),validationWarnings:serializationReport.validationWarnings.slice()});
   }  function cloneSerialized(value){return value==null?null:JSON.parse(JSON.stringify(value));}
-  function captureFrameSnapshot(layer,frameIndex){var frame=existingShadowFrame(layer,Number(frameIndex));return frame?cloneSerialized(v4.serializeFrame(frame)):null;}
+  function captureFrameSnapshot(layer,frameIndex){var frame=existingShadowFrame(layer,Number(frameIndex));return frame?cloneSerialized({frame:v4.serializeFrame(frame),tileOrder:serializeTileOrder(stateByFrame.get(frame))}):null;}
   function restoreFrameSnapshot(layer,frameIndex,snapshot){
     frameIndex=Number(frameIndex);var map=shadowFrames(layer);
     if(!snapshot){map.delete(frameIndex);documentReport.lastOperation={type:'delete-frame',frameIndex:frameIndex};return null;}
-    try{var frame=v4.deserializeFrame(cloneSerialized(snapshot));map.set(frameIndex,frame);createState(frame,layer,(currentLayers()||[]).indexOf(layer),frameIndex);documentReport.lastOperation={type:'restore-frame',frameIndex:frameIndex,tileCount:frame.tiles.size};return frame;}
+    try{var saved=cloneSerialized(snapshot),frame=v4.deserializeFrame(saved.frame||saved);map.set(frameIndex,frame);var state=createState(frame,layer,(currentLayers()||[]).indexOf(layer),frameIndex);restoreTileOrder(state,saved.tileOrder,frame);documentReport.lastOperation={type:'restore-frame',frameIndex:frameIndex,tileCount:frame.tiles.size};return frame;}
     catch(error){documentReport.validationErrors.push({operation:'restore-frame',frameIndex:frameIndex,reason:error.message||String(error)});throw error;}
   }
   function deleteV4Frame(layer,frameIndex){var map=framesByLayer.get(layer),removed=!!(map&&map.delete(Number(frameIndex)));documentReport.lastOperation={type:'delete-frame',frameIndex:Number(frameIndex),removed:removed};return removed;}
@@ -678,6 +708,7 @@ function refreshVisibleLayer(layer){
   root.SmartRasterV4StyleCoverageMask=styleCoverageMask;
   root.SmartRasterV4CaptureStyleTransform=captureStyleTransform;
   root.SmartRasterV4ReplaceStyleTransform=replaceStyleTransform;
+  root.SmartRasterV4StyleIsAuthoritative=styleIsAuthoritative;
   if(typeof root.smartRasterV4DebugAssertions!=='boolean')root.smartRasterV4DebugAssertions=false;
   root.debugSmartRasterV4=debugFrame;
   root.debugSmartRasterV4Pixel=debugPixel;
@@ -689,7 +720,7 @@ function refreshVisibleLayer(layer){
   root.debugSmartRasterV4DocumentOperations=documentDiagnostics;
   root.undoSmartRasterV4Debug=undoDebug;
   root.redoSmartRasterV4Debug=redoDebug;
-  root.addEventListener('advanced-palette-style-color-changed',function(event){var styleId=event&&event.detail&&event.detail.styleId;if(styleId)recolorStyle(styleId);});
+  root.addEventListener('advanced-palette-style-color-changed',function(event){var detail=event&&event.detail||{},styleId=detail.styleId;if(styleId)recolorStyle(styleId,{interactive:detail.interactive===true});});
   root.addEventListener('advanced-palette-order-changed',function(){palettePriorityCache=null;compositionVersion++;trackedLayers.forEach(function(layer){var map=framesByLayer.get(layer);if(map)map.forEach(function(frame){frame.tiles.forEach(function(tile,key){frame.dirtyTiles.add(key);});});});renderAllFrames();var list=currentLayers(),active=list&&typeof curLayer!=='undefined'?list[curLayer]:null;if(active&&active.renderMode==='style-layering')refreshVisibleLayer(active);});
   root.addEventListener('active-artwork-changed',function(){liveEraserSession=null;renderFrame(activeShadowFrame());});
 })(typeof window!=='undefined'?window:globalThis);

@@ -195,6 +195,7 @@
     return -1;
   }
   function recolorFrame(layer,li,fi,styleId,rgba){
+    if(typeof window.SmartRasterV4StyleIsAuthoritative==='function'&&window.SmartRasterV4StyleIsAuthoritative(layer,fi,styleId))return false;
     var frame=layer.smartStyleFrames&&layer.smartStyleFrames[fi];if(!frame)return false;
     var index=Number(frame.meta.styleIdToIndex[styleId])||0;if(!index)return false;
     var frameIndex=Number(fi),activeFrame=li===curLayer?heldArtworkFrameIndex(layer,curFrame):-1,isActive=li===curLayer&&frameIndex===activeFrame;

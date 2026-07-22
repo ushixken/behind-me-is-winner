@@ -809,6 +809,7 @@ const _colorControlStarts=new WeakMap();
   function onWheelUp(e){
     const shouldCommit=e.type!=='pointercancel';
     wheelDown=false;sqDown=false;_hidePickCursor();
+    if(shouldCommit&&window.PaletteDocker&&typeof window.PaletteDocker.flushAdvancedStyleColorChange==='function')window.PaletteDocker.flushAdvancedStyleColorChange();
     if(shouldCommit)_recordAdvancedHistoryAfter(historyStart);historyStart=null;
     cpWheelCanvas.removeEventListener('pointermove',onWheelMove);
     cpWheelCanvas.removeEventListener('pointerup',onWheelUp);
@@ -836,6 +837,7 @@ const _colorControlStarts=new WeakMap();
   function onSqUp(e){
     const shouldCommit=e.type!=='pointercancel';
     sqDown=false;_hidePickCursor();
+    if(shouldCommit&&window.PaletteDocker&&typeof window.PaletteDocker.flushAdvancedStyleColorChange==='function')window.PaletteDocker.flushAdvancedStyleColorChange();
     if(shouldCommit)_recordAdvancedHistoryAfter(historyStart);historyStart=null;
     cpSqCanvas.removeEventListener('pointermove',onSqMove);
     cpSqCanvas.removeEventListener('pointerup',onSqUp);

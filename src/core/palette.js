@@ -43,8 +43,12 @@
   let toolbarSubmenuOpen=false;
   let isSyncingColorPanel=false;
   let advancedColorFrame=null;
+  let advancedColorTimer=null;
+  let advancedColorSettleTimer=null;
+  let advancedColorLastDispatch=0;
   let advancedSelectionPersistTimer=null;
   const pendingAdvancedColorStyleIds=new Set();
+  const activeAdvancedColorStyleIds=new Set();
   const defaultHexes=['#000000','#ffffff','#f23636','#ff9f1c','#ffd23f','#2ec4b6','#3a86ff','#8338ec'];
   function makeAdvancedStyle(rgba,id,name){
     const values=Array.isArray(rgba)?rgba:[0,0,0,255];
@@ -1045,17 +1049,27 @@
       window.dispatchEvent(new CustomEvent('advanced-palette-style-color-changed',{detail:{styleId:style.id}}));
     }
   }
+  function dispatchPendingAdvancedStyleColors(){
+    advancedColorFrame=null;advancedColorLastDispatch=performance.now();
+    const styleIds=Array.from(pendingAdvancedColorStyleIds);pendingAdvancedColorStyleIds.clear();
+    styleIds.forEach(id=>window.dispatchEvent(new CustomEvent('advanced-palette-style-color-changed',{detail:{styleId:id,interactive:true}})));
+    clearTimeout(advancedColorSettleTimer);advancedColorSettleTimer=setTimeout(()=>{advancedColorSettleTimer=null;render();persist();},120);
+  }
   function queueAdvancedStyleColorChange(styleId){
-    pendingAdvancedColorStyleIds.add(styleId);
-    if(advancedColorFrame!==null) return;
-    advancedColorFrame=requestAnimationFrame(()=>{
-      advancedColorFrame=null;
-      const styleIds=Array.from(pendingAdvancedColorStyleIds);
-      pendingAdvancedColorStyleIds.clear();
-      render();
-      persist();
-      styleIds.forEach(id=>window.dispatchEvent(new CustomEvent('advanced-palette-style-color-changed',{detail:{styleId:id}})));
-    });
+    pendingAdvancedColorStyleIds.add(styleId);activeAdvancedColorStyleIds.add(styleId);
+    if(advancedColorFrame!==null||advancedColorTimer!==null)return;
+    const delay=Math.max(0,33-(performance.now()-advancedColorLastDispatch));
+    if(delay>1)advancedColorTimer=setTimeout(()=>{advancedColorTimer=null;advancedColorFrame=requestAnimationFrame(dispatchPendingAdvancedStyleColors);},delay);
+    else advancedColorFrame=requestAnimationFrame(dispatchPendingAdvancedStyleColors);
+  }
+  function flushAdvancedStyleColorChange(){
+    if(advancedColorFrame!==null){cancelAnimationFrame(advancedColorFrame);advancedColorFrame=null;}
+    if(advancedColorTimer!==null){clearTimeout(advancedColorTimer);advancedColorTimer=null;}
+    advancedColorLastDispatch=performance.now();
+    const styleIds=Array.from(activeAdvancedColorStyleIds);pendingAdvancedColorStyleIds.clear();activeAdvancedColorStyleIds.clear();
+    styleIds.forEach(id=>window.dispatchEvent(new CustomEvent('advanced-palette-style-color-changed',{detail:{styleId:id,interactive:false}})));
+    if(advancedColorSettleTimer!==null){clearTimeout(advancedColorSettleTimer);advancedColorSettleTimer=null;}
+    render();persist();
   }
   function updateActiveAdvancedStyleFromColorPanel(hex){
     if(isSyncingColorPanel||!activeLayerUsesAdvancedPalette()||!activeAdvancedStyleId) return false;
@@ -2706,7 +2720,7 @@
     const style=advancedColorPanelStyleId&&advancedColorPanelStyleId===activeAdvancedStyleId?findAdvancedStyleById(activeAdvancedStyleId):null;
     return style&&!style.locked&&Array.isArray(style.rgba)?style.rgba.slice():null;
   }
-  window.PaletteDocker={serialize,load,reset(){load(null);},renderCurrentColors:render,refresh:render,synchronizeActiveContext,isAdvancedPalettePaintingEnabled,getActiveAdvancedPaletteStyleId,getActiveAdvancedStyleColorForHistory,findAdvancedStyleById,getAdvancedStyleOrder,restoreAdvancedStyleOrder,updateActiveAdvancedStyleFromColorPanel,selectAdvancedStyleById,selectMatchingRgba,setForegroundFromSample};
+  window.PaletteDocker={serialize,load,reset(){load(null);},renderCurrentColors:render,refresh:render,synchronizeActiveContext,isAdvancedPalettePaintingEnabled,getActiveAdvancedPaletteStyleId,getActiveAdvancedStyleColorForHistory,findAdvancedStyleById,getAdvancedStyleOrder,restoreAdvancedStyleOrder,updateActiveAdvancedStyleFromColorPanel,flushAdvancedStyleColorChange,selectAdvancedStyleById,selectMatchingRgba,setForegroundFromSample};
   window.addEventListener('active-artwork-changed',()=>{synchronizeActiveContext(true);syncStyleLayeringControl();});
   window.addEventListener('active-layer-changed',syncStyleLayeringControl);
   window.addEventListener('smart-raster-style-layering-changed',syncStyleLayeringControl);

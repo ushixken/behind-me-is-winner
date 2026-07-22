@@ -416,8 +416,8 @@ function _tfCommitSmartFreeTransform(){
     const sourceX=Math.floor(localX),sourceY=Math.floor(localY);
     if(sourceX<0||sourceX>=source.width||sourceY<0||sourceY>=source.height)continue;
     const sourceOffset=sourceY*source.width+sourceX;
-    if(tfPixelSelection&&tfPixelSelection.mask[sourceOffset]!==255)continue;
     if(contribution){outputCoverage[destinationOffset]=_tfSampleCoverageBilinear(contribution.coverage,source.width,source.height,localX,localY);continue;}
+    if(tfPixelSelection&&tfPixelSelection.mask[sourceOffset]!==255)continue;
     if(sourceRgba[sourceOffset*4+3]===0)continue;
     outputIds[destinationOffset]=source.styleIds[sourceOffset]||0;
   }
@@ -564,8 +564,8 @@ function _tfCommitSmartPerspectiveTransform(){
     const sourceY=Math.floor(source.bounds.y+v*source.bounds.h);
     if(sourceX<0||sourceX>=source.width||sourceY<0||sourceY>=source.height)continue;
     const sourceOffset=sourceY*source.width+sourceX;
-    if(tfPixelSelection&&tfPixelSelection.mask[sourceOffset]!==255)continue;
     if(contribution){outputCoverage[destinationOffset]=_tfSampleCoverageBilinear(contribution.coverage,source.width,source.height,source.bounds.x+u*source.bounds.w,source.bounds.y+v*source.bounds.h);continue;}
+    if(tfPixelSelection&&tfPixelSelection.mask[sourceOffset]!==255)continue;
     if(sourceRgba[sourceOffset*4+3]===0)continue;
     outputIds[destinationOffset]=source.styleIds[sourceOffset]||0;
   }
