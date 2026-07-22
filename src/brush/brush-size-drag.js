@@ -87,6 +87,7 @@
     if(typeof refreshSizeUI==='function') refreshSizeUI(); else {
       const v=document.getElementById('ts-size-val'); if(v) v.textContent=px;
     }
+    if(typeof window._captureActiveBrushPreset==='function')window._captureActiveBrushPreset(false);
     return px;
   }
 

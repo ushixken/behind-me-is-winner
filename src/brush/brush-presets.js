@@ -1670,7 +1670,16 @@ function applyToolPreset(json){
       if(!captureTip&&(settingKey==='ts-tip-dataurl'||settingKey==='ts-texture-dataurl'))return;
       settings[settingKey]=effective[settingKey];
     });
-    settings['ts-size']=toolSizes[toolType];
+    const capturedSize=Number(toolSizes[toolType]);
+    if(Number.isFinite(capturedSize)){
+      settings['ts-size']=capturedSize;
+      _toolPresetSizes[toolType][presetId]=capturedSize;
+      if(_activePresetId===presetId)_toolState[toolType].size=capturedSize;
+      if(_activeTab===toolType){
+        const displaySize=window.formatBrushSize?window.formatBrushSize(capturedSize):String(Math.round(capturedSize*10)/10);
+        document.querySelectorAll('.bp-item[data-preset-id='+CSS.escape(presetId)+'] .bp-preset-size').forEach(label=>{label.textContent=displaySize;});
+      }
+    }
     if(captureTip){
       if(window.brushTipCanvas){
         try{settings['ts-tip-dataurl']=window.brushTipCanvas.toDataURL('image/png');}catch(e){}
