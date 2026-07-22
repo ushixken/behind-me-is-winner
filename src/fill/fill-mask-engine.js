@@ -25,17 +25,23 @@
     if(!supersampleCanvas){supersampleCanvas=document.createElement('canvas');supersampleContext=supersampleCanvas.getContext('2d',{willReadFrequently:true});}
     if(supersampleCanvas.width!==dimension||supersampleCanvas.height!==dimension){supersampleCanvas.width=dimension;supersampleCanvas.height=dimension;supersampleContext=supersampleCanvas.getContext('2d',{willReadFrequently:true});}
   }
-  function tracePolygon(context,points){
-    context.beginPath();context.moveTo(points[0].x,points[0].y);for(var i=1;i<points.length;i++)context.lineTo(points[i].x,points[i].y);context.closePath();context.fill('nonzero');
+  function tracePath(context,commands){
+    context.beginPath();for(var i=0;i<commands.length;i++){var command=commands[i];
+      if(command.type==='move')context.moveTo(command.x,command.y);
+      else if(command.type==='line')context.lineTo(command.x,command.y);
+      else if(command.type==='quadratic')context.quadraticCurveTo(command.cx,command.cy,command.x,command.y);
+      else if(command.type==='cubic')context.bezierCurveTo(command.cx1,command.cy1,command.cx2,command.cy2,command.x,command.y);
+      else if(command.type==='close')context.closePath();
+    }context.fill('nonzero');
   }
-  function rasterizePolygon(points,bounds,samples){
-    if(!Array.isArray(points)||points.length<3)return null;
+  function rasterizePath(commands,bounds,samples){
+    if(!Array.isArray(commands)||commands.length<3)return null;
     var rect=clampBounds(bounds,1),coverage=ensureDocumentCanvas('coverage');if(!rect.w||!rect.h)return null;
     coverageContext.clearRect(rect.x,rect.y,rect.w,rect.h);ensureSupersample(samples);
     for(var tileY=rect.y;tileY<rect.y+rect.h;tileY+=TILE_SIZE)for(var tileX=rect.x;tileX<rect.x+rect.w;tileX+=TILE_SIZE){
       var tileWidth=Math.min(TILE_SIZE,rect.x+rect.w-tileX),tileHeight=Math.min(TILE_SIZE,rect.y+rect.h-tileY),highWidth=tileWidth*samples,highHeight=tileHeight*samples;
       supersampleContext.setTransform(1,0,0,1,0,0);supersampleContext.clearRect(0,0,highWidth,highHeight);
-      supersampleContext.setTransform(samples,0,0,samples,-tileX*samples,-tileY*samples);supersampleContext.fillStyle='#fff';tracePolygon(supersampleContext,points);
+      supersampleContext.setTransform(samples,0,0,samples,-tileX*samples,-tileY*samples);supersampleContext.fillStyle='#fff';tracePath(supersampleContext,commands);
       var high=supersampleContext.getImageData(0,0,highWidth,highHeight).data,low=coverageContext.createImageData(tileWidth,tileHeight),lowData=low.data,area=samples*samples;
       for(var y=0;y<tileHeight;y++)for(var x=0;x<tileWidth;x++){
         var sum=0;for(var sy=0;sy<samples;sy++){var highRow=(y*samples+sy)*highWidth;for(var sx=0;sx<samples;sx++)sum+=high[(highRow+x*samples+sx)*4+3];}
@@ -76,13 +82,16 @@
     if(styleId&&typeof commitSmartRasterBrush==='function')commitSmartRasterBrush(effective,styleId,1,rect,beforeSmart,'normal');
     saveActiveToKey();recomposite(curLayer,curFrame);renderTimeline();updateStatus();return changed>0;
   }
-  function applyPolygon(points,bounds,options){
+  function applyPath(commands,bounds,options){
     options=options||{};var enabled=options.antialiasing==null?settings.antialiasing:!!options.antialiasing,quality=['weak','medium','strong'].indexOf(options.quality)>=0?options.quality:settings.quality;
-    var samples=enabled?(quality==='weak'?2:quality==='strong'?8:4):1,result=rasterizePolygon(points,bounds,samples);return result?applyCoverageMask(result.canvas,result.bounds,options):false;
+    var samples=enabled?(quality==='weak'?2:quality==='strong'?8:4):1,result=rasterizePath(commands,bounds,samples);return result?applyCoverageMask(result.canvas,result.bounds,options):false;
+  }
+  function applyPolygon(points,bounds,options){
+    if(!Array.isArray(points)||points.length<3)return false;var commands=[{type:'move',x:points[0].x,y:points[0].y}];for(var i=1;i<points.length;i++)commands.push({type:'line',x:points[i].x,y:points[i].y});commands.push({type:'close'});return applyPath(commands,bounds,options);
   }
   function applyMask(maskCanvas,bounds,options){return applyCoverageMask(maskCanvas,bounds,options);}
   function setAntialiasing(enabled){settings.antialiasing=!!enabled;persist();notify();}
   function setQuality(quality){if(['weak','medium','strong'].indexOf(quality)<0)return false;settings.quality=quality;persist();notify();return true;}
   function getSettings(){return{antialiasing:settings.antialiasing,quality:settings.quality};}
-  window.FillMaskEngine={applyMask:applyMask,applyPolygon:applyPolygon,getSettings:getSettings,setAntialiasing:setAntialiasing,setQuality:setQuality};
+  window.FillMaskEngine={applyMask:applyMask,applyPath:applyPath,applyPolygon:applyPolygon,getSettings:getSettings,setAntialiasing:setAntialiasing,setQuality:setQuality};
 })();
