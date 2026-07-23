@@ -1203,11 +1203,12 @@ function renderRows(){
     // Keyframe blocks
     kfs.filter(f=>f<TOTAL).forEach(f=>{
       const block=document.createElement('div');const kk=`${i}:${f}`;
-      let cls='kf-block';if(selectedKFs.has(kk)) cls+=' selected';
+      let cls='kf-block';if(selectedKFs.has(kk)) cls+=' selected';if(typeof isDrawingFrameHidden==='function'&&isDrawingFrameHidden(i,f))cls+=' drawing-hidden';
       block.className=cls;
       block.style.cssText='position:absolute;left:'+(f*CellW+3)+'px;top:4px;bottom:4px;width:'+(CellW-6)+'px;';
       block.style.setProperty('--kf-mark-color',getMarkDef(getDrawingMark(i,f)).color);
-      block.title=l.name+' F'+frameLabel(f);
+      block.title=l.name+' F'+frameLabel(f)+(typeof isDrawingFrameHidden==='function'&&isDrawingFrameHidden(i,f)?' (hidden)':'');
+      if(typeof isDrawingFrameHidden==='function'&&isDrawingFrameHidden(i,f)){const x=document.createElement('span');x.className='kf-hidden-x';x.textContent='X';block.appendChild(x);}
       block.dataset.layerIdx=i;block.dataset.kk=kk;
       block.addEventListener('pointerdown',ev=>{
         ev.stopPropagation();

@@ -5,8 +5,10 @@ const ONION_SKIN_PREF_KEY='animator_onion_skin_enabled';
 function updateOnion(){
   octx.clearRect(0,0,CW,CH);
   if(!document.getElementById('onion-chk').checked) return;
-  const p=getHeldKey(curLayer,curFrame-1);if(p){octx.globalAlpha=0.28;octx.drawImage(p,0,0);octx.globalAlpha=1;}
-  const n=getExactKey(curLayer,curFrame+1);if(n){octx.globalAlpha=0.15;octx.drawImage(n,0,0);octx.globalAlpha=1;}
+  const p=typeof getPreviousVisibleDrawingKey==='function'?getPreviousVisibleDrawingKey(curLayer,curFrame-1):null;
+  if(p){octx.globalAlpha=0.28;octx.drawImage(p.canvas,0,0);octx.globalAlpha=1;}
+  const n=typeof getNextVisibleDrawingKey==='function'?getNextVisibleDrawingKey(curLayer,curFrame+1):null;
+  if(n){octx.globalAlpha=0.15;octx.drawImage(n.canvas,0,0);octx.globalAlpha=1;}
 }
 function setOnionSkinEnabled(enabled,{persist=true}={}){
   const checkbox=document.getElementById('onion-chk');
@@ -135,9 +137,18 @@ function _restoreStyleLayeringToggle(action,direction){
 function _restoreStyleLayeringOrder(snapshot){
   if(!window.PaletteDocker||typeof window.PaletteDocker.restoreAdvancedStyleOrder!=='function')return false;
   window.PaletteDocker.restoreAdvancedStyleOrder(snapshot);recomposite(curLayer,curFrame);return true;
-}function undo(){
+}
+function _restoreDrawingFrameHidden(action,hidden){
+  if(typeof setDrawingFrameHidden!=='function'||!setDrawingFrameHidden(action.layer,action.frame,hidden))return false;
+  if(action.layer===curLayer)loadFrame(curLayer,curFrame);
+  else recomposite(curLayer,curFrame);
+  renderTimeline();updateOnion();updateStatus();
+  return true;
+}
+function undo(){
   if(!undoStack.length)return;
   const action=undoStack.pop();
+  if(action.type==='drawing-frame-hidden'){if(_restoreDrawingFrameHidden(action,action.before))redoStack.push(action);return;}
   if(action.type==='smart-raster-style-layering-toggle'){if(_restoreStyleLayeringToggle(action,"before"))redoStack.push(action);return;}
   if(action.type==='smart-raster-style-order'){if(_restoreStyleLayeringOrder(action.before))redoStack.push(action);return;}
   if(action.type==='layer-cut'){
@@ -162,6 +173,7 @@ function _restoreStyleLayeringOrder(snapshot){
 function redo(){
   if(!redoStack.length)return;
   const action=redoStack.pop();
+  if(action.type==='drawing-frame-hidden'){if(_restoreDrawingFrameHidden(action,action.after))undoStack.push(action);return;}
   if(action.type==='smart-raster-style-layering-toggle'){if(_restoreStyleLayeringToggle(action,"after"))undoStack.push(action);return;}
   if(action.type==='smart-raster-style-order'){if(_restoreStyleLayeringOrder(action.after))undoStack.push(action);return;}
   if(action.type==='layer-cut'){

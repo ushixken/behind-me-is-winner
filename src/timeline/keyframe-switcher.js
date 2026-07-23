@@ -34,7 +34,8 @@
   // ── Drawing Mark DOM refs (Drawing Marks panel) ───────────────
   const markSwatch  = document.getElementById('dm-swatch');
   const markName    = document.getElementById('dm-label');
-  const markBtns    = document.querySelectorAll('.dm-btn');
+  const markBtns    = document.querySelectorAll('.dm-btn[data-mark]');
+  const hiddenBtn   = document.getElementById('dm-btn-hidden');
 
   // ── Highlight helpers ──────────────────────────────────────────
   // Apply --kfsw-mark-color as a CSS custom property so the active button
@@ -46,6 +47,8 @@
   function _refreshMarkButtons(currentMarkId){
     const hasKey = !!(layers[curLayer] && layers[curLayer].frames[curFrame]);
     const def = (typeof DRAWING_MARKS !== 'undefined') ? DRAWING_MARKS : null;
+    const hidden = hasKey && typeof isDrawingFrameHidden==='function' && isDrawingFrameHidden(curLayer,curFrame);
+    if(hiddenBtn){hiddenBtn.classList.toggle('dm-btn-active',hidden);hiddenBtn.disabled=!hasKey;}
 
     markBtns.forEach(btn => {
       const id = btn.dataset.mark;
@@ -62,7 +65,7 @@
       const m = def[currentMarkId];
       markSwatch.style.background = m.color;
       markSwatch.style.borderColor = m.color;
-      markName.textContent = m.displayName;
+      markName.textContent = hidden ? 'Hidden - '+m.displayName : m.displayName;
       markName.style.color = '';
     } else {
       markSwatch.style.background = '';
@@ -91,6 +94,21 @@
     });
   });
 
+  if(hiddenBtn){
+    hiddenBtn.addEventListener('click',()=>{
+      const layer=layers[curLayer];
+      if(!layer||!layer.frames[curFrame])return;
+      const before=typeof isDrawingFrameHidden==='function'&&isDrawingFrameHidden(curLayer,curFrame);
+      if(!before&&typeof saveActiveToKey==='function')saveActiveToKey();
+      if(typeof setDrawingFrameHidden!=='function'||!setDrawingFrameHidden(curLayer,curFrame,!before))return;
+      undoStack.push({type:'drawing-frame-hidden',layer:curLayer,frame:curFrame,before,after:!before});
+      if(undoStack.length>40)undoStack.shift();
+      redoStack=[];
+      loadFrame(curLayer,curFrame);
+      renderTimeline();
+      refreshMarks();
+    });
+  }
   // Restore saved options (step + bypass), same pattern as other prefs in this app.
   try{
     const savedStep=parseInt(localStorage.getItem(STORE_KEY_STEP));
@@ -160,7 +178,7 @@
   // Used exclusively by navigate() and the Prev/Next display in refresh() —
   // the total Keyframes count and Drawing Mark section are always unfiltered.
   function filteredFrameTimes(li){
-    const times = keyframeTimes(li);
+    const times = keyframeTimes(li).filter(f=>!(typeof isDrawingFrameHidden==='function'&&isDrawingFrameHidden(li,f)));
     if(_flipThrough.keyframe && _flipThrough.breakdown && _flipThrough.inbetween) return times;
     return times.filter(f => {
       const mark = (typeof getDrawingMark === 'function') ? getDrawingMark(li, f) : 'inbetween';
@@ -188,6 +206,12 @@
     refreshMarks();
   }
 
+  function _visibleStepTarget(start,direction){
+    for(let f=start;f>=rangeStart&&f<=rangeEnd;f+=direction){
+      if(!(typeof isDrawingFrameHidden==='function'&&isDrawingFrameHidden(curLayer,f)))return f;
+    }
+    return null;
+  }
   function navigate(direction){
     if(!layers[curLayer]) return;
     const step=Math.max(1,Math.min(100,parseInt(spinStep.value)||1));
@@ -195,8 +219,8 @@
     // At the out point, "next frame" wraps to the in point (and vice versa),
     // same as the timeline's step forward/back buttons — this takes priority
     // over jumping to the next/prev keyframe or bypass-stepping.
-    if(direction>0&&curFrame>=rangeEnd){ goToFrame(rangeStart); refresh(); return; }
-    if(direction<0&&curFrame<=rangeStart){ goToFrame(rangeEnd); refresh(); return; }
+    if(direction>0&&curFrame>=rangeEnd){const wrapped=_visibleStepTarget(rangeStart,1);if(wrapped!==null)goToFrame(wrapped);refresh();return;}
+    if(direction<0&&curFrame<=rangeStart){const wrapped=_visibleStepTarget(rangeEnd,-1);if(wrapped!==null)goToFrame(wrapped);refresh();return;}
 
     let target;
 
@@ -218,6 +242,7 @@
     }
 
     target=Math.max(0,Math.min(TOTAL-1,target));
+    if(typeof isDrawingFrameHidden==='function'&&isDrawingFrameHidden(curLayer,target)){const visible=_visibleStepTarget(target,direction);if(visible===null){refresh();return;}target=visible;}
     goToFrame(target);
     refresh();
   }

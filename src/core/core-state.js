@@ -123,6 +123,25 @@ function setDrawingMark(li, fi, markType) {
   }
 }
 
+/** Hidden drawings remain stored, but are ignored by exposure resolution. */
+function isDrawingFrameHidden(li, fi) {
+  const layer=layers[li],meta=layer&&layer.frameMeta&&layer.frameMeta[fi];
+  return !!(meta&&meta.hidden);
+}
+
+function setDrawingFrameHidden(li, fi, hidden) {
+  const layer=layers[li];
+  if(!layer||!layer.frames||!layer.frames[fi]) return false;
+  if(!layer.frameMeta) layer.frameMeta={};
+  if(hidden){
+    if(!layer.frameMeta[fi]) layer.frameMeta[fi]={};
+    layer.frameMeta[fi].hidden=true;
+  }else if(layer.frameMeta[fi]){
+    delete layer.frameMeta[fi].hidden;
+    if(Object.keys(layer.frameMeta[fi]).length===0) delete layer.frameMeta[fi];
+  }
+  return true;
+}
 // Layer object shape: {name, visible, onTimeline, color, frames, opacity(0-1), stencil('none'|'inside'|'outside'), clipTo(layerIdx|null), groupId(string|null)}
 // Group object shape: {id, name, visible, collapsed, opacity(0-1), color, parentId(string|null — id of the group this group is nested inside, null = top level)}
 let groups=[];

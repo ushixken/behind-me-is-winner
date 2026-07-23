@@ -195,7 +195,26 @@ function _ensureScratchCanvases(){
   if(!_scratchTmp||_scratchTmp.width!==CW||_scratchTmp.height!==CH) _scratchTmp=mkLayerCanvas();
 }
 function getExactKey(li,fi){return layers[li].frames[fi]||null;}
-function getHeldKey(li,fi){for(let f=fi;f>=0;f--)if(layers[li].frames[f])return layers[li].frames[f];return null;}
+function getHeldKey(li,fi){
+  for(let f=fi;f>=0;f--){
+    if(layers[li].frames[f]&&!(typeof isDrawingFrameHidden==='function'&&isDrawingFrameHidden(li,f)))return layers[li].frames[f];
+  }
+  return null;
+}
+function getPreviousVisibleDrawingKey(li,fi){
+  const layer=layers[li];if(!layer)return null;
+  for(let f=Math.min(fi,TOTAL-1);f>=0;f--){
+    if(layer.frames[f]&&!(typeof isDrawingFrameHidden==='function'&&isDrawingFrameHidden(li,f)))return {frameIndex:f,canvas:layer.frames[f]};
+  }
+  return null;
+}
+function getNextVisibleDrawingKey(li,fi){
+  const layer=layers[li];if(!layer)return null;
+  for(let f=Math.max(0,fi);f<TOTAL;f++){
+    if(layer.frames[f]&&!(typeof isDrawingFrameHidden==='function'&&isDrawingFrameHidden(li,f)))return {frameIndex:f,canvas:layer.frames[f]};
+  }
+  return null;
+}
 
 // ── Group-to-group clip helpers ───────────────────────────────
 // If a layer has no clip of its own but belongs to a group that is itself
@@ -274,6 +293,7 @@ function ensureKey(options){
   return false;
 }
 function saveActiveToKey(){
+  if(typeof isDrawingFrameHidden==='function'&&isDrawingFrameHidden(curLayer,curFrame))return;
   const kf=layers[curLayer].frames[curFrame];if(!kf)return;
   const kctx=kf.getContext('2d');kctx.clearRect(0,0,CW,CH);kctx.drawImage(activeC,0,0);
 }

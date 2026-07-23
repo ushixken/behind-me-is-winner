@@ -3305,6 +3305,7 @@ activeC.addEventListener('pointerdown',e=>{
     e.preventDefault();_eyedropperPointerId=e.pointerId;activeC.setPointerCapture(e.pointerId);_sampleVisibleCanvasColor(e);return;
   }
   if(tool!=='brush'&&tool!=='eraser'&&tool!=='fill'&&tool!=='line') return;
+  if(typeof isDrawingFrameHidden==='function'&&isDrawingFrameHidden(curLayer,curFrame)) return;
   // Prevent browser from hijacking tablet/stylus events (scroll, pan, zoom)
   e.preventDefault();
   if((tool==='brush'||tool==='eraser')&&window.FirstDabLatencyProbe){window.FirstDabLatencyProbe.begin({layerType:layers[curLayer]&&layers[curLayer].type,pointerdownAt:diagnosticPointerdownEntry});window.FirstDabLatencyProbe.setupMeasure('eventValidationAndPreventDefault',diagnosticPointerdownEntry);}

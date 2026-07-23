@@ -410,6 +410,8 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 .kf-block{position:absolute;top:4px;bottom:4px;border-radius:3px;background:var(--kf-mark-color,var(--accent));cursor:grab;z-index:5;touch-action:none;}
 .kf-block:hover{filter:brightness(1.15);}
 .kf-block.selected{filter:brightness(1.4);outline:2px solid rgba(255,255,255,0.25);}
+.kf-block.drawing-hidden{background:color-mix(in srgb,var(--kf-mark-color,var(--accent)) 28%,var(--bg2));}
+.kf-hidden-x{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:800;line-height:1;text-shadow:0 1px 2px #000;pointer-events:none;}
 .kf-extend{position:absolute;top:50%;height:2px;background:#4a4780;transform:translateY(-50%);z-index:2;pointer-events:none;}
 #playhead{position:absolute;top:0;width:2px;background:var(--red);z-index:20;pointer-events:none;}
 #playhead::before{content:'';position:absolute;top:0;left:-4px;width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:7px solid var(--red);}
@@ -973,6 +975,7 @@ body:has(#palette-color-modal) .fp-split-resize{
   border-color:var(--kfsw-mark-color,var(--accent));
   color:#fff;
 }
+.dm-btn-hidden.dm-btn-active{background:#8f3841;border-color:#e56a75;color:#fff;}
 
 /* â”€â”€ Compact mode (185-106px): label hidden, buttons horizontal â”€â”€â”€â”€â”€ */
 /* JS adds .dm-compact when 106 <= width < 185px                         */
