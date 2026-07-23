@@ -1597,6 +1597,10 @@ function applyToolPreset(json){
   // they're re-loaded fresh from disk every session, same as the app's own
   // built-in Hard Round/Soft Round/etc.
   let _assetPackPresets = [];
+  // Eraser entries are lightweight references into the shared preset catalog.
+  // Settings remain independent through the existing eraser:<presetId> slots.
+  const DEFAULT_ERASER_PRESET_IDS=['hard-round','soft-round'];
+  let _eraserPresetIds=new Set(DEFAULT_ERASER_PRESET_IDS);
 
   //  Groups (folders)
   // A single ordered list now (no more separate brush/eraser group sets
@@ -1739,7 +1743,7 @@ function applyToolPreset(json){
   function persist(){
     try{
       localStorage.setItem(STORE_KEY, JSON.stringify({
-        v:2, customPresets:_customPresets, groups:_groups, toolState:_toolState, toolPresetSizes:_toolPresetSizes, presetSettings:_presetSettings
+        v:3, customPresets:_customPresets, groups:_groups, eraserPresetIds:Array.from(_eraserPresetIds), toolState:_toolState, toolPresetSizes:_toolPresetSizes, presetSettings:_presetSettings
       }));
     }catch(e){ /* storage unavailable — fail silently, in-memory state still works */ }
   }
@@ -1766,6 +1770,9 @@ function applyToolPreset(json){
       const data=JSON.parse(raw);
       if(data && Array.isArray(data.customPresets)) _customPresets=data.customPresets.map(p=>Object.assign({},p,{settings:normalizeBrushSettings(p.settings)}));
       if(data && Array.isArray(data.groups) && data.groups.length) _groups=data.groups;
+      if(data&&Array.isArray(data.eraserPresetIds)){
+        _eraserPresetIds=new Set(DEFAULT_ERASER_PRESET_IDS.concat(data.eraserPresetIds.filter(id=>typeof id==='string')));
+      }
       if(data && data.toolState){
         if(data.toolState.brush){ _toolState.brush=Object.assign({},_toolState.brush,data.toolState.brush); delete _toolState.brush.density; }
         if(data.toolState.eraser){ _toolState.eraser=Object.assign({},_toolState.eraser,data.toolState.eraser); delete _toolState.eraser.density; }
@@ -1831,6 +1838,11 @@ function applyToolPreset(json){
     }catch(e){ /* corrupt/unavailable storage — just use defaults */ }
   }
   loadPersisted();
+  DEFAULT_ERASER_PRESET_IDS.forEach(id=>_eraserPresetIds.add(id));
+  if(!_eraserPresetIds.has(_toolState.eraser.presetId)){
+    _toolState.eraser.presetId='hard-round';
+    _toolState.eraser.size=Number(_toolPresetSizes.eraser['hard-round'])||20;
+  }
   const generalGroup=_groups.find(group=>group.id==='general')||_groups.find(group=>group.default)||_groups[0];
   if(generalGroup){
     ['hard-round','soft-round','soft-airbrush'].forEach(id=>{
@@ -1840,6 +1852,7 @@ function applyToolPreset(json){
 
   function allPresets(){ return BRUSH_PRESETS.concat(_customPresets).concat(_assetPackPresets); }
   function findPreset(id){ return allPresets().find(p=>p.id===id); }
+  function presetVisibleInActiveLibrary(preset){return _activeTab!=='eraser'||_eraserPresetIds.has(preset.id);}
 
   //  Draw preview canvas
   function drawPreview(canvas, cfg){
@@ -2158,6 +2171,11 @@ function applyToolPreset(json){
     const isCustom = preset && preset.custom;
     const cutItem = document.getElementById('bp-ctx-cut');
     const delItem = document.getElementById('bp-ctx-delete');
+    const addEraserItem=document.getElementById('bp-ctx-add-eraser'),removeEraserItem=document.getElementById('bp-ctx-remove-eraser');
+    const inErasers=_eraserPresetIds.has(presetId),isEraserTab=_activeTab==='eraser';
+    if(addEraserItem){addEraserItem.style.display=isEraserTab?'none':'';addEraserItem.style.opacity=inErasers?'0.4':'1';addEraserItem.setAttribute('aria-disabled',String(inErasers));}
+    if(removeEraserItem){const removable=isEraserTab&&!DEFAULT_ERASER_PRESET_IDS.includes(presetId);removeEraserItem.style.display=isEraserTab?'':'none';removeEraserItem.style.opacity=removable?'1':'0.4';removeEraserItem.setAttribute('aria-disabled',String(!removable));}
+    ['bp-ctx-rename','bp-ctx-cut','bp-ctx-paste','bp-ctx-delete'].forEach(id=>{const item=document.getElementById(id);if(item)item.style.display=isEraserTab?'none':'';});
     if(cutItem) cutItem.style.opacity = isCustom ? '1' : '0.4';
     if(delItem) delItem.style.opacity = isCustom ? '1' : '0.4';
     bpCtxMenu.style.left = Math.min(e.clientX, window.innerWidth - 160) + 'px';
@@ -2166,6 +2184,29 @@ function applyToolPreset(json){
   }
 
   if(bpCtxMenu){
+    document.getElementById('bp-ctx-add-eraser').onclick=()=>{
+      bpCtxMenu.classList.remove('visible');
+      const id=_bpCtxTargetId,preset=findPreset(id);
+      if(!id||!preset||_eraserPresetIds.has(id))return;
+      _captureToPreset(id,false,'brush');
+      const brushSettings=_presetSettings[_presetSettingsKey(id,'brush')]||preset.settings||{};
+      _presetSettings[_presetSettingsKey(id,'eraser')]=JSON.parse(JSON.stringify(normalizeBrushSettings(brushSettings)));
+      const size=Number(_toolPresetSizes.brush[id]??brushSettings['ts-size']??preset.settings?.['ts-size']);
+      if(Number.isFinite(size))_toolPresetSizes.eraser[id]=size;
+      _eraserPresetIds.add(id);persist();
+    };
+    document.getElementById('bp-ctx-remove-eraser').onclick=()=>{
+      bpCtxMenu.classList.remove('visible');
+      const id=_bpCtxTargetId;
+      if(!id||DEFAULT_ERASER_PRESET_IDS.includes(id)||!_eraserPresetIds.has(id))return;
+      _eraserPresetIds.delete(id);delete _presetSettings[_presetSettingsKey(id,'eraser')];delete _toolPresetSizes.eraser[id];
+      if(_toolState.eraser.presetId===id){
+        _toolState.eraser.presetId='hard-round';_activePresetId='hard-round';window._activeBrushPresetId='hard-round';
+        if(_activeTab==='eraser')selectPreset('hard-round');
+      }
+      persist();buildGrid(_bpSearchVal());refreshGrid();
+    };
+
     document.getElementById('bp-ctx-rename').onclick = ()=>{
       bpCtxMenu.classList.remove('visible');
       if(!_bpCtxTargetId) return;
@@ -2235,6 +2276,7 @@ function applyToolPreset(json){
       // Remove from customPresets
       const ci = _customPresets.findIndex(p=>p.id===_bpCtxTargetId);
       if(ci !== -1) _customPresets.splice(ci, 1);
+      _eraserPresetIds.delete(_bpCtxTargetId);
       // Remove from all groups
       _groups.forEach(g=>{ const i=g.ids.indexOf(_bpCtxTargetId); if(i!==-1) g.ids.splice(i,1); });
       persist();
@@ -2251,6 +2293,7 @@ function applyToolPreset(json){
       if(!preset || !preset.custom) return;
       const ci = _customPresets.findIndex(p=>p.id===_bpCtxTargetId);
       if(ci !== -1) _customPresets.splice(ci, 1);
+      _eraserPresetIds.delete(_bpCtxTargetId);
       _groups.forEach(g=>{ const i=g.ids.indexOf(_bpCtxTargetId); if(i!==-1) g.ids.splice(i,1); });
       persist();
       buildGrid();
@@ -2387,7 +2430,7 @@ function applyToolPreset(json){
         for(const id of deletedIds) delete _toolPresetSizes[toolType][id];
       }
       _customPresets=_customPresets.filter(preset=>!deletedIds.has(preset.id));
-      for(const id of deletedIds){delete _presetSettings[_presetSettingsKey(id,'brush')];delete _presetSettings[_presetSettingsKey(id,'eraser')];}
+      for(const id of deletedIds){_eraserPresetIds.delete(id);delete _presetSettings[_presetSettingsKey(id,'brush')];delete _presetSettings[_presetSettingsKey(id,'eraser')];}
       _groups=_groups.filter(candidate=>candidate.id!==group.id);
       _bgCtxTargetId=null;
       persist();
@@ -2505,7 +2548,7 @@ function applyToolPreset(json){
 
     if(q){
       // Flat search results across every group, no folders shown
-      const matched = allPresets().filter(p=>p.name.toLowerCase().includes(q));
+      const matched = allPresets().filter(p=>presetVisibleInActiveLibrary(p)&&p.name.toLowerCase().includes(q));
       if(matched.length===0){
         if(noResults) noResults.style.display='block';
       } else {
@@ -2528,11 +2571,13 @@ function applyToolPreset(json){
       grpEl.className='bp-group';
       grpEl.dataset.groupId=grp.id;
 
+      const visibleIds=grp.ids.filter(id=>{const preset=findPreset(id);return preset&&presetVisibleInActiveLibrary(preset);});
       const hd = document.createElement('div');
       hd.className='bp-group-hd'+(grp.collapsed?' collapsed':'');
       hd.draggable=true;
       hd.innerHTML=`<span class="bp-group-grip">⠿</span><span class="bp-group-toggle">▾</span><span class="bp-group-name">${grp.icon} ${grp.label}</span><span class="bp-group-count">${grp.ids.length}</span>`+
         (grp.default ? '' : '<span class="bp-group-del" title="Delete group">✕</span>');
+      const visibleCount=hd.querySelector('.bp-group-count');if(visibleCount)visibleCount.textContent=visibleIds.length;
       hd.addEventListener('click', e=>{
         if(e.target.classList.contains('bp-group-del')) return; // handled separately
         if(e.target.closest('.bp-group-name') && e.detail===2) return; // double-click handled below
@@ -2593,7 +2638,7 @@ function applyToolPreset(json){
       innerGrid.addEventListener('dragover', e=>{
         if(!_drag || _drag.type!=='item') return;
         e.preventDefault();
-        if(grp.ids.length===0) innerGrid.classList.add('drag-over');
+        if(visibleIds.length===0) innerGrid.classList.add('drag-over');
       });
       innerGrid.addEventListener('dragleave', ()=>innerGrid.classList.remove('drag-over'));
       innerGrid.addEventListener('drop', e=>{
@@ -2605,11 +2650,11 @@ function applyToolPreset(json){
         moveItem(_drag.id, _drag.fromGroup, grp.id, grp.ids[grp.ids.length-1], false);
       });
 
-      grp.ids.forEach(id=>{
+      visibleIds.forEach(id=>{
         const p=findPreset(id);
         if(p) innerGrid.appendChild(makeBpItem(p, grp.id));
       });
-      if(grp.ids.length===0){
+      if(visibleIds.length===0){
         const hint=document.createElement('div');
         hint.className='bp-group-empty-hint';
         hint.textContent='Drag brushes here, or use ➕ to add one';
@@ -2880,6 +2925,7 @@ function applyToolPreset(json){
     const p = findPreset(id);
     if(!p) return;
     const targetTool = (_activeTab==='eraser') ? 'eraser' : 'brush';
+    if(targetTool==='eraser'&&!_eraserPresetIds.has(id)) return;
     if(tool!==targetTool) setTool(targetTool, targetTool==='brush'?'Brush':'Eraser');
 
     // Save the outgoing preset's current slider state before switching away
