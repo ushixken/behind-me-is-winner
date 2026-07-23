@@ -944,9 +944,12 @@ body:has(#palette-color-modal) .fp-split-resize{
 #drawing-marks-panel{min-width:40px;}
 /* .fp-body-wrap has global flex:1 which forces it to fill panel height â€”
    override so the panel shrink-wraps to its single row of content. */
-#drawing-marks-panel .fp-body-wrap{flex:0 0 auto !important;overflow:hidden;}
+#drawing-marks-panel .fp-body-wrap{flex:0 0 auto !important;overflow:hidden;width:100% !important;align-self:stretch;box-sizing:border-box;}
 #drawing-marks-panel .fp-body{
   flex:0 0 auto !important;
+  width:100% !important;
+  align-self:stretch;
+  box-sizing:border-box;
   padding:6px 8px;
   gap:0;
   overflow:hidden;
@@ -977,41 +980,57 @@ body:has(#palette-color-modal) .fp-split-resize{
 }
 .dm-btn-hidden.dm-btn-active{background:#8f3841;border-color:#e56a75;color:#fff;}
 
-/* â”€â”€ Compact mode (185-106px): label hidden, buttons horizontal â”€â”€â”€â”€â”€ */
-/* JS adds .dm-compact when 106 <= width < 185px                         */
+/* Compact: preserve one centered button row and omit the status label. */
 #drawing-marks-panel.dm-compact .dm-swatch-wrap{display:none;}
-#drawing-marks-panel.dm-compact .dm-mark-row{justify-content:center;}
+#drawing-marks-panel.dm-compact .dm-mark-row{
+  justify-content:center;
+  width:100%;
+}
+#drawing-marks-panel.dm-compact .dm-btns{
+  display:grid;
+  grid-auto-flow:column;
+  grid-auto-columns:28px;
+  justify-content:center;
+  width:100%;
+  margin-inline:auto;
+}
 
-/* â”€â”€ Vertical mode (< 106px): KF/BD/IB stacked, 30x30, centered â”€â”€â”€ */
-/* 106px = 3x28px btns + 2x3px gaps + 2x8px padding                     */
-/* JS adds .dm-vertical; height:auto shrink-wraps to content              */
-#drawing-marks-panel.dm-vertical{min-width:40px;height:auto !important;}
+/* Vertical: use the extra height for a centered label above the same row. */
+#drawing-marks-panel.dm-vertical .fp-body-wrap{
+  flex:1 1 auto !important;
+  min-height:0;
+}
 #drawing-marks-panel.dm-vertical .fp-body{
-  padding:4px;
-  align-items:center;
+  flex:1 1 auto !important;
+  justify-content:center;
   overflow:hidden;
 }
 #drawing-marks-panel.dm-vertical .dm-mark-row{
   flex-direction:column;
   align-items:center;
-  justify-content:flex-start;
-  gap:3px;
+  justify-content:center;
+  gap:6px;
   width:100%;
 }
-#drawing-marks-panel.dm-vertical .dm-swatch-wrap{display:none;}
+#drawing-marks-panel.dm-vertical .dm-swatch-wrap{
+  display:flex;
+  flex:none;
+  justify-content:center;
+  width:100%;
+  max-width:100%;
+  margin-inline:auto;
+}
 #drawing-marks-panel.dm-vertical .dm-btns{
-  flex-direction:column;
-  gap:3px;
+  display:grid;
+  grid-auto-flow:column;
+  grid-auto-columns:28px;
+  justify-content:center;
   align-items:center;
+  gap:3px;
   width:100%;
+  max-width:100%;
+  margin-inline:auto;
 }
-#drawing-marks-panel.dm-vertical .dm-btn{
-  width:30px;
-  height:30px;
-  border-radius:4px;
-  flex-shrink:0;
-}
-
 /* â”€â”€ KEYFRAME EXPOSURE PANEL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 #keyframe-exposure-panel{min-width:106px;}
 #keyframe-exposure-panel .fp-body{padding:8px;gap:8px;overflow:hidden;}

@@ -423,59 +423,62 @@
   }
 
   // ── Drawing Marks panel — responsive layout ──────────────────────
-  // Three states based on panel width:
-  //   Normal   (>= 185px): [dot No drawing] [KF] [BD] [IB]
-  //   Compact  (106-184px): label hidden, [KF] [BD] [IB] horizontal
-  //   Vertical (< 106px):  KF / BD / IB stacked
-  //
-  // Fixed breakpoints avoid dynamic DOM measurement during resize:
-  //   Vertical = 106px: 3x28px btns + 2x3px gaps + 2x8px body padding
-  //   Compact  = 185px: above + 8px swatch + 5px gap + ~55px label + 6px row-gap
-  //
-  // NO MutationObserver: classList.toggle() fires MutationObserver which
-  // re-invokes the callback -> infinite layout loop. Only ResizeObserver
-  // is used. _dmState tracks the last applied state so classList is only
-  // written when the target actually changes (pure read path when idle).
-  // RAF throttle collapses burst callbacks during fast drags into one pass.
+  // Responsive Drawing Marks layout. Measurements come from the current
+  // contents so adding another mark button does not require new breakpoints.
   const dmPanel = document.getElementById('drawing-marks-panel');
   if(dmPanel && typeof ResizeObserver !== 'undefined'){
-    const DM_COMPACT_BREAKPOINT  = 185;
-    const DM_VERTICAL_BREAKPOINT = 106;
-    let _dmState = '';         // '' | 'normal' | 'compact' | 'vertical'
-    let _dmRafPending = false;
+    const dmButtons=dmPanel.querySelector('.dm-btns');
+    const dmLabelWrap=dmPanel.querySelector('.dm-swatch-wrap');
+    const dmLabel=dmPanel.querySelector('.dm-label');
+    const dmSwatch=dmPanel.querySelector('.dm-swatch');
+    const dmTitlebar=dmPanel.querySelector('.fp-titlebar');
+    const dmBody=dmPanel.querySelector('.fp-body');
+    let _dmState='';
+    let _dmRafPending=false;
+    let _dmKnownLabelWidth=72;
 
     function _dmApplyLayout(){
-      _dmRafPending = false;
-      const w = dmPanel.offsetWidth;
-      const next = w < DM_VERTICAL_BREAKPOINT ? 'vertical'
-                 : w < DM_COMPACT_BREAKPOINT  ? 'compact'
-                 : 'normal';
-      if(next === _dmState) return;  // no change -- do NOT touch DOM
-      _dmState = next;
+      _dmRafPending=false;
+      if(!dmButtons||!dmBody)return;
 
-      // Write classes exactly once per real state change.
-      dmPanel.classList.toggle('dm-compact',  next === 'compact');
-      dmPanel.classList.toggle('dm-vertical', next === 'vertical');
+      // Temporarily rely on intrinsic row width, not the panel's current width.
+      const bodyStyle=getComputedStyle(dmBody);
+      const horizontalPadding=(parseFloat(bodyStyle.paddingLeft)||0)+(parseFloat(bodyStyle.paddingRight)||0);
+      const buttonStyle=getComputedStyle(dmButtons);
+      const buttonGap=parseFloat(buttonStyle.columnGap||buttonStyle.gap)||0;
+      const buttons=Array.from(dmButtons.children).filter(button=>getComputedStyle(button).display!=='none');
+      const buttonRowWidth=buttons.reduce((width,button)=>width+button.offsetWidth,0)
+        +Math.max(0,buttons.length-1)*buttonGap;
+      const safeMinimum=Math.ceil(buttonRowWidth+horizontalPadding+2);
+      const safeMinimumCss=safeMinimum+'px';
+      if(dmPanel.style.minWidth!==safeMinimumCss)dmPanel.style.minWidth=safeMinimumCss;
 
-      // Clear inline height on vertical entry so CSS height:auto takes over.
-      if(next === 'vertical'){
-        dmPanel.style.height = '';
-        if(typeof FloatPanels !== 'undefined' && FloatPanels.setFloatSize){
-          FloatPanels.setFloatSize('drawing-marks', null, null);
-        }
+      if(dmLabelWrap&&getComputedStyle(dmLabelWrap).display!=='none'){
+        const labelGap=5;
+        _dmKnownLabelWidth=Math.max(_dmKnownLabelWidth,(dmSwatch?dmSwatch.offsetWidth:0)+labelGap+(dmLabel?dmLabel.scrollWidth:0));
       }
+      const normalWidth=safeMinimum+_dmKnownLabelWidth+6;
+      const titleHeight=dmTitlebar?dmTitlebar.offsetHeight:0;
+      const verticalHeight=titleHeight+(parseFloat(bodyStyle.paddingTop)||0)+(parseFloat(bodyStyle.paddingBottom)||0)
+        +Math.max(dmLabelWrap?dmLabelWrap.scrollHeight:0,12)+6+dmButtons.scrollHeight;
+      const hasHorizontalRoom=dmPanel.clientWidth>=normalWidth;
+      const hasVerticalRoom=dmPanel.clientHeight>=verticalHeight;
+      const next=hasHorizontalRoom?'normal':(hasVerticalRoom?'vertical':'compact');
+      if(next===_dmState)return;
+      _dmState=next;
+      dmPanel.classList.toggle('dm-compact',next==='compact');
+      dmPanel.classList.toggle('dm-vertical',next==='vertical');
     }
 
     function _dmSchedule(){
-      if(_dmRafPending) return;
-      _dmRafPending = true;
+      if(_dmRafPending)return;
+      _dmRafPending=true;
       requestAnimationFrame(_dmApplyLayout);
     }
 
     new ResizeObserver(_dmSchedule).observe(dmPanel);
     _dmSchedule();
   }
-
   // Stop wheel events from bubbling to the canvas when scrolling the body
   // (same pattern as the Layers and Brush Presets panels in layers.js).
   const kfswBody = document.querySelector('#keyframe-switcher-panel .fp-body');
