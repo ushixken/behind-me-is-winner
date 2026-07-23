@@ -13,6 +13,7 @@
   try{drawerSaved=JSON.parse(localStorage.getItem(DRAWER_STORAGE_KEY)||'{}')||{};}catch(_){drawerSaved={};}
   try{selectionSettingsSaved=JSON.parse(localStorage.getItem(SELECTION_SETTINGS_STORAGE_KEY)||'{}')||{};}catch(_){selectionSettingsSaved={};}
   try{magicWandAdvancedOpen=localStorage.getItem('animate.magicWandAdvancedExpanded.v1')==='true';}catch(_){magicWandAdvancedOpen=false;}
+  if(!saved['smart-selection']&&(saved.selection==='magic-wand'||saved.selection==='style-select'))saved['smart-selection']=saved.selection;
 
   function registerGroup(definition){
     if(!definition||!definition.id||!Array.isArray(definition.subTools))throw new Error('Invalid tool group');
@@ -34,6 +35,7 @@
     const rectangle=getSubTool(group,'rectangle-select');if(subToolIsAvailable(rectangle))return rectangle;
     return group.subTools.find(item=>item.id!=='style-select'&&subToolIsAvailable(item))||null;
   }
+  function smartSelectionFallback(group){return getSubTool(group,'magic-wand');}
   function drawerState(stateId){
     const raw=drawerSaved[stateId]||{};
     return {expanded:raw.expanded===true,height:Number.isFinite(+raw.height)?Math.max(80,Math.min(500,+raw.height)):150};
@@ -88,7 +90,7 @@
   }
   function configureOptionsDrawer(body,group){
     const drawer=body.querySelector('.tool-options-drawer'),header=drawer&&drawer.querySelector('.tool-options-drawer-header');if(!drawer||!header)return;
-    const label=drawer.querySelector('.tool-options-drawer-label'),activeSubTool=getSubTool(group,group.activeSubToolId),usesToolSettings=drawer.classList.contains('tool-settings-drawer')||group.id==='fill'||group.id==='line',baseTitle=usesToolSettings?'TOOL SETTINGS':(group.name+' Options').toUpperCase(),fullTitle=(usesToolSettings||group.id==='selection')&&activeSubTool?baseTitle+' — '+(usesToolSettings?group.name:activeSubTool.name):baseTitle,visibleTitle=usesToolSettings?baseTitle+' · '+group.name.toUpperCase():(group.id==='selection'&&activeSubTool?baseTitle+' · '+activeSubTool.name.toUpperCase():baseTitle);if(label){label.textContent=visibleTitle;label.title=fullTitle;}header.setAttribute('aria-label',fullTitle);
+    const label=drawer.querySelector('.tool-options-drawer-label'),activeSubTool=getSubTool(group,group.activeSubToolId),usesToolSettings=drawer.classList.contains('tool-settings-drawer')||group.id==='fill'||group.id==='line',usesSelectionOptions=group.id==='selection'||group.id==='smart-selection',baseTitle=usesToolSettings?'TOOL SETTINGS':(group.name+' Options').toUpperCase(),fullTitle=(usesToolSettings||usesSelectionOptions)&&activeSubTool?baseTitle+' — '+(usesToolSettings?group.name:activeSubTool.name):baseTitle,visibleTitle=usesToolSettings?baseTitle+' · '+group.name.toUpperCase():(usesSelectionOptions&&activeSubTool?baseTitle+' · '+activeSubTool.name.toUpperCase():baseTitle);if(label){label.textContent=visibleTitle;label.title=fullTitle;}header.setAttribute('aria-label',fullTitle);
     applyDrawerState(body,group);
     if(header.dataset.drawerBound)return;header.dataset.drawerBound='true';
     let drag=null;
@@ -153,7 +155,7 @@
   function activateSubTool(groupId,subToolId,options){
     const group=getGroup(groupId),subTool=getSubTool(group,subToolId);if(!group||!subToolIsAvailable(subTool))return false;
     const optionsLayout=captureOptionsPanelLayout();
-    if(groupId==='selection'&&subTool.id!=='style-select')group.lastValidSubToolId=subTool.id;
+    if(groupId==='selection')group.lastValidSubToolId=subTool.id;
     activeGroupId=groupId;group.activeSubToolId=subTool.id;persist();
     if(groupId==='selection')restoreSelectionToolContext(subTool);
     activating=true;try{if(typeof subTool.activate==='function')subTool.activate(options||{});}finally{activating=false;}
@@ -167,14 +169,16 @@
     if(optionsLayout)requestAnimationFrame(()=>restoreOptionsPanelLayout(optionsLayout,group));
     return true;
   }
-  function activateGroup(groupId){const group=getGroup(groupId);if(!group)return false;let subTool=getSubTool(group,group.activeSubToolId);if(!subToolIsAvailable(subTool)&&groupId==='selection')subTool=selectionFallback(group);return !!subTool&&activateSubTool(groupId,subTool.id,{fromGroup:true});}
+  function activateGroup(groupId){const group=getGroup(groupId);if(!group)return false;let subTool=getSubTool(group,group.activeSubToolId);if(!subToolIsAvailable(subTool)){if(groupId==='selection')subTool=selectionFallback(group);else if(groupId==='smart-selection')subTool=smartSelectionFallback(group);}return !!subTool&&activateSubTool(groupId,subTool.id,{fromGroup:true});}
   function refreshSelectionAvailability(){
-    const group=getGroup('selection');if(!group)return;
-    const current=getSubTool(group,group.activeSubToolId);
-    if(activeGroupId==='selection'&&!subToolIsAvailable(current)){
-      const fallback=selectionFallback(group);if(fallback){activateSubTool('selection',fallback.id,{contextFallback:true});return;}
+    const selection=getGroup('selection'),smart=getGroup('smart-selection');
+    if(selection&&activeGroupId==='selection'){renderGeneric(selection);setBody('tool-group');renderSettings();}
+    if(!smart)return;
+    const current=getSubTool(smart,smart.activeSubToolId);
+    if(activeGroupId==='smart-selection'&&!subToolIsAvailable(current)){
+      const fallback=smartSelectionFallback(smart);if(fallback){activateSubTool('smart-selection',fallback.id,{contextFallback:true});return;}
     }
-    if(activeGroupId==='selection'){renderGeneric(group);setBody('tool-group');renderSettings();}
+    if(activeGroupId==='smart-selection'){renderGeneric(smart);setBody('tool-group');renderSettings();}
   }
   function syncActiveButtons(){document.querySelectorAll('[data-tool-group-id]').forEach(button=>button.classList.toggle('active',button.dataset.toolGroupId===activeGroupId));}
   function bindMainButton(id,groupId){const button=document.getElementById(id);if(!button)return;button.dataset.toolGroupId=groupId;button.onclick=()=>activateGroup(groupId);}
@@ -296,14 +300,18 @@
 
   registerGroup({id:'brush',name:'Brush',shortcutActionId:'toolBrush',icon:'B',defaultSubToolId:'brush:hard-round',subTools:presetSubTools('brush')});
   registerGroup({id:'eraser',name:'Eraser',shortcutActionId:'toolEraser',icon:'E',defaultSubToolId:'eraser:hard-round',subTools:presetSubTools('eraser')});
-  const selectionGroup=registerGroup({id:'selection',name:'Selection',shortcutActionId:'toolSelection',icon:'S',panelRenderer:renderSelectionOptions,defaultSubToolId:'style-select',subTools:[
-    {id:'rectangle-select',name:'Rectangle Select',icon:'R',section:'Selection Area',selectionSettings:{defaults:{combine:'add',scope:'all'},renderer:renderAreaSelectionSettings},activate:toolActivation('rectangle-select','Rectangle Select'),settingsDescription:'Drag a rectangular selection. Shift adds, Alt subtracts, and Shift+Alt intersects.'},
-    {id:'lasso-select',name:'Lasso Select',icon:'L',section:'Selection Area',selectionSettings:{defaults:{combine:'add',scope:'all'},renderer:renderAreaSelectionSettings},activate:toolActivation('lasso','Lasso Select'),settingsDescription:'Drag a freehand closed selection. Shift adds, Alt subtracts, and Shift+Alt intersects.'},
-    {id:'ellipse-select',name:'Ellipse Select',icon:'O',section:'Selection Area',selectionSettings:{defaults:{combine:'add',scope:'all'},renderer:renderAreaSelectionSettings},activate:toolActivation('ellipse-select','Ellipse Select'),settingsDescription:'Drag an elliptical selection. Shift constrains a circle; selection modifiers still control add, subtract, and intersect.'},Object.assign(placeholder('polyline-select','Polyline Select','P'),{section:'Selection Area',selectionSettings:{defaults:{combine:'add',scope:'all'},renderer:renderAreaSelectionSettings}}),
-    {id:'magic-wand',name:'Magic Wand',icon:'W',section:'Smart Selection',cursor:'crosshair',selectionSettings:{renderer:renderMagicWandSettings},activate:toolActivation('magic-wand','Magic Wand')},
-    {id:'style-select',name:'Style Select',icon:'S',section:'Smart Selection',selectionSettings:{renderer:renderSelectionInfo},isAvailable:activeLayerSupportsStyleSelect,unavailableLabel:'Smart Raster Only',activate:toolActivation('selection','Style Select'),settingsDescription:'Click a Smart Raster pixel to select its visible style. Click the same point repeatedly to cycle through underlying styles.'},
-    Object.assign(placeholder('selection-pen','Selection Pen','P'),{section:'Selection Painting',selectionSettings:{defaults:{combine:'add',scope:'all'},renderer:renderAreaSelectionSettings}}),Object.assign(placeholder('erase-selection','Erase Selection','E'),{section:'Selection Painting'})
+  const selectionGroup=registerGroup({id:'selection',name:'Selection',panelTitle:'Selection Sub Tools',shortcutActionId:'toolSelection',icon:'S',panelRenderer:renderSelectionOptions,defaultSubToolId:'rectangle-select',subTools:[
+    {id:'rectangle-select',name:'Rectangle Select',icon:'R',selectionSettings:{defaults:{combine:'add',scope:'all'},renderer:renderAreaSelectionSettings},activate:toolActivation('rectangle-select','Rectangle Select'),settingsDescription:'Drag a rectangular selection. Shift adds, Alt subtracts, and Shift+Alt intersects.'},
+    {id:'lasso-select',name:'Lasso Select',icon:'L',selectionSettings:{defaults:{combine:'add',scope:'all'},renderer:renderAreaSelectionSettings},activate:toolActivation('lasso','Lasso Select'),settingsDescription:'Drag a freehand closed selection. Shift adds, Alt subtracts, and Shift+Alt intersects.'},
+    {id:'ellipse-select',name:'Ellipse Select',icon:'O',selectionSettings:{defaults:{combine:'add',scope:'all'},renderer:renderAreaSelectionSettings},activate:toolActivation('ellipse-select','Ellipse Select'),settingsDescription:'Drag an elliptical selection. Shift constrains a circle; selection modifiers still control add, subtract, and intersect.'},
+    Object.assign(placeholder('polyline-select','Polyline Select','P'),{selectionSettings:{defaults:{combine:'add',scope:'all'},renderer:renderAreaSelectionSettings}}),
+    Object.assign(placeholder('selection-pen','Selection Pen','P'),{selectionSettings:{defaults:{combine:'add',scope:'all'},renderer:renderAreaSelectionSettings}}),
+    Object.assign(placeholder('erase-selection','Erase Selection','E'),{})
   ]});selectionGroup.lastValidSubToolId='lasso-select';
+  const smartSelectionGroup=registerGroup({id:'smart-selection',name:'Smart Selection',panelTitle:'Smart Selection',shortcutActionId:'toolSmartSelection',icon:'W',panelRenderer:renderSelectionOptions,defaultSubToolId:'magic-wand',subTools:[
+    {id:'magic-wand',name:'Magic Wand',icon:'W',shortcutActionId:'toolSubTool.selection.magic-wand',cursor:'crosshair',selectionSettings:{renderer:renderMagicWandSettings},activate:toolActivation('magic-wand','Magic Wand')},
+    {id:'style-select',name:'Style Select',icon:'S',shortcutActionId:'toolSubTool.selection.style-select',selectionSettings:{renderer:renderSelectionInfo},isAvailable:activeLayerSupportsStyleSelect,unavailableLabel:'Smart Raster Only',activate:toolActivation('selection','Style Select'),settingsDescription:'Click a Smart Raster pixel to select its visible style. Click the same point repeatedly to cycle through underlying styles.'}
+  ]});
   registerGroup({id:'fill',name:'Fill',shortcutActionId:'toolFill',icon:'F',panelRenderer:renderFillOptions,defaultSubToolId:'bucket-fill',subTools:[
     {id:'bucket-fill',name:'Bucket Fill',icon:'F',activate:toolActivation('fill','Fill')},{id:'lasso-fill',name:'Lasso Fill',icon:'L',activate:toolActivation('lasso-fill','Lasso Fill'),settingsDescription:'Draw a freehand boundary and release to fill it with the current color.'},placeholder('rectangle-fill','Rectangle Fill','R'),placeholder('ellipse-fill','Ellipse Fill','O'),placeholder('polyline-fill','Polyline Fill','P'),placeholder('enclose-fill','Enclose and Fill','E'),placeholder('refer-other-layers','Refer Other Layers','A')
   ]});
@@ -318,18 +326,18 @@
     {id:'perspective-transform',name:'Perspective Transform',icon:'P',activate:toolActivation('transform','Transform',()=>{if(typeof _tfSetPerspective==='function')_tfSetPerspective(true);})}
   ]});
 
-  bindMainButton('tp-btn-brush','brush');bindMainButton('tp-btn-eraser','eraser');bindMainButton('tp-btn-selection','selection');bindMainButton('tp-btn-fill','fill');bindMainButton('tp-btn-line','line');bindMainButton('tp-btn-eyedropper','eyedropper');bindMainButton('tp-btn-transform','transform');
+  bindMainButton('tp-btn-brush','brush');bindMainButton('tp-btn-eraser','eraser');bindMainButton('tp-btn-selection','selection');bindMainButton('tp-btn-smart-selection','smart-selection');bindMainButton('tp-btn-fill','fill');bindMainButton('tp-btn-line','line');bindMainButton('tp-btn-eyedropper','eyedropper');bindMainButton('tp-btn-transform','transform');
   const free=document.getElementById('transform-mode-free'),perspective=document.getElementById('transform-mode-perspective');
   if(free)free.onclick=()=>activateSubTool('transform','free-transform');if(perspective)perspective.onclick=()=>activateSubTool('transform','perspective-transform');
   const grid=document.getElementById('brush-preset-grid');if(grid)grid.addEventListener('click',event=>{const item=event.target.closest('.bp-item');if(!item)return;const group=getGroup(tool==='eraser'?'eraser':'brush');if(group){const subTool=ensurePresetSubTool(group,item.dataset.presetId);group.activeSubToolId=subTool.id;persist();renderSettings();}});
-  window.addEventListener('tool-changed',event=>{if(activating)return;const map={brush:'brush',eraser:'eraser',fill:'fill','lasso-fill':'fill',line:'line',eyedropper:'eyedropper',lasso:'selection','rectangle-select':'selection','ellipse-select':'selection',selection:'selection',transform:'transform'},id=map[event.detail&&event.detail.tool];if(id){activeGroupId=id;syncPanel(getGroup(id));syncActiveButtons();renderSettings();}});
+  window.addEventListener('tool-changed',event=>{if(activating)return;const map={brush:'brush',eraser:'eraser',fill:'fill','lasso-fill':'fill',line:'line',eyedropper:'eyedropper',lasso:'selection','rectangle-select':'selection','ellipse-select':'selection','magic-wand':'smart-selection',selection:'smart-selection',transform:'transform'},id=map[event.detail&&event.detail.tool];if(id){activeGroupId=id;syncPanel(getGroup(id));syncActiveButtons();renderSettings();}});
   window.addEventListener('active-artwork-changed',refreshSelectionAvailability);
   window.addEventListener('project-loaded',refreshSelectionAvailability);
   window.addEventListener('layer-type-changed',refreshSelectionAvailability);
-  const initial=({brush:'brush',eraser:'eraser',fill:'fill','lasso-fill':'fill',line:'line',eyedropper:'eyedropper',lasso:'selection','rectangle-select':'selection','ellipse-select':'selection',selection:'selection',transform:'transform'})[typeof tool!=='undefined'?tool:'brush']||'brush';activeGroupId=initial;if(initial==='selection')restoreSelectionToolContext(getSubTool(selectionGroup,selectionGroup.activeSubToolId));syncPanel(getGroup(initial));syncActiveButtons();refreshSelectionAvailability();
+  const initial=({brush:'brush',eraser:'eraser',fill:'fill','lasso-fill':'fill',line:'line',eyedropper:'eyedropper',lasso:'selection','rectangle-select':'selection','ellipse-select':'selection','magic-wand':'smart-selection',selection:'smart-selection',transform:'transform'})[typeof tool!=='undefined'?tool:'brush']||'brush';activeGroupId=initial;if(initial==='selection')restoreSelectionToolContext(getSubTool(selectionGroup,selectionGroup.activeSubToolId));syncPanel(getGroup(initial));syncActiveButtons();refreshSelectionAvailability();
   window.SelectionToolSettings={
-    get(toolId){return selectionSettingsFor(getSubTool(selectionGroup,toolId));},
-    set(toolId,key,value){const subTool=getSubTool(selectionGroup,toolId);if(subTool)updateSelectionSetting(subTool,key,value);},
+    get(toolId){return selectionSettingsFor(getSubTool(selectionGroup,toolId)||getSubTool(smartSelectionGroup,toolId));},
+    set(toolId,key,value){const subTool=getSubTool(selectionGroup,toolId)||getSubTool(smartSelectionGroup,toolId);if(subTool)updateSelectionSetting(subTool,key,value);},
     modeFromEvent:selectionModeForEvent
   };
   window.ToolGroups={registerGroup,getGroup,getGroups:()=>Array.from(groups.values()),activateGroup,activateSubTool,get activeGroupId(){return activeGroupId;}};

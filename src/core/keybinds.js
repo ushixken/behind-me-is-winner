@@ -112,6 +112,7 @@ const TOOL_GROUP_EXPANDED_KEY='keybind_tool_groups_expanded_v1';
 let _expandedToolGroups={};
 try{_expandedToolGroups=JSON.parse(localStorage.getItem(TOOL_GROUP_EXPANDED_KEY)||'{}')||{};}catch(_){_expandedToolGroups={};}
 function _toolSubActionId(groupId,subToolId){return 'toolSubTool.'+groupId+'.'+subToolId;}
+function _toolSubAction(group,subTool){return subTool.shortcutActionId||_toolSubActionId(group.id,subTool.id);}
 function _saveExpandedToolGroups(){try{localStorage.setItem(TOOL_GROUP_EXPANDED_KEY,JSON.stringify(_expandedToolGroups));}catch(_){}}
 function syncToolGroupKeybindCommands(){
   if(!window.ToolGroups||typeof ToolGroups.getGroups!=='function')return;
@@ -120,14 +121,14 @@ function syncToolGroupKeybindCommands(){
     if(group.shortcutActionId&&!KEYBIND_DEFAULTS[group.shortcutActionId])KEYBIND_DEFAULTS[group.shortcutActionId]={label:group.name+' Tool',key:'',ctrl:false,shift:false,alt:false};
     if(group.shortcutActionId&&!keybinds[group.shortcutActionId])keybinds[group.shortcutActionId]=Object.assign({},KEYBIND_DEFAULTS[group.shortcutActionId],stored[group.shortcutActionId]||{});
     if(group.shortcutActionId==='toolSelection'&&keybinds[group.shortcutActionId]&&keybinds[group.shortcutActionId].key==='')keybinds[group.shortcutActionId].key='g';
-    group.subTools.forEach(subTool=>{const action=_toolSubActionId(group.id,subTool.id),definition={label:subTool.name,key:'',ctrl:false,shift:false,alt:false};if(!KEYBIND_DEFAULTS[action])KEYBIND_DEFAULTS[action]=definition;if(!keybinds[action])keybinds[action]=Object.assign({},definition,stored[action]||{});});
+    group.subTools.forEach(subTool=>{const action=_toolSubAction(group,subTool),definition={label:subTool.name,key:'',ctrl:false,shift:false,alt:false};if(!KEYBIND_DEFAULTS[action])KEYBIND_DEFAULTS[action]=definition;if(!keybinds[action])keybinds[action]=Object.assign({},definition,stored[action]||{});});
   });
 }
 window.addEventListener('tool-groups-ready',()=>{syncToolGroupKeybindCommands();});
 function handleToolGroupKeybind(event){
   syncToolGroupKeybindCommands();if(!window.ToolGroups||typeof ToolGroups.getGroups!=='function')return false;
   const groups=ToolGroups.getGroups();
-  for(const group of groups){for(const subTool of group.subTools){const action=_toolSubActionId(group.id,subTool.id);if(keybinds[action]&&matchBind(event,action)){ToolGroups.activateSubTool(group.id,subTool.id,{fromShortcut:true});return true;}}}
+  for(const group of groups){for(const subTool of group.subTools){const action=_toolSubAction(group,subTool);if(keybinds[action]&&matchBind(event,action)){ToolGroups.activateSubTool(group.id,subTool.id,{fromShortcut:true});return true;}}}
   for(const group of groups){if(group.shortcutActionId&&keybinds[group.shortcutActionId]&&matchBind(event,group.shortcutActionId)){ToolGroups.activateGroup(group.id);return true;}}
   return false;
 }
@@ -247,7 +248,7 @@ function renderKeybindsList(){
   }
   function buildToolGroups(){
     if(!window.ToolGroups||typeof ToolGroups.getGroups!=='function')return false;
-    const visibleGroups=ToolGroups.getGroups().map(group=>{const mainAction=group.shortcutActionId,children=group.subTools.map(subTool=>({subTool,action:_toolSubActionId(group.id,subTool.id)})),visibleChildren=children.filter(item=>matches(item.action)),parentMatches=mainAction&&matches(mainAction);return {group,mainAction,children,visibleChildren,parentMatches};}).filter(item=>item.mainAction&&keybinds[item.mainAction]&&(!q||item.parentMatches||item.visibleChildren.length));
+    const visibleGroups=ToolGroups.getGroups().map(group=>{const mainAction=group.shortcutActionId,children=group.subTools.map(subTool=>({subTool,action:_toolSubAction(group,subTool)})),visibleChildren=children.filter(item=>matches(item.action)),parentMatches=mainAction&&matches(mainAction);return {group,mainAction,children,visibleChildren,parentMatches};}).filter(item=>item.mainAction&&keybinds[item.mainAction]&&(!q||item.parentMatches||item.visibleChildren.length));
     if(!visibleGroups.length)return false;
     const categoryExpanded=!!q||_expandedToolGroups.__toolGroupsCategory!==false,header=document.createElement('div');header.className='keybinds-cat-header';
     const arrow=document.createElement('span');arrow.className='keybinds-cat-chevron';arrow.textContent=categoryExpanded?'\u25bc':'\u25b6';const title=document.createElement('span');title.textContent='Tool Groups';const count=document.createElement('span');count.className='keybinds-cat-count';count.textContent=visibleGroups.length;header.append(arrow,title,count);
@@ -263,7 +264,7 @@ function renderKeybindsList(){
     return true;
   }
 
-  let anyVisible=buildToolGroups(),seen=new Set();if(window.ToolGroups&&typeof ToolGroups.getGroups==='function')ToolGroups.getGroups().forEach(group=>{if(group.shortcutActionId)seen.add(group.shortcutActionId);group.subTools.forEach(subTool=>seen.add(_toolSubActionId(group.id,subTool.id)));});
+  let anyVisible=buildToolGroups(),seen=new Set();if(window.ToolGroups&&typeof ToolGroups.getGroups==='function')ToolGroups.getGroups().forEach(group=>{if(group.shortcutActionId)seen.add(group.shortcutActionId);group.subTools.forEach(subTool=>seen.add(_toolSubAction(group,subTool)));});
   KEYBIND_CATEGORIES.forEach(category=>{category.actions.forEach(action=>{if(keybinds[action])seen.add(action);});if(buildSection(category.name,category.actions))anyVisible=true;});
   const leftover=Object.keys(keybinds).filter(action=>!seen.has(action));if(leftover.length&&buildSection('Other',leftover))anyVisible=true;
   if(!anyVisible){const empty=document.createElement('div');empty.className='keybinds-empty';empty.textContent='No keybinds match "'+q+'"';list.appendChild(empty);}
