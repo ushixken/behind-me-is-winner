@@ -204,8 +204,8 @@ function updateBlendModeUI(){
   // 100 (fully solid disc, no feather). Turning AA back on restores the
   // exact settings that were there before, so nothing is lost.
   let _preAA=null; // {opacityCtrl, hardness} snapshot taken the moment AA was switched off
-  // Last non-'none' AA mode -- restored when the AA checkbox/toolbar button
-  // is toggled back on (Requirement 11: clicking AA toggles 'none' <-> the
+  // Last non-'none' AA mode -- restored when the AA checkbox
+  // is toggled back on (Requirement 11: AA toggles 'none' <-> the
   // last enabled mode; the dropdown itself only ever chooses weak/medium/strong).
   let _lastEnabledAAMode=(window.brushAAMode&&window.brushAAMode!=='none')?window.brushAAMode:'medium';
   function _syncAAModeUI(){
@@ -245,7 +245,6 @@ function updateBlendModeUI(){
       checkbox.checked=brushAA;
       checkbox.dispatchEvent(new Event('input',{bubbles:true}));
     }
-    const button=document.getElementById('btn-aa');if(button)button.classList.toggle('active',brushAA);
     document.getElementById('stat-tool').textContent=(tool==='brush'?(brushAA?'Brush':'Pencil'):tool.charAt(0).toUpperCase()+tool.slice(1));
     _syncAAModeUI();
     if(typeof applyTransform==='function')applyTransform();
@@ -254,7 +253,7 @@ function updateBlendModeUI(){
   // AA strength dropdown (None/Weak/Medium/Strong) -- separate from the
   // on/off checkbox. Selecting weak/medium/strong here always implies AA is
   // ON (matches Requirement 11); it never sets 'none' itself -- that's only
-  // reachable via the checkbox/toolbar toggle.
+  // reachable via the Tool Settings checkbox.
   function _setBrushAAMode(mode){
     const m=(mode==='weak'||mode==='medium'||mode==='strong')?mode:'medium';
     _lastEnabledAAMode=m;
@@ -265,7 +264,7 @@ function updateBlendModeUI(){
   }
   window._setBrushAAMode=_setBrushAAMode;
 
-  // AA checkbox in Tool Settings mirrors toolbar AA button
+  // AA checkbox in Tool Settings owns the AA enabled state.
   const tsAA=document.getElementById('ts-aa');
   tsAA.checked=brushAA;
   tsAA.onchange=()=>{
@@ -3276,31 +3275,6 @@ function applyToolPreset(json){
 })();
 
 
-// TVPaint brush parameter controls
-// AA toggle — mirrors TVPaint aliasing=1/0 and Clip Studio AA on/off
-(function(){
-  const btn=document.getElementById('btn-aa');
-  function updateAABtn(){
-    btn.classList.toggle('active',brushAA);
-    btn.title=brushAA
-      ?'Antialiasing ON — sub-pixel smooth edges (TVPaint PenBrush / Clip Studio normal pen). Click to switch to pixel-perfect.'
-      :'Antialiasing OFF — hard pixel edges (TVPaint Pencil / Clip Studio pixel pen). Click to switch to smooth.';
-    // When AA is off, also snap hardness to 1 for the display; actual hardness is ignored in aliased mode
-    document.getElementById('stat-tool').textContent=(tool==='brush'?(brushAA?'Brush':'Pencil'):tool.charAt(0).toUpperCase()+tool.slice(1));
-    if(typeof applyTransform==='function') applyTransform();
-  }
-  btn.onclick=()=>{
-    window._setBrushAA(!brushAA);
-    const tsAA2=document.getElementById('ts-aa');if(tsAA2)tsAA2.checked=brushAA;
-    // Don't let the button keep keyboard focus after the click — otherwise
-    // a later Space press (or any other key that can trigger :focus-visible)
-    // makes the browser's themed focus ring latch onto this button on top
-    // of the .active state outline, and since nothing else blurs it, that
-    // extra ring just stays there forever even as AA keeps toggling fine.
-    btn.blur();
-  };
-  updateAABtn();
-})();
 document.getElementById('onion-chk').onchange=updateOnion;
 
 //

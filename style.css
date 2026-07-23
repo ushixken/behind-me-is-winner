@@ -3,7 +3,7 @@
 /* â”€â”€ FOCUS OUTLINE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
    Browsers draw their own default focus ring (often a stark white/blue
    outline) on any button/element that receives focus â€” including just
-   from a mouse click, e.g. clicking the AA toggle in the toolbar. Reset it
+   from a mouse click. Reset it
    everywhere, but keep a themed ring for :focus-visible (keyboard
    navigation) so the app doesn't lose keyboard-accessibility outlines,
    it just stops flashing a mismatched white box on every click. */
