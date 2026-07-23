@@ -220,7 +220,7 @@ function setTool(t,lbl){
   if(tool==='lasso'&&t!=='lasso'&&window.LassoSelection) LassoSelection.cancel();
   if(tool==='lasso-fill'&&t!=='lasso-fill'&&window.LassoFill) LassoFill.cancel();
   tool=t;
-  if((t==='eyedropper'||previousTool==='eyedropper')&&typeof _baseCursorCSS==='function')activeC.style.cursor=_baseCursorCSS();
+  if(typeof _refreshActiveCursor==='function')_refreshActiveCursor();
   _syncBrushPresetsDocker(t);
   document.querySelectorAll('.tbtn').forEach(b=>b.classList.remove('active'));
   const btn=document.getElementById('btn-'+t);if(btn) btn.classList.add('active');

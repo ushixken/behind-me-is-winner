@@ -24,7 +24,7 @@ function _baseCursorCSS(){
   const paintTool=typeof tool!=='undefined'&&(tool==='brush'||tool==='eraser');
   if(paintTool&&(cursorStyle==='crosshair'||cursorStyle==='point'||cursorStyle==='brush'||cursorStyle==='brush-shape')) return 'none';
   if(cursorStyle==='point') return _POINT_CURSOR_CSS;
-  if(cursorStyle==='brush'||cursorStyle==='brush-shape') return 'crosshair';
+  if(cursorStyle==='brush'||cursorStyle==='brush-shape') return _CROSS_CURSOR_CSS;
   return _CROSS_CURSOR_CSS;
 }
 

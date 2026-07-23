@@ -98,16 +98,16 @@
     var point=getPos(event),x=Math.floor(point.x),y=Math.floor(point.y);if(x<0||y<0||x>=CW||y>=CH)return;
     event.preventDefault();event.stopImmediatePropagation();
     var modified=event.shiftKey||event.altKey,mode=modified&&window.PixelSelection?PixelSelection.modeFromEvent(event):settings.combine;
-    var image=sampleImage(),token=++operationToken,oldCursor=activeC.style.cursor,layerIndex=curLayer,frameIndex=curFrame;
+    var image=sampleImage(),token=++operationToken,layerIndex=curLayer,frameIndex=curFrame;
     function calculate(){
-      if(token!==operationToken||tool!=='magic-wand'||curLayer!==layerIndex||curFrame!==frameIndex){activeC.style.cursor=oldCursor;return;}
+      if(token!==operationToken||tool!=='magic-wand'||curLayer!==layerIndex||curFrame!==frameIndex){if(typeof _refreshActiveCursor==='function')_refreshActiveCursor();return;}
       var mask=buildMask(image,x,y);
       if(token===operationToken&&window.PixelSelection)PixelSelection.applyMask(mask,CW,CH,mode,'magic-wand');
-      activeC.style.cursor=oldCursor;
+      if(typeof _refreshActiveCursor==='function')_refreshActiveCursor();
     }
     if(CW*CH>=1000000){activeC.style.cursor='wait';requestAnimationFrame(calculate);}else calculate();
   }
-  document.addEventListener('keydown',function(event){if(event.key==='Escape'&&tool==='magic-wand'){operationToken++;activeC.style.cursor='crosshair';}},true);
+  document.addEventListener('keydown',function(event){if(event.key==='Escape'&&tool==='magic-wand'){operationToken++;if(typeof _refreshActiveCursor==='function')_refreshActiveCursor();}},true);
   window.addEventListener('tool-changed',function(event){if(!event.detail||event.detail.tool!=='magic-wand')operationToken++;});
   activeC.addEventListener('pointerdown',pointerDown);
   window.MagicWandSelection={getSettings:function(){return Object.assign({},settings);},updateSettings:update,cancel:function(){operationToken++;}};

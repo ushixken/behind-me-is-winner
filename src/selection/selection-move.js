@@ -1,7 +1,7 @@
 (function(){
   'use strict';
 
-  var gesture=null,lastHoverEvent=null,cursorApplied=false,oldAreaCursor='',oldCanvasCursor='';
+  var gesture=null,lastHoverEvent=null,cursorApplied=false;
   var DRAG_THRESHOLD=4;
 
   function primary(event){return event.pointerType!=='mouse'||event.button===0;}
@@ -10,8 +10,8 @@
   function setMoveCursor(on){
     if(on===cursorApplied)return;
     cursorApplied=on;
-    if(on){oldAreaCursor=canvasArea.style.cursor;oldCanvasCursor=activeC.style.cursor;canvasArea.style.cursor='move';activeC.style.cursor='move';}
-    else{canvasArea.style.cursor=oldAreaCursor;activeC.style.cursor=oldCanvasCursor;}
+    if(on){canvasArea.style.cursor='move';activeC.style.cursor='move';}
+    else{canvasArea.style.cursor='';if(typeof _refreshActiveCursor==='function')_refreshActiveCursor();}
   }
   function updateHover(event){
     lastHoverEvent=event;
@@ -66,4 +66,5 @@
   },true);
   document.addEventListener('keyup',function(event){if(event.key==='Control'||event.key==='Meta')setMoveCursor(false);},true);
   window.addEventListener('blur',function(){if(gesture)cancel({});else setMoveCursor(false);});
+  window.addEventListener('tool-changed',function(){if(gesture)cancel({});lastHoverEvent=null;setMoveCursor(false);});
 })();

@@ -244,10 +244,13 @@
   function sameStyleStack(stack){if(!styleCycle||styleCycle.styleIds.length!==stack.length)return false;for(var i=0;i<stack.length;i++)if(styleCycle.styleIds[i]!==stack[i].styleId)return false;return true;}
 
   function handleCanvasPointer(event,force){
-    if(typeof matchPointerBind!=='function'||!matchPointerBind(event,'selectLinkedPixels',true))return;
-    if(selectionActive&&!force&&tool!=='selection')return;
+    var styleSelectTool=tool==='selection';
+    var primary=event.pointerType==='mouse'?event.button===0:(!!force||event.pointerType==='touch'||event.button===0||!!(event.buttons&1));
+    if(!primary)return false;
+    if(!force&&!styleSelectTool&&(typeof matchPointerBind!=='function'||!matchPointerBind(event,'selectLinkedPixels',true)))return false;
+    if(selectionActive&&!force&&!styleSelectTool)return false;
     event.preventDefault();event.stopImmediatePropagation();
-    var layer=layers[curLayer];if(!layer||layer.type!=='smart-raster')return;
+    var layer=layers[curLayer];if(!layer||layer.type!=='smart-raster')return false;
     var frameIndex=heldFrameIndex(layer,curFrame),frame=layer.smartStyleFrames&&layer.smartStyleFrames[frameIndex];
     if(!frame||!frame.meta||!(frame.styleIds instanceof Uint16Array))return;
     var point=getPos(event),x=Math.floor(point.x),y=Math.floor(point.y),width=frame.width||CW,height=frame.height||CH;
@@ -265,7 +268,7 @@
       styleId=frame.meta.indexToStyleId&&frame.meta.indexToStyleId[index];if(!styleId){resetStyleCycle();return;}
       styleCycle={layerIndex:curLayer,frameIndex:frameIndex,x:point.x,y:point.y,cycleIndex:0,styleIds:[styleId]};
     }
-    selectLinkedPixels(styleId,event,'linked-canvas');
+    return selectLinkedPixels(styleId,event,'linked-canvas');
   }
   canvasArea.addEventListener('pointerdown',handleCanvasPointer,true);
   canvasArea.addEventListener('pointermove',function(event){if(!styleCycle)return;var point=getPos(event),tolerance=3/Math.max(.0001,zoom||1);if(Math.hypot(point.x-styleCycle.x,point.y-styleCycle.y)>tolerance)resetStyleCycle();},true);
