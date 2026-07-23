@@ -3,7 +3,7 @@
 
   var selectionMask=null,outlineMask=null,contourSegments=new Float32Array(0),contourPath=null;
   var selectionRevision=0;
-  var styleCycle=null,selectionStyleId=null;
+  var styleCycle=null,selectionStyleId=null,selectionStyleIds=new Set();
   var selectionWidth=0,selectionHeight=0;
   var selectionBounds=null,selectionActive=false;
   var selectionLayerIndex=-1,selectionFrameIndex=-1;
@@ -94,7 +94,7 @@
     selectionBounds=count?{x:minX,y:minY,width:maxX-minX+1,height:maxY-minY+1}:null;
     rebuildOutlineAndContours(width,height,selectionBounds);selectionRevision++;
     selectionActive=count>0;
-    window.pixelSelectionState={active:selectionActive,mask:selectionMask,maskCanvas:maskCanvas,bounds:selectionBounds,width:width,height:height,count:count,revision:selectionRevision,layerIndex:selectionLayerIndex,frameIndex:selectionFrameIndex,styleId:selectionStyleId};
+    window.pixelSelectionState={active:selectionActive,mask:selectionMask,maskCanvas:maskCanvas,bounds:selectionBounds,width:width,height:height,count:count,revision:selectionRevision,layerIndex:selectionLayerIndex,frameIndex:selectionFrameIndex,styleId:selectionStyleId,styleIds:Array.from(selectionStyleIds)};
     return count;
   }
 
@@ -192,9 +192,16 @@
     return extraShift&&extraAlt?'intersect':extraShift?'add':extraAlt?'subtract':'replace';
   }
 
+  function updateSelectedStyleIds(mode,styleId){
+    if(mode==='replace'){selectionStyleIds=new Set([styleId]);}
+    else if(mode==='add')selectionStyleIds.add(styleId);
+    else if(mode==='subtract')selectionStyleIds.delete(styleId);
+    else if(mode==='intersect'){selectionStyleIds=selectionStyleIds.has(styleId)?new Set([styleId]):new Set();}
+    selectionStyleId=selectionStyleIds.size===1?selectionStyleIds.values().next().value:null;
+  }
   function applyCanonicalMask(incoming,width,height,mode,source){
     if(!(incoming instanceof Uint8Array||incoming instanceof Uint8ClampedArray)||incoming.length!==width*height)return false;
-    selectionStyleId=null;
+    selectionStyleId=null;selectionStyleIds.clear();
     var incomingCount=0;for(var p=0;p<incoming.length;p++)if(incoming[p]===255)incomingCount++;
     if(!incomingCount)return false;
     var layer=layers[curLayer],targetFrame=layer&&layer.type==='smart-raster'?heldFrameIndex(layer,curFrame):curFrame;
@@ -226,11 +233,11 @@
     // An unused style is not an empty geometric selection operation. Leave
     // the canonical selection untouched in every mode.
     if(!incomingCount)return true;
-    if(selectionLayerIndex!==curLayer||selectionFrameIndex!==frameIndex)selectionMask=null;
-    selectionStyleId=mode==='replace'?styleId:null;
+    if(selectionLayerIndex!==curLayer||selectionFrameIndex!==frameIndex){selectionMask=null;selectionStyleIds.clear();}
+    updateSelectedStyleIds(mode,styleId);
     selectionWidth=width;selectionHeight=height;selectionLayerIndex=curLayer;selectionFrameIndex=frameIndex;
     combineMask(incoming,mode);var matchedCount=rebuildMaskCanvasAndBounds();
-    overlayVisible=true;if(!matchedCount){renderSelection();return true;}scheduleOverlayRender();
+    overlayVisible=true;if(!matchedCount){selectionStyleIds.clear();selectionStyleId=null;renderSelection();return true;}scheduleOverlayRender();
     window.dispatchEvent(new CustomEvent('pixel-selection-changed',{detail:{active:true,mode:mode,source:source||'linked-style',styleId:styleId,ownershipIndex:index,matchedPixelCount:matchedCount,mask:selectionMask.slice(),maskCanvas:maskCanvas,bounds:selectionBounds&&Object.assign({},selectionBounds),width:width,height:height,layerIndex:curLayer,frameIndex:frameIndex}}));
     return true;
   }
@@ -277,7 +284,7 @@
   function clearSelection(){
     overlayOffsetX=overlayOffsetY=0;transformPreviewSegments=transformPreviewPath=null;
     selectionMask=null;outlineMask=null;contourSegments=new Float32Array(0);contourPath=null;selectionBounds=null;selectionActive=false;
-    selectionStyleId=null;
+    selectionStyleId=null;selectionStyleIds.clear();
     selectionLayerIndex=selectionFrameIndex=-1;
     if(overlayRaf){cancelAnimationFrame(overlayRaf);overlayRaf=0;}
     rebuildMaskCanvasAndBounds();renderSelection();
@@ -287,6 +294,16 @@
   function deleteSelectedPixels(){
     if(!selectionActive||!selectionMask)return false;
     var state=window.pixelSelectionState,layer=layers[curLayer];if(!state||state.layerIndex!==curLayer||!layer)return false;
+    var selectedStyleIds=Array.isArray(state.styleIds)?state.styleIds.filter(Boolean):[];
+    if(layer.type==='smart-raster'&&selectedStyleIds.length){
+      var authoritative=typeof window.SmartRasterV4StyleIsAuthoritative==='function'&&selectedStyleIds.every(function(styleId){return SmartRasterV4StyleIsAuthoritative(layer,state.frameIndex,styleId);});
+      if(!authoritative||typeof window.SmartRasterV4DeleteStyleContributionsFromFrame!=='function')return false;
+      var redoBefore=redoStack.slice();pushUndo();
+      if(!SmartRasterV4DeleteStyleContributionsFromFrame(selectedStyleIds,layer,state.frameIndex)){
+        undoStack.pop();redoStack=redoBefore;return false;
+      }
+      recomposite(curLayer,curFrame);renderTimeline();clearSelection();return true;
+    }
     pushUndo();var image=ctx.getImageData(0,0,state.width,state.height),rgba=image.data;
     var frame=layer.type==='smart-raster'&&layer.smartStyleFrames&&layer.smartStyleFrames[state.frameIndex];
     for(var p=0,o=0;p<selectionMask.length;p++,o+=4)if(selectionMask[p]===255){
@@ -294,7 +311,6 @@
     }
     ctx.putImageData(image,0,0);saveActiveToKey();recomposite(curLayer,curFrame);renderTimeline();clearSelection();return true;
   }
-
   function replaceSelectedWithStyle(styleId,rgba){
     var state=window.pixelSelectionState,layer=layers[curLayer];
     if(!selectionActive||!selectionMask||!state||state.layerIndex!==curLayer||!layer||layer.type!=='smart-raster'||!styleId||!Array.isArray(rgba))return false;
@@ -370,13 +386,13 @@
     transformPreviewSegments=transformPreviewPath=null;overlayOffsetX=overlayOffsetY=0;
     if(!mask||mask.length!==width*height){clearSelection();return false;}
     selectionMask=new Uint8ClampedArray(mask);selectionWidth=width;selectionHeight=height;
-    if(snapshot){selectionLayerIndex=snapshot.layerIndex;selectionFrameIndex=snapshot.frameIndex;selectionStyleId=snapshot.styleId||null;}else{selectionStyleId=null;selectionLayerIndex=curLayer;selectionFrameIndex=(layers[curLayer]&&layers[curLayer].type==='smart-raster')?heldFrameIndex(layers[curLayer],curFrame):curFrame;}
+    if(snapshot){selectionLayerIndex=snapshot.layerIndex;selectionFrameIndex=snapshot.frameIndex;selectionStyleIds=new Set(Array.isArray(snapshot.styleIds)?snapshot.styleIds:(snapshot.styleId?[snapshot.styleId]:[]));selectionStyleId=selectionStyleIds.size===1?selectionStyleIds.values().next().value:null;}else{selectionStyleId=null;selectionStyleIds.clear();selectionLayerIndex=curLayer;selectionFrameIndex=(layers[curLayer]&&layers[curLayer].type==='smart-raster')?heldFrameIndex(layers[curLayer],curFrame):curFrame;}
     var count=rebuildMaskCanvasAndBounds();overlayVisible=true;if(count)scheduleOverlayRender();else renderSelection();
     window.dispatchEvent(new CustomEvent('pixel-selection-changed',{detail:{active:count>0,source:source||'selection-transform',mask:selectionMask.slice(),maskCanvas:maskCanvas,bounds:selectionBounds&&Object.assign({},selectionBounds),width:width,height:height,layerIndex:selectionLayerIndex,frameIndex:selectionFrameIndex}}));
     return count>0;
   }
 
-  function captureSelection(){return selectionActive&&selectionMask?{mask:selectionMask.slice(),width:selectionWidth,height:selectionHeight,layerIndex:selectionLayerIndex,frameIndex:selectionFrameIndex,styleId:selectionStyleId}:null;}
+  function captureSelection(){return selectionActive&&selectionMask?{mask:selectionMask.slice(),width:selectionWidth,height:selectionHeight,layerIndex:selectionLayerIndex,frameIndex:selectionFrameIndex,styleId:selectionStyleId,styleIds:Array.from(selectionStyleIds)}:null;}
   function restoreSelection(snapshot){if(!snapshot){clearSelection();return;}replaceCanonicalMask(snapshot.mask,snapshot.width,snapshot.height,'selection-history',snapshot);}
 
   // Raster editing always clips to the non-empty canonical selection. The

@@ -605,7 +605,19 @@ function refreshVisibleLayer(layer,options){
     root.__smartRasterV4LastStyleTransform={styleId:payload.styleId,frameIndex:Number(frameIndex),renderMode:payload.renderMode,invalidatedTiles:Array.from(affected),recomposedTiles:rendered.completed.slice(),failedTiles:rendered.failed.slice(),bounds:frame.styleBounds.get(styleIndex)||null};
     return true;
   }
-  function styleIsAuthoritative(layer,frameIndex,styleId){var frame=existingShadowFrame(layer,Number(frameIndex));if(!frame||!v4.isAuthorityEligible(frame))return false;return !!v4.getStyleIndex(frame,styleId);}
+  function deleteStyleContributionsFromFrame(styleIds,layer,frameIndex){
+    if(!Array.isArray(styleIds)||!styleIds.length||!layer)return false;
+    frameIndex=Number(frameIndex);var frame=existingShadowFrame(layer,frameIndex),state=frame&&stateByFrame.get(frame);
+    if(!frame||!state||!v4.isAuthorityEligible(frame))return false;
+    var indices=[],affected=new Set();
+    styleIds.forEach(function(styleId){var index=v4.getStyleIndex(frame,styleId);if(!index||indices.indexOf(index)>=0)return;indices.push(index);var keys=frame.styleTiles.get(index);if(keys)keys.forEach(function(key){affected.add(key);});});
+    if(!indices.length)return false;
+    indices.forEach(function(index){v4.noteEdit(frame,'style-delete');v4.removeStyleContributions(frame,index);});
+    affected.forEach(function(key){indices.forEach(function(index){syncTransformedTileOrder(frame,state,key,index,{});});frame.dirtyTiles.add(key);});
+    invalidateTiles(frame,affected,true);var rendered=composeDirtyTiles(frame,state,true);refreshVisibleLayer(layer);
+    root.__smartRasterV4LastSelectionDelete={styleIds:styleIds.slice(),frameIndex:frameIndex,changedTiles:Array.from(affected),recomposedTiles:rendered.completed.slice(),failedTiles:rendered.failed.slice()};
+    return rendered.failed.length===0;
+  }  function styleIsAuthoritative(layer,frameIndex,styleId){var frame=existingShadowFrame(layer,Number(frameIndex));if(!frame||!v4.isAuthorityEligible(frame))return false;return !!v4.getStyleIndex(frame,styleId);}
   function debugPixel(x,y,frame){
     frame=resolveFrame(frame);if(!frame)return null;
     x=Math.floor(Number(x));y=Math.floor(Number(y));
@@ -708,6 +720,7 @@ function refreshVisibleLayer(layer,options){
   root.SmartRasterV4StyleCoverageMask=styleCoverageMask;
   root.SmartRasterV4CaptureStyleTransform=captureStyleTransform;
   root.SmartRasterV4ReplaceStyleTransform=replaceStyleTransform;
+  root.SmartRasterV4DeleteStyleContributionsFromFrame=deleteStyleContributionsFromFrame;
   root.SmartRasterV4StyleIsAuthoritative=styleIsAuthoritative;
   if(typeof root.smartRasterV4DebugAssertions!=='boolean')root.smartRasterV4DebugAssertions=false;
   root.debugSmartRasterV4=debugFrame;
