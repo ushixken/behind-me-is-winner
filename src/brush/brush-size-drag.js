@@ -60,10 +60,21 @@
     labelEl.style.top=(clientY+screenD/2+8)+'px';
     labelEl.textContent=sizeLabelText(px);
     labelEl.style.display='block';
+    // Let the persistent brush/eraser cursor overlay (brush-size-cursor.js)
+    // know it should stay hidden — otherwise its own size-indicating circle
+    // sits on top of this resize preview and reads as a confusing double ring.
+    if(!window._brushResizePreviewActive){
+      window._brushResizePreviewActive=true;
+      window.dispatchEvent(new Event('brush-resize-preview-toggle'));
+    }
   }
   function hidePreview(){
     previewEl.style.display='none';
     labelEl.style.display='none';
+    if(window._brushResizePreviewActive){
+      window._brushResizePreviewActive=false;
+      window.dispatchEvent(new Event('brush-resize-preview-toggle'));
+    }
   }
 
   // ── held-key tracking ─────────────────────────────────────────

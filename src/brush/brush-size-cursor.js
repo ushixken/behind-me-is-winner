@@ -17,7 +17,7 @@
   function paintTool(){return tool==='brush'||tool==='eraser';}
   function strokeActive(){return typeof drawing!=='undefined'&&drawing&&paintTool();}
   function shouldShow(){
-    return paintTool()&&(hovering||strokeActive())&&!activeGroupId&&!panning&&!_zoomDrag&&!_rotateDrag&&!spaceHeld;
+    return paintTool()&&(hovering||strokeActive())&&!activeGroupId&&!panning&&!_zoomDrag&&!_rotateDrag&&!spaceHeld&&!window._brushResizePreviewActive;
   }
   function setPosition(){cursorCanvas.style.left=lastX+'px';cursorCanvas.style.top=lastY+'px';}
   function prepare(cssSize){
@@ -106,5 +106,6 @@
   window.addEventListener('pointercancel',()=>{hovering=false;cursorCanvas.style.display='none';},true);
   window.addEventListener('blur',()=>{hovering=false;cursorCanvas.style.display='none';});
   window.addEventListener('tool-changed',()=>update(true));
+  window.addEventListener('brush-resize-preview-toggle',()=>update(true));
   (function loop(){update(false);requestAnimationFrame(loop);})();
 })();
