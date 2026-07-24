@@ -1781,13 +1781,24 @@ body.tool-options-resizing{cursor:ns-resize!important;user-select:none!important
 .tool-group-settings p{margin:0;color:var(--text2);font-size:11px;line-height:1.5;}
 
 .tool-group-inline-options{display:flex;flex-direction:column;gap:7px;flex:0 0 auto;}
-.tool-aa-controls{gap:2px;padding:1px 0;}
-.tool-aa-toggle{gap:6px;min-height:20px!important;}
-.tool-aa-quality-row{min-height:22px!important;padding:0;}
-.tool-aa-quality{flex:0 0 22px!important;align-self:flex-start;width:96px!important;height:22px!important;min-height:22px!important;max-height:22px!important;margin-left:22px;box-sizing:border-box;}
-.ts-advanced-mirror-row.tool-aa-quality-row .tool-aa-quality{margin-left:45px;}
+.tool-aa-controls{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  align-items:center;
+  gap:3px 6px;
+  min-width:0;
+  padding:1px 0;
+}
+.tool-aa-controls>.ts-divider{grid-column:1/-1;width:100%;}
+.tool-aa-toggle{grid-column:1;justify-self:start;width:max-content;max-width:100%;min-width:0;gap:6px;min-height:22px!important;white-space:nowrap;}
+.tool-aa-quality-row{grid-column:2;justify-self:end;min-width:0;min-height:22px!important;padding:0;}
+.tool-aa-quality{grid-column:2;justify-self:end;flex:0 0 22px!important;width:96px!important;height:22px!important;min-width:0!important;min-height:22px!important;max-height:22px!important;margin-left:0;box-sizing:border-box;}
 .tool-aa-quality:disabled{opacity:.5;cursor:not-allowed;}
 .tool-aa-toggle:has(.ts-check:disabled){opacity:.52;cursor:default;}
+.tool-aa-controls.aa-stacked>.tool-aa-toggle{grid-column:1/-1;}
+.tool-aa-controls.aa-stacked>.tool-aa-quality-row,
+.tool-aa-controls.aa-stacked>.tool-aa-quality{grid-column:1/-1;justify-self:center;margin-top:3px;}
+.tool-aa-controls.aa-stacked>.tool-aa-quality-row>.tool-aa-quality{margin:0!important;}
 .tool-options-label{color:var(--text2);font-size:10px;}
 .selection-options-layout{width:100%;min-width:0;padding:2px 3px;gap:13px;box-sizing:border-box;overflow-x:hidden;}
 .selection-option-section,.selection-option-field{display:flex;flex-direction:column;width:100%;min-width:0;gap:8px;box-sizing:border-box;}

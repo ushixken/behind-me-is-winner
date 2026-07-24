@@ -341,5 +341,25 @@
     modeFromEvent:selectionModeForEvent
   };
   window.ToolGroups={registerGroup,getGroup,getGroups:()=>Array.from(groups.values()),activateGroup,activateSubTool,get activeGroupId(){return activeGroupId;}};
-  window.dispatchEvent(new CustomEvent('tool-groups-ready'));
+  const responsiveAaControls=new WeakSet();
+  const aaLayoutObserver=typeof ResizeObserver==='undefined'?null:new ResizeObserver(entries=>{
+    entries.forEach(entry=>{
+      const control=entry.target,children=Array.from(control.children);
+      const toggle=children.find(child=>child.classList&&child.classList.contains('tool-aa-toggle'));
+      const qualityHost=children.find(child=>child.classList&&(child.classList.contains('tool-aa-quality-row')||child.classList.contains('tool-aa-quality')));
+      const select=qualityHost&&(qualityHost.matches('select')?qualityHost:qualityHost.querySelector('select'));
+      if(!toggle||!select)return;
+      const gap=parseFloat(getComputedStyle(control).columnGap)||0;
+      const requiredWidth=Math.ceil(toggle.scrollWidth+select.offsetWidth+gap);
+      control.classList.toggle('aa-stacked',control.clientWidth<requiredWidth);
+    });
+  });
+  function observeResponsiveAaControls(root){
+    if(!aaLayoutObserver)return;
+    const controls=[];if(root.nodeType===1&&root.matches('.tool-aa-controls'))controls.push(root);
+    if(root.querySelectorAll)controls.push(...root.querySelectorAll('.tool-aa-controls'));
+    controls.forEach(control=>{if(!responsiveAaControls.has(control)){responsiveAaControls.add(control);aaLayoutObserver.observe(control);}});
+  }
+  observeResponsiveAaControls(document);
+  new MutationObserver(records=>records.forEach(record=>record.addedNodes.forEach(observeResponsiveAaControls))).observe(document.body,{childList:true,subtree:true});  window.dispatchEvent(new CustomEvent('tool-groups-ready'));
 })();
