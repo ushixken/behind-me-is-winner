@@ -267,7 +267,7 @@ function renderKeybindsList(){
     const arrow=document.createElement('span');arrow.className='keybinds-cat-chevron';arrow.textContent=categoryExpanded?'\u25bc':'\u25b6';const title=document.createElement('span');title.textContent='Tool Groups';const count=document.createElement('span');count.className='keybinds-cat-count';count.textContent=visibleGroups.length;header.append(arrow,title,count);
     header.onclick=()=>{_expandedToolGroups.__toolGroupsCategory=!categoryExpanded;_saveExpandedToolGroups();renderKeybindsList();};list.appendChild(header);if(!categoryExpanded)return true;
     visibleGroups.forEach(({group,mainAction,children,visibleChildren,parentMatches})=>{
-      const expanded=!!q||_expandedToolGroups[group.id]!==false,parent=document.createElement('div');parent.className='modal-row keybinds-row keybinds-tool-parent';
+      const expanded=!!q||_expandedToolGroups[group.id]===true,parent=document.createElement('div');parent.className='modal-row keybinds-row keybinds-tool-parent';
       const toggle=document.createElement('button');toggle.type='button';toggle.className='keybinds-tool-toggle';toggle.setAttribute('aria-expanded',String(expanded));
       const chevron=document.createElement('span');chevron.className='keybinds-tool-chevron';chevron.textContent=expanded?'\u25bc':'\u25b6';const name=document.createElement('span');name.className='keybinds-tool-name';name.textContent=keybinds[mainAction].label;toggle.append(chevron,name);
       toggle.onclick=()=>{_expandedToolGroups[group.id]=!expanded;_saveExpandedToolGroups();renderKeybindsList();};
