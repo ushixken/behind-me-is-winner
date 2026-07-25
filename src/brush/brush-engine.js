@@ -2706,6 +2706,13 @@ function _buildLinePressureProfile(sx,sy,ex,ey){
   const samples=_linePressureSamples;
   if(!samples||samples.length===0) return function(){return 1;};
   if(samples.length===1){const p=samples[0].pressure;return function(){return p;};}
+  // Pin the true start/end pressure BEFORE projection/sorting. These are
+  // identity-stable (always the first and most-recently-recorded sample),
+  // unlike anything derived from the projected/sorted array below, whose
+  // ordering and t=0/t=1 clustering shifts every frame as the projection
+  // axis (sx,sy)->(ex,ey) rotates with the live drag endpoint.
+  const startPressure=samples[0].pressure;
+  const endPressure=samples[samples.length-1].pressure;
   const dx=ex-sx,dy=ey-sy,lenSq=dx*dx+dy*dy;
   const projected=samples.map(s=>({
     t: lenSq>0 ? Math.max(0,Math.min(1,((s.x-sx)*dx+(s.y-sy)*dy)/lenSq)) : 0,
@@ -2723,6 +2730,13 @@ function _buildLinePressureProfile(sx,sy,ex,ey){
   // whatever interior sample happened to project nearest to t=0 or t=1.
   if(smoothed[0].t>0) smoothed.unshift({t:0,pressure:smoothed[0].pressure});
   if(smoothed[smoothed.length-1].t<1) smoothed.push({t:1,pressure:smoothed[smoothed.length-1].pressure});
+  // Overwrite the anchor pressures with the pinned values so the rendered
+  // start/end width always reflects the actual first/latest recorded
+  // pressure, not an index-windowed average whose membership is unstable
+  // across frames. Only the anchors are overwritten -- the interior of the
+  // curve still benefits from the smoothing pass above.
+  smoothed[0].pressure=startPressure;
+  smoothed[smoothed.length-1].pressure=endPressure;
   return function pressureAt(t){
     t=Math.max(0,Math.min(1,t));
     let lo=smoothed[0];
@@ -2755,23 +2769,57 @@ function _renderLineDrag(ex,ey,e){
   _autoHardRoundPrevDab=null;
   _beginEndTaperCapture();
   const usePenPressure=_isDrawingWithPen&&getLinePressureMode()==='pen';
-  if(usePenPressure){
-    const pressureAt=_buildLinePressureProfile(lineStart.x,lineStart.y,ex,ey);
-    currentPressure=pressureAt(1);
-    _strokeSegmentProfile(lineStart.x,lineStart.y,ex,ey,e,pressureAt);
-  }else{
-    // Fixed Pressure (and the mouse/touch fallback): temporarily behave as
-    // if this weren't a pen stroke at all, which is exactly how the rest of
-    // the brush engine already renders constant, pressure-independent
-    // width/flow/opacity for mouse input (_computeSpacingRadius's
-    // sizeCtrl==='pressure' branch only applies scaling when
-    // _isDrawingWithPen is true). That gives a true constant-width line at
-    // the current brush size with zero tablet-pressure influence.
-    const savedIsDrawingWithPen=_isDrawingWithPen;
-    _isDrawingWithPen=false;
-    currentPressure=1;
-    try{ _strokeSegment(lineStart.x,lineStart.y,ex,ey,e,1,1); }
-    finally{ _isDrawingWithPen=savedIsDrawingWithPen; }
+  // Deterministic pressure-smoothing seed for THIS replay ------------------
+  // _renderLineDrag fully re-walks the whole line from t=0 on every single
+  // pointermove (live preview) and once more at commit -- each call is an
+  // independent, from-scratch replay of the same line. _smoothedPressure
+  // (the EMA that _resolveControl('pressure',e) maintains inside
+  // _computeEffectiveParams, and which the rendered dab radius actually
+  // comes from) is a persistent module-level variable that is meant to
+  // carry over *within* a stroke -- that's what gives freehand brush
+  // strokes their natural taper. But because the Line tool calls this
+  // function repeatedly for the SAME stroke, each replay was inheriting
+  // whatever pressure the *previous* frame's *last* dab (near the current,
+  // still-moving endpoint) left the EMA at, instead of starting clean. As
+  // the line direction rotated during the drag, that leftover seed changed
+  // every frame -- producing a start-of-line width that visibly grew and
+  // shrank even though the pinned start pressure (pAt(0)) itself was
+  // already perfectly stable.
+  // Fix: snap _smoothedPressure to the correct starting value for this
+  // replay before walking (matching the same "no ramp-in lag" snap already
+  // used at real stroke start, see pointerdown), let it evolve normally
+  // across this walk's dabs exactly as before (this is what preserves the
+  // taper), then restore whatever _smoothedPressure held beforehand once
+  // the replay finishes. Restoring afterward scopes the reset to this
+  // replay only, so it can't leak into the next preview frame's seed choice
+  // (moot, since we always reset explicitly) nor into an unrelated stroke
+  // started right after (e.g. switching to Brush immediately after drawing
+  // a line).
+  const _savedSmoothedPressureForLinePreview=_smoothedPressure;
+  _smoothedPressure = usePenPressure
+    ? ((_linePressureSamples&&_linePressureSamples.length) ? _linePressureSamples[0].pressure : currentPressure)
+    : 1; // Fixed Pressure / mouse / touch: matches the constant currentPressure=1 used below
+  try{
+    if(usePenPressure){
+      const pressureAt=_buildLinePressureProfile(lineStart.x,lineStart.y,ex,ey);
+      currentPressure=pressureAt(1);
+      _strokeSegmentProfile(lineStart.x,lineStart.y,ex,ey,e,pressureAt);
+    }else{
+      // Fixed Pressure (and the mouse/touch fallback): temporarily behave as
+      // if this weren't a pen stroke at all, which is exactly how the rest
+      // of the brush engine already renders constant, pressure-independent
+      // width/flow/opacity for mouse input (_computeSpacingRadius's
+      // sizeCtrl==='pressure' branch only applies scaling when
+      // _isDrawingWithPen is true). That gives a true constant-width line at
+      // the current brush size with zero tablet-pressure influence.
+      const savedIsDrawingWithPen=_isDrawingWithPen;
+      _isDrawingWithPen=false;
+      currentPressure=1;
+      try{ _strokeSegment(lineStart.x,lineStart.y,ex,ey,e,1,1); }
+      finally{ _isDrawingWithPen=savedIsDrawingWithPen; }
+    }
+  } finally {
+    _smoothedPressure=_savedSmoothedPressureForLinePreview;
   }
   _flushStrokeTail();
 }
