@@ -249,6 +249,29 @@ let _strokeCtx    = null; // its 2D context
 let _inStroke = false;
 let _strokeReplayDabs = [];
 let _strokeReplayBase = null;
+
+//  Line tool — Pressure Mode (Toon Boom Harmony-style)
+// 'fixed'  — constant-width line at the current brush size, tablet
+//            pressure ignored entirely (also what mouse/touch always get).
+// 'pen'    — width follows the smoothed pressure profile recorded while
+//            dragging, projected onto the final straight line.
+let _linePressureMode = 'pen';
+try{
+  const _savedLinePressureMode = localStorage.getItem('animate.linePressureMode.v1');
+  if(_savedLinePressureMode==='fixed'||_savedLinePressureMode==='pen') _linePressureMode=_savedLinePressureMode;
+}catch(_){}
+function getLinePressureMode(){ return _linePressureMode; }
+function setLinePressureMode(mode){
+  _linePressureMode = (mode==='fixed') ? 'fixed' : 'pen';
+  try{ localStorage.setItem('animate.linePressureMode.v1',_linePressureMode); }catch(_){}
+}
+window.getLinePressureMode=getLinePressureMode;
+window.setLinePressureMode=setLinePressureMode;
+
+// Continuous pointer+pressure samples recorded while dragging the Line
+// tool, in canvas coordinates. Cleared at the start/end of every drag.
+let _lineDragging = false;
+let _linePressureSamples = [];
 let _selectionScopeBase = null;
 let _colorEraserBase = null;
 let _colorEraserOwnership = null;
@@ -2428,12 +2451,13 @@ function _initialDabSpacingRatio(e,pressure){
   const step=Math.max(0.5,radius*2*_effectiveSpacingFrac());
   return _flowRatioForStep(step,radius);
 }
-function _walkDabArc(length,pointAt,e,startPressure,endPressure){
-  if(length<=0){currentPressure=endPressure;return;}
+function _walkDabArc(length,pointAt,e,startPressure,endPressure,pressureAt){
+  const pAt = pressureAt || (t=>startPressure+(endPressure-startPressure)*t);
+  if(length<=0){currentPressure=pAt(1);return;}
   let distance=0;
   while(distance<length){
     const sample=pointAt(distance);
-    const pressure=startPressure+(endPressure-startPressure)*sample.t;
+    const pressure=pAt(sample.t);
     const spacingR=_computeSpacingRadius(e,pressure);
     const step=Math.max(0.5,spacingR*2*_effectiveSpacingFrac());
     const needed=Math.max(0,step-_strokeSegCarryOver);
@@ -2444,7 +2468,7 @@ function _walkDabArc(length,pointAt,e,startPressure,endPressure){
     }
     distance+=needed;
     const dab=pointAt(distance);
-    currentPressure=startPressure+(endPressure-startPressure)*dab.t;
+    currentPressure=pAt(dab.t);
     _strokeDistSoFar+=step;
     _flowSpacingRatio=_flowRatioForStep(step,spacingR);
     try{_stampDab(dab.x,dab.y,e);}
@@ -2452,7 +2476,19 @@ function _walkDabArc(length,pointAt,e,startPressure,endPressure){
     _strokeSegCarryOver=0;
     if(needed===0&&remaining===0) break;
   }
-  currentPressure=endPressure;
+  currentPressure=pAt(1);
+}
+// Stamp a straight segment using an arbitrary pressureAt(t) profile (t is
+// 0..1 progress along the segment) instead of a simple linear ramp between
+// two endpoint pressures. Used by the Line tool's Pen Pressure mode so the
+// entire recorded pressure curve — not just its start/end values — shapes
+// the rendered width.
+function _strokeSegmentProfile(ax,ay,bx,by,e,pressureAt){
+  const dx=bx-ax,dy=by-ay,dist=Math.sqrt(dx*dx+dy*dy);
+  _walkDabArc(dist,d=>{
+    const t=dist>0?d/dist:1;
+    return{x:ax+dx*t,y:ay+dy*t,t};
+  },e,0,0,pressureAt);
 }
 function _strokeSegment(ax,ay,bx,by,e,startPressure,endPressure){
   const sp = (startPressure !== undefined) ? startPressure : currentPressure;
@@ -2656,6 +2692,90 @@ function _flushCurveTail(e){
   _curveP0=null;_curveP1=null;
 }
 
+//  Line tool — Pen Pressure profile
+// Projects every {x,y,pressure} sample recorded during the drag onto the
+// FINAL straight line (start -> end), turning the freeform drag path into
+// a 0..1 parametric pressure curve along that line. Samples are collected
+// continuously in _handleMoveEvent while the line is being dragged (not
+// just the pointerdown/pointerup pressure), so the whole gesture — every
+// press and release in between — shapes the width, not just the two
+// endpoints. A small moving-average smooths tablet jitter without
+// flattening real pressure changes, and the profile is interpolated
+// piecewise-linearly for a continuous, non-stepped taper.
+function _buildLinePressureProfile(sx,sy,ex,ey){
+  const samples=_linePressureSamples;
+  if(!samples||samples.length===0) return function(){return 1;};
+  if(samples.length===1){const p=samples[0].pressure;return function(){return p;};}
+  const dx=ex-sx,dy=ey-sy,lenSq=dx*dx+dy*dy;
+  const projected=samples.map(s=>({
+    t: lenSq>0 ? Math.max(0,Math.min(1,((s.x-sx)*dx+(s.y-sy)*dy)/lenSq)) : 0,
+    pressure: s.pressure
+  }));
+  projected.sort((a,b)=>a.t-b.t);
+  const SMOOTH_RADIUS=2; // samples on each side averaged together
+  const smoothed=projected.map((p,i)=>{
+    let sum=0,count=0;
+    for(let j=Math.max(0,i-SMOOTH_RADIUS);j<=Math.min(projected.length-1,i+SMOOTH_RADIUS);j++){sum+=projected[j].pressure;count++;}
+    return {t:p.t,pressure:sum/count};
+  });
+  // Make sure the curve actually reaches both endpoints of the line so the
+  // start/end of the stroke reflect real recorded pressure rather than
+  // whatever interior sample happened to project nearest to t=0 or t=1.
+  if(smoothed[0].t>0) smoothed.unshift({t:0,pressure:smoothed[0].pressure});
+  if(smoothed[smoothed.length-1].t<1) smoothed.push({t:1,pressure:smoothed[smoothed.length-1].pressure});
+  return function pressureAt(t){
+    t=Math.max(0,Math.min(1,t));
+    let lo=smoothed[0];
+    for(let i=1;i<smoothed.length;i++){
+      const hi=smoothed[i];
+      if(t<=hi.t){
+        const span=hi.t-lo.t;
+        const f=span>0?(t-lo.t)/span:0;
+        return lo.pressure+(hi.pressure-lo.pressure)*f;
+      }
+      lo=hi;
+    }
+    return smoothed[smoothed.length-1].pressure;
+  };
+}
+// Renders the Line tool's current drag (or its final committed state) into
+// _strokeCanvas from scratch: clears any previous stamp, then re-walks the
+// whole line so both live preview (called every pointermove) and the final
+// commit (called once at pointerup) share the exact same code path — the
+// preview IS what gets committed, not an approximation of it. Reuses the
+// normal brush engine (_strokeSegment/_strokeSegmentProfile -> _stampDab)
+// so hardness, flow, opacity, AA, and brush tip all stay consistent with
+// every other tool.
+function _renderLineDrag(ex,ey,e){
+  if(!lineStart) return;
+  if(_strokeCtx&&_strokeCanvas) _strokeCtx.clearRect(0,0,_strokeCanvas.width,_strokeCanvas.height);
+  _pendingDabs.length=0;
+  _strokeSegCarryOver=0;
+  _strokeDistSoFar=0;
+  _autoHardRoundPrevDab=null;
+  _beginEndTaperCapture();
+  const usePenPressure=_isDrawingWithPen&&getLinePressureMode()==='pen';
+  if(usePenPressure){
+    const pressureAt=_buildLinePressureProfile(lineStart.x,lineStart.y,ex,ey);
+    currentPressure=pressureAt(1);
+    _strokeSegmentProfile(lineStart.x,lineStart.y,ex,ey,e,pressureAt);
+  }else{
+    // Fixed Pressure (and the mouse/touch fallback): temporarily behave as
+    // if this weren't a pen stroke at all, which is exactly how the rest of
+    // the brush engine already renders constant, pressure-independent
+    // width/flow/opacity for mouse input (_computeSpacingRadius's
+    // sizeCtrl==='pressure' branch only applies scaling when
+    // _isDrawingWithPen is true). That gives a true constant-width line at
+    // the current brush size with zero tablet-pressure influence.
+    const savedIsDrawingWithPen=_isDrawingWithPen;
+    _isDrawingWithPen=false;
+    currentPressure=1;
+    try{ _strokeSegment(lineStart.x,lineStart.y,ex,ey,e,1,1); }
+    finally{ _isDrawingWithPen=savedIsDrawingWithPen; }
+  }
+  _flushStrokeTail();
+}
+
 // PERF FIX: recompositing flattens every layer/group (full-canvas
 // drawImage per layer, plus mask canvases) Ã¢â‚¬â€ that's fine to do once per
 // frame, but the old code called it synchronously on EVERY pointermove,
@@ -2756,8 +2876,18 @@ function _endStroke(pointerId){
   _strokeCompletionStarted=true;
   _stopAirbrushSpray();
   _autoHardRoundPrevDab=null;
-  if(drawing){drawing=false;_flushStrokeTail();if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();}_endColorEraserStroke();_completePostStrokePresentation(_strokeOwnerLayer,_strokeOwnerFrame);
+  if(drawing){drawing=false;_flushStrokeTail();if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();}
+  if(lineStart&&_lineDragging){
+    // Line drag aborted mid-gesture (pointercancel, tab blur, etc.) -- undo
+    // was never pushed and the layer was never touched, so just discard the
+    // uncommitted scratch preview rather than committing a partial line.
+    if(_inStroke){_inStroke=false;if(_strokeCtx&&_strokeCanvas)_strokeCtx.clearRect(0,0,_strokeCanvas.width,_strokeCanvas.height);}
+    if(_strokePreviewCtx&&_strokePreviewCanvas)_strokePreviewCtx.clearRect(0,0,_strokePreviewCanvas.width,_strokePreviewCanvas.height);
+  }
+  _endColorEraserStroke();_completePostStrokePresentation(_strokeOwnerLayer,_strokeOwnerFrame);
   lineStart=null;
+  _lineDragging=false;
+  _linePressureSamples=[];
   _pendingDabs.length=0;
   _curveP0=null;_curveP1=null;
   _strokeSegCarryOver=0;
@@ -3357,7 +3487,17 @@ activeC.addEventListener('pointerdown',e=>{
   _strokeOwnerLayer=curLayer;_strokeOwnerFrame=curFrame;_activeStrokeSession=++_strokeSessionSerial;
   _traceStrokeLifecycle('stroke-start',{sourceLayer:curLayer,sourceFrame:curFrame});
   _strokeCompletionStarted=false;
-  if(tool==='line'){lineStart=p;return;}
+  if(tool==='line'){
+    lineStart=p;
+    _lineDragging=true;
+    _linePressureSamples=[{x:p.x,y:p.y,pressure:currentPressure}];
+    activeC.setPointerCapture(e.pointerId);
+    _ensureStrokeCanvas();
+    _inStroke=true;
+    _renderLineDrag(p.x,p.y,e);
+    _scheduleRecomposite({firstDab:true});
+    return;
+  }
   if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('pressureAndStateInitialization',diagnosticSetupStart);
   diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
   activeC.setPointerCapture(e.pointerId);
@@ -3425,11 +3565,33 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
 // before the browser throttles events to display refresh rate Ã¢â‚¬â€ giving every
 // real pressure value the tablet digitizer reports, not just the surviving ones.
 function _handleMoveEvent(e){
-  if(!drawing||activeGroupId||_strokeCompletionStarted) return;
+  if((!drawing&&!_lineDragging)||activeGroupId||_strokeCompletionStarted) return;
   if(_activeStrokePointerId!=null&&e.pointerId!==_activeStrokePointerId) return;
   if(!(e.buttons&1)){_endStroke(e.pointerId);return;}
   e.preventDefault();
   const events=(typeof e.getCoalescedEvents==='function'&&e.getCoalescedEvents().length)?e.getCoalescedEvents():[e];
+  if(tool==='line'&&_lineDragging){
+    // Record every coalesced sample (position + pressure) at full input
+    // rate -- this is what lets Pen Pressure preserve the whole recorded
+    // curve instead of collapsing it to one value. The line itself stays
+    // straight (start -> current raw pointer position); only the WIDTH
+    // profile comes from the sampled path, so no smoothing/curving is
+    // applied to the endpoint tracking itself.
+    let lastRaw=null,lastEvent=e;
+    for(const ev of events){
+      const pressure=_getPressure(ev);
+      const raw=getPos(ev);
+      _linePressureSamples.push({x:raw.x,y:raw.y,pressure});
+      currentPressure=pressure;
+      lastRaw=raw;lastEvent=ev;
+    }
+    if(lastRaw){
+      lx=lastRaw.x;ly=lastRaw.y;_lastPointerEvent=lastEvent;
+      _renderLineDrag(lastRaw.x,lastRaw.y,lastEvent);
+      _scheduleRecomposite();
+    }
+    return;
+  }
   for(const ev of events){
     const prevPressure = currentPressure;
     const newPressure = _getPressure(ev);
@@ -3476,15 +3638,20 @@ function _pointerEndStroke(e){
   if(_activeStrokePointerId!=null&&e.pointerId!==_activeStrokePointerId) return;
   _strokeCompletionStarted=true;
   _stopAirbrushSpray();
-  if(activeGroupId){drawing=false;lineStart=null;_pendingDabs.length=0;_endColorEraserStroke();_activeStrokePointerId=null;return;}
+  if(activeGroupId){drawing=false;lineStart=null;_lineDragging=false;_linePressureSamples=[];_pendingDabs.length=0;_endColorEraserStroke();_activeStrokePointerId=null;return;}
   if(tool==='line'&&lineStart){
-    pushUndo();ensureKey();_beginEndTaperCapture();const p=getPos(e);
-    if(tool!=='eraser'){_ensureStrokeCanvas();_inStroke=true;}
+    pushUndo();ensureKey();const p=getPos(e);
+    const finalPressure=_getPressure(e);
+    _linePressureSamples.push({x:p.x,y:p.y,pressure:finalPressure});
+    currentPressure=finalPressure;
+    if(!_strokeCanvas||!_inStroke){_ensureStrokeCanvas();_inStroke=true;}
   if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.event('stroke-state-initialization-complete',{strokeCanvas:!!_strokeCanvas,inStroke:_inStroke});
-    _strokeSegment(lineStart.x,lineStart.y,p.x,p.y,e,currentPressure,currentPressure);
-    _flushStrokeTail();
+    // Final commit shares the exact same renderer used for every live
+    // preview frame during the drag, so what the user saw IS what gets
+    // written to the layer (no "collapsing to one average value").
+    _renderLineDrag(p.x,p.y,e);
     if(_inStroke){_inStroke=false;_commitStrokeCanvas();}
-    _cleanupErasedSmartOwnership();lineStart=null;saveActiveToKey();
+    _cleanupErasedSmartOwnership();lineStart=null;_lineDragging=false;_linePressureSamples=[];saveActiveToKey();
   }else if(drawing){
     drawing=false;
     _flushCurveTail(e);

@@ -1908,6 +1908,10 @@ body.tool-options-resizing{cursor:ns-resize!important;user-select:none!important
 .tool-group-option-row.compact{display:flex;min-height:22px;color:var(--text);}
 .tool-group-option-value{text-align:right;font-variant-numeric:tabular-nums;}
 .tool-group-line-color{width:18px;height:18px;flex:0 0 18px;border:1px solid var(--border2);border-radius:3px;}
+.tool-line-pressure-group{align-items:flex-start;gap:8px;}
+.tool-line-pressure-options{display:flex;flex-direction:column;gap:4px;min-width:0;}
+.tool-line-pressure-option{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--text);cursor:pointer;}
+.tool-line-pressure-option input[type="radio"]{margin:0;}
 
 /* Temporary distraction-free drawing workspace. Panels remain mounted so
    docking, sizing, scroll positions, and listeners are preserved verbatim. */

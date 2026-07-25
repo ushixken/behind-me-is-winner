@@ -190,6 +190,18 @@
     function rangeRow(label,min,max,step,value,onInput){const row=document.createElement('label');row.className='tool-group-option-row';const text=document.createElement('span');text.textContent=label;const input=document.createElement('input');input.type='range';input.min=min;input.max=max;input.step=step;input.value=value;const output=document.createElement('span');output.className='tool-group-option-value';output.textContent=value;input.oninput=()=>{output.textContent=input.value;onInput(+input.value);};row.append(text,input,output);section.appendChild(row);}
     rangeRow('Width / Size',1,2000,.1,toolSizes.line||6,value=>{toolSizes.line=value;if(tool==='line'){szSlider.value=value;if(typeof refreshSizeUI==='function')refreshSizeUI();}});
     rangeRow('Opacity',1,100,1,Math.round(brushOpacity*100),value=>{brushOpacity=value/100;const existing=document.getElementById('ts-opacity');if(existing){existing.value=value;existing.dispatchEvent(new Event('input',{bubbles:true}));}});
+    const pressureGroup=document.createElement('div');pressureGroup.className='tool-group-option-row compact tool-line-pressure-group';
+    const pressureLabel=document.createElement('span');pressureLabel.textContent='Pressure';pressureGroup.appendChild(pressureLabel);
+    const pressureOptions=document.createElement('div');pressureOptions.className='tool-line-pressure-options';pressureOptions.setAttribute('role','radiogroup');pressureOptions.setAttribute('aria-label','Line Pressure Mode');
+    const currentMode=(typeof window.getLinePressureMode==='function')?window.getLinePressureMode():'pen';
+    [['fixed','Fixed'],['pen','Pen Pressure']].forEach(([mode,text])=>{
+      const optionLabel=document.createElement('label');optionLabel.className='tool-line-pressure-option';
+      const radio=document.createElement('input');radio.type='radio';radio.name='line-pressure-mode';radio.value=mode;radio.checked=(currentMode===mode);
+      radio.onchange=()=>{if(radio.checked&&typeof window.setLinePressureMode==='function')window.setLinePressureMode(mode);};
+      const radioText=document.createElement('span');radioText.textContent=text;
+      optionLabel.append(radio,radioText);pressureOptions.appendChild(optionLabel);
+    });
+    pressureGroup.appendChild(pressureOptions);section.appendChild(pressureGroup);
     const aaRow=document.createElement('label');aaRow.className='tool-group-option-row compact';const aa=document.createElement('input');aa.type='checkbox';aa.checked=!!brushAA;const aaText=document.createElement('span');aaText.textContent='Anti-aliasing';aa.onchange=()=>{if(aa.checked!==!!brushAA&&typeof window._setBrushAA==='function')window._setBrushAA(aa.checked);};aaRow.append(aa,aaText);section.appendChild(aaRow);
     const colorRow=document.createElement('div');colorRow.className='tool-group-option-row compact';const colorPreview=document.createElement('span');colorPreview.className='tool-group-line-color';colorPreview.style.background=typeof color==='string'?color:'#000';const colorText=document.createElement('span');colorText.textContent='Current Color  '+(typeof color==='string'?color:'');colorRow.append(colorPreview,colorText);section.appendChild(colorRow);
     body.appendChild(section);
