@@ -51,7 +51,6 @@
 
   const listEl=document.getElementById('ls-list');
   const totalEl=document.getElementById('ls-total-size');
-  const selectAll=document.getElementById('ls-select-all');
   const selectedCount=document.getElementById('ls-selected-count');
   const clearSelection=document.getElementById('ls-clear-selection');
   const deleteSelected=document.getElementById('ls-delete-selected');
@@ -65,13 +64,18 @@
   function _syncSelection(entries){
     const visibleKeys=new Set(entries.map(entry=>entry.key));
     selectedKeys.forEach(key=>{if(!visibleKeys.has(key)) selectedKeys.delete(key);});
-    const count=selectedKeys.size,allSelected=entries.length>0&&count===entries.length;
-    selectAll.checked=allSelected;
-    selectAll.indeterminate=count>0&&!allSelected;
-    selectAll.disabled=entries.length===0;
+    const count=selectedKeys.size;
     clearSelection.disabled=count===0;
     deleteSelected.disabled=count===0;
     selectedCount.textContent=count+' item'+(count===1?'':'s')+' selected';
+    listEl.querySelectorAll('.ls-section-select').forEach(box=>{
+      const section=box.dataset.section;
+      const sectionEntries=entries.filter(({key})=>(_meta(key).important?'important':'preferences')===section);
+      const sectionSelected=sectionEntries.filter(({key})=>selectedKeys.has(key)).length;
+      box.checked=sectionEntries.length>0&&sectionSelected===sectionEntries.length;
+      box.indeterminate=sectionSelected>0&&sectionSelected<sectionEntries.length;
+      box.disabled=sectionEntries.length===0;
+    });
   }
   function _refreshRenderedSelection(entries){
     listEl.querySelectorAll('.ls-select').forEach(checkbox=>{
@@ -83,7 +87,12 @@
   }
   function _setAll(entries,checked){
     entries.forEach(({key})=>checked?selectedKeys.add(key):selectedKeys.delete(key));
-    _refreshRenderedSelection(entries);
+    // Always resync against the FULL current list, not just the subset that
+    // was (de)selected — otherwise a single-section toggle (e.g. clicking the
+    // "Important Saved Data" checkbox) would hand _syncSelection a truncated
+    // entries array, making every OTHER section look like it has 0 items and
+    // incorrectly disabling its checkbox.
+    _refreshRenderedSelection(_collectEntries().entries);
   }
 
   function render(){
@@ -106,7 +115,25 @@
         currentSection=section;
         const heading=document.createElement('div');
         heading.className='ls-section-header '+section;
-        heading.textContent=meta.important?'IMPORTANT SAVED DATA':'STORED APPLICATION PREFERENCES';
+        const checkboxId='ls-section-select-'+section;
+        const sectionLabel=document.createElement('label');
+        sectionLabel.className='ls-section-header-inner';
+        sectionLabel.htmlFor=checkboxId;
+        const sectionCheckbox=document.createElement('input');
+        sectionCheckbox.type='checkbox';
+        sectionCheckbox.className='ls-section-select';
+        sectionCheckbox.id=checkboxId;
+        sectionCheckbox.dataset.section=section;
+        sectionCheckbox.setAttribute('aria-label','Select all in '+(meta.important?'Important Saved Data':'Stored Application Preferences'));
+        sectionCheckbox.onchange=()=>{
+          const sectionEntries=entries.filter(({key})=>(_meta(key).important?'important':'preferences')===section);
+          _setAll(sectionEntries,sectionCheckbox.checked);
+        };
+        const labelText=document.createElement('span');
+        labelText.className='ls-section-header-label';
+        labelText.textContent=meta.important?'IMPORTANT SAVED DATA':'STORED APPLICATION PREFERENCES';
+        sectionLabel.append(sectionCheckbox,labelText);
+        heading.appendChild(sectionLabel);
         listEl.appendChild(heading);
       }
       const row=document.createElement('div');
@@ -144,7 +171,6 @@
     listEl.scrollTop=Math.min(previousScrollTop,Math.max(0,listEl.scrollHeight-listEl.clientHeight));
   }
 
-  selectAll.onchange=()=>_setAll(_collectEntries().entries,selectAll.checked);
   clearSelection.onclick=()=>{selectedKeys.clear();_refreshRenderedSelection(_collectEntries().entries);};
   deleteSelected.onclick=async()=>{
     const entries=_collectEntries().entries.filter(({key})=>selectedKeys.has(key));
