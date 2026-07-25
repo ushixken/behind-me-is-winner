@@ -36,6 +36,52 @@ textarea:focus-visible,[tabindex]:focus-visible{
   --dock-scroll-edge-gap:2px;
 }
 
+/* ── UNIFIED CHECKBOX DESIGN ──────────────────────────────────
+   One consistent look for every checkbox in the app: a small dark
+   square with a subtle border when unchecked, filled with the accent
+   color and a checkmark when checked. Matches the style already used
+   in the Local Storage panel. Using appearance:none (instead of
+   accent-color) so it renders identically across browsers/OSes,
+   instead of falling back to a plain native white checkbox. */
+input[type="checkbox"]{
+  appearance:none;-webkit-appearance:none;
+  width:14px;height:14px;flex:0 0 auto;
+  border:1.5px solid var(--border2);
+  border-radius:3px;
+  background:var(--bg4);
+  display:inline-grid;place-content:center;
+  cursor:pointer;margin:0;
+  transition:background .12s,border-color .12s;
+  position:relative;
+}
+input[type="checkbox"]:hover:not(:disabled){border-color:var(--text2);}
+input[type="checkbox"]:checked{
+  background:var(--accent);
+  border-color:var(--accent);
+}
+input[type="checkbox"]:checked::after{
+  content:"";
+  position:absolute;left:3.5px;top:0.5px;
+  width:4px;height:8px;
+  border:solid #fff;border-width:0 1.6px 1.6px 0;
+  transform:rotate(45deg);
+}
+input[type="checkbox"]:indeterminate{
+  background:var(--accent);
+  border-color:var(--accent);
+}
+input[type="checkbox"]:indeterminate::after{
+  content:"";
+  position:absolute;left:2.5px;top:5.5px;
+  width:7px;height:1.6px;background:#fff;
+}
+input[type="checkbox"]:disabled{
+  opacity:.5;cursor:not-allowed;
+}
+input[type="checkbox"]:focus-visible{
+  outline:1.5px solid var(--accent);outline-offset:1px;
+}
+
 /* ── BASE ─────────────────────────────────────────────────── */
 body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;font-size:13px;
   display:flex;flex-direction:column;height:100vh;overflow:hidden;user-select:none;}
@@ -266,7 +312,7 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 #modal-del-layer .modal,#modal-del-group .modal{min-width:260px;}
 #modal-del-layer .modal p,#modal-del-group .modal p{font-size:12px;color:var(--text2);margin-bottom:12px;}
 .del-modal-check{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text2);margin-bottom:14px;cursor:pointer;}
-.del-modal-check input{accent-color:var(--accent);cursor:pointer;}
+.del-modal-check input{cursor:pointer;}
 .del-group-opts{display:flex;flex-direction:column;gap:8px;margin-bottom:14px;}
 .del-group-opt{display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border-radius:6px;border:1px solid var(--border2);cursor:pointer;transition:background .1s;}
 .del-group-opt:hover{background:var(--bg3);}
@@ -532,11 +578,10 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 .ls-section-header.important{color:#ffb3b3;}
 .ls-section-header.preferences{color:var(--accent);}
 .ls-section-header-inner{display:flex;align-items:center;gap:8px;padding:8px 0 6px;cursor:pointer;}
-.ls-section-select{appearance:none;-webkit-appearance:none;width:13px;height:13px;margin:0;flex-shrink:0;border:1.5px solid #6A7085;border-radius:3px;background:var(--bg4);cursor:pointer;position:relative;transition:background .1s,border-color .1s;}
-.ls-section-select:hover:not(:disabled){border-color:#858CA8;}
-.ls-section-select:checked,.ls-section-select:indeterminate{background:var(--accent);border-color:var(--accent);}
-.ls-section-select:checked::after{content:'';position:absolute;left:3.5px;top:0.5px;width:3px;height:6.5px;border:solid #fff;border-width:0 1.6px 1.6px 0;transform:rotate(45deg);}
-.ls-section-select:indeterminate::after{content:'';position:absolute;left:2.5px;top:5px;width:6px;height:1.6px;background:#fff;}
+.ls-section-select{width:13px;height:13px;}
+.ls-section-select:hover:not(:disabled){border-color:var(--text2);}
+.ls-section-select:checked::after{left:3px;top:0.5px;width:3px;height:6.5px;}
+.ls-section-select:indeterminate::after{left:2.5px;top:5px;width:6px;height:1.6px;}
 .ls-section-select:disabled{opacity:.35;cursor:not-allowed;}
 .ls-section-header.important .ls-section-select:checked,.ls-section-header.important .ls-section-select:indeterminate{background:#e05858;border-color:#e05858;}
 .ls-section-header-label{flex:1;}
@@ -544,10 +589,6 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 .ls-row.is-selected{background:rgba(127,119,221,.16);outline:1px solid rgba(127,119,221,.55);outline-offset:-1px;}
 .ls-row-important.is-selected{background:rgba(180,45,45,.2);}
 .ls-row:last-child{border-bottom:none;}
-.ls-select{appearance:none;-webkit-appearance:none;width:14px;height:14px;margin:0;flex-shrink:0;border:1.5px solid #6A7085;border-radius:3px;background:var(--bg4);cursor:pointer;position:relative;transition:background .1s,border-color .1s;}
-.ls-select:hover{border-color:#858CA8;}
-.ls-select:checked{background:var(--accent);border-color:var(--accent);}
-.ls-select:checked::after{content:'';position:absolute;left:4px;top:1px;width:3.5px;height:7px;border:solid #fff;border-width:0 1.8px 1.8px 0;transform:rotate(45deg);}
 .ls-row-important .ls-select:checked{background:#e05858;border-color:#e05858;}
 .ls-row .ls-size{width:64px;flex-shrink:0;color:var(--text2);}
 .ls-row .ls-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;}
@@ -922,7 +963,7 @@ body:has(#palette-color-modal) .fp-split-resize{
 .kfsw-options input[type=number]{width:52px;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);font-size:12px;padding:2px 5px;outline:none;}
 .kfsw-options input[type=number]:focus{border-color:var(--accent);}
 .kfsw-checkbox{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text);cursor:pointer;}
-.kfsw-checkbox input{accent-color:var(--accent);}
+.kfsw-checkbox input{}
 /* Progressive row hiding as panel shrinks (widest → narrowest) */
 #keyframe-switcher-panel.kfsw-hide-next    #kfsw-row-next{display:none;}
 #keyframe-switcher-panel.kfsw-hide-prev    #kfsw-row-prev{display:none;}
@@ -1114,7 +1155,7 @@ body:has(#palette-color-modal) .fp-split-resize{
 .ts-label-sm{font-size:10px;color:var(--text2);white-space:nowrap;flex-shrink:0;}
 .ts-val{font-size:10px;color:var(--text2);min-width:26px;text-align:right;flex-shrink:0;}
 .ts-range{flex:1;min-width:0;accent-color:var(--accent);}
-.ts-check{accent-color:var(--accent);cursor:pointer;flex-shrink:0;}
+.ts-check{cursor:pointer;flex-shrink:0;}
 .ts-select{
   flex:1;background:var(--bg3);border:1px solid var(--border2);border-radius:4px;
   color:var(--text);font-size:10px;padding:2px 4px;cursor:pointer;outline:none;min-width:0;
@@ -1225,7 +1266,7 @@ button.ts-brush-blend-mode-option:hover,button.ts-brush-blend-mode-option:focus-
 
 /* Sidebar checkboxes */
 .ts-ps-nav-check{
-  accent-color:var(--accent);cursor:pointer;flex-shrink:0;
+  cursor:pointer;flex-shrink:0;
   width:12px;height:12px;
 }
 
@@ -1583,7 +1624,7 @@ input.size-val-input{
 .palette-style-layering-control{display:flex;align-items:center;gap:7px;min-height:28px;padding:4px 10px;box-sizing:border-box;color:var(--text);font-size:12px;cursor:pointer;}
 .palette-style-layering-control:hover{background:var(--bg4);}
 .palette-style-layering-control:has(input:disabled){color:var(--text2);opacity:.5;cursor:not-allowed;background:transparent;}
-.palette-style-layering-control input{margin:0;accent-color:var(--accent);}
+.palette-style-layering-control input{margin:0;}
 .palette-side-menu button{width:100%;padding:6px 10px;border:0;border-radius:5px;background:transparent;color:var(--text);font-size:12px;text-align:left;cursor:pointer;white-space:nowrap;transition:background-color .16s ease,color .16s ease,transform .16s ease;}
 .palette-side-menu button:not(:disabled):hover{background:var(--bg4);color:var(--accent);}
 .palette-side-menu button:not(:disabled):active{background:var(--accent-bg);color:var(--accent);transform:translateY(1px);}
