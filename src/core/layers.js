@@ -284,33 +284,32 @@ const layerCtxMenu=document.getElementById('layer-ctx-menu');
 let _layerCtxTargetIdx=null,_layerCtxTargetGid=null;
 function hideAllMenus(){ctxMenu.classList.remove('visible');rulerCtxMenu.classList.remove('visible');layerCtxMenu.classList.remove('visible');const bpCtx=document.getElementById('brush-preset-ctx-menu');if(bpCtx)bpCtx.classList.remove('visible');const bgCtx=document.getElementById('brush-group-ctx-menu');if(bgCtx)bgCtx.classList.remove('visible');closeAllDropdowns();}
 document.addEventListener('contextmenu',e=>{
-  if(rulerEl.contains(e.target)) return;
-  // Suppress canvas ctx-menu when right-clicking in the layer panel, timeline label column, or brush presets panel
+  if(rulerEl.contains(e.target)) return; // ruler has its own contextmenu listener
   const inLayerPanel=document.getElementById('right-panel').contains(e.target);
-  const inTlLabels=document.getElementById('tl-labels-col').contains(e.target);
-  const inBrushPresets=document.getElementById('brush-presets-panel').contains(e.target);
-  if(inTlLabels||inBrushPresets){e.preventDefault();return;}
   if(inLayerPanel) return; // handled by the layer panel's own contextmenu listener
-  // Only show the canvas ctx-menu when right-clicking inside the timeline (tl-scroll), not on the canvas itself
-  const inTlScroll=document.getElementById('tl-scroll').contains(e.target);
-  if(!inTlScroll){e.preventDefault();return;}
+  // Everything else: any element with a more specific context menu (brush preset
+  // items, timeline rows, palette cards, etc.) calls stopPropagation() in its own
+  // listener, so this only runs when nothing more specific handled it. Rather than
+  // silently eating the right-click, show the general app ctx-menu here.
   e.preventDefault();hideAllMenus();
   ctxMenu.style.left=Math.min(e.clientX,window.innerWidth-180)+'px';ctxMenu.style.top=Math.min(e.clientY,window.innerHeight-220)+'px';
   ctxMenu.classList.add('visible');
 });
 
-// Track last known pointer position so a keybind can open the menu there
+// Track last known pointer position so a keybind can open a menu there
 let _lastPtrX=0,_lastPtrY=0;
 document.addEventListener('pointermove',e=>{_lastPtrX=e.clientX;_lastPtrY=e.clientY;},{passive:true});
 
-// Pen button mapped to F2 in the tablet driver (Windows Ink breaks native
-// pen right-click contextmenu in Chrome, so we use a keybind instead).
-// Instead of always opening one fixed menu, simulate a REAL right-click at
-// the pen's last position — this makes every spot's own contextmenu logic
-// (layer rows, brush presets, palette, timeline, canvas) fire exactly as
-// if you'd actually right-clicked there, so the correct menu shows itself.
+// Tablet pens can't reliably fire a native contextmenu event in Chrome when
+// Windows Ink is enabled (a Chromium bug), so pen buttons should be mapped
+// to a keyboard key in the driver instead of "Mouse Right Button". This
+// listens for that key (configurable in Settings ▸ Keybinds ▸ Tablet/Pen,
+// default F2) and simulates a REAL right-click at the pen's last known
+// position — so whatever's actually under the pen (a layer row, brush
+// preset, palette color, canvas, etc.) gets its own correct context menu,
+// exactly as if a real right-click happened there.
 document.addEventListener('keydown',e=>{
-  if(e.key!=='F2') return;
+  if(!matchBind(e,'penContextMenu')) return;
   e.preventDefault();
   const target=document.elementFromPoint(_lastPtrX,_lastPtrY);
   if(!target) return;

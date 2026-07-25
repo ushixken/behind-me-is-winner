@@ -43,6 +43,8 @@ const KEYBIND_DEFAULTS={
   flipperBypass:  {label:'Flipper: Enable Bypass (hold)', key:'Shift', ctrl:false, shift:false, alt:false},
   increaseExposure: {label:'Increase Exposure', key:'1', ctrl:false, shift:false, alt:false},
   decreaseExposure: {label:'Decrease Exposure', key:'2', ctrl:false, shift:false, alt:false},
+  penContextMenu: {label:'Pen/Tablet Context Menu', key:'F2', ctrl:false, shift:false, alt:false,
+    note:'For tablet pen buttons only. Set your pen driver to "Press Key" (not "Mouse Right Button") and match this key exactly. If you change this shortcut, update your driver to match.'},
 };
 
 // Migrate only untouched clipboard defaults from the previous layout.
@@ -77,6 +79,7 @@ const KEYBIND_CATEGORIES=[
   {name:'Frames & Keyframes', actions:['newFrame','delKeyframe','nextFrame','prevFrame','flipperBypass','increaseExposure','decreaseExposure']},
   {name:'View',           actions:['toggleDrawMode','toggleOnionSkin','zoomIn','zoomOut','zoomReset','rotateReset']},
   {name:'Transform',      actions:['flipHorizontal','flipVertical']},
+  {name:'Tablet / Pen',   actions:['penContextMenu']},
 ];
 
 function loadKeybinds(){
@@ -236,6 +239,7 @@ function renderKeybindsList(){
   function buildRow(action,options){
     const b=keybinds[action],opts=options||{},row=document.createElement('div');row.className='modal-row keybinds-row'+(opts.child?' keybinds-tool-child':'')+(opts.disabled?' disabled':'');
     const label=document.createElement('span');label.className='keybinds-row-label';label.textContent=b.label;row.appendChild(label);
+    if(b.note){const info=document.createElement('span');info.className='keybinds-row-info';info.textContent='ⓘ';info.title=b.note;row.appendChild(info);}
     if(opts.status){const status=document.createElement('span');status.className='keybinds-row-status';status.textContent=opts.status;row.appendChild(status);}
     const btn=document.createElement('button');btn.className='modal-btn keybinds-shortcut-button';btn.textContent=formatBind(b);btn.title=opts.disabled?'Shortcut unavailable until this sub-tool is implemented':'Click, then press a new key combo';btn.disabled=!!opts.disabled;btn.onclick=event=>{event.stopPropagation();startRebind(action,btn);};row.appendChild(btn);return row;
   }

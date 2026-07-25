@@ -1,4 +1,4 @@
-*{box-sizing:border-box;margin:0;padding:0;}
+﻿*{box-sizing:border-box;margin:0;padding:0;}
 
 /* â”€â”€ FOCUS OUTLINE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
    Browsers draw their own default focus ring (often a stark white/blue
@@ -497,6 +497,11 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 .keybinds-row{display:grid;grid-template-columns:minmax(0,1fr) auto 128px;align-items:center;gap:8px;width:100%;min-width:0;max-width:100%;box-sizing:border-box;margin:0 0 4px;padding:3px 0 3px 24px;overflow:hidden;}
 .keybinds-tool-child{padding-left:42px;}
 .keybinds-row-label{min-width:0;overflow:hidden;color:var(--text2);font-size:11px;text-overflow:ellipsis;white-space:nowrap;}
+.keybinds-row-info{flex-shrink:0;color:var(--text3,#888);font-size:11px;cursor:help;margin-left:2px;}
+.keybinds-row-info:hover{color:var(--text);}
+.keybinds-info-box summary::-webkit-details-marker{display:none;}
+.keybinds-info-chevron{display:inline-block;transition:transform .15s ease;font-size:9px;}
+.keybinds-info-box[open] .keybinds-info-chevron{transform:rotate(90deg);}
 .keybinds-row-status{color:var(--text2);font-size:8px;white-space:nowrap;}
 .keybinds-shortcut-button{width:128px;min-width:0;max-width:128px;box-sizing:border-box;flex:0 0 128px;padding-left:8px;padding-right:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .keybinds-row.disabled{opacity:.48;}
