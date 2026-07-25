@@ -298,6 +298,32 @@ document.addEventListener('contextmenu',e=>{
   ctxMenu.style.left=Math.min(e.clientX,window.innerWidth-180)+'px';ctxMenu.style.top=Math.min(e.clientY,window.innerHeight-220)+'px';
   ctxMenu.classList.add('visible');
 });
+
+// Track last known pointer position so a keybind can open the menu there
+let _lastPtrX=0,_lastPtrY=0;
+document.addEventListener('pointermove',e=>{_lastPtrX=e.clientX;_lastPtrY=e.clientY;},{passive:true});
+
+// Pen button mapped to F2 in the tablet driver (Windows Ink breaks native
+// pen right-click contextmenu in Chrome, so we use a keybind instead).
+// Instead of always opening one fixed menu, simulate a REAL right-click at
+// the pen's last position — this makes every spot's own contextmenu logic
+// (layer rows, brush presets, palette, timeline, canvas) fire exactly as
+// if you'd actually right-clicked there, so the correct menu shows itself.
+document.addEventListener('keydown',e=>{
+  if(e.key!=='F2') return;
+  e.preventDefault();
+  const target=document.elementFromPoint(_lastPtrX,_lastPtrY);
+  if(!target) return;
+  target.dispatchEvent(new MouseEvent('contextmenu',{
+    bubbles:true,
+    cancelable:true,
+    clientX:_lastPtrX,
+    clientY:_lastPtrY,
+    button:2,
+    buttons:2
+  }));
+});
+
 document.addEventListener('click',e=>{const bpCtx=document.getElementById('brush-preset-ctx-menu');const bgCtx=document.getElementById('brush-group-ctx-menu');if(!ctxMenu.contains(e.target)&&!rulerCtxMenu.contains(e.target)&&!layerCtxMenu.contains(e.target)&&(!bpCtx||!bpCtx.contains(e.target))&&(!bgCtx||!bgCtx.contains(e.target))) hideAllMenus();});
 document.addEventListener('mousedown',e=>{if(e.button===2) return;const bpCtx=document.getElementById('brush-preset-ctx-menu');const bgCtx=document.getElementById('brush-group-ctx-menu');if(!ctxMenu.contains(e.target)&&!rulerCtxMenu.contains(e.target)&&!layerCtxMenu.contains(e.target)&&(!bpCtx||!bpCtx.contains(e.target))&&(!bgCtx||!bgCtx.contains(e.target))){if(ctxMenu.classList.contains('visible')||rulerCtxMenu.classList.contains('visible')||layerCtxMenu.classList.contains('visible')||(bpCtx&&bpCtx.classList.contains('visible'))||(bgCtx&&bgCtx.classList.contains('visible'))) hideAllMenus();}},{capture:true});
 document.getElementById('ctx-cut').onclick=()=>{cutFrame();hideAllMenus();};
