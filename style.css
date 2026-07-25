@@ -1,5 +1,10 @@
 ﻿*{box-sizing:border-box;margin:0;padding:0;}
 
+/* Hide number input spinners globally */
+input[type=number]::-webkit-inner-spin-button,
+input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}
+input[type=number]{-moz-appearance:textfield;appearance:textfield;}
+
 /* ── FOCUS OUTLINE ────────────────────────────────────────────
    Browsers draw their own default focus ring (often a stark white/blue
    outline) on any button/element that receives focus — including just
@@ -10,9 +15,7 @@
 button,.tbtn,input,select,textarea,[tabindex]{outline:none;}
 button:focus,.tbtn:focus,input:focus,select:focus,textarea:focus,[tabindex]:focus{outline:none;}
 button:focus-visible,.tbtn:focus-visible,input:focus-visible,select:focus-visible,
-textarea:focus-visible,[tabindex]:focus-visible{
-  outline:1.5px solid var(--accent);outline-offset:1px;
-}
+textarea:focus-visible,[tabindex]:focus-visible{outline:none;}
 
 /* ── SCROLLBARS ───────────────────────────────────────────────
    Replace the default OS/Chrome scrollbar everywhere with the same
@@ -851,7 +854,7 @@ body:has(#palette-color-modal) .fp-split-resize{
   border-radius:4px;color:var(--text);font-size:10px;padding:2px 3px;
   outline:none;text-align:right;-moz-appearance:textfield;appearance:textfield;
 }
-.cp-slider-row input[type=number]::-webkit-inner-spin-button{opacity:.4;}
+
 
 /* 4-edge + 4-corner resize handles */
 .cp-re{position:absolute;background:transparent;z-index:15;transition:background .12s;}
@@ -1186,7 +1189,7 @@ button.ts-brush-blend-mode-option:hover,button.ts-brush-blend-mode-option:focus-
   outline:none;text-align:right;-moz-appearance:textfield;appearance:textfield;
 }
 .ts-num:focus{border-color:var(--accent);}
-.ts-num::-webkit-inner-spin-button{opacity:.4;}
+
 .ts-pill-row{display:flex;gap:3px;flex-wrap:wrap;}
 .ts-pill{
   padding:2px 7px;border-radius:10px;border:1px solid var(--border2);
@@ -1352,6 +1355,7 @@ button.ts-brush-blend-mode-option:hover,button.ts-brush-blend-mode-option:focus-
   width:22px;height:22px;flex:0 0 22px;padding:0;border:1px solid var(--border2);
   border-radius:4px;background:var(--bg3);color:var(--text2);cursor:pointer;font-size:11px;
 }
+
 .ts-simple-settings-btn:hover,.ts-simple-settings-btn.active{color:var(--accent);border-color:var(--accent);background:var(--accent-bg);}
 .ts-simple-settings-popup{
   display:none;position:fixed;z-index:10020;width:220px;padding:10px;
@@ -1370,6 +1374,7 @@ button.ts-brush-blend-mode-option:hover,button.ts-brush-blend-mode-option:focus-
   background:none;border:none;cursor:pointer;font-size:11px;line-height:1;
   padding:2px;color:var(--text2);flex-shrink:0;position:relative;
 }
+
 .ts-eye-btn:hover{color:var(--text);}
 .ts-eye-btn.ts-eye-off{opacity:0.4;}
 .ts-eye-btn.ts-eye-off::after{
@@ -1415,8 +1420,9 @@ button.ts-brush-blend-mode-option:hover,button.ts-brush-blend-mode-option:focus-
 input.size-val-input{
   font:inherit;font-size:10px;color:var(--text1);background:var(--bg4,rgba(255,255,255,0.08));
   border:1px solid var(--accent);border-radius:3px;padding:0 3px;text-align:right;
-  box-sizing:border-box;
+  box-sizing:border-box;outline:none;
 }
+
 #bp-size-bar input.size-val-input{width:42px;height:16px;}
 .ts-row input.size-val-input{width:48px;height:18px;}
 #ts-size, #bp-sz{touch-action:none;}
@@ -1592,6 +1598,7 @@ input.size-val-input{
 
 .ts-value-edit{cursor:text;border-radius:3px;padding:1px 3px;min-width:30px!important;transition:background .12s,color .12s;}
 .ts-value-edit:hover,.ts-value-edit:focus{background:var(--bg4,rgba(255,255,255,0.08));color:var(--text1);outline:none;}
+
 
 .ts-pressure-preview{width:92px;height:38px;flex:0 0 92px;border:1px solid var(--border2);border-radius:4px;cursor:pointer;background:var(--bg2);}
 .ts-pressure-preview:hover{border-color:var(--accent);}
