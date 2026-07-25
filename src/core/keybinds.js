@@ -412,8 +412,8 @@ document.getElementById('modal-keybinds-close').onclick=_closeKeybindsModal;
 document.getElementById('modal-keybinds').addEventListener('click',e=>{
   if(e.target===document.getElementById('modal-keybinds')) _closeKeybindsModal();
 });
-document.getElementById('modal-keybinds-reset').onclick=()=>{
-  if(!confirm('Reset all keybinds to their defaults?')) return;
+document.getElementById('modal-keybinds-reset').onclick=async()=>{
+  if(!await siteConfirm('Reset all keybinds to their defaults?',{title:'Reset Keybinds',okText:'Reset',danger:true})) return;
   keybinds=JSON.parse(JSON.stringify(KEYBIND_DEFAULTS));
   saveKeybinds();
   const q=_keybindSearchInput?_keybindSearchInput.value:'';
@@ -447,12 +447,12 @@ document.getElementById('modal-keybinds-import-file').addEventListener('change',
   e.target.value=''; // allow re-selecting the same file later
   if(!file) return;
   const reader=new FileReader();
-  reader.onload=()=>{
+  reader.onload=async()=>{
     let parsed;
     try{ parsed=JSON.parse(reader.result); }
-    catch(err){ alert('That file isn\'t valid JSON.'); return; }
+    catch(err){ await siteAlert('That file isn\'t valid JSON.',{title:'Import Failed'}); return; }
     const incoming=parsed&&parsed.keybinds&&typeof parsed.keybinds==='object'?parsed.keybinds:parsed;
-    if(!incoming||typeof incoming!=='object'){ alert('That file doesn\'t look like a keybinds export.'); return; }
+    if(!incoming||typeof incoming!=='object'){ await siteAlert('That file doesn\'t look like a keybinds export.',{title:'Import Failed'}); return; }
     // Validate entries: only accept known actions with sane shapes, so a
     // malformed or unrelated JSON file can't corrupt the app's keybind state.
     const clean={},unknown=[];
@@ -463,11 +463,11 @@ document.getElementById('modal-keybinds-import-file').addEventListener('change',
       clean[action]={key:b.key,ctrl:!!b.ctrl,shift:!!b.shift,alt:!!b.alt};
     }
     const importedCount=Object.keys(clean).length;
-    if(!importedCount){ alert('No recognizable keybinds were found in that file.'); return; }
-    const msg='Import '+importedCount+' keybind'+(importedCount===1?'':'s')+
+    if(!importedCount){ await siteAlert('No recognizable keybinds were found in that file.',{title:'Import Failed'}); return; }
+    const msg='Import '+importedCount+' keybind'+(importedCount===1?'':'s')+'?'+
       (unknown.length?' (skipping '+unknown.length+' unrecognized entr'+(unknown.length===1?'y':'ies')+')':'')+
-      '?\n\nThis will overwrite your current bindings for those actions.';
-    if(!confirm(msg)) return;
+      '\n\nThis will overwrite your current bindings for those actions.';
+    if(!await siteConfirm(msg,{title:'Import Keybinds',okText:'Import'})) return;
     for(const action in clean){
       if(!keybinds[action]) keybinds[action]=Object.assign({label:action},clean[action]);
       else Object.assign(keybinds[action],clean[action]);
@@ -476,7 +476,7 @@ document.getElementById('modal-keybinds-import-file').addEventListener('change',
     renderKeybindsList();
     syncKeybindMenuLabels();
   };
-  reader.onerror=()=>alert('Could not read that file.');
+  reader.onerror=async()=>await siteAlert('Could not read that file.',{title:'Import Failed'});
   reader.readAsText(file);
 });
 

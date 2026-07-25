@@ -550,6 +550,11 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 .preset-btn{padding:4px 10px;border-radius:4px;border:1px solid var(--border2);background:transparent;color:var(--text2);font-size:11px;cursor:pointer;}
 .preset-btn:hover{background:var(--bg3);color:var(--text);}
 .modal-section{font-size:10px;font-weight:600;color:var(--text2);letter-spacing:.08em;text-transform:uppercase;margin:14px 0 8px;}
+
+/* Themed confirm/alert dialog — replaces window.confirm()/window.alert() */
+#modal-site-dialog{z-index:40000;}
+.site-dialog-modal{min-width:320px;max-width:440px;}
+.site-dialog-message{font-size:12px;line-height:1.6;color:var(--text2);white-space:pre-line;}
 .color-swatch-grid{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;}
 .bg-swatch{width:28px;height:28px;border-radius:5px;border:2px solid transparent;cursor:pointer;}
 .bg-swatch.active{border-color:var(--accent);}

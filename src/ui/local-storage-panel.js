@@ -146,7 +146,7 @@
 
   selectAll.onchange=()=>_setAll(_collectEntries().entries,selectAll.checked);
   clearSelection.onclick=()=>{selectedKeys.clear();_refreshRenderedSelection(_collectEntries().entries);};
-  deleteSelected.onclick=()=>{
+  deleteSelected.onclick=async()=>{
     const entries=_collectEntries().entries.filter(({key})=>selectedKeys.has(key));
     if(entries.length===0) return;
     const important=entries.filter(({key})=>_meta(key).important);
@@ -154,7 +154,8 @@
     const warning=important.length
       ? '\n\nWARNING: '+important.length+' important saved data item'+(important.length===1?' is':'s are')+' included. This may reset brushes, shortcuts, workspace layout, or Tool Settings.'
       : '';
-    if(!confirm('Delete '+entries.length+' selected item'+(entries.length===1?'':'s')+'?\n\n'+names+warning+'\n\nThis cannot be undone.')) return;
+    const ok=await siteConfirm('Delete '+entries.length+' selected item'+(entries.length===1?'':'s')+'?\n\n'+names+warning+'\n\nThis cannot be undone.',{title:'Delete Saved Data',okText:'Delete',danger:true});
+    if(!ok) return;
     const failed=[];
     entries.forEach(({key})=>{
       try{
@@ -167,7 +168,7 @@
       }catch(error){failed.push(_meta(key).name);}
     });
     render();
-    if(failed.length) alert('Could not delete:\n- '+failed.join('\n- '));
+    if(failed.length) await siteAlert('Could not delete:\n- '+failed.join('\n- '),{title:'Delete Failed'});
   };
 
 
@@ -177,7 +178,7 @@
       const {entries}=_collectEntries();
       if(entries.length===0) return;
       if(typeof JSZip==='undefined'){
-        alert('ZIP export isn\'t available right now.');
+        await siteAlert('ZIP export isn\'t available right now.',{title:'Export Unavailable'});
         return;
       }
       const zip=new JSZip();
