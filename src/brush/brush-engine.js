@@ -2824,6 +2824,96 @@ function _renderLineDrag(ex,ey,e){
   _flushStrokeTail();
 }
 
+// Lightweight Line preview (used while the pointer is actively moving) -----
+// _renderLineDrag above is correct but O(line length): it walks and stamps
+// every individual dab along the whole line, every time it's called. Even
+// with rendering already capped to one call per animation frame (see the
+// Line preview scheduler below), that per-frame cost still scales with
+// current line length/spacing and was the confirmed remaining cause of the
+// preview trailing the cursor during a fast drag.
+//
+// Fix: while the pointer is actively moving, don't replay the brush engine
+// at all. Approximate the line as a small number of native Canvas 2D
+// stroke() calls (round caps/joins, width derived from the same effective
+// radius formula real dabs use) drawn straight into the existing
+// _strokeCanvas scratch layer -- the same layer _renderLineDrag itself
+// targets, so it participates in the exact same live-preview compositing
+// path (_getLiveStrokePreview/_scheduleRecomposite) with no changes needed
+// there. This is O(1) (Fixed Pressure) or O(SEGMENTS) (Pen Pressure) per
+// frame instead of O(line length / spacing), and is only ever used as a
+// temporary visual stand-in: the full, exact _renderLineDrag still runs
+// once the pointer pauses (see _armLineIdleTimer) and always runs
+// synchronously on pointerup before anything is committed, so the
+// committed line is never influenced by this approximation.
+//
+// Resolves an approximate {r,alpha} for a given pressure without stamping
+// anything or mutating persistent stroke state. _computeSpacingRadius is
+// already written to be safe to call speculatively (it saves/restores
+// currentPressure and _smoothedPressure internally), so reusing it here
+// gives the exact same size-control/pressure-curve result real dabs would
+// use. Alpha is a simpler approximation (Flow, optionally scaled by raw
+// pressure when Opacity is pressure-controlled) rather than replicating the
+// full per-dab alpha/flow-accumulation model -- close enough for a
+// transient preview that's about to be replaced by the exact render.
+function _lineApproxDabParams(e,pressure){
+  const r=_computeSpacingRadius(e,pressure);
+  const opacityCtrl=_getOpacityControl();
+  const opacityPressure=(opacityCtrl==='pressure'&&_isDrawingWithPen)?Math.max(0.05,pressure):1;
+  const alpha=Math.max(0,Math.min(1,brushFlow*opacityPressure));
+  return {r,alpha};
+}
+function _renderLineDragLightweight(ex,ey,e){
+  if(!lineStart) return;
+  _ensureStrokeCanvas();
+  if(!_strokeCtx||!_strokeCanvas) return;
+  // Clear before every redraw -- this is the only thing standing between a
+  // fresh approximation and a stale leftover from the previous frame (or
+  // from a full-fidelity idle render that just ran), since nothing here
+  // reuses or diffs against previous content.
+  _strokeCtx.clearRect(0,0,_strokeCanvas.width,_strokeCanvas.height);
+  const usePenPressure=_isDrawingWithPen&&getLinePressureMode()==='pen';
+  const rgb=_hexToRGB(color);
+  const dc=_strokeCtx;
+  dc.save();
+  dc.globalCompositeOperation='source-over';
+  dc.lineCap='round';
+  dc.lineJoin='round';
+  dc.strokeStyle='rgb('+rgb[0]+','+rgb[1]+','+rgb[2]+')';
+  if(!usePenPressure){
+    // Fixed Pressure / mouse / touch: constant width along the whole line,
+    // matching how _renderLineDrag's own Fixed-Pressure branch treats it
+    // (currentPressure pinned to 1) -- a single stroke() call.
+    const {r,alpha}=_lineApproxDabParams(e,1);
+    dc.globalAlpha=alpha;
+    dc.lineWidth=Math.max(0.5,r*2);
+    dc.beginPath();
+    dc.moveTo(lineStart.x,lineStart.y);
+    dc.lineTo(ex,ey);
+    dc.stroke();
+  }else{
+    // Pen Pressure: reuse the exact same recorded-sample pressure profile
+    // _renderLineDrag uses, but sample it at a small fixed number of points
+    // instead of once per dab, and vary lineWidth per segment. Round
+    // caps/joins keep adjacent segments visually continuous despite the
+    // width jump between them.
+    const pressureAt=_buildLinePressureProfile(lineStart.x,lineStart.y,ex,ey);
+    const SEGMENTS=16;
+    const dx=ex-lineStart.x,dy=ey-lineStart.y;
+    for(let i=0;i<SEGMENTS;i++){
+      const t0=i/SEGMENTS,t1=(i+1)/SEGMENTS,tMid=(t0+t1)/2;
+      const {r,alpha}=_lineApproxDabParams(e,pressureAt(tMid));
+      dc.globalAlpha=alpha;
+      dc.lineWidth=Math.max(0.5,r*2);
+      dc.beginPath();
+      dc.moveTo(lineStart.x+dx*t0,lineStart.y+dy*t0);
+      dc.lineTo(lineStart.x+dx*t1,lineStart.y+dy*t1);
+      dc.stroke();
+    }
+  }
+  dc.restore();
+}
+
+
 // PERF FIX: recompositing flattens every layer/group (full-canvas
 // drawImage per layer, plus mask canvases) Ã¢â‚¬â€ that's fine to do once per
 // frame, but the old code called it synchronously on EVERY pointermove,
@@ -2929,6 +3019,7 @@ function _endStroke(pointerId){
     // Line drag aborted mid-gesture (pointercancel, tab blur, etc.) -- undo
     // was never pushed and the layer was never touched, so just discard the
     // uncommitted scratch preview rather than committing a partial line.
+    _cancelLinePreview();
     if(_inStroke){_inStroke=false;if(_strokeCtx&&_strokeCanvas)_strokeCtx.clearRect(0,0,_strokeCanvas.width,_strokeCanvas.height);}
     if(_strokePreviewCtx&&_strokePreviewCanvas)_strokePreviewCtx.clearRect(0,0,_strokePreviewCanvas.width,_strokePreviewCanvas.height);
   }
@@ -3608,9 +3699,105 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
   if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.event('recomposite-scheduled');
   if(window._brushAirbrush&&window._brushContinuousSpraying) _startAirbrushSpray();
 });
+// Line tool preview scheduler ------------------------------------------
+// pointerrawupdate deliberately fires at full tablet/OS sampling rate (up
+// to ~1000Hz) so no pressure sample is ever lost -- see the note on
+// _handleMoveEvent below. Sample RECORDING must stay at that rate. But
+// _renderLineDrag() fully replays and re-rasterizes the WHOLE line from
+// scratch every time it's called, so calling it synchronously once per raw
+// input event made rendering cost scale with input frequency (and with
+// current line length) instead of with display refresh rate: once
+// per-event render time exceeded the gap between events, pointer events
+// queued up behind a still-running render and the preview visibly trailed
+// the cursor.
+// Fix: decouple recording from rendering. Every pointerrawupdate still
+// pushes a sample into _linePressureSamples (unchanged, full rate, no
+// pressure data lost) and stores the latest endpoint, but only marks the
+// preview dirty and schedules (at most) one requestAnimationFrame. If more
+// samples/endpoints arrive before that frame fires, they keep updating the
+// stored "latest endpoint" and pressure samples, but no extra render or
+// extra RAF is queued -- the callback always renders exactly once, using
+// whatever the newest endpoint is by the time it actually runs. This caps
+// rendering at the display's own frame rate regardless of input frequency,
+// while every sample in between still lands in _linePressureSamples and
+// therefore still shapes the pressure profile / final commit exactly as
+// before.
+//
+// This intentionally does NOT reuse _scheduleRecomposite()'s RAF machinery.
+// That scheduler coalesces the CANVAS COMPOSITE step (flattening layers to
+// the screen) and carries first-dab-latency experiment/telemetry logic
+// that's specific to that job. Bolting line-preview rendering onto it would
+// conflate two different pieces of work with different coalescing
+// semantics (and different "what counts as stale" rules) for no shared
+// benefit -- _renderLineDrag must run BEFORE _scheduleRecomposite() can do
+// anything useful anyway (there'd be nothing new to composite otherwise).
+// A small dedicated scheduler keeps that ordering explicit and keeps this
+// concern isolated from the compositing pipeline.
+let _linePreviewRAFPending=false,_linePreviewRAFHandle=0;
+let _linePreviewLatestX=0,_linePreviewLatestY=0,_linePreviewLatestEvent=null;
+// Dual-quality preview ------------------------------------------------------
+// Even capped to one call per animation frame, _renderLineDrag's own cost
+// (full dab-stamping replay of the whole line) still scales with line
+// length/spacing and remained the confirmed source of visible trailing
+// during a fast drag. Fix: split "update every frame" from "be exact".
+// Every RAF frame while the pointer is actively moving renders the cheap
+// _renderLineDragLightweight() approximation (a handful of Canvas 2D
+// stroke() calls, no dab loop) so the preview always stays attached to the
+// cursor. The exact _renderLineDrag() replay is deferred to a short idle
+// timer -- it only runs once ~40-60ms have passed with no new endpoint,
+// "upgrading" the visible preview to full fidelity while the hand is
+// actually still. Any new movement before that timer fires cancels it via
+// the generation token below and drops straight back to the lightweight
+// path. pointerup (_cancelLinePreview, called from _pointerEndStroke)
+// cancels both the pending RAF and this idle timer, then _pointerEndStroke
+// runs _renderLineDrag synchronously on the true final position -- so the
+// committed line is always exact and is never derived from either the
+// lightweight approximation or a stale idle upgrade.
+let _lineIdleTimer=0;
+let _linePreviewGeneration=0;
+const _LINE_IDLE_UPGRADE_MS=50; // within the required ~40-60ms idle window
+function _armLineIdleUpgrade(){
+  const generation=_linePreviewGeneration;
+  _lineIdleTimer=setTimeout(()=>{
+    _lineIdleTimer=0;
+    // Token check: if a newer endpoint/sample arrived since this timer was
+    // armed, _scheduleLinePreview already cleared/rearmed it and bumped the
+    // generation -- this stale callback (a defensive backstop alongside the
+    // clearTimeout in _scheduleLinePreview/_cancelLinePreview) must not be
+    // allowed to draw over a newer lightweight frame.
+    if(generation!==_linePreviewGeneration) return;
+    if(!lineStart||!_lineDragging) return; // stroke ended/cancelled before this fired
+    _renderLineDrag(_linePreviewLatestX,_linePreviewLatestY,_linePreviewLatestEvent);
+    _scheduleRecomposite();
+  },_LINE_IDLE_UPGRADE_MS);
+}
+function _scheduleLinePreview(x,y,e){
+  _linePreviewLatestX=x;_linePreviewLatestY=y;_linePreviewLatestEvent=e;
+  // New endpoint -- invalidate any pending idle full-fidelity upgrade and
+  // restart the idle clock from now, since "idle" means idle since the
+  // LAST endpoint update, not since the last RAF frame.
+  _linePreviewGeneration++;
+  if(_lineIdleTimer){clearTimeout(_lineIdleTimer);_lineIdleTimer=0;}
+  _armLineIdleUpgrade();
+  if(_linePreviewRAFPending) return; // already scheduled -- newest endpoint above is all that changes
+  _linePreviewRAFPending=true;
+  _linePreviewRAFHandle=requestAnimationFrame(()=>{
+    _linePreviewRAFPending=false;_linePreviewRAFHandle=0;
+    if(!lineStart||!_lineDragging) return; // stroke ended/cancelled before this frame ran
+    _renderLineDragLightweight(_linePreviewLatestX,_linePreviewLatestY,_linePreviewLatestEvent);
+    _scheduleRecomposite();
+  });
+}
+function _cancelLinePreview(){
+  if(_linePreviewRAFHandle){cancelAnimationFrame(_linePreviewRAFHandle);_linePreviewRAFHandle=0;}
+  _linePreviewRAFPending=false;
+  if(_lineIdleTimer){clearTimeout(_lineIdleTimer);_lineIdleTimer=0;}
+  _linePreviewGeneration++; // belt-and-braces: also shadows any in-flight timer callback
+}
+
 // _handleMoveEvent: shared by pointermove + pointerrawupdate.
 // pointerrawupdate fires at the full OS/Windows Ink sampling rate (up to 1000Hz)
-// before the browser throttles events to display refresh rate Ã¢â‚¬â€ giving every
+// before the browser throttles events to display refresh rate â giving every
 // real pressure value the tablet digitizer reports, not just the surviving ones.
 function _handleMoveEvent(e){
   if((!drawing&&!_lineDragging)||activeGroupId||_strokeCompletionStarted) return;
@@ -3624,7 +3811,9 @@ function _handleMoveEvent(e){
     // curve instead of collapsing it to one value. The line itself stays
     // straight (start -> current raw pointer position); only the WIDTH
     // profile comes from the sampled path, so no smoothing/curving is
-    // applied to the endpoint tracking itself.
+    // applied to the endpoint tracking itself. Recording happens on every
+    // call regardless of rendering -- see _scheduleLinePreview above for
+    // why rendering itself is decoupled from this.
     let lastRaw=null,lastEvent=e;
     for(const ev of events){
       const pressure=_getPressure(ev);
@@ -3635,8 +3824,7 @@ function _handleMoveEvent(e){
     }
     if(lastRaw){
       lx=lastRaw.x;ly=lastRaw.y;_lastPointerEvent=lastEvent;
-      _renderLineDrag(lastRaw.x,lastRaw.y,lastEvent);
-      _scheduleRecomposite();
+      _scheduleLinePreview(lastRaw.x,lastRaw.y,lastEvent);
     }
     return;
   }
@@ -3686,6 +3874,7 @@ function _pointerEndStroke(e){
   if(_activeStrokePointerId!=null&&e.pointerId!==_activeStrokePointerId) return;
   _strokeCompletionStarted=true;
   _stopAirbrushSpray();
+  _cancelLinePreview();
   if(activeGroupId){drawing=false;lineStart=null;_lineDragging=false;_linePressureSamples=[];_pendingDabs.length=0;_endColorEraserStroke();_activeStrokePointerId=null;return;}
   if(tool==='line'&&lineStart){
     pushUndo();ensureKey();const p=getPos(e);
@@ -3696,7 +3885,10 @@ function _pointerEndStroke(e){
   if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.event('stroke-state-initialization-complete',{strokeCanvas:!!_strokeCanvas,inStroke:_inStroke});
     // Final commit shares the exact same renderer used for every live
     // preview frame during the drag, so what the user saw IS what gets
-    // written to the layer (no "collapsing to one average value").
+    // written to the layer (no "collapsing to one average value"). Any
+    // preview RAF that was still pending from the last pointermove was
+    // already cancelled above -- this call always uses the true final
+    // pointerup position, never a stale queued endpoint.
     _renderLineDrag(p.x,p.y,e);
     if(_inStroke){_inStroke=false;_commitStrokeCanvas();}
     _cleanupErasedSmartOwnership();lineStart=null;_lineDragging=false;_linePressureSamples=[];saveActiveToKey();
