@@ -872,6 +872,27 @@ function tlZoomToSpan(newSpan, anchorFrame, anchorScreenX){
 
   const ZOOM_SENSITIVITY = 0.01;   // dx (px) -> exponent; matches the requested exp(dx*0.01) mapping
 
+  // ── Key-level touch-action guard ─────────────────────────────────────────
+  // #tl-scroll has touch-action:pan-x pan-y so the browser can natively
+  // scroll it.  But browsers resolve touch-action the instant the pen tip
+  // touches the surface — BEFORE any JS pointerdown fires — so setting
+  // touch-action in the pointerdown handler is always too late.  The blank
+  // zone below the layer rows IS #tl-scroll itself, so panning there triggers
+  // an immediate pointercancel that kills the zoom drag.
+  //
+  // Fix: watch keydown/keyup and flip touch-action to 'none' the moment
+  // Ctrl+Space are both held (before the pen ever contacts the screen).
+  // Restore it as soon as either key is released (or the drag ends).
+  function _updateTlScrollTouchAction(){
+    if(spaceHeld && ctrlHeld){
+      tlScroll.style.touchAction = 'none';
+    } else {
+      tlScroll.style.touchAction = '';   // revert to stylesheet value (pan-x pan-y)
+    }
+  }
+  window.addEventListener('keydown', _updateTlScrollTouchAction, {capture: true});
+  window.addEventListener('keyup',   _updateTlScrollTouchAction, {capture: true});
+
   // Dedicated gesture state (distinct from scrollbar dragging/scrubbing/
   // selection state) so other handlers can check it if they ever need to.
   window.timelineZoomDragActive = false;
@@ -958,6 +979,7 @@ function tlZoomToSpan(newSpan, anchorFrame, anchorScreenX){
     pointerId = null;
     document.body.style.userSelect = '';
     timelineArea.style.cursor = '';
+    _updateTlScrollTouchAction();   // re-evaluate based on current key state (safety net)
   }
   timelineArea.addEventListener('pointerup',        endDrag);
   timelineArea.addEventListener('pointercancel',    endDrag);

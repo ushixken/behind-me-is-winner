@@ -963,7 +963,6 @@ body:has(#palette-color-modal) .fp-split-resize{
 .kfsw-options input[type=number]{width:52px;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);font-size:12px;padding:2px 5px;outline:none;}
 .kfsw-options input[type=number]:focus{border-color:var(--accent);}
 .kfsw-checkbox{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text);cursor:pointer;}
-.kfsw-checkbox input{}
 /* Progressive row hiding as panel shrinks (widest → narrowest) */
 #keyframe-switcher-panel.kfsw-hide-next    #kfsw-row-next{display:none;}
 #keyframe-switcher-panel.kfsw-hide-prev    #kfsw-row-prev{display:none;}
