@@ -239,9 +239,18 @@ function renderKeybindsList(){
   function buildRow(action,options){
     const b=keybinds[action],opts=options||{},row=document.createElement('div');row.className='modal-row keybinds-row'+(opts.child?' keybinds-tool-child':'')+(opts.disabled?' disabled':'');
     const label=document.createElement('span');label.className='keybinds-row-label';label.textContent=b.label;row.appendChild(label);
-    if(b.note){const info=document.createElement('span');info.className='keybinds-row-info';info.textContent='ⓘ';info.title=b.note;row.appendChild(info);}
-    if(opts.status){const status=document.createElement('span');status.className='keybinds-row-status';status.textContent=opts.status;row.appendChild(status);}
-    const btn=document.createElement('button');btn.className='modal-btn keybinds-shortcut-button';btn.textContent=formatBind(b);btn.title=opts.disabled?'Shortcut unavailable until this sub-tool is implemented':'Click, then press a new key combo';btn.disabled=!!opts.disabled;btn.onclick=event=>{event.stopPropagation();startRebind(action,btn);};row.appendChild(btn);return row;
+    // Always render the meta column (even empty) so the shortcut button stays
+    // pinned to the fixed-width right column instead of drifting into the
+    // middle "auto" column when a row has no info/status content.
+    const meta=document.createElement('span');meta.className='keybinds-row-meta';
+    if(b.note){const info=document.createElement('span');info.className='keybinds-row-info';info.textContent='ⓘ';info.title=b.note;meta.appendChild(info);}
+    if(opts.status){const status=document.createElement('span');status.className='keybinds-row-status';status.textContent=opts.status;meta.appendChild(status);}
+    row.appendChild(meta);
+    const wrap=document.createElement('span');wrap.className='keybinds-shortcut-wrap';
+    const btn=document.createElement('button');btn.className='modal-btn keybinds-shortcut-button';btn.textContent=formatBind(b);btn.title=opts.disabled?'Shortcut unavailable until this sub-tool is implemented':'Click, then press a new key combo';btn.disabled=!!opts.disabled;btn.onclick=event=>{event.stopPropagation();startRebind(action,btn);};wrap.appendChild(btn);
+    if(b.key&&!opts.disabled){const clear=document.createElement('button');clear.className='keybinds-clear-button';clear.textContent='✕';clear.title='Remove this shortcut';clear.onclick=event=>{event.stopPropagation();cancelRebind();keybinds[action]=Object.assign({},keybinds[action],{key:'',ctrl:false,shift:false,alt:false});saveKeybinds();renderKeybindsList();syncKeybindMenuLabels();};wrap.appendChild(clear);}
+    row.appendChild(wrap);
+    return row;
   }
   function buildSection(name,actions){
     const visible=actions.filter(action=>keybinds[action]&&matches(action));if(!visible.length)return false;const forceOpen=!!q,collapsed=!forceOpen&&!!_collapsedCats[name];
@@ -262,7 +271,10 @@ function renderKeybindsList(){
       const toggle=document.createElement('button');toggle.type='button';toggle.className='keybinds-tool-toggle';toggle.setAttribute('aria-expanded',String(expanded));
       const chevron=document.createElement('span');chevron.className='keybinds-tool-chevron';chevron.textContent=expanded?'\u25bc':'\u25b6';const name=document.createElement('span');name.className='keybinds-tool-name';name.textContent=keybinds[mainAction].label;toggle.append(chevron,name);
       toggle.onclick=()=>{_expandedToolGroups[group.id]=!expanded;_saveExpandedToolGroups();renderKeybindsList();};
-      const shortcut=document.createElement('button');shortcut.className='modal-btn keybinds-shortcut-button';shortcut.textContent=formatBind(keybinds[mainAction]);shortcut.title='Click, then press a new key combo';shortcut.onclick=event=>{event.stopPropagation();startRebind(mainAction,shortcut);};parent.append(toggle,shortcut);list.appendChild(parent);
+      const shortcutWrap=document.createElement('span');shortcutWrap.className='keybinds-shortcut-wrap';
+      const shortcut=document.createElement('button');shortcut.className='modal-btn keybinds-shortcut-button';shortcut.textContent=formatBind(keybinds[mainAction]);shortcut.title='Click, then press a new key combo';shortcut.onclick=event=>{event.stopPropagation();startRebind(mainAction,shortcut);};shortcutWrap.appendChild(shortcut);
+      if(keybinds[mainAction].key){const clear=document.createElement('button');clear.className='keybinds-clear-button';clear.textContent='✕';clear.title='Remove this shortcut';clear.onclick=event=>{event.stopPropagation();cancelRebind();keybinds[mainAction]=Object.assign({},keybinds[mainAction],{key:'',ctrl:false,shift:false,alt:false});saveKeybinds();renderKeybindsList();syncKeybindMenuLabels();};shortcutWrap.appendChild(clear);}
+      parent.append(toggle,shortcutWrap);list.appendChild(parent);
       const displayedChildren=q&&parentMatches?children:visibleChildren;if(expanded)displayedChildren.forEach(({subTool,action})=>{const disabled=subTool.status!=='implemented',status=subTool.id==='style-select'?'Smart Raster Only':(disabled?'Coming Soon':'');list.appendChild(buildRow(action,{child:true,disabled,status}));});
     });
     return true;
@@ -408,6 +420,65 @@ document.getElementById('modal-keybinds-reset').onclick=()=>{
   renderKeybindsList();
   syncKeybindMenuLabels();
 };
+
+// ── Export: download the current keybinds as a JSON file ──────────────
+document.getElementById('modal-keybinds-export').onclick=()=>{
+  const toSave={};
+  for(const action in keybinds){
+    const b=keybinds[action];
+    toSave[action]={key:b.key,ctrl:!!b.ctrl,shift:!!b.shift,alt:!!b.alt};
+  }
+  const payload={type:'animator-keybinds',version:1,exportedAt:new Date().toISOString(),keybinds:toSave};
+  const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download='keybinds.json';
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
+
+// ── Import: load keybinds from a previously exported JSON file ────────
+document.getElementById('modal-keybinds-import').onclick=()=>{
+  document.getElementById('modal-keybinds-import-file').click();
+};
+document.getElementById('modal-keybinds-import-file').addEventListener('change',e=>{
+  const file=e.target.files&&e.target.files[0];
+  e.target.value=''; // allow re-selecting the same file later
+  if(!file) return;
+  const reader=new FileReader();
+  reader.onload=()=>{
+    let parsed;
+    try{ parsed=JSON.parse(reader.result); }
+    catch(err){ alert('That file isn\'t valid JSON.'); return; }
+    const incoming=parsed&&parsed.keybinds&&typeof parsed.keybinds==='object'?parsed.keybinds:parsed;
+    if(!incoming||typeof incoming!=='object'){ alert('That file doesn\'t look like a keybinds export.'); return; }
+    // Validate entries: only accept known actions with sane shapes, so a
+    // malformed or unrelated JSON file can't corrupt the app's keybind state.
+    const clean={},unknown=[];
+    for(const action in incoming){
+      if(!KEYBIND_DEFAULTS[action]&&!keybinds[action]){ unknown.push(action); continue; }
+      const b=incoming[action]||{};
+      if(typeof b.key!=='string'){ unknown.push(action); continue; }
+      clean[action]={key:b.key,ctrl:!!b.ctrl,shift:!!b.shift,alt:!!b.alt};
+    }
+    const importedCount=Object.keys(clean).length;
+    if(!importedCount){ alert('No recognizable keybinds were found in that file.'); return; }
+    const msg='Import '+importedCount+' keybind'+(importedCount===1?'':'s')+
+      (unknown.length?' (skipping '+unknown.length+' unrecognized entr'+(unknown.length===1?'y':'ies')+')':'')+
+      '?\n\nThis will overwrite your current bindings for those actions.';
+    if(!confirm(msg)) return;
+    for(const action in clean){
+      if(!keybinds[action]) keybinds[action]=Object.assign({label:action},clean[action]);
+      else Object.assign(keybinds[action],clean[action]);
+    }
+    saveKeybinds();
+    renderKeybindsList();
+    syncKeybindMenuLabels();
+  };
+  reader.onerror=()=>alert('Could not read that file.');
+  reader.readAsText(file);
+});
 
 // ── PREFERENCES MODAL (Edit ▸ Preferences) ──────────────────────────────
 // Sidebar tab-switching, mirroring the Advanced Tool Settings layout but
