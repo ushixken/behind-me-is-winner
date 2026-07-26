@@ -180,7 +180,7 @@
     }
     if(activeGroupId==='smart-selection'){renderGeneric(smart);setBody('tool-group');renderSettings();}
   }
-  function syncActiveButtons(){document.querySelectorAll('[data-tool-group-id]').forEach(button=>button.classList.toggle('active',button.dataset.toolGroupId===activeGroupId));}
+  function syncActiveButtons(){document.querySelectorAll('[data-tool-group-id]').forEach(button=>{const group=getGroup(button.dataset.toolGroupId);button.classList.toggle('active',button.dataset.toolGroupId===activeGroupId);if(group&&group.dynamicToolbarIcon){const subTool=getSubTool(group,group.activeSubToolId),icon=button.querySelector('.tool-group-main-icon');if(icon&&subTool)icon.textContent=subTool.icon||group.icon||'';}});}
   function bindMainButton(id,groupId){const button=document.getElementById(id);if(!button)return;button.dataset.toolGroupId=groupId;button.onclick=()=>activateGroup(groupId);}
   function toolActivation(toolId,label,after){return()=>{setTool(toolId,label);if(after)after();};}
   function placeholder(id,name,icon){return{id,name,icon,status:'coming-soon'};}
@@ -234,7 +234,7 @@
 
   function renderLineOptions(body){
     const panel=ToolSettingsUI.panel();
-    ToolSettingsUI.slider(panel,{label:'Size',min:1,max:2000,step:.1,value:toolSizes.brush||6,kind:'line-size',format:value=>typeof window.formatBrushSize==='function'?window.formatBrushSize(value):String(value),onInput:value=>{window._lineSizeUpdateSource='line-slider';toolSizes.line=value;window._lineSizeUpdateSource=null;if(tool==='line'){szSlider.value=value;if(typeof refreshSizeUI==='function')refreshSizeUI();}}});
+    ToolSettingsUI.slider(panel,{label:'Size',min:1,max:2000,step:.1,value:toolSizes.brush||6,kind:'line-size',format:value=>typeof window.formatBrushSize==='function'?window.formatBrushSize(value):String(value),onInput:value=>{window._lineSizeUpdateSource='line-slider';toolSizes.line=value;window._lineSizeUpdateSource=null;if(tool==='line'||tool==='curve'){szSlider.value=value;if(typeof refreshSizeUI==='function')refreshSizeUI();}}});
     ToolSettingsUI.slider(panel,{label:'Opacity',min:1,max:100,step:1,value:Math.round(brushOpacity*100),format:value=>String(Math.round(value)),onInput:value=>{brushOpacity=value/100;const existing=document.getElementById('ts-opacity');if(existing){existing.value=value;existing.dispatchEvent(new Event('input',{bubbles:true}));}}});
     ToolSettingsUI.select(panel,{label:'Pressure',value:typeof window.getLinePressureMode==='function'?window.getLinePressureMode():'pen',items:[['fixed','Fixed'],['pen','Pen Pressure']],onChange:mode=>{if(typeof window.setLinePressureMode==='function')window.setLinePressureMode(mode);}});
     const lineAA=typeof window.getLineAASettings==='function'?window.getLineAASettings():{enabled:true,quality:'medium'};
@@ -372,10 +372,11 @@
   registerGroup({id:'fill',name:'Fill',shortcutActionId:'toolFill',icon:'F',panelRenderer:renderFillOptions,defaultSubToolId:'bucket-fill',subTools:[
     {id:'bucket-fill',name:'Bucket Fill',icon:'F',activate:toolActivation('fill','Fill')},{id:'lasso-fill',name:'Lasso Fill',icon:'L',activate:toolActivation('lasso-fill','Lasso Fill'),settingsDescription:'Draw a freehand boundary and release to fill it with the current color.'},placeholder('rectangle-fill','Rectangle Fill','R'),placeholder('ellipse-fill','Ellipse Fill','O'),placeholder('polyline-fill','Polyline Fill','P'),placeholder('enclose-fill','Enclose and Fill','E'),placeholder('refer-other-layers','Refer Other Layers','A')
   ]});
-  registerGroup({id:'line',name:'Line',shortcutActionId:'toolLine',icon:'L',panelTitle:'Line',panelRenderer:renderLineOptions,defaultSubToolId:'straight-line',subTools:[
-    {id:'straight-line',name:'Straight Line',icon:'L',activate:toolActivation('line','Line'),settingsDescription:'Uses the existing line engine and shared brush settings.'},placeholder('polyline','Polyline','P'),placeholder('curve','Curve','C'),placeholder('rectangle-line','Rectangle','R'),placeholder('ellipse-line','Ellipse','O')
-  ]});
-  registerGroup({id:'eyedropper',name:'Eyedropper',shortcutActionId:'toolEyedropper',icon:'I',defaultSubToolId:'sample-visible-color',subTools:[
+  registerGroup({id:'line',name:'Line',shortcutActionId:'toolLine',icon:'↖',dynamicToolbarIcon:true,panelTitle:'Line',panelRenderer:renderLineOptions,defaultSubToolId:'straight-line',subTools:[
+    {id:'straight-line',name:'Straight Line',icon:'↖',section:'LINE',activate:toolActivation('line','Line'),settingsDescription:'Uses the existing line engine and shared brush settings.'},
+    {id:'curve',name:'Curve',icon:'⌒',section:'LINE',shortcutActionId:'toolCurve',activate:toolActivation('curve','Curve'),settingsDescription:'Define endpoints, then position the quadratic control point.'},
+    Object.assign(placeholder('polyline','Polyline','P'),{section:'Coming Soon'}),Object.assign(placeholder('rectangle-line','Rectangle','R'),{section:'Coming Soon'}),Object.assign(placeholder('ellipse-line','Ellipse','O'),{section:'Coming Soon'})
+  ]});  registerGroup({id:'eyedropper',name:'Eyedropper',shortcutActionId:'toolEyedropper',icon:'I',defaultSubToolId:'sample-visible-color',subTools:[
     {id:'sample-visible-color',name:'Sample Visible Color',icon:'I',activate:toolActivation('eyedropper','Eyedropper'),settingsDescription:'Samples the visible composited canvas color.'}
   ]});
   registerGroup({id:'transform',name:'Transform',shortcutActionId:'toolTransform',icon:'T',defaultSubToolId:'free-transform',subTools:[
@@ -387,11 +388,11 @@
   const free=document.getElementById('transform-mode-free'),perspective=document.getElementById('transform-mode-perspective');
   if(free)free.onclick=()=>activateSubTool('transform','free-transform');if(perspective)perspective.onclick=()=>activateSubTool('transform','perspective-transform');
   const grid=document.getElementById('brush-preset-grid');if(grid)grid.addEventListener('click',event=>{const item=event.target.closest('.bp-item');if(!item)return;const group=getGroup(tool==='eraser'?'eraser':'brush');if(group){const subTool=ensurePresetSubTool(group,item.dataset.presetId);group.activeSubToolId=subTool.id;persist();renderSettings();}});
-  window.addEventListener('tool-changed',event=>{if(activating)return;const map={brush:'brush',eraser:'eraser',fill:'fill','lasso-fill':'fill',line:'line',eyedropper:'eyedropper',lasso:'selection','rectangle-select':'selection','ellipse-select':'selection','magic-wand':'smart-selection',selection:'smart-selection',transform:'transform'},id=map[event.detail&&event.detail.tool];if(id){activeGroupId=id;syncPanel(getGroup(id));syncActiveButtons();renderSettings();}});
+  window.addEventListener('tool-changed',event=>{if(activating)return;const map={brush:'brush',eraser:'eraser',fill:'fill','lasso-fill':'fill',line:'line',curve:'line',eyedropper:'eyedropper',lasso:'selection','rectangle-select':'selection','ellipse-select':'selection','magic-wand':'smart-selection',selection:'smart-selection',transform:'transform'},id=map[event.detail&&event.detail.tool];if(id){activeGroupId=id;syncPanel(getGroup(id));syncActiveButtons();renderSettings();}});
   window.addEventListener('active-artwork-changed',refreshSelectionAvailability);
   window.addEventListener('project-loaded',refreshSelectionAvailability);
   window.addEventListener('layer-type-changed',refreshSelectionAvailability);
-  const initial=({brush:'brush',eraser:'eraser',fill:'fill','lasso-fill':'fill',line:'line',eyedropper:'eyedropper',lasso:'selection','rectangle-select':'selection','ellipse-select':'selection','magic-wand':'smart-selection',selection:'smart-selection',transform:'transform'})[typeof tool!=='undefined'?tool:'brush']||'brush';activeGroupId=initial;if(initial==='selection')restoreSelectionToolContext(getSubTool(selectionGroup,selectionGroup.activeSubToolId));syncPanel(getGroup(initial));syncActiveButtons();refreshSelectionAvailability();
+  const initial=({brush:'brush',eraser:'eraser',fill:'fill','lasso-fill':'fill',line:'line',curve:'line',eyedropper:'eyedropper',lasso:'selection','rectangle-select':'selection','ellipse-select':'selection','magic-wand':'smart-selection',selection:'smart-selection',transform:'transform'})[typeof tool!=='undefined'?tool:'brush']||'brush';activeGroupId=initial;if(initial==='selection')restoreSelectionToolContext(getSubTool(selectionGroup,selectionGroup.activeSubToolId));syncPanel(getGroup(initial));syncActiveButtons();refreshSelectionAvailability();
   window.SelectionToolSettings={
     get(toolId){return selectionSettingsFor(getSubTool(selectionGroup,toolId)||getSubTool(smartSelectionGroup,toolId));},
     set(toolId,key,value){const subTool=getSubTool(selectionGroup,toolId)||getSubTool(smartSelectionGroup,toolId);if(subTool)updateSelectionSetting(subTool,key,value);},

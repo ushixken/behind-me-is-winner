@@ -309,6 +309,7 @@ window.setLineAAQuality=setLineAAQuality;
 let _lineDragging = false;
 let _linePressureSamples = [];
 let _lineGesture=null;
+let _curveToolGesture=null,_curveGuideCanvas=null,_curveGuideCtx=null,_curveCommitPointerId=null;
 let _linePreviewBounds=null,_linePreviewPreviousEndpoint=null;
 let _linePreviewFrameId=0,_linePreviewMoveSequence=0,_linePreviewGeneration=0;
 let _lineDiagnosticCurrentT=0,_lineEffectivePressureSamples=[];
@@ -409,7 +410,7 @@ function _ensureStrokeCanvas(){
 // Opacity is already baked into each dab's alpha as it was painted (see
 // _computeEffectiveParams), so this only needs to apply the constant
 // brushOpacity ceiling Ã¢â‚¬â€ no separate end-of-stroke multiplier.
-function _usesBrushPaintPipeline(){return tool==='brush'||tool==='line';}
+function _usesBrushPaintPipeline(){return tool==='brush'||tool==='line'||tool==='curve';}
 function _brushPaintCompositeOperation(){
   if(!_usesBrushPaintPipeline()) return 'source-over';
   switch(window.brushBlendMode){
@@ -715,7 +716,7 @@ window._prewarmRealDisposableDab=_prewarmRealDisposableDab;
 //
 
 function _currentAAMode(){
-  if(tool==='line')return _lineAAEnabled?_lineAAQuality:'none';
+  if(tool==='line'||tool==='curve')return _lineAAEnabled?_lineAAQuality:'none';
   return _normalizeAAMode(typeof window!=='undefined'?window.brushAAMode:null);
 }
 function _hexToRGB(hex){
@@ -2612,10 +2613,10 @@ function _quadPoint(x0,y0,cx,cy,x1,y1,t){
 // Rough arc-length estimate (control-polygon length) Ã¢â‚¬â€ good enough to pick
 // a dab count; exact arc length isn't needed since dab spacing is already
 // approximate/adaptive elsewhere in this engine.
-function _quadArcTable(x0,y0,cx,cy,x1,y1){
+function _quadArcTable(x0,y0,cx,cy,x1,y1,maxDivisions=256){
   const controlLen=Math.hypot(cx-x0,cy-y0)+Math.hypot(x1-cx,y1-cy);
   const chordLen=Math.hypot(x1-x0,y1-y0);
-  const divisions=Math.max(8,Math.min(256,Math.ceil(Math.max(controlLen,chordLen)/0.5)));
+  const divisions=Math.max(8,Math.min(maxDivisions,Math.ceil(Math.max(controlLen,chordLen)/0.5)));
   const table=new Array(divisions+1);
   let prev={x:x0,y:y0},length=0;
   table[0]={t:0,x:x0,y:y0,length:0};
@@ -2818,6 +2819,26 @@ function _buildLinePressureProfile(sx,sy,ex,ey){
 // normal brush engine (_strokeSegment/_strokeSegmentProfile -> _stampDab)
 // so hardness, flow, opacity, AA, and brush tip all stay consistent with
 // every other tool.
+function _curvePressureProfile(){
+  const samples=_lineGesture&&_lineGesture.pressureSamples||[],domain=Math.max(.0001,_lineGesture&&_lineGesture.recordedLength||1);
+  return t=>_linePressureAtDistance(samples,Math.max(0,Math.min(1,t))*domain);
+}
+function _strokeQuadraticProfile(p0,p1,p2,e,pressureAt){
+  const table=_quadArcTable(p0.x,p0.y,p1.x,p1.y,p2.x,p2.y,1024),length=table[table.length-1].length;
+  _walkDabArc(length,d=>{const point=_quadPointAtLength(table,d);point.t=length>0?d/length:1;return point;},e,0,0,pressureAt);
+}
+function _ensureCurveGuide(){
+  if(_curveGuideCanvas&&_curveGuideCanvas.isConnected){if(_curveGuideCanvas.width!==CW||_curveGuideCanvas.height!==CH){_curveGuideCanvas.width=CW;_curveGuideCanvas.height=CH;}return;}
+  const host=document.getElementById('canvas-wrap')||activeC.parentElement;if(!host)return;
+  _curveGuideCanvas=document.createElement('canvas');_curveGuideCanvas.id='curve-tool-guide';_curveGuideCanvas.width=CW;_curveGuideCanvas.height=CH;
+  _curveGuideCanvas.style.cssText='position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:5;';host.appendChild(_curveGuideCanvas);_curveGuideCtx=_curveGuideCanvas.getContext('2d');
+}
+function _clearCurveGuide(){if(_curveGuideCtx&&_curveGuideCanvas)_curveGuideCtx.clearRect(0,0,_curveGuideCanvas.width,_curveGuideCanvas.height);}
+function _drawCurveGuide(){
+  _clearCurveGuide();if(!_curveToolGesture||_curveToolGesture.phase!=='bending')return;_ensureCurveGuide();if(!_curveGuideCtx)return;
+  const g=_curveGuideCtx,p0=_curveToolGesture.start,p1=_curveToolGesture.control,p2=_curveToolGesture.end,r=Math.max(3,4/Math.max(.01,zoom)),w=Math.max(1,1/Math.max(.01,zoom));
+  g.save();g.setTransform(1,0,0,1,0,0);g.strokeStyle='rgba(127,119,221,.9)';g.fillStyle='#7f77dd';g.lineWidth=w;g.setLineDash([4*w,3*w]);g.beginPath();g.moveTo(p0.x,p0.y);g.lineTo(p1.x,p1.y);g.lineTo(p2.x,p2.y);g.stroke();g.setLineDash([]);for(const p of[p0,p1,p2]){g.beginPath();g.arc(p.x,p.y,r,0,Math.PI*2);g.fill();g.strokeStyle='rgba(255,255,255,.9)';g.stroke();}g.restore();
+}
 function _includeLinePreviewFrameBounds(bounds){
   if(!bounds)return;
   if(!_frameDirty)_frameDirty={minX:bounds.minX,minY:bounds.minY,maxX:bounds.maxX,maxY:bounds.maxY};
@@ -2840,6 +2861,10 @@ function _clearLinePreviewCanvas(canvas,context){
 }
 function _renderLineDrag(ex,ey,e,phase){
   if(!lineStart) return;
+  const curveBending=tool==='curve'&&_curveToolGesture&&_curveToolGesture.phase==='bending';
+  const curveControl=curveBending?{x:ex,y:ey}:null;
+  if(curveBending){ex=_curveToolGesture.end.x;ey=_curveToolGesture.end.y;_curveToolGesture.control=curveControl;}
+
   const previousEndpoint=_linePreviewPreviousEndpoint&&{x:_linePreviewPreviousEndpoint.x,y:_linePreviewPreviousEndpoint.y};
   const previousBounds=_linePreviewBounds&&{minX:_linePreviewBounds.minX,minY:_linePreviewBounds.minY,maxX:_linePreviewBounds.maxX,maxY:_linePreviewBounds.maxY};
   const transformBeforeClear=_strokeCtx&&typeof _strokeCtx.getTransform==='function'?_strokeCtx.getTransform():null;
@@ -2889,12 +2914,13 @@ function _renderLineDrag(ex,ey,e,phase){
     : 1; // Fixed Pressure / mouse / touch: matches the constant currentPressure=1 used below
   try{
     if(usePenPressure){
-      const pressureAt=_buildLinePressureProfile(lineStart.x,lineStart.y,ex,ey);
+      const pressureAt=curveBending?_curvePressureProfile():_buildLinePressureProfile(lineStart.x,lineStart.y,ex,ey);
       const startPressure=pressureAt(0),savedFlowSpacingRatio=_flowSpacingRatio;
       currentPressure=startPressure;_flowSpacingRatio=_initialDabSpacingRatio(e,startPressure);
       try{_stampDab(lineStart.x,lineStart.y,e);}finally{_flowSpacingRatio=savedFlowSpacingRatio;}
       currentPressure=pressureAt(1);
-      _strokeSegmentProfile(lineStart.x,lineStart.y,ex,ey,e,pressureAt);
+      if(curveBending)_strokeQuadraticProfile(lineStart,curveControl,{x:ex,y:ey},e,pressureAt);
+      else _strokeSegmentProfile(lineStart.x,lineStart.y,ex,ey,e,pressureAt);
     }else{
       // Fixed Pressure (and the mouse/touch fallback): temporarily behave as
       // if this weren't a pen stroke at all, which is exactly how the rest
@@ -2909,7 +2935,8 @@ function _renderLineDrag(ex,ey,e,phase){
       try{
         const savedFlowSpacingRatio=_flowSpacingRatio;_flowSpacingRatio=_initialDabSpacingRatio(e,1);
         try{_stampDab(lineStart.x,lineStart.y,e);}finally{_flowSpacingRatio=savedFlowSpacingRatio;}
-        _strokeSegment(lineStart.x,lineStart.y,ex,ey,e,1,1);
+        if(curveBending)_strokeQuadraticProfile(lineStart,curveControl,{x:ex,y:ey},e,()=>1);
+        else _strokeSegment(lineStart.x,lineStart.y,ex,ey,e,1,1);
       }
       finally{ _isDrawingWithPen=savedIsDrawingWithPen; }
     }
@@ -2919,6 +2946,7 @@ function _renderLineDrag(ex,ey,e,phase){
   _flushStrokeTail();
   _linePreviewBounds=_strokeDirty?{minX:_strokeDirty.minX,minY:_strokeDirty.minY,maxX:_strokeDirty.maxX,maxY:_strokeDirty.maxY}:null;
   _linePreviewPreviousEndpoint={x:ex,y:ey};
+  if(curveBending)_drawCurveGuide();
   if(window.DEBUG_LINE_TOOL){
     const storedProfile=usePenPressure?_getLinePressureProfile(lineStart.x,lineStart.y,ex,ey):[{t:0,pressure:1},{t:1,pressure:1}];
     const diagnostic={
@@ -3048,7 +3076,7 @@ function _endStroke(pointerId){
   _stopAirbrushSpray();
   _autoHardRoundPrevDab=null;
   if(drawing){drawing=false;_flushStrokeTail();if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();}
-  if(lineStart&&_lineDragging){
+  if(lineStart&&(_lineDragging||_curveToolGesture)){
     // Line drag aborted mid-gesture (pointercancel, tab blur, etc.) -- undo
     // was never pushed and the layer was never touched, so just discard the
     // uncommitted scratch preview rather than committing a partial line.
@@ -3063,6 +3091,7 @@ function _endStroke(pointerId){
   _linePreviewBounds=null;_linePreviewPreviousEndpoint=null;
   _linePressureSamples=[];
   _lineGesture=null;
+  _curveToolGesture=null;_clearCurveGuide();
   _pendingDabs.length=0;
   _curveP0=null;_curveP1=null;
   _strokeSegCarryOver=0;
@@ -3612,10 +3641,11 @@ activeC.addEventListener('pointerdown',e=>{
   if(tool==='eyedropper'){
     e.preventDefault();_eyedropperPointerId=e.pointerId;activeC.setPointerCapture(e.pointerId);_sampleVisibleCanvasColor(e);return;
   }
-  if(tool!=='brush'&&tool!=='eraser'&&tool!=='fill'&&tool!=='line') return;
+  if(tool!=='brush'&&tool!=='eraser'&&tool!=='fill'&&tool!=='line'&&tool!=='curve') return;
   if(typeof isDrawingFrameHidden==='function'&&isDrawingFrameHidden(curLayer,curFrame)) return;
   // Prevent browser from hijacking tablet/stylus events (scroll, pan, zoom)
   e.preventDefault();
+  if(tool==='curve'&&_curveToolGesture&&_curveToolGesture.phase==='bending'){_curveCommitPointerId=e.pointerId;_commitCurveTool(e);return;}
   if((tool==='brush'||tool==='eraser')&&window.FirstDabLatencyProbe){window.FirstDabLatencyProbe.begin({layerType:layers[curLayer]&&layers[curLayer].type,pointerdownAt:diagnosticPointerdownEntry});window.FirstDabLatencyProbe.setupMeasure('eventValidationAndPreventDefault',diagnosticPointerdownEntry);}
   let diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
   if(window.CompositionPrewarm)window.CompositionPrewarm.beforeStroke();
@@ -3665,13 +3695,14 @@ activeC.addEventListener('pointerdown',e=>{
   _strokeOwnerLayer=curLayer;_strokeOwnerFrame=curFrame;_activeStrokeSession=++_strokeSessionSerial;
   _traceStrokeLifecycle('stroke-start',{sourceLayer:curLayer,sourceFrame:curFrame});
   _strokeCompletionStarted=false;
-  if(tool==='line'){
+  if(tool==='line'||tool==='curve'){
     lineStart=p;
     _lineDragging=true;
     const fixedLinePressure=getLinePressureMode()==='fixed';
     const storedLinePressure=fixedLinePressure?1:currentPressure;
     _linePressureSamples=[{x:p.x,y:p.y,pressure:storedLinePressure}];
     _lineGesture={phase:'editing',startPoint:{x:p.x,y:p.y},endPoint:{x:p.x,y:p.y},currentLength:0,recordedLength:0,pressureSamples:[{distance:0,pressure:storedLinePressure}],currentEventPressure:Number(e.pressure),lastEditDiagnostic:null};
+    if(tool==='curve')_curveToolGesture={phase:'endpoints',start:{x:p.x,y:p.y},end:{x:p.x,y:p.y},control:{x:p.x,y:p.y}};
     _linePreviewBounds=null;_linePreviewPreviousEndpoint=null;_linePreviewFrameId=0;_linePreviewMoveSequence=0;_linePreviewGeneration++;
     activeC.setPointerCapture(e.pointerId);
     _ensureStrokeCanvas();
@@ -3788,7 +3819,7 @@ function _scheduleLinePreview(x,y,e){
   _linePreviewRAFPending=true;
   _linePreviewRAFHandle=requestAnimationFrame(()=>{
     _linePreviewRAFPending=false;_linePreviewRAFHandle=0;
-    if(!lineStart||!_lineDragging) return;
+    if(!lineStart||(!_lineDragging&&!(_curveToolGesture&&_curveToolGesture.phase==='bending'))) return;
     _renderLineDrag(_linePreviewLatestX,_linePreviewLatestY,_linePreviewLatestEvent,'preview');
     _scheduleRecomposite();
   });
@@ -3800,17 +3831,35 @@ function _cancelLinePreview(){
   if(discarded&&window.DEBUG_LINE_PREVIEW)console.debug('[LinePreview]',{generation:_linePreviewGeneration,pointermoveSequence:_linePreviewMoveSequence,stalePreviewDiscarded:true});
 }
 
+function _resetCurveToolGesture(){
+  _cancelLinePreview();_clearCurveGuide();
+  if(_inStroke){_inStroke=false;_clearLinePreviewCanvas(_strokeCanvas,_strokeCtx);}
+  _clearLinePreviewCanvas(_texturedStrokeCanvas,_texturedStrokeCtx);_clearLinePreviewCanvas(_strokePreviewCanvas,_strokePreviewCtx);
+  lineStart=null;_lineDragging=false;_linePressureSamples=[];_lineGesture=null;_curveToolGesture=null;_curveCommitPointerId=null;_pendingDabs.length=0;_activeStrokePointerId=null;_strokeCompletionStarted=false;
+}
+function _cancelCurveTool(){if(!_curveToolGesture)return;const layer=_strokeOwnerLayer,frame=_strokeOwnerFrame;_resetCurveToolGesture();_strokeOwnerLayer=-1;_strokeOwnerFrame=-1;if(layer>=0&&frame>=0&&curLayer===layer&&curFrame===frame)recomposite(layer,frame);}
+function _commitCurveTool(e){
+  if(!_curveToolGesture||_curveToolGesture.phase!=='bending')return false;
+  _cancelLinePreview();pushUndo();ensureKey();if(!_strokeCanvas||!_inStroke){_ensureStrokeCanvas();_inStroke=true;}
+  _renderLineDrag(_curveToolGesture.control.x,_curveToolGesture.control.y,e||_lastPointerEvent||{pointerType:'mouse',pressure:.5},'commit');
+  if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_cleanupErasedSmartOwnership();saveActiveToKey();
+  const layer=_strokeOwnerLayer,frame=_strokeOwnerFrame;_resetCurveToolGesture();_completePostStrokePresentation(layer,frame);_strokeOwnerLayer=-1;_strokeOwnerFrame=-1;return true;
+}
+window.cancelCurveTool=_cancelCurveTool;
 // _handleMoveEvent: shared by pointermove + pointerrawupdate.
 // pointerrawupdate fires at the full OS/Windows Ink sampling rate (up to 1000Hz)
 // before the browser throttles events to display refresh rate â giving every
 // real pressure value the tablet digitizer reports, not just the surviving ones.
 function _handleMoveEvent(e){
+  if(tool==='curve'&&_curveToolGesture&&_curveToolGesture.phase==='bending'){
+    if(activeGroupId)return;const p=getPos(e);_lastPointerEvent=e;_curveToolGesture.control={x:p.x,y:p.y};_scheduleLinePreview(p.x,p.y,e);return;
+  }
   if((!drawing&&!_lineDragging)||activeGroupId||_strokeCompletionStarted) return;
   if(_activeStrokePointerId!=null&&e.pointerId!==_activeStrokePointerId) return;
   if(!(e.buttons&1)){_endStroke(e.pointerId);return;}
   e.preventDefault();
   const events=(typeof e.getCoalescedEvents==='function'&&e.getCoalescedEvents().length)?e.getCoalescedEvents():[e];
-  if(tool==='line'&&_lineDragging){
+  if((tool==='line'||tool==='curve')&&_lineDragging){
     // Record every coalesced sample (position + pressure) at full input
     // rate -- this is what lets Pen Pressure preserve the whole recorded
     // curve instead of collapsing it to one value. The line itself stays
@@ -3875,6 +3924,11 @@ function _pointerEndStroke(e){
   _strokeCompletionStarted=true;
   _stopAirbrushSpray();
   _cancelLinePreview();
+  if(tool==='curve'&&_curveToolGesture&&_curveToolGesture.phase==='endpoints'){
+    const p=getPos(e);if(_lineGesture)_editLinePressureProfile([{event:e,point:p}]);
+    _curveToolGesture.end={x:p.x,y:p.y};_curveToolGesture.control={x:(lineStart.x+p.x)/2,y:(lineStart.y+p.y)/2};_curveToolGesture.phase='bending';
+    _lineDragging=false;_activeStrokePointerId=null;_strokeCompletionStarted=false;_renderLineDrag(_curveToolGesture.control.x,_curveToolGesture.control.y,e,'preview');_scheduleRecomposite();return;
+  }
   if(activeGroupId){drawing=false;lineStart=null;_lineDragging=false;_linePressureSamples=[];_lineGesture=null;_linePreviewBounds=null;_linePreviewPreviousEndpoint=null;_pendingDabs.length=0;_endColorEraserStroke();_activeStrokePointerId=null;return;}
   if(tool==='line'&&lineStart){
     pushUndo();ensureKey();const p=getPos(e);
@@ -3916,10 +3970,19 @@ function _pointerEndStroke(e){
   _activeStrokePointerId=null;
   _strokeOwnerLayer=-1;_strokeOwnerFrame=-1;
 }
+document.addEventListener('keydown',e=>{
+  if(!_curveToolGesture)return;const target=e.target instanceof Element?e.target:null;
+  if(target&&(target.isContentEditable||target.closest('input,textarea,select,[contenteditable="true"]')))return;
+  if(e.key==='Escape'){e.preventDefault();_cancelCurveTool();}
+  else if(e.key==='Enter'&&_curveToolGesture.phase==='bending'){e.preventDefault();_commitCurveTool(_lastPointerEvent);}
+});
+activeC.addEventListener('contextmenu',e=>{if(tool==='curve'&&_curveToolGesture){e.preventDefault();_cancelCurveTool();}});
+window.addEventListener('tool-changed',e=>{if(_curveToolGesture&&(!e.detail||e.detail.tool!=='curve'))_cancelCurveTool();});
 activeC.addEventListener('pointerup',e=>{
+  if(e.pointerId===_curveCommitPointerId){_curveCommitPointerId=null;return;}
   if(e.pointerId===_eyedropperPointerId){_eyedropperPointerId=null;if(activeC.hasPointerCapture(e.pointerId))activeC.releasePointerCapture(e.pointerId);return;}
   _pointerEndStroke(e);
   if(activeC.hasPointerCapture(e.pointerId))activeC.releasePointerCapture(e.pointerId);
 });
 activeC.addEventListener('pointercancel',e=>{if(e.pointerId===_eyedropperPointerId)_eyedropperPointerId=null;_endStroke(e.pointerId);});
-activeC.addEventListener('lostpointercapture',e=>{if(e.pointerId===_eyedropperPointerId)_eyedropperPointerId=null;_endStroke(e.pointerId);});
+activeC.addEventListener('lostpointercapture',e=>{if(e.pointerId===_eyedropperPointerId)_eyedropperPointerId=null;if(tool==='curve'&&_curveToolGesture&&_curveToolGesture.phase==='bending')return;_endStroke(e.pointerId);});

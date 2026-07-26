@@ -25,6 +25,7 @@ const KEYBIND_DEFAULTS={
   toolSelection:{label:'Selection Tool',     key:'g',          ctrl:false, shift:false, alt:false},
   toolFill:    {label:'Fill Tool',          key:'f',          ctrl:false, shift:false, alt:false},
   toolLine:    {label:'Line Tool',          key:'l',          ctrl:false, shift:false, alt:false},
+  toolCurve:   {label:'Curve Tool',         key:'c',          ctrl:false, shift:false, alt:false},
   toolEyedropper:{label:'Eyedropper Tool',  key:'i',          ctrl:false, shift:false, alt:false},
   toolTransform: {label:'Transform Tool',   key:'t',          ctrl:false, shift:false, alt:false},
   newFrame:    {label:'New Blank Keyframe', key:'n',          ctrl:false, shift:false, alt:false},

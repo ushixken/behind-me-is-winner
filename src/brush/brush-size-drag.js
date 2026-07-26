@@ -93,7 +93,7 @@
     window._lineSizeUpdateSource='keyboard-shortcut';
     toolSizes[tool]=px;
     window._lineSizeUpdateSource=null;
-    if(tool==='line')window._lastLineShortcutSize=px;
+    if(tool==='line'||tool==='curve')window._lastLineShortcutSize=px;
     const tsSz=document.getElementById('ts-size'); if(tsSz) tsSz.value=px;
     const bpSz=document.getElementById('bp-sz'); if(bpSz) bpSz.value=px;
     if(typeof _aaDabCache!=='undefined') _aaDabCache.clear();

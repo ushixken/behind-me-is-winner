@@ -29,6 +29,12 @@ Object.defineProperty(toolSizes,'line',{
     window.dispatchEvent(new CustomEvent('brush-size-changed',{detail:{tool:'line',size:value,source:window._lineSizeUpdateSource||'unknown'}}));
   }
 });
+Object.defineProperty(toolSizes,'curve',{
+  enumerable:true,
+  configurable:false,
+  get(){return this.brush;},
+  set(value){this.line=value;}
+});
 let drawing=false,lx=0,ly=0,lineStart=null;
 // TVPaint-style brush engine state
 let brushOpacity=1.0; // flow/opacity 0-1

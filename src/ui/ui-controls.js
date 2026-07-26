@@ -296,22 +296,28 @@ document.getElementById('draw-mode-exit').addEventListener('click',()=>setDrawMo
 // ════════════════════════════════════════════════════════════════
 // Alt temporarily samples the visible canvas color without changing the
 // user's permanent drawing-tool choice.
-let _temporaryEyedropperRestore=null;
+let _temporaryEyedropperRestore=null,_temporaryEyedropperActivating=false;
 function _shortcutTargetIsEditable(target){
   return target instanceof Element&&!!(target.isContentEditable||target.closest('input,textarea,select,[contenteditable="true"]'));
 }
 function _restoreTemporaryEyedropper(){
   if(!_temporaryEyedropperRestore)return;
   const previous=_temporaryEyedropperRestore;_temporaryEyedropperRestore=null;
-  if(tool==='eyedropper')setTool(previous.tool,previous.label);
+  if(tool!=='eyedropper')return;
+  if(previous.groupId&&previous.subToolId&&window.ToolGroups&&typeof ToolGroups.activateSubTool==='function'&&ToolGroups.activateSubTool(previous.groupId,previous.subToolId,{fromTemporaryTool:true}))return;
+  setTool(previous.toolId,previous.label);
 }
 document.addEventListener('keydown',e=>{
   if(e.key!=='Alt'||e.repeat||_temporaryEyedropperRestore||_shortcutTargetIsEditable(e.target)||document.querySelector('.modal-overlay.visible'))return;
-  if(!['brush','eraser','fill','line'].includes(tool))return;
-  e.preventDefault();_temporaryEyedropperRestore={tool,label:document.getElementById('stat-tool').textContent};setTool('eyedropper','Eyedropper');
+  if(!['brush','eraser','fill','line','curve'].includes(tool))return;
+  const group=window.ToolGroups&&ToolGroups.getGroup(ToolGroups.activeGroupId);
+  e.preventDefault();_temporaryEyedropperRestore={toolId:tool,label:document.getElementById('stat-tool').textContent,groupId:group&&group.id||null,subToolId:group&&group.activeSubToolId||null};
+  _temporaryEyedropperActivating=true;try{setTool('eyedropper','Eyedropper');}finally{_temporaryEyedropperActivating=false;}
 });
+window.addEventListener('tool-changed',()=>{if(_temporaryEyedropperRestore&&!_temporaryEyedropperActivating)_temporaryEyedropperRestore=null;});
 document.addEventListener('keyup',e=>{if(e.key==='Alt')_restoreTemporaryEyedropper();});
 window.addEventListener('blur',_restoreTemporaryEyedropper);
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')_restoreTemporaryEyedropper();});
 
 // KEYBOARD SHORTCUTS
 // ════════════════════════════════════════════════════════════════
@@ -342,7 +348,7 @@ document.addEventListener('keydown',e=>{
   if(!toolShortcutBlocked&&!e.repeat&&matchBind(e,'toggleOnionSkin')){e.preventDefault();toggleOnionSkin();return;}
   if(!toolShortcutBlocked&&typeof handleToolGroupKeybind==='function'&&handleToolGroupKeybind(e)){e.preventDefault();return;}
   if(!toolShortcutBlocked&&(!window.ToolGroups||typeof ToolGroups.getGroups!=='function')){
-    const toolMap={toolBrush:['brush','Brush'],toolEraser:['eraser','Eraser'],toolFill:['fill','Fill'],toolLine:['line','Line'],toolEyedropper:['eyedropper','Eyedropper'],toolTransform:['transform','Transform']};
+    const toolMap={toolBrush:['brush','Brush'],toolEraser:['eraser','Eraser'],toolFill:['fill','Fill'],toolLine:['line','Line'],toolCurve:['curve','Curve'],toolEyedropper:['eyedropper','Eyedropper'],toolTransform:['transform','Transform']};
     for(const action in toolMap){if(matchBind(e,action)){e.preventDefault();setTool(...toolMap[action]);return;}}
   }
   if(matchBind(e,'newFrame')){createBlankKey();loadFrame(curLayer,curFrame);}
