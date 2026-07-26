@@ -7,10 +7,21 @@
   const records=new Map();
   let syncQueued=false;
   const excluded='html,body,textarea,select,#tl-scroll,#tl-hscroll-track,#tl-hscroll-thumb';
+  const verticalSources=[
+    '#palette-grid',
+    '#brush-preset-grid',
+    '#layers-list',
+    '#tl-labels-rows',
+    '.tool-options-drawer-content',
+    '.tool-group-list',
+    '#tool-settings-panel .fp-body',
+    '#keyframe-switcher-panel.docked .fp-body',
+    '#keyframe-exposure-panel.docked .fp-body'
+  ].join(',');
 
   function scrollbarAxis(element){
     if(element?.id==='toolbar-palette-strip')return 'x';
-    if(!(element instanceof HTMLElement)||element.matches(excluded))return null;
+    if(!(element instanceof HTMLElement)||element.matches(excluded)||!element.matches(verticalSources))return null;
     const style=getComputedStyle(element);
     return style.overflowY==='auto'||style.overflowY==='scroll'?'y':null;
   }
@@ -23,8 +34,10 @@
     const axis=scrollbarAxis(element);
     if(records.has(element)||!axis)return;
     const track=document.createElement('div'),thumb=document.createElement('div'),local=element.id==='palette-grid';
-    track.className='app-scrollbar-track app-scrollbar-track-'+axis+(local?' app-scrollbar-track-local':'');thumb.className='app-scrollbar-thumb';track.appendChild(thumb);(local?element.parentElement:document.body).appendChild(track);
-    const record={element,track,thumb,local,axis,pointerId:null,startPointer:0,startScroll:0,maxScroll:0,travel:0,resizeObserver:null};records.set(element,record);
+    const owner=local?element.parentElement:element.closest('.modal-overlay,.float-panel,.panel-stack,.floating-window');
+    const owned=!local&&!!owner,host=owner||document.body;
+    track.className='app-scrollbar-track app-scrollbar-track-'+axis+(local?' app-scrollbar-track-local':'')+(owned?' app-scrollbar-track-owned':'');thumb.className='app-scrollbar-thumb';track.appendChild(thumb);host.appendChild(track);
+    const record={element,track,thumb,local,owned,owner,axis,pointerId:null,startPointer:0,startScroll:0,maxScroll:0,travel:0,resizeObserver:null};records.set(element,record);
     const update=()=>updateRecord(record);element.addEventListener('scroll',update,{passive:true});
     thumb.addEventListener('pointerdown',event=>beginDrag(record,event));
     record.resizeObserver=new ResizeObserver(update);record.resizeObserver.observe(element);
@@ -32,14 +45,16 @@
   }
   function updateRecord(record){
     const {element,track,thumb}=record;
-    if(!element.isConnected){remove(record);return;}
+    const currentAxis=scrollbarAxis(element);
+    if(!element.isConnected||!currentAxis||currentAxis!==record.axis){remove(record);return;}
     const rect=element.getBoundingClientRect(),horizontal=record.axis==='x';
     const maxScroll=horizontal?element.scrollWidth-element.clientWidth:element.scrollHeight-element.clientHeight;
     const visible=maxScroll>1&&rect.width>0&&rect.height>0&&rect.bottom>0&&rect.right>0&&rect.top<innerHeight&&rect.left<innerWidth&&getComputedStyle(element).visibility!=='hidden';
     track.hidden=!visible;if(!visible)return;
     if(horizontal){
       const height=5,trackWidth=Math.max(0,rect.width);
-      track.style.left=Math.round(rect.left)+'px';track.style.right='auto';track.style.top=Math.round(rect.bottom+1)+'px';track.style.width=Math.round(trackWidth)+'px';track.style.height=height+'px';track.style.zIndex=String(panelZ(element));
+      const ownerRect=record.owned?record.owner.getBoundingClientRect():null;
+      track.style.left=Math.round(rect.left-(ownerRect?.left||0))+'px';track.style.right='auto';track.style.top=Math.round(rect.bottom+1-(ownerRect?.top||0))+'px';track.style.width=Math.round(trackWidth)+'px';track.style.height=height+'px';track.style.zIndex=record.owned?'2':String(panelZ(element));
       const thumbWidth=Math.max(24,trackWidth*(element.clientWidth/element.scrollWidth)),travel=Math.max(0,trackWidth-thumbWidth);
       thumb.style.width=Math.round(thumbWidth)+'px';thumb.style.height='100%';thumb.style.transform='translateX('+Math.round(travel?element.scrollLeft/maxScroll*travel:0)+'px)';
       return;
@@ -49,7 +64,7 @@
       ?element.closest('.tool-options-drawer')?.getBoundingClientRect()||rect
       :rect;
     if(record.local){track.style.left='auto';track.style.right='2px';track.style.top=Math.round(element.offsetTop+inset)+'px';track.style.zIndex='6';}
-    else{track.style.left=Math.round(horizontalAnchor.right-width-edgeInset)+'px';track.style.right='auto';track.style.top=Math.round(rect.top+inset)+'px';track.style.zIndex=String(panelZ(element));}
+    else{const ownerRect=record.owned?record.owner.getBoundingClientRect():null;track.style.left=Math.round(horizontalAnchor.right-(ownerRect?.left||0)-width-edgeInset)+'px';track.style.right='auto';track.style.top=Math.round(rect.top-(ownerRect?.top||0)+inset)+'px';track.style.zIndex=record.owned?'2':String(panelZ(element));}
     track.style.width=width+'px';track.style.height=Math.round(trackHeight)+'px';
     const thumbHeight=Math.max(24,trackHeight*(element.clientHeight/element.scrollHeight)),travel=Math.max(0,trackHeight-thumbHeight);
     thumb.style.height=Math.round(thumbHeight)+'px';thumb.style.transform='translateY('+Math.round(travel?element.scrollTop/maxScroll*travel:0)+'px)';
