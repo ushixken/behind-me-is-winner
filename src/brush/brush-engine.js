@@ -268,6 +268,42 @@ function setLinePressureMode(mode){
 window.getLinePressureMode=getLinePressureMode;
 window.setLinePressureMode=setLinePressureMode;
 
+const LINE_AA_STORE_KEY='animate.lineAA.v1';
+let _lineAAEnabled=true,_lineAAQuality='medium';
+function _normalizeLineAAQuality(value){
+  const mode=String(value||'').toLowerCase();
+  if(mode==='weak'||mode==='low')return'weak';
+  if(mode==='strong'||mode==='high')return'strong';
+  return'medium';
+}
+try{
+  const saved=localStorage.getItem(LINE_AA_STORE_KEY);
+  const legacy=localStorage.getItem('animate.lineAAMode.v1');
+  const raw=saved!==null?saved:legacy;
+  let value=raw;
+  if(raw!==null){try{value=JSON.parse(raw);}catch(_){value=raw;}}
+  if(value&&typeof value==='object'){
+    _lineAAEnabled=value.enabled!==false&&String(value.quality||'').toLowerCase()!=='none';
+    _lineAAQuality=_normalizeLineAAQuality(value.quality);
+  }else if(typeof value==='string'){
+    _lineAAEnabled=value.toLowerCase()!=='none';
+    _lineAAQuality=_normalizeLineAAQuality(value);
+  }
+}catch(_){}
+function _persistLineAA(){
+  try{localStorage.setItem(LINE_AA_STORE_KEY,JSON.stringify({enabled:_lineAAEnabled,quality:_lineAAQuality}));}catch(_){}
+}
+function _clearLineAACaches(){
+  if(typeof _aaDabCache!=='undefined')_aaDabCache.clear();
+  if(typeof _stampCache!=='undefined')_stampCache.clear();
+  if(typeof _tipDabCache!=='undefined')_tipDabCache.clear();
+}
+function getLineAASettings(){return{enabled:_lineAAEnabled,quality:_lineAAQuality};}
+function setLineAAEnabled(enabled){_lineAAEnabled=!!enabled;_persistLineAA();_clearLineAACaches();}
+function setLineAAQuality(quality){_lineAAQuality=_normalizeLineAAQuality(quality);_persistLineAA();_clearLineAACaches();}
+window.getLineAASettings=getLineAASettings;
+window.setLineAAEnabled=setLineAAEnabled;
+window.setLineAAQuality=setLineAAQuality;
 // Continuous pointer+pressure samples recorded while dragging the Line
 // tool, in canvas coordinates. Cleared at the start/end of every drag.
 let _lineDragging = false;
@@ -678,6 +714,7 @@ window._prewarmRealDisposableDab=_prewarmRealDisposableDab;
 //
 
 function _currentAAMode(){
+  if(tool==='line')return _lineAAEnabled?_lineAAQuality:'none';
   return _normalizeAAMode(typeof window!=='undefined'?window.brushAAMode:null);
 }
 function _hexToRGB(hex){
@@ -2132,7 +2169,7 @@ function _drawDabNow(d){
   // Track current dab color so _applyTextureToDabDirect can use it for alpha-only masking.
   _lastDabRGB=d.rgb;
   if(!_drawAutoHardRoundSegment(d)){
-    if(brushAA) _dabAA(d.x,d.y,d.r,d.rgb,d.alpha,d.composite);
+    if(_currentAAMode()!=='none') _dabAA(d.x,d.y,d.r,d.rgb,d.alpha,d.composite);
     else _dabAliased(d.x,d.y,d.r,d.rgb,d.alpha,d.composite);
   }
   _activeDabRotation=0;

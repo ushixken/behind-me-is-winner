@@ -214,6 +214,18 @@
       const text=document.createElement('span');text.textContent=options.label;input.onchange=()=>options.onChange(input.checked);
       row.append(input,text);field.appendChild(row);parent.appendChild(field);return{field,input};
     },
+    antialiasing(parent,options){
+      const field=document.createElement('div');field.className='ts-field tool-setting tool-aa-controls';
+      const row=document.createElement('label');row.className='ts-row tool-group-option-row compact tool-aa-toggle';
+      const input=document.createElement('input');input.type='checkbox';input.className='ts-check';input.checked=!!options.enabled;
+      const text=document.createElement('span');text.className='tool-setting__label';text.textContent='Anti-aliasing (AA)';
+      const select=document.createElement('select');select.className='ts-select tool-aa-quality';select.setAttribute('aria-label','Anti-aliasing quality');
+      [['weak','Weak'],['medium','Medium'],['strong','Strong']].forEach(([value,label])=>{const option=document.createElement('option');option.value=value;option.textContent=label;select.appendChild(option);});
+      select.value=options.quality;select.disabled=!input.checked;
+      input.onchange=()=>{select.disabled=!input.checked;options.onEnabledChange(input.checked);};
+      select.onchange=()=>options.onQualityChange(select.value);
+      row.append(input,text);field.append(row,select);parent.appendChild(field);return{field,input,select};
+    },
     separator(parent){const separator=document.createElement('div');separator.className='ts-divider tool-setting-separator';parent.appendChild(separator);return separator;},
     disabled(parent,label,status){const row=document.createElement('div');row.className='ts-row ts-disabled tool-setting tool-setting--disabled';row.textContent=label+(status?' — '+status:'');parent.appendChild(row);return row;},
     help(parent,text){const help=document.createElement('div');help.className='tool-setting-help';help.textContent=text;parent.appendChild(help);return help;}
@@ -225,15 +237,9 @@
     ToolSettingsUI.slider(panel,{label:'Size',min:1,max:2000,step:.1,value:toolSizes.brush||6,kind:'line-size',format:value=>typeof window.formatBrushSize==='function'?window.formatBrushSize(value):String(value),onInput:value=>{window._lineSizeUpdateSource='line-slider';toolSizes.line=value;window._lineSizeUpdateSource=null;if(tool==='line'){szSlider.value=value;if(typeof refreshSizeUI==='function')refreshSizeUI();}}});
     ToolSettingsUI.slider(panel,{label:'Opacity',min:1,max:100,step:1,value:Math.round(brushOpacity*100),format:value=>String(Math.round(value)),onInput:value=>{brushOpacity=value/100;const existing=document.getElementById('ts-opacity');if(existing){existing.value=value;existing.dispatchEvent(new Event('input',{bubbles:true}));}}});
     ToolSettingsUI.select(panel,{label:'Pressure',value:typeof window.getLinePressureMode==='function'?window.getLinePressureMode():'pen',items:[['fixed','Fixed'],['pen','Pen Pressure']],onChange:mode=>{if(typeof window.setLinePressureMode==='function')window.setLinePressureMode(mode);}});
-    const currentAAMode=brushAA&&['weak','medium','strong'].includes(window.brushAAMode)?window.brushAAMode:'none';
-    ToolSettingsUI.select(panel,{label:'Anti-aliasing (AA)',value:currentAAMode,items:[['none','None'],['weak','Low'],['medium','Medium'],['strong','High']],onChange:mode=>{
-      if(mode==='none'){
-        if(typeof window._setBrushAA==='function')window._setBrushAA(false);
-      }else if(typeof window._setBrushAAMode==='function'){
-        window._setBrushAAMode(mode);
-      }
-      if(typeof window._captureActiveBrushPreset==='function')window._captureActiveBrushPreset(false);
-    }});
+    const lineAA=typeof window.getLineAASettings==='function'?window.getLineAASettings():{enabled:true,quality:'medium'};
+    ToolSettingsUI.antialiasing(panel,{enabled:lineAA.enabled,quality:lineAA.quality,onEnabledChange:enabled=>{if(typeof window.setLineAAEnabled==='function')window.setLineAAEnabled(enabled);},onQualityChange:quality=>{if(typeof window.setLineAAQuality==='function')window.setLineAAQuality(quality);}});
+
     body.appendChild(panel);
   }
   window.addEventListener('brush-size-changed',event=>{
