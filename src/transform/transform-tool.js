@@ -16,6 +16,10 @@ const transformC=document.getElementById('transform-canvas');
 const tfCtx=transformC.getContext('2d');
 const tfUiC=document.getElementById('transform-ui-canvas');
 const tfUiCtx=tfUiC.getContext('2d');
+const tfActionControls=document.createElement('div');tfActionControls.className='tf-floating-actions';tfActionControls.hidden=true;
+const tfConfirmButton=document.createElement('button'),tfCancelButton=document.createElement('button');
+tfConfirmButton.type=tfCancelButton.type='button';tfConfirmButton.className='tf-floating-action tf-floating-confirm';tfCancelButton.className='tf-floating-action tf-floating-cancel';tfConfirmButton.textContent='\u2713';tfCancelButton.textContent='\u00d7';tfConfirmButton.title='Confirm transform';tfCancelButton.title='Cancel transform';tfConfirmButton.setAttribute('aria-label','Confirm transform');tfCancelButton.setAttribute('aria-label','Cancel transform');tfActionControls.append(tfConfirmButton,tfCancelButton);document.getElementById('canvas-area').appendChild(tfActionControls);
+
 
 // ── Perspective guide overlay (VPs / horizon line) ─────────────────
 // Drawn on a SEPARATE canvas sized to the canvas-area viewport, not to
@@ -127,6 +131,8 @@ function _tfPersistAntialiasing(){
 let tfBox=null;          // {x,y,w,h} axis-aligned bbox of the artwork, in original canvas coords
 let tfState=null;        // {tx,ty,scale,rotation} — cumulative transform applied to tfBox's center
 let tfLastCommittedOperation=null; // operation-relative delta retained for TVPaint-style repeated Enter
+let tfAwaitingRepeat=false; // committed Free Transform state: tool remains active, controls hidden until repeat preview
+let tfPendingRepeatUndo=null; // recaptured committed state, promoted to undo only when the repeated preview is confirmed
 let tfDrag=null;         // current drag mode: 'move' | 'scale' | 'rotate' | 'pivot' | null
 let tfDragInfo=null;     // scratch data for the active drag
 // Pivot point — the origin rotation/scaling is performed around. Stored in
@@ -617,6 +623,7 @@ function _tfCommitSmartPerspectiveTransform(){
 
 function enterTransformTool(){
   if(tfActive) return;
+  tfAwaitingRepeat=false;
   tfSmartMove=null;
   tfPixelSelection=null;
   tfRasterPerspectivePreview=null;
@@ -721,6 +728,7 @@ function _tfStoreFullTransform(layerIndex,frameIndex,source,options){
 
 function commitTransformTool(options){
   if(!tfActive) return;
+  _tfHideFloatingActions();
   if(window.DEBUG_TOOL_LIFECYCLE)console.log('[ToolLifecycle] commitTransformTool',{activeTool:tool,repeatable:!!(window.RepeatableTransformController&&RepeatableTransformController.active),stack:(new Error('Transform commit')).stack});
   const preserveSessionShell=!!(options&&options.preserveSessionShell);
   _tfCancelFreePreview(false);
@@ -773,6 +781,7 @@ function commitTransformTool(options){
 
 function cancelTransformTool(){
   if(!tfActive) return;
+  _tfHideFloatingActions();
   _tfCancelFreePreview(false);
   _tfCancelPerspectivePreview();
   tfActive=false;
@@ -893,23 +902,33 @@ function _tfRotateHandlePos(){
   return {x:c.x+lx*cosR-ly*sinR, y:c.y+lx*sinR+ly*cosR};
 }
 
+function _tfHideFloatingActions(){tfActionControls.hidden=true;}
+function _tfPositionFloatingActions(points){
+  if(!tfActive||tfAwaitingRepeat||!points||!points.length){_tfHideFloatingActions();return;}
+  const area=document.getElementById('canvas-area'),width=area.clientWidth,height=area.clientHeight,minX=Math.min(...points.map(point=>point.x)),maxX=Math.max(...points.map(point=>point.x)),minY=Math.min(...points.map(point=>point.y)),maxY=Math.max(...points.map(point=>point.y)),controlWidth=68,controlHeight=32,gap=10;
+  let left=(minX+maxX-controlWidth)/2,top=maxY+gap;if(top+controlHeight>height-6)top=minY-controlHeight-gap;
+  tfActionControls.style.left=Math.max(6,Math.min(width-controlWidth-6,left))+'px';tfActionControls.style.top=Math.max(6,Math.min(height-controlHeight-6,top))+'px';tfActionControls.hidden=false;
+}
+
 function _tfDrawHandles(clearFirst){
   _tfResizeGuideCanvas();const corners=_tfCorners().map(_tfToViewportPoint),rHandle=_tfToViewportPoint(_tfRotateHandlePos());_tfClearUi();
-  const c=tfUiCtx;c.save();c.strokeStyle=tfGroupMode?'#ff9f4d':'#4da3ff';c.lineWidth=1.5;c.lineJoin='round';c.lineCap='round';c.setLineDash([6,4]);
+  const idle=tfAwaitingRepeat,c=tfUiCtx;c.save();c.globalAlpha=idle?.38:1;c.strokeStyle=idle?'#9a9aa6':(tfGroupMode?'#ff9f4d':'#4da3ff');c.lineWidth=1.5;c.lineJoin='round';c.lineCap='round';c.setLineDash([6,4]);
   c.beginPath();corners.forEach((p,i)=>{i?c.lineTo(p.x,p.y):c.moveTo(p.x,p.y);});c.closePath();c.stroke();c.setLineDash([]);
   const topMid={x:(corners[0].x+corners[1].x)/2,y:(corners[0].y+corners[1].y)/2};c.beginPath();c.moveTo(topMid.x,topMid.y);c.lineTo(rHandle.x,rHandle.y);c.stroke();
-  const hr=TF_HANDLE_R;c.fillStyle='#fff';corners.forEach(p=>{c.beginPath();c.rect(p.x-hr/2,p.y-hr/2,hr,hr);c.fill();c.stroke();});c.beginPath();c.arc(rHandle.x,rHandle.y,hr/2,0,Math.PI*2);c.fill();c.stroke();_tfDrawPivotHandle();c.restore();
+  _tfPositionFloatingActions(corners);
+  const hr=TF_HANDLE_R;c.fillStyle=idle?'#8c8c96':'#fff';corners.forEach(p=>{c.beginPath();c.rect(p.x-hr/2,p.y-hr/2,hr,hr);c.fill();c.stroke();});c.beginPath();c.arc(rHandle.x,rHandle.y,hr/2,0,Math.PI*2);c.fill();c.stroke();_tfDrawPivotHandle();c.restore();
 }
 
 function _tfDrawPivotHandle(){
-  if(!tfPivot)return;const p=_tfToViewportPoint(_tfPivotWorld()),hr=TF_HANDLE_R,c=tfUiCtx;c.save();c.strokeStyle='#ffd24d';c.fillStyle='rgba(255,210,77,0.25)';c.lineWidth=1.5;c.lineCap='round';
+  if(!tfPivot)return;const p=_tfToViewportPoint(_tfPivotWorld()),hr=TF_HANDLE_R,c=tfUiCtx;c.save();c.strokeStyle=tfAwaitingRepeat?'#92929c':'#ffd24d';c.fillStyle=tfAwaitingRepeat?'rgba(146,146,156,.2)':'rgba(255,210,77,0.25)';c.lineWidth=1.5;c.lineCap='round';
   c.beginPath();c.arc(p.x,p.y,hr*.7,0,Math.PI*2);c.fill();c.stroke();c.beginPath();c.moveTo(p.x-hr/2,p.y);c.lineTo(p.x+hr/2,p.y);c.moveTo(p.x,p.y-hr/2);c.lineTo(p.x,p.y+hr/2);c.stroke();c.restore();
 }
 
 function _tfDrawHandlesPerspective(clearFirst){
   const geometry=_tfResizeGuideCanvas();_tfClearUi();perspGuideCtx.setTransform(1,0,0,1,0,0);perspGuideCtx.clearRect(0,0,perspGuideC.width,perspGuideC.height);perspGuideCtx.setTransform(geometry.dpr,0,0,geometry.dpr,0,0);
   if(tfOptionValues.perspectiveGuidesEnabled){const analysis=PerspectiveController.analyze(tfCorners),viewAnalysis=_tfAnalysisToViewport(analysis);PerspectiveController.draw(perspGuideCtx,viewAnalysis,{scale:1,width:geometry.width,height:geometry.height});}
-  const corners=tfCorners.map(_tfToViewportPoint),c=tfUiCtx,hr=TF_HANDLE_R;c.save();c.strokeStyle=tfGroupMode?'#ff9f4d':'#a24dff';c.lineWidth=1.5;c.lineJoin='round';c.lineCap='round';c.setLineDash([6,4]);c.beginPath();corners.forEach((p,i)=>{i?c.lineTo(p.x,p.y):c.moveTo(p.x,p.y);});c.closePath();c.stroke();c.setLineDash([]);c.fillStyle='#fff';corners.forEach(p=>{c.beginPath();c.rect(p.x-hr/2,p.y-hr/2,hr,hr);c.fill();c.stroke();});
+  const corners=tfCorners.map(_tfToViewportPoint),idle=tfAwaitingRepeat,c=tfUiCtx,hr=TF_HANDLE_R;c.save();c.globalAlpha=idle?.38:1;c.strokeStyle=idle?'#9a9aa6':(tfGroupMode?'#ff9f4d':'#a24dff');c.lineWidth=1.5;c.lineJoin='round';c.lineCap='round';c.setLineDash([6,4]);c.beginPath();corners.forEach((p,i)=>{i?c.lineTo(p.x,p.y):c.moveTo(p.x,p.y);});c.closePath();c.stroke();c.setLineDash([]);c.fillStyle=idle?'#8c8c96':'#fff';corners.forEach(p=>{c.beginPath();c.rect(p.x-hr/2,p.y-hr/2,hr,hr);c.fill();c.stroke();});
+  _tfPositionFloatingActions(corners);
   const mids=_tfPolyEdgeMidpoints(corners),dr=hr*.62;mids.forEach(p=>{c.beginPath();c.moveTo(p.x,p.y-dr);c.lineTo(p.x+dr,p.y);c.lineTo(p.x,p.y+dr);c.lineTo(p.x-dr,p.y);c.closePath();c.fill();c.stroke();});c.restore();
 }
 
@@ -1042,7 +1061,8 @@ function _tfFreePointerDown(e){
   e.preventDefault();
   const p=getPos(e);
   const hit=_tfHitTest(p);
-  if(!hit) return;
+  if(!hit)return;
+  if(tfAwaitingRepeat){tfAwaitingRepeat=false;_tfRedraw(false);}
   e.currentTarget.setPointerCapture(e.pointerId);
   tfDrag=hit.mode;
   if(hit.mode==='pivot'){
@@ -1189,34 +1209,27 @@ function _tfFreePointerHover(e){
 transformC.addEventListener('pointermove',_tfFreePointerHover);
 tfUiC.addEventListener('pointermove',_tfFreePointerHover);
 
+function _tfRememberCurrentFreeOperation(){
+  const boxCenter={x:tfBox.x+tfBox.w/2,y:tfBox.y+tfBox.h/2},pivotOffset={x:tfPivot.x-boxCenter.x,y:tfPivot.y-boxCenter.y},hasLiveOperation=Math.abs(tfState.tx)>1e-9||Math.abs(tfState.ty)>1e-9||Math.abs(tfState.scale-1)>1e-9||Math.abs(tfState.rotation)>1e-9||Math.abs(pivotOffset.x)>1e-9||Math.abs(pivotOffset.y)>1e-9;
+  if(hasLiveOperation)tfLastCommittedOperation={state:Object.assign({},tfState),pivotOffset};return hasLiveOperation;
+}
+function _tfShowRepeatedFreePreview(){
+  if(!tfLastCommittedOperation||!tfActive||tfPerspective)return false;const boxCenter={x:tfBox.x+tfBox.w/2,y:tfBox.y+tfBox.h/2};tfState=Object.assign({},tfLastCommittedOperation.state);tfPivot={x:boxCenter.x+tfLastCommittedOperation.pivotOffset.x,y:boxCenter.y+tfLastCommittedOperation.pivotOffset.y};tfAwaitingRepeat=false;_tfRedraw(false);return true;
+}
+function _tfConfirmAction(){
+  if(!tfActive)return false;if(!tfPerspective&&tfAwaitingRepeat)return _tfShowRepeatedFreePreview();
+  const wasPerspective=tfPerspective;if(!wasPerspective&&!_tfRememberCurrentFreeOperation()&&tfLastCommittedOperation)return _tfShowRepeatedFreePreview();
+  if(!wasPerspective&&tfPendingRepeatUndo){undoStack.push(tfPendingRepeatUndo);if(undoStack.length>40)undoStack.shift();redoStack=[];tfPendingRepeatUndo=null;}
+  commitTransformTool();if(tool==='transform'){enterTransformTool();if(!wasPerspective){tfPendingRepeatUndo=undoStack.pop()||null;tfAwaitingRepeat=true;_tfHideFloatingActions();_tfDrawHandles(true);}}return true;
+}
+function _tfCancelAction(){
+  if(!tfActive||tfAwaitingRepeat)return false;const wasPerspective=tfPerspective;cancelTransformTool();if(tool==='transform'){enterTransformTool();if(!wasPerspective){tfPendingRepeatUndo=undoStack.pop()||tfPendingRepeatUndo;tfAwaitingRepeat=true;_tfHideFloatingActions();_tfDrawHandles(true);}}return true;
+}
+tfConfirmButton.addEventListener('pointerdown',event=>event.stopPropagation());tfCancelButton.addEventListener('pointerdown',event=>event.stopPropagation());tfConfirmButton.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();_tfConfirmAction();});tfCancelButton.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();_tfCancelAction();});
 document.addEventListener('keydown',e=>{
-  if(!tfActive) return;
-  const repeatController=window.RepeatableTransformController;
-  if(repeatController&&repeatController.enabled){
-    if(!repeatController.active)repeatController.start();
-    if(repeatController.active&&e.key==='Enter'){e.preventDefault();e.stopImmediatePropagation();repeatController.apply();return;}
-    if(repeatController.active&&e.key==='Escape'){e.preventDefault();e.stopImmediatePropagation();repeatController.cancel();return;}
-  }
-  if(e.target.tagName==='INPUT') return;
-  if(e.key==='Enter'){
-    e.preventDefault();e.stopImmediatePropagation();
-    const boxCenter={x:tfBox.x+tfBox.w/2,y:tfBox.y+tfBox.h/2};
-    const pivotOffset={x:tfPivot.x-boxCenter.x,y:tfPivot.y-boxCenter.y};
-    const hasLiveOperation=Math.abs(tfState.tx)>1e-9||Math.abs(tfState.ty)>1e-9||Math.abs(tfState.scale-1)>1e-9||Math.abs(tfState.rotation)>1e-9||Math.abs(pivotOffset.x)>1e-9||Math.abs(pivotOffset.y)>1e-9;
-    if(hasLiveOperation){
-      tfLastCommittedOperation={state:Object.assign({},tfState),pivotOffset};
-    }else if(tfLastCommittedOperation){
-      tfState=Object.assign({},tfLastCommittedOperation.state);
-      tfPivot={x:boxCenter.x+tfLastCommittedOperation.pivotOffset.x,y:boxCenter.y+tfLastCommittedOperation.pivotOffset.y};
-      _tfRedraw(false);
-    }
-    commitTransformTool();
-    if(tool==='transform')enterTransformTool();
-  }else if(e.key==='Escape'){
-    e.preventDefault();e.stopImmediatePropagation();
-    cancelTransformTool();
-    if(tool==='transform')enterTransformTool();
-  }
+  if(!tfActive||e.target.tagName==='INPUT')return;
+  if(e.key==='Enter'){e.preventDefault();e.stopImmediatePropagation();_tfConfirmAction();}
+  else if(e.key==='Escape'){e.preventDefault();e.stopImmediatePropagation();_tfCancelAction();}
 },{capture:true});
 
 // ── Transform Options panel ─────────────────────────────────────
