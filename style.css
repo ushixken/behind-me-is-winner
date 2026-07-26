@@ -429,12 +429,17 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 .tl-lbl-draghandle{display:flex;align-items:center;gap:5px;overflow:hidden;white-space:nowrap;flex:1;min-width:0;cursor:grab;touch-action:none;}
 .tl-lbl-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .tl-lbl-rbzone{flex:0 0 18px;width:18px;height:100%;min-width:18px;cursor:default;border-left:1px solid var(--border);margin-left:4px;}
-.tl-layer-inline-actions{display:flex;align-items:center;gap:3px;flex:0 0 72px;}
+.tl-layer-inline-actions{display:flex;align-items:center;gap:3px;flex:0 0 auto;}
 .tl-layer-quick-btn{width:22px;height:20px;padding:0;flex:0 0 22px;box-sizing:border-box;border:1px solid var(--border2);border-radius:4px;background:var(--bg2);color:var(--text2);display:flex;align-items:center;justify-content:center;cursor:pointer;touch-action:manipulation;}
 .tl-layer-quick-btn svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:1.35;stroke-linecap:round;stroke-linejoin:round;pointer-events:none;}
 .tl-layer-quick-btn:hover{background:var(--bg4);color:var(--text);}
 .tl-layer-quick-btn.active{background:var(--accent-bg);border-color:var(--accent);color:var(--accent);}
-.tl-lbl-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;border:1px solid var(--border2);}
+.tl-layer-lbl:not(.tl-group-lbl) .tl-lbl-draghandle{padding-left:calc(var(--tl-tree-depth,0) * 14px);}
+.tl-group-lbl{padding-left:calc(6px + var(--tl-tree-depth,0) * 14px);background:color-mix(in srgb,var(--bg3) 72%,var(--bg2));font-weight:600;}
+.tl-group-toggle{width:14px;height:18px;flex:0 0 14px;border:0;background:transparent;color:var(--text2);font-size:9px;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;}
+.tl-group-folder{width:15px;flex:0 0 15px;font-size:12px;line-height:1;filter:saturate(.45);}
+.tl-group-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tl-group-track-row{background:color-mix(in srgb,var(--bg3) 55%,var(--bg2));border-bottom-color:var(--border);}
 
 #tl-labels-resize{
   width:4px;background:var(--border);cursor:col-resize;flex-shrink:0;z-index:20;

@@ -185,7 +185,7 @@ function makeBlankLayer(layerType,extra){
     name:defaultLayerNameForType(type),
     visible:true,
     locked:false,
-    onionSkin:true,
+    onionSkin:false,
     onTimeline:true,
     color:'transparent',
     frames:{},
@@ -201,8 +201,13 @@ function makeBlankLayer(layerType,extra){
     groupId:null
   },extra||{});
 }
-let layers=[{name:'Layer 1',visible:true,locked:false,onionSkin:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},indexFrames:{},indexMeta:{},type:'bitmap',opacity:1,stencil:'none',clipTo:null,groupId:null}];
-function isLayerLocked(layerIndex=curLayer){return !!(layers[layerIndex]&&layers[layerIndex].locked);}
+let layers=[{name:'Layer 1',visible:true,locked:false,onionSkin:false,onTimeline:true,color:'transparent',frames:{},frameMeta:{},indexFrames:{},indexMeta:{},type:'bitmap',opacity:1,stencil:'none',clipTo:null,groupId:null}];
+function isLayerLocked(layerIndex=curLayer){
+  const layer=layers[layerIndex];if(!layer)return false;if(layer.locked)return true;
+  let groupId=layer.groupId,seen=new Set();
+  while(groupId&&!seen.has(groupId)){seen.add(groupId);const group=groups.find(item=>item.id===groupId);if(!group)break;if(group.locked)return true;groupId=group.parentId||null;}
+  return false;
+}
 function setLayerLocked(layerIndex,locked){
   const layer=layers[layerIndex];if(!layer)return false;
   layer.locked=!!locked;

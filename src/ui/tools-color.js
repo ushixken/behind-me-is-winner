@@ -5,7 +5,10 @@ const ONION_SKIN_PREF_KEY='animator_onion_skin_enabled';
 function updateOnion(){
   octx.clearRect(0,0,CW,CH);
   if(!document.getElementById('onion-chk').checked) return;
-  if(layers[curLayer]&&layers[curLayer].onionSkin===false) return;
+  const activeLayer=layers[curLayer];
+  if(activeLayer&&activeLayer.onionSkin!==true) return;
+  let groupId=activeLayer&&activeLayer.groupId,seenGroups=new Set();
+  while(groupId&&!seenGroups.has(groupId)){seenGroups.add(groupId);const group=groups.find(item=>item.id===groupId);if(!group)break;if(group.onionSkin!==true)return;groupId=group.parentId||null;}
   const p=typeof getPreviousVisibleDrawingKey==='function'?getPreviousVisibleDrawingKey(curLayer,curFrame-1):null;
   if(p){octx.globalAlpha=0.28;octx.drawImage(p.canvas,0,0);octx.globalAlpha=1;}
   const n=typeof getNextVisibleDrawingKey==='function'?getNextVisibleDrawingKey(curLayer,curFrame+1):null;
@@ -146,9 +149,24 @@ function _restoreDrawingFrameHidden(action,hidden){
   renderTimeline();updateOnion();updateStatus();
   return true;
 }
+function _restoreLayerHierarchy(snapshot){
+  if(!snapshot)return false;
+  groups=(snapshot.groups||[]).map(group=>Object.assign({},group));
+  (snapshot.layerGroupIds||[]).forEach((groupId,index)=>{if(layers[index])layers[index].groupId=groupId||null;});
+  curLayer=Math.max(0,Math.min(layers.length-1,Number(snapshot.curLayer)||0));
+  activeGroupId=snapshot.activeGroupId||null;
+  selectedLayerIndices=new Set(snapshot.selectedLayers||[]);
+  selectedGroupIds=new Set(snapshot.selectedGroups||[]);
+  selectedTlLabelIndices=new Set(snapshot.selectedTimelineLayers||[]);
+  _reanchorAllStencils();
+  loadFrame(curLayer,curFrame);
+  recomposite(curLayer,curFrame);renderLayerPanel();renderTimeline();updateOnion();updateStatus();
+  return true;
+}
 function undo(){
   if(!undoStack.length)return;
   const action=undoStack.pop();
+  if(action.type==='layer-hierarchy'){if(_restoreLayerHierarchy(action.before))redoStack.push(action);return;}
   if(action.type==='drawing-frame-hidden'){if(_restoreDrawingFrameHidden(action,action.before))redoStack.push(action);return;}
   if(action.type==='smart-raster-style-layering-toggle'){if(_restoreStyleLayeringToggle(action,"before"))redoStack.push(action);return;}
   if(action.type==='smart-raster-style-order'){if(_restoreStyleLayeringOrder(action.before))redoStack.push(action);return;}
@@ -174,6 +192,7 @@ function undo(){
 function redo(){
   if(!redoStack.length)return;
   const action=redoStack.pop();
+  if(action.type==='layer-hierarchy'){if(_restoreLayerHierarchy(action.after))undoStack.push(action);return;}
   if(action.type==='drawing-frame-hidden'){if(_restoreDrawingFrameHidden(action,action.after))undoStack.push(action);return;}
   if(action.type==='smart-raster-style-layering-toggle'){if(_restoreStyleLayeringToggle(action,"after"))undoStack.push(action);return;}
   if(action.type==='smart-raster-style-order'){if(_restoreStyleLayeringOrder(action.after))undoStack.push(action);return;}

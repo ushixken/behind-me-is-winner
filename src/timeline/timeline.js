@@ -251,8 +251,8 @@ function refreshTimelineSelection(){
     if(block)block.classList.add('selected');
   });
   document.querySelectorAll('.tl-layer-lbl.active').forEach(label=>label.classList.remove('active'));
-  const activeLabel=document.querySelector('.tl-layer-lbl[data-idx="'+curLayer+'"]');
-  if(activeLabel&&!activeGroupId)activeLabel.classList.add('active');
+  const activeLabel=activeGroupId?document.querySelector('.tl-group-lbl[data-gid="'+CSS.escape(activeGroupId)+'"]'):document.querySelector('.tl-layer-lbl[data-idx="'+curLayer+'"]');
+  if(activeLabel)activeLabel.classList.add('active');
   updatePlayhead();renderRulerHighlight();updateStatus();
   document.getElementById('frame-info').textContent=frameLabel(curFrame)+' / '+frameLabel(TOTAL-1);
 }
@@ -1078,11 +1078,20 @@ function renderRulerHighlight(){
   const fill=rulerEl.querySelector('.ruler-current-fill');
   if(fill){fill.style.left=(curFrame*CellW)+'px';fill.style.width=CellW+'px';}
 }
-// Returns indices (top-to-bottom render order) of layers currently shown on the timeline
+// Timeline is a projection of the same hierarchy used by the Layers panel.
+// Collapse is view-local: it never mutates the document hierarchy or Layers-panel state.
+const timelineCollapsedGroupIds=new Set();
+function timelineTreeItems(){
+  const all=_buildFlatGeneric({includeCollapsed:true,includeOrphanGroups:true});
+  return all.filter(item=>{
+    if(item.type==='layer'&&(!layers[item.idx]||layers[item.idx].onTimeline===false))return false;
+    const chain=item.type==='group'?_groupChain(item.id).slice(0,-1):_groupChain(layers[item.idx].groupId);
+    return !chain.some(id=>timelineCollapsedGroupIds.has(id));
+  });
+}
+// Actual animation rows only; group rows never enter playback or frame operations.
 function timelineLayerIndices(){
-  const idx=[];
-  for(let i=layers.length-1;i>=0;i--) if(layers[i].onTimeline!==false) idx.push(i);
-  return idx;
+  return timelineTreeItems().filter(item=>item.type==='layer').map(item=>item.idx);
 }
 
 let dragTlLabelIdx=null;
@@ -1091,23 +1100,29 @@ let tlLabelLastClicked=null; // for shift-range
 let tlLbSelecting=false,tlLbStartX=0,tlLbStartY=0,tlLbBoxEl=null;
 
 let _timelineSoloState=null;
-function _toggleTimelineLayerSolo(layer){
-  if(_timelineSoloState&&!layers.includes(_timelineSoloState.layer))_timelineSoloState=null;
-  if(_timelineSoloState&&_timelineSoloState.layer===layer){
-    layers.forEach(item=>{if(_timelineSoloState.visibility.has(item))item.visible=_timelineSoloState.visibility.get(item);});
-    _timelineSoloState=null;return;
-  }
-  if(!_timelineSoloState)_timelineSoloState={layer:layer,visibility:new Map(layers.map(item=>[item,item.visible]))};
-  else _timelineSoloState.layer=layer;
-  layers.forEach(item=>{item.visible=item===layer;});
+function _restoreTimelineSoloVisibility(){
+  if(!_timelineSoloState)return;
+  layers.forEach(item=>{if(_timelineSoloState.layerVisibility.has(item))item.visible=_timelineSoloState.layerVisibility.get(item);});
+  groups.forEach(item=>{if(_timelineSoloState.groupVisibility.has(item))item.visible=_timelineSoloState.groupVisibility.get(item);});
 }
+function _beginTimelineSolo(type,target){
+  const same=_timelineSoloState&&_timelineSoloState.type===type&&_timelineSoloState.target===target;
+  if(same){_restoreTimelineSoloVisibility();_timelineSoloState=null;return;}
+  if(!_timelineSoloState)_timelineSoloState={type,target,layerVisibility:new Map(layers.map(item=>[item,item.visible])),groupVisibility:new Map(groups.map(item=>[item,item.visible]))};
+  else{_restoreTimelineSoloVisibility();_timelineSoloState.type=type;_timelineSoloState.target=target;}
+  groups.forEach(group=>{group.visible=true;});
+  if(type==='layer')layers.forEach(layer=>{layer.visible=layer===target;});
+  else{const ids=_allDescendantGroupIds(target.id);layers.forEach(layer=>{layer.visible=!!(layer.groupId&&ids.has(layer.groupId));});}
+}
+function _toggleTimelineLayerSolo(layer){_beginTimelineSolo('layer',layer);}
+function _toggleTimelineGroupSolo(group){_beginTimelineSolo('group',group);}
 function _applyTimelineLayerQuickAction(layer,action){
   const index=layers.indexOf(layer);if(index<0)return;
   if(action==='lock'){
     if(typeof setLayerLocked==='function')setLayerLocked(index,!layer.locked);else layer.locked=!layer.locked;
     renderLabelCol();renderLayerPanel();
   }else if(action==='onion'){
-    layer.onionSkin=layer.onionSkin===false;
+    layer.onionSkin=layer.onionSkin!==true;
     if(layer.onionSkin&&document.getElementById('onion-chk')&&!document.getElementById('onion-chk').checked&&typeof setOnionSkinEnabled==='function')setOnionSkinEnabled(true);
     else updateOnion();
     renderLabelCol();
@@ -1115,18 +1130,49 @@ function _applyTimelineLayerQuickAction(layer,action){
     _toggleTimelineLayerSolo(layer);recomposite(curLayer,curFrame);updateOnion();renderLayerPanel();renderTimeline();
   }
 }
-window.addEventListener('project-loaded',()=>{_timelineSoloState=null;});
+window.addEventListener('project-loaded',()=>{_timelineSoloState=null;timelineCollapsedGroupIds.clear();});
+function _applyTimelineGroupQuickAction(group,action){
+  if(action==='solo')_toggleTimelineGroupSolo(group);
+  else if(action==='lock')group.locked=!group.locked;
+  else if(action==='onion')group.onionSkin=group.onionSkin===false;
+  if(action==='onion'&&group.onionSkin&&document.getElementById('onion-chk')&&!document.getElementById('onion-chk').checked&&typeof setOnionSkinEnabled==='function')setOnionSkinEnabled(true);
+  recomposite(curLayer,curFrame);updateOnion();renderLayerPanel();renderTimeline();
+}
+function _makeTimelineGroupLabel(item){
+  const group=_groupById(item.id);if(!group)return null;
+  if(group.visible==null)group.visible=true;if(group.locked==null)group.locked=false;if(group.onionSkin==null)group.onionSkin=false;
+  const row=document.createElement('div');
+  row.className='tl-layer-lbl tl-group-lbl'+(activeGroupId===group.id?' active':'');
+  if(group.color&&group.color!=='transparent'){const hex=group.color,r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);row.style.background=`rgba(${r},${g},${b},0.22)`;row.style.boxShadow=`inset 3px 0 0 ${group.color}`;}
+  row.style.height=CellH+'px';row.style.setProperty('--tl-tree-depth',item.depth||0);row.dataset.gid=group.id;
+  const hasChildren=layers.some(layer=>layer.groupId===group.id)||groups.some(child=>child.parentId===group.id);
+  const toggle=document.createElement('button');toggle.type='button';toggle.className='tl-group-toggle';toggle.textContent=hasChildren?(timelineCollapsedGroupIds.has(group.id)?'\u25B6':'\u25BC'):'';toggle.setAttribute('aria-expanded',String(!timelineCollapsedGroupIds.has(group.id)));toggle.title=timelineCollapsedGroupIds.has(group.id)?'Expand group':'Collapse group';
+  toggle.onclick=event=>{event.stopPropagation();if(!hasChildren)return;if(timelineCollapsedGroupIds.has(group.id))timelineCollapsedGroupIds.delete(group.id);else timelineCollapsedGroupIds.add(group.id);renderTimeline();};
+  const folder=document.createElement('span');folder.className='tl-group-folder';folder.textContent='\uD83D\uDCC1';folder.setAttribute('aria-hidden','true');
+  const name=document.createElement('span');name.className='tl-group-name';name.textContent=group.name;
+  const actions=document.createElement('span');actions.className='tl-layer-inline-actions';
+  const specs=[['solo','Solo Group',!!(_timelineSoloState&&_timelineSoloState.type==='group'&&_timelineSoloState.target===group),'<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8s2.3-4 6.5-4 6.5 4 6.5 4-2.3 4-6.5 4-6.5-4-6.5-4Z"></path><circle cx="8" cy="8" r="2"></circle></svg>'],['lock','Lock Group',group.locked,'<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="7" width="9" height="6.5" rx="1.5"></rect><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"></path></svg>'],['onion','Group Onion Skin',group.onionSkin===true,'<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.2 10.3A4.2 4.2 0 1 1 10.8 10.3c-.7.5-1 1-1.1 1.7H6.3c-.1-.7-.4-1.2-1.1-1.7Z"></path><path d="M6.4 14h3.2M8 0v1.2M1.7 2.6l.9.8M14.3 2.6l-.9.8"></path></svg>']];
+  specs.forEach(([action,title,enabled,icon])=>{const button=document.createElement('button');button.type='button';button.className='tl-layer-quick-btn'+(enabled?' active':'');button.dataset.action=action;button.title=title;button.setAttribute('aria-label',title);button.setAttribute('aria-pressed',String(!!enabled));button.innerHTML=icon;button.onpointerdown=event=>{event.preventDefault();event.stopPropagation();};button.onclick=event=>{event.preventDefault();event.stopPropagation();_applyTimelineGroupQuickAction(group,action);};actions.appendChild(button);});
+  const rubberbandZone=document.createElement('span');rubberbandZone.className='tl-lbl-rbzone';rubberbandZone.title='Drag to select multiple layers';rubberbandZone.setAttribute('aria-label','Rubber-band layer selection area');
+  rubberbandZone.onpointerdown=event=>{if(event.button!==0)return;event.stopPropagation();startTlLabelRubberBand(event);};
+  row.append(toggle,folder,name,actions,rubberbandZone);
+  row.onclick=()=>{selectedTlLabelIndices.clear();selectedLayerIndices.clear();selectedGroupIds.clear();selectedGroupIds.add(group.id);activeGroupId=group.id;renderLayerPanel();renderTimeline();};
+  return row;
+}
 function renderLabelCol(){
   const el=document.getElementById('tl-labels-rows');el.innerHTML='';
-  const visibleIndices=timelineLayerIndices();
-  visibleIndices.forEach(i=>{
-    const l=layers[i];const lbl=document.createElement('div');
+  const visibleItems=timelineTreeItems();
+  const visibleIndices=visibleItems.filter(item=>item.type==='layer').map(item=>item.idx);
+  visibleItems.forEach(item=>{
+    if(item.type==='group'){const groupRow=_makeTimelineGroupLabel(item);if(groupRow)el.appendChild(groupRow);return;}
+    const i=item.idx,l=layers[i];const lbl=document.createElement('div');
+    lbl.style.setProperty('--tl-tree-depth',item.depth||0);
     const isMultiSel=selectedTlLabelIndices.has(i);
     lbl.className='tl-layer-lbl'+(!activeGroupId&&i===curLayer?' active':isMultiSel?' multi-sel':'');
     lbl.style.height=CellH+'px';
     lbl.dataset.idx=i;
     lbl.title='Click to select. Shift+click range, Ctrl+click individual. Drag name to Hide zone to remove from timeline. Drag empty space to rubber-band select.';
-lbl.innerHTML='<span class="tl-lbl-draghandle" draggable="true"><div class="tl-lbl-dot" style="background:'+l.color+'"></div><span class="tl-lbl-name">'+l.name+'</span></span><span class="tl-layer-inline-actions"><button type="button" class="tl-layer-quick-btn'+(_timelineSoloState&&_timelineSoloState.layer===l?' active':'')+'" data-action="solo" title="Solo Mode" aria-label="Solo Mode" aria-pressed="'+String(!!(_timelineSoloState&&_timelineSoloState.layer===l))+'"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8s2.3-4 6.5-4 6.5 4 6.5 4-2.3 4-6.5 4-6.5-4-6.5-4Z"></path><circle cx="8" cy="8" r="2"></circle></svg></button><button type="button" class="tl-layer-quick-btn'+(l.locked?' active':'')+'" data-action="lock" title="Lock Layer" aria-label="Lock Layer" aria-pressed="'+String(!!l.locked)+'"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="7" width="9" height="6.5" rx="1.5"></rect><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"></path></svg></button><button type="button" class="tl-layer-quick-btn'+(l.onionSkin!==false?' active':'')+'" data-action="onion" title="Onion Skin" aria-label="Onion Skin" aria-pressed="'+String(l.onionSkin!==false)+'"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.2 10.3A4.2 4.2 0 1 1 10.8 10.3c-.7.5-1 1-1.1 1.7H6.3c-.1-.7-.4-1.2-1.1-1.7Z"></path><path d="M6.4 14h3.2M8 0v1.2M1.7 2.6l.9.8M14.3 2.6l-.9.8"></path></svg></button></span><span class="tl-lbl-rbzone" title="Drag to select multiple layers" aria-label="Rubber-band layer selection area"></span>';
+lbl.innerHTML='<span class="tl-lbl-draghandle" draggable="true"><span class="tl-lbl-name">'+l.name+'</span></span><span class="tl-layer-inline-actions"><button type="button" class="tl-layer-quick-btn'+(_timelineSoloState&&_timelineSoloState.type==='layer'&&_timelineSoloState.target===l?' active':'')+'" data-action="solo" title="Solo Mode" aria-label="Solo Mode" aria-pressed="'+String(!!(_timelineSoloState&&_timelineSoloState.type==='layer'&&_timelineSoloState.target===l))+'"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8s2.3-4 6.5-4 6.5 4 6.5 4-2.3 4-6.5 4-6.5-4-6.5-4Z"></path><circle cx="8" cy="8" r="2"></circle></svg></button><button type="button" class="tl-layer-quick-btn'+(l.locked?' active':'')+'" data-action="lock" title="Lock Layer" aria-label="Lock Layer" aria-pressed="'+String(!!l.locked)+'"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="7" width="9" height="6.5" rx="1.5"></rect><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"></path></svg></button><button type="button" class="tl-layer-quick-btn'+(l.onionSkin===true?' active':'')+'" data-action="onion" title="Onion Skin" aria-label="Onion Skin" aria-pressed="'+String(l.onionSkin===true)+'"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.2 10.3A4.2 4.2 0 1 1 10.8 10.3c-.7.5-1 1-1.1 1.7H6.3c-.1-.7-.4-1.2-1.1-1.7Z"></path><path d="M6.4 14h3.2M8 0v1.2M1.7 2.6l.9.8M14.3 2.6l-.9.8"></path></svg></button></span><span class="tl-lbl-rbzone" title="Drag to select multiple layers" aria-label="Rubber-band layer selection area"></span>';
     const handle=lbl.querySelector('.tl-lbl-draghandle');
 
     lbl.addEventListener('click',ev=>{
@@ -1163,12 +1209,7 @@ lbl.innerHTML='<span class="tl-lbl-draghandle" draggable="true"><div class="tl-l
       document.addEventListener('pointerup',onTlLabelDragUp);
     });
 
-    // Mousedown on the empty rubber-band zone of a row: start rubber-band instead of a drag
-    lbl.querySelector('.tl-lbl-rbzone').addEventListener('pointerdown',ev=>{
-      if(ev.button!==0) return;
-      ev.stopPropagation();
-      startTlLabelRubberBand(ev);
-    });
+    lbl.querySelector('.tl-lbl-rbzone').addEventListener('pointerdown',event=>{if(event.button!==0)return;event.stopPropagation();startTlLabelRubberBand(event);});
 
     lbl.querySelectorAll('.tl-layer-quick-btn').forEach(actionButton=>{
       actionButton.addEventListener('pointerdown',event=>{if(event.pointerType==='mouse'&&event.button!==0)return;event.preventDefault();event.stopPropagation();});
@@ -1182,7 +1223,7 @@ lbl.innerHTML='<span class="tl-lbl-draghandle" draggable="true"><div class="tl-l
   if(!el.dataset.blankSelectionBound){
     el.dataset.blankSelectionBound='1';
     el.addEventListener('pointerdown',ev=>{
-      const onRow=ev.target.closest('.tl-layer-lbl[data-idx]');
+      const onRow=ev.target.closest('.tl-layer-lbl');
       if(onRow) return;
       if(ev.button!==0) return;
       selectedTlLabelIndices.clear();tlLabelLastClicked=null;
@@ -1271,8 +1312,9 @@ function renderRows(){
   const totalW=TOTAL*CellW,timelineFps=Math.max(1,getFPS());rowWrap.style.width=totalW+'px';
   document.getElementById('tl-inner').style.setProperty('--timeline-second-span',(timelineFps*CellW)+'px');
 
-  timelineLayerIndices().forEach(i=>{
-    const l=layers[i];const row=document.createElement('div');
+  timelineTreeItems().forEach(item=>{
+    if(item.type==='group'){const groupRow=document.createElement('div'),group=_groupById(item.id);groupRow.className='tl-row tl-group-track-row';groupRow.style.width=totalW+'px';groupRow.style.height=CellH+'px';groupRow.dataset.groupId=item.id;if(group&&group.color&&group.color!=='transparent'){const hex=group.color,r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);groupRow.style.background=`rgba(${r},${g},${b},0.22)`;}rowWrap.appendChild(groupRow);return;}
+    const i=item.idx,l=layers[i];const row=document.createElement('div');
     row.className='tl-row'+(l.color&&l.color!=='transparent'?' has-layer-color':'');row.style.width=totalW+'px';row.style.position='relative';
     if(l.color&&l.color!=='transparent'){const hex=l.color;const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);row.style.background=`rgba(${r},${g},${b},0.22)`;}
 
@@ -1407,14 +1449,14 @@ function renderRows(){
 
 function updateRangeOverlay(){
   const ro=document.getElementById('range-overlay');if(!ro) return;
-  const left=rangeStart*CellW,width=(rangeEnd-rangeStart+1)*CellW,totalH=timelineLayerIndices().length*CellH;
+  const left=rangeStart*CellW,width=(rangeEnd-rangeStart+1)*CellW,totalH=timelineTreeItems().length*CellH;
   ro.style.cssText='position:absolute;top:0;left:'+left+'px;width:'+width+'px;height:'+totalH+'px;border-left:2px solid rgba(29,158,117,0.6);border-right:2px solid rgba(226,75,74,0.6);pointer-events:none;z-index:6;';
 }
 
 function updatePlayhead(){
   const ph=document.getElementById('playhead');if(!ph) return;
   const left=curFrame*CellW+CellW/2-1;
-  ph.style.left=left+'px';ph.style.height=(timelineLayerIndices().length*CellH)+'px';ph.style.top='0';
+  ph.style.left=left+'px';ph.style.height=(timelineTreeItems().length*CellH)+'px';ph.style.top='0';
   const oldFrameLabel=ph.querySelector('.ph-frame-label');
   if(oldFrameLabel)oldFrameLabel.remove();
   // Auto-scroll to keep the playhead in view — but NOT while the scrollbar
@@ -1584,12 +1626,12 @@ function showGroupColorPicker(grp,dotEl){
   const grid=document.createElement('div');grid.style.cssText='display:flex;flex-wrap:wrap;gap:5px;';
   const clearBtn=document.createElement('div');clearBtn.title='Clear (transparent)';
   clearBtn.style.cssText='width:20px;height:20px;border-radius:50%;border:1.5px solid var(--border2);cursor:pointer;background:repeating-conic-gradient(#999 0% 25%,#ddd 0% 50%) 0 0/10px 10px;flex-shrink:0;';
-  clearBtn.onclick=()=>{grp.color='transparent';popup.remove();layerColorPickerEl=null;renderLayerPanel();};
+  clearBtn.onclick=()=>{grp.color='transparent';popup.remove();layerColorPickerEl=null;renderLayerPanel();renderTimeline();};
   grid.appendChild(clearBtn);
   LCOLORS.forEach(c=>{
     const sw=document.createElement('div');sw.style.cssText='width:20px;height:20px;border-radius:50%;border:1.5px solid var(--border2);cursor:pointer;background:'+c+';flex-shrink:0;';
     if(grp.color===c) sw.style.outline='2px solid #fff';
-    sw.onclick=()=>{grp.color=c;popup.remove();layerColorPickerEl=null;renderLayerPanel();};
+    sw.onclick=()=>{grp.color=c;popup.remove();layerColorPickerEl=null;renderLayerPanel();renderTimeline();};
     grid.appendChild(sw);
   });
   popup.appendChild(grid);
@@ -1597,7 +1639,7 @@ function showGroupColorPicker(grp,dotEl){
   const customLabel=document.createElement('span');customLabel.style.cssText='font-size:10px;color:var(--text2);';customLabel.textContent='Custom';
   const customIn=document.createElement('input');customIn.type='color';customIn.value=grp.color&&grp.color!=='transparent'?grp.color:'#7F77DD';
   customIn.style.cssText='width:32px;height:22px;border:1px solid var(--border2);border-radius:4px;cursor:pointer;padding:1px;background:var(--bg3);';
-  customIn.oninput=e=>{grp.color=e.target.value;renderLayerPanel();};
+  customIn.oninput=e=>{grp.color=e.target.value;renderLayerPanel();renderTimeline();};
   customRow.appendChild(customLabel);customRow.appendChild(customIn);
   popup.appendChild(customRow);
   document.body.appendChild(popup);layerColorPickerEl=popup;
@@ -3084,8 +3126,9 @@ document.getElementById('modal-add-layer-placement').addEventListener('click',e=
 // to the top level.
 function _computeNewGroupParentId(){
   const parentCandidates=new Set();
-  if(selectedLayerIndices.size>0){
-    selectedLayerIndices.forEach(i=>{if(layers[i]) parentCandidates.add(layers[i].groupId||null);});
+  const selectedLayers=selectedLayerIndices.size>0?selectedLayerIndices:selectedTlLabelIndices;
+  if(selectedLayers.size>0){
+    selectedLayers.forEach(i=>{if(layers[i]) parentCandidates.add(layers[i].groupId||null);});
   }
   if(selectedGroupIds.size>0){
     selectedGroupIds.forEach(gid=>{
@@ -3095,23 +3138,42 @@ function _computeNewGroupParentId(){
       if(!hasSelectedAncestor) parentCandidates.add(g.parentId||null);
     });
   }
-  if(selectedLayerIndices.size===0&&selectedGroupIds.size===0){
+  if(selectedLayers.size===0&&selectedGroupIds.size===0){
     parentCandidates.add(layers[curLayer]?(layers[curLayer].groupId||null):null);
   }
-  return parentCandidates.size===1?[...parentCandidates][0]:null;
+  return parentCandidates.size===1?[...parentCandidates][0]:undefined;
+}
+
+function _captureLayerHierarchy(){
+  return {
+    groups:groups.map(group=>Object.assign({},group)),
+    layerGroupIds:layers.map(layer=>layer.groupId||null),
+    curLayer,
+    activeGroupId,
+    selectedLayers:[...selectedLayerIndices],
+    selectedGroups:[...selectedGroupIds],
+    selectedTimelineLayers:[...selectedTlLabelIndices]
+  };
+}
+function _commitLayerHierarchyUndo(before){
+  undoStack.push({type:'layer-hierarchy',before,after:_captureLayerHierarchy()});
+  if(undoStack.length>40)undoStack.shift();
+  redoStack=[];
 }
 
 // Wraps the current selection (layers and/or groups) in a brand-new group,
 // nesting that new group inside whatever parent the selection shared (see
 // _computeNewGroupParentId) instead of always dropping it at the top level.
 function _createGroupFromSelection(parentId){
+  const before=_captureLayerHierarchy();
   const id=makeGroupId();
   const name='Group '+(groups.length+1);
-  groups.push({id,name,visible:true,collapsed:false,opacity:1,color:'transparent',stencil:'none',clipToGroup:null,parentId:parentId||null});
+  groups.push({id,name,visible:true,locked:false,onionSkin:false,collapsed:false,opacity:1,color:'transparent',stencil:'none',clipToGroup:null,parentId:parentId||null});
   // Collect layers to group: selected layers (directly) + selected groups become NESTED subfolders
   const toGroupLayers=new Set();
-  if(selectedLayerIndices.size>0){
-    selectedLayerIndices.forEach(i=>toGroupLayers.add(i));
+  const selectedLayers=selectedLayerIndices.size>0?selectedLayerIndices:selectedTlLabelIndices;
+  if(selectedLayers.size>0){
+    selectedLayers.forEach(i=>toGroupLayers.add(i));
   }
   // Selected groups become subgroups (folders inside the new folder) rather than being
   // absorbed/flattened — only re-parent the topmost selected ones, so a group whose
@@ -3127,9 +3189,10 @@ function _createGroupFromSelection(parentId){
   // If nothing selected at all, just group curLayer
   if(toGroupLayers.size===0&&selectedGroupIds.size===0) toGroupLayers.add(curLayer);
   toGroupLayers.forEach(i=>{if(layers[i]) layers[i].groupId=id;});
-  selectedLayerIndices.clear();selectedGroupIds.clear();activeGroupId=id;
+  selectedLayerIndices.clear();selectedTlLabelIndices.clear();selectedGroupIds.clear();activeGroupId=id;
   _reanchorAllStencils();
   renderLayerPanel();renderTimeline();
+  _commitLayerHierarchyUndo(before);
   return id;
 }
 
@@ -3140,7 +3203,7 @@ function _insertGroupInsideGroup(targetGroupId){
   saveActiveToKey();
   const id=makeGroupId();
   const name='Group '+(groups.length+1);
-  groups.push({id,name,visible:true,collapsed:false,opacity:1,color:'transparent',stencil:'none',clipToGroup:null,parentId:targetGroupId});
+  groups.push({id,name,visible:true,locked:false,onionSkin:false,collapsed:false,opacity:1,color:'transparent',stencil:'none',clipToGroup:null,parentId:targetGroupId});
   const newLayer=makeBlankLayer('bitmap',{groupId:id});
   let topIdx=-1;
   layers.forEach((l,i)=>{if(l.groupId===targetGroupId&&i>topIdx) topIdx=i;});
@@ -3157,13 +3220,15 @@ function _insertGroupInsideGroup(targetGroupId){
 function _wrapSingleGroup(gid){
   const g=groups.find(g2=>g2.id===gid);
   if(!g) return;
+  const before=_captureLayerHierarchy();
   const id=makeGroupId();
   const name='Group '+(groups.length+1);
-  groups.push({id,name,visible:true,collapsed:false,opacity:1,color:'transparent',stencil:'none',clipToGroup:null,parentId:g.parentId||null});
+  groups.push({id,name,visible:true,locked:false,onionSkin:false,collapsed:false,opacity:1,color:'transparent',stencil:'none',clipToGroup:null,parentId:g.parentId||null});
   g.parentId=id;
   selectedLayerIndices.clear();selectedGroupIds.clear();activeGroupId=id;
   _reanchorAllStencils();
   renderLayerPanel();renderTimeline();
+  _commitLayerHierarchyUndo(before);
 }
 
 document.getElementById('add-group-btn').onclick=()=>{
@@ -3177,15 +3242,12 @@ document.getElementById('add-group-btn').onclick=()=>{
     else if(selectedGroupIds.size===0&&activeGroupId) singleGroupId=activeGroupId;
   }
   if(singleGroupId){
-    const grp=groups.find(g=>g.id===singleGroupId);
-    const modal=document.getElementById('modal-group-action');
-    document.getElementById('modal-group-action-msg').textContent='What do you want to do with "'+(grp?grp.name:'this group')+'"?';
-    document.querySelector('input[name="group-action"][value="wrap"]').checked=true;
-    modal.dataset.targetGroupId=singleGroupId;
-    modal.classList.add('visible');
+    _wrapSingleGroup(singleGroupId);
     return;
   }
-  _createGroupFromSelection(_computeNewGroupParentId());
+  const parentId=_computeNewGroupParentId();
+  if(parentId===undefined)return; // mixed-parent selections cannot be wrapped as one sibling group
+  _createGroupFromSelection(parentId);
 };
 
 document.getElementById('modal-group-action-cancel').onclick=()=>document.getElementById('modal-group-action').classList.remove('visible');
