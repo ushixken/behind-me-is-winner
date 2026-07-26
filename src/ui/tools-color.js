@@ -164,6 +164,7 @@ function _restoreLayerHierarchy(snapshot){
   return true;
 }
 function undo(){
+  if(window.RepeatableTransformController&&RepeatableTransformController.active)RepeatableTransformController.cancelForToolExit();
   if(!undoStack.length)return;
   const action=undoStack.pop();
   if(action.type==='layer-hierarchy'){if(_restoreLayerHierarchy(action.before))redoStack.push(action);return;}
@@ -190,6 +191,7 @@ function undo(){
   _restoreUndoAction(action);
 }
 function redo(){
+  if(window.RepeatableTransformController&&RepeatableTransformController.active)RepeatableTransformController.cancelForToolExit();
   if(!redoStack.length)return;
   const action=redoStack.pop();
   if(action.type==='layer-hierarchy'){if(_restoreLayerHierarchy(action.after))undoStack.push(action);return;}
@@ -233,10 +235,16 @@ function _syncBrushPresetsDocker(t){
 }
 function setTool(t,lbl){
   const previousTool=tool;
+  if(window.DEBUG_TOOL_LIFECYCLE&&previousTool!==t){
+    const stack=(new Error('Tool lifecycle')).stack||'';
+    console.groupCollapsed('[ToolLifecycle] setTool '+previousTool+' -> '+t);
+    console.log({functionName:'setTool',caller:(stack.split('\\n')[2]||'').trim(),previousTool,newTool:t,label:lbl,stack});
+    console.groupEnd();
+  }
   // Leaving the Transform tool for anything else commits the current
   // move/scale/rotate into the layer (baking it into the active canvas)
   // before the new tool takes over.
-  if(tool==='transform'&&t!=='transform'&&typeof commitTransformTool==='function') commitTransformTool();
+  if(tool==='transform'&&t!=='transform'&&typeof commitTransformTool==='function'){if(window.RepeatableTransformController&&RepeatableTransformController.active)RepeatableTransformController.cancelForToolExit();else commitTransformTool();}
   if(tool==='lasso'&&t!=='lasso'&&window.LassoSelection) LassoSelection.cancel();
   if(tool==='lasso-fill'&&t!=='lasso-fill'&&window.LassoFill) LassoFill.cancel();
   tool=t;
@@ -249,7 +257,10 @@ function setTool(t,lbl){
   const s=toolSizes[t]||6;szSlider.value=s;
   if(typeof refreshSizeUI==='function') refreshSizeUI(); else szValEl.textContent=s;
   if(typeof refreshColorSwatches==='function') refreshColorSwatches();
-  if(t==='transform'&&typeof enterTransformTool==='function') enterTransformTool();
+  if(t==='transform'&&typeof enterTransformTool==='function'){
+    enterTransformTool();
+    if(window.RepeatableTransformController&&RepeatableTransformController.enabled&&!RepeatableTransformController.active)RepeatableTransformController.start();
+  }
   window.dispatchEvent(new CustomEvent('tool-changed',{detail:{tool:t,label:lbl}}));
 }
 document.getElementById('btn-undo').onclick=undo;

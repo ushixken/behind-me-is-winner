@@ -112,6 +112,7 @@ let tfAntialiasing='medium';
 try{const savedMode=localStorage.getItem(TF_ANTIALIAS_KEY);if(['none','weak','medium','strong'].includes(savedMode))tfAntialiasing=savedMode;}catch(_){}
 let tfBox=null;          // {x,y,w,h} axis-aligned bbox of the artwork, in original canvas coords
 let tfState=null;        // {tx,ty,scale,rotation} — cumulative transform applied to tfBox's center
+let tfLastCommittedOperation=null; // operation-relative delta retained for TVPaint-style repeated Enter
 let tfDrag=null;         // current drag mode: 'move' | 'scale' | 'rotate' | 'pivot' | null
 let tfDragInfo=null;     // scratch data for the active drag
 // Pivot point — the origin rotation/scaling is performed around. Stored in
@@ -673,20 +674,25 @@ function enterTransformTool(){
   transformC.classList.add('tf-active');
   _tfSyncToggleUI();
   _tfSyncGuideCanvasActive();
+  _tfRenderOptionsPanel();
   _tfRedraw();
 }
 
-function commitTransformTool(){
+function commitTransformTool(options){
   if(!tfActive) return;
+  if(window.DEBUG_TOOL_LIFECYCLE)console.log('[ToolLifecycle] commitTransformTool',{activeTool:tool,repeatable:!!(window.RepeatableTransformController&&RepeatableTransformController.active),stack:(new Error('Transform commit')).stack});
+  const preserveSessionShell=!!(options&&options.preserveSessionShell);
   _tfCancelFreePreview(false);
   if(!tfGroupMode&&!tfPerspective)_tfRedraw(false);
   _tfCancelPerspectivePreview();
   tfActive=false;
-  transformC.classList.remove('tf-active');
-  tfCtx.clearRect(0,0,CW,CH);
-  _tfClearUi();
-  perspGuideCtx.clearRect(0,0,perspGuideC.width,perspGuideC.height);
-  _tfSyncGuideCanvasActive();
+  if(!preserveSessionShell){
+    transformC.classList.remove('tf-active');
+    tfCtx.clearRect(0,0,CW,CH);
+    _tfClearUi();
+    perspGuideCtx.clearRect(0,0,perspGuideC.width,perspGuideC.height);
+    _tfSyncGuideCanvasActive();
+  }
 
   if(tfGroupMode){
     const c=_tfCenter();
@@ -794,6 +800,7 @@ function _tfCancelPerspectivePreview(){
 
 function _tfRedraw(fastPerspectivePreview){
   if(!tfActive) return;
+  _tfSyncStateFields();
   if(tfGroupMode){
     _tfDrawGroupPreview(fastPerspectivePreview);
     if(tfPerspective) _tfDrawHandlesPerspective(false); else _tfDrawHandles(false);
@@ -1094,6 +1101,7 @@ transformC.addEventListener('pointermove',e=>{
     // current world position under the *live* (unchanging during this
     // drag) state, so it tracks the cursor exactly.
     tfPivot=_tfWorldToLocal(p,tfState);
+    _tfSyncStateFields();
     _tfScheduleFreePreview();
     return;
   }
@@ -1117,6 +1125,7 @@ transformC.addEventListener('pointermove',e=>{
     // Rotate around the pivot, not the box center — same idea as scale above.
     _tfSetStateForPivot(tfDragInfo.startPivotWorld,newRot,tfDragInfo.startState.scale);
   }
+  _tfSyncStateFields();
   _tfScheduleFreePreview();
 });
 function _tfEndDrag(e){
@@ -1146,10 +1155,33 @@ transformC.addEventListener('pointermove',e=>{
 
 document.addEventListener('keydown',e=>{
   if(!tfActive) return;
+  const repeatController=window.RepeatableTransformController;
+  if(repeatController&&repeatController.enabled){
+    if(!repeatController.active)repeatController.start();
+    if(repeatController.active&&e.key==='Enter'){e.preventDefault();e.stopImmediatePropagation();repeatController.apply();return;}
+    if(repeatController.active&&e.key==='Escape'){e.preventDefault();e.stopImmediatePropagation();repeatController.cancel();return;}
+  }
   if(e.target.tagName==='INPUT') return;
-  if(e.key==='Enter'){ e.preventDefault(); setTool('brush','Brush'); }
-  else if(e.key==='Escape'){ e.preventDefault(); cancelTransformTool(); setTool('brush','Brush'); }
-});
+  if(e.key==='Enter'){
+    e.preventDefault();e.stopImmediatePropagation();
+    const boxCenter={x:tfBox.x+tfBox.w/2,y:tfBox.y+tfBox.h/2};
+    const pivotOffset={x:tfPivot.x-boxCenter.x,y:tfPivot.y-boxCenter.y};
+    const hasLiveOperation=Math.abs(tfState.tx)>1e-9||Math.abs(tfState.ty)>1e-9||Math.abs(tfState.scale-1)>1e-9||Math.abs(tfState.rotation)>1e-9||Math.abs(pivotOffset.x)>1e-9||Math.abs(pivotOffset.y)>1e-9;
+    if(hasLiveOperation){
+      tfLastCommittedOperation={state:Object.assign({},tfState),pivotOffset};
+    }else if(tfLastCommittedOperation){
+      tfState=Object.assign({},tfLastCommittedOperation.state);
+      tfPivot={x:boxCenter.x+tfLastCommittedOperation.pivotOffset.x,y:boxCenter.y+tfLastCommittedOperation.pivotOffset.y};
+      _tfRedraw(false);
+    }
+    commitTransformTool();
+    if(tool==='transform')enterTransformTool();
+  }else if(e.key==='Escape'){
+    e.preventDefault();e.stopImmediatePropagation();
+    cancelTransformTool();
+    if(tool==='transform')enterTransformTool();
+  }
+},{capture:true});
 
 // ── Transform Options panel ─────────────────────────────────────
 // Per-mode checkbox options rendered into the "Transform Options" section
@@ -1174,12 +1206,60 @@ const _tfOptionsBody=document.getElementById('tf-options-body');
 // (e.g. via a shared tfMode variable) once it's wired up.
 function _tfCurrentModeKey(){ return tfPerspective?'perspective':'free'; }
 
+function _tfStateFieldValue(key){
+  if(!tfState)return 0;
+  if(key==='scale')return tfState.scale*100;
+  if(key==='pivotX'||key==='pivotY'){
+    const pivot=tfPivot?_tfPivotWorld(tfState):{x:0,y:0},center=tfBox?{x:tfBox.x+tfBox.w/2,y:tfBox.y+tfBox.h/2}:{x:0,y:0};
+    return key==='pivotX'?pivot.x-center.x:pivot.y-center.y;
+  }
+  return key==='translateX'?tfState.tx:key==='translateY'?tfState.ty:tfState.rotation;
+}
+function _tfFormatStateField(key,value){
+  const rounded=Math.round(value*100)/100;
+  return key==='scale'?rounded+'%':String(rounded);
+}
+function _tfSyncStateFields(){
+  if(!_tfOptionsBody||!tfState)return;
+  _tfOptionsBody.querySelectorAll('[data-tf-state-field]').forEach(input=>{
+    if(document.activeElement===input)return;
+    input.value=_tfFormatStateField(input.dataset.tfStateField,_tfStateFieldValue(input.dataset.tfStateField));
+  });
+}
+function _tfApplyStateField(key,raw){
+  if(!tfActive||!tfState)return;
+  const parsed=Number.parseFloat(String(raw).replace('%',''));
+  if(!Number.isFinite(parsed))return;
+  if(key==='translateX')tfState.tx=parsed;
+  else if(key==='translateY')tfState.ty=parsed;
+  else if(key==='rotation')_tfSetStateForPivot(_tfPivotWorld(tfState),parsed,tfState.scale);
+  else if(key==='scale'&&parsed>0)_tfSetStateForPivot(_tfPivotWorld(tfState),tfState.rotation,parsed/100);
+  else if((key==='pivotX'||key==='pivotY')&&tfPivot&&tfBox){
+    const pivotWorld=_tfPivotWorld(tfState),center={x:tfBox.x+tfBox.w/2,y:tfBox.y+tfBox.h/2};
+    pivotWorld[key==='pivotX'?'x':'y']=(key==='pivotX'?center.x:center.y)+parsed;
+    tfPivot=_tfWorldToLocal(pivotWorld,tfState);
+  }
+  _tfRedraw(false);
+}
+function _tfAppendStateFields(root){
+  if(tfPerspective||!tfState)return;
+  [['Panning X','translateX'],['Panning Y','translateY'],['Scale','scale'],['Angle','rotation'],['Pivot X','pivotX'],['Pivot Y','pivotY']].forEach(([label,key])=>{
+    const row=document.createElement('label');row.className='tf-option-row tf-state-row';
+    const text=document.createElement('span');text.textContent=label;
+    const input=document.createElement('input');input.type='text';input.className='tf-state-input';input.dataset.tfStateField=key;input.value=_tfFormatStateField(key,_tfStateFieldValue(key));
+    input.addEventListener('input',()=>_tfApplyStateField(key,input.value));
+    input.addEventListener('blur',()=>{input.value=_tfFormatStateField(key,_tfStateFieldValue(key));});
+    row.append(text,input);root.appendChild(row);
+  });
+}
+
 // Rebuilds the checkbox list for whichever mode is active. Free Transform
 // has no options registered, so the section shows an explicit quiet state.
 function _tfRenderOptionsPanel(){
   if(!_tfOptionsBody) return;
   const opts=TF_MODE_OPTIONS[_tfCurrentModeKey()]||[];
   _tfOptionsBody.innerHTML='';
+  _tfAppendStateFields(_tfOptionsBody);
   const aaRow=document.createElement('label');aaRow.className='tf-option-row tf-antialias-row';
   const aaLabel=document.createElement('span');aaLabel.textContent='Anti-aliasing';
   const aaSelect=document.createElement('select');aaSelect.className='ts-select tf-antialias-select';
@@ -1235,6 +1315,7 @@ function _tfSetPerspective(on){
   tfPerspective=on;
   _tfSyncToggleUI();
   _tfSyncGuideCanvasActive();
+  _tfRenderOptionsPanel();
   _tfRedraw();
 }
 // ── Continuous guide re-sync during zoom/pan/rotate ─────────────────
