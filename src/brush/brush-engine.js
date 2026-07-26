@@ -309,7 +309,7 @@ window.setLineAAQuality=setLineAAQuality;
 let _lineDragging = false;
 let _linePressureSamples = [];
 let _lineGesture=null;
-let _curveToolGesture=null,_curveGuideCanvas=null,_curveGuideCtx=null,_curveCommitPointerId=null;
+let _curveToolGesture=null,_curveGuideOverlay=null,_curveCommitPointerId=null;
 let _linePreviewBounds=null,_linePreviewPreviousEndpoint=null;
 let _linePreviewFrameId=0,_linePreviewMoveSequence=0,_linePreviewGeneration=0;
 let _lineDiagnosticCurrentT=0,_lineEffectivePressureSamples=[];
@@ -2828,16 +2828,19 @@ function _strokeQuadraticProfile(p0,p1,p2,e,pressureAt){
   _walkDabArc(length,d=>{const point=_quadPointAtLength(table,d);point.t=length>0?d/length:1;return point;},e,0,0,pressureAt);
 }
 function _ensureCurveGuide(){
-  if(_curveGuideCanvas&&_curveGuideCanvas.isConnected){if(_curveGuideCanvas.width!==CW||_curveGuideCanvas.height!==CH){_curveGuideCanvas.width=CW;_curveGuideCanvas.height=CH;}return;}
-  const host=document.getElementById('canvas-wrap')||activeC.parentElement;if(!host)return;
-  _curveGuideCanvas=document.createElement('canvas');_curveGuideCanvas.id='curve-tool-guide';_curveGuideCanvas.width=CW;_curveGuideCanvas.height=CH;
-  _curveGuideCanvas.style.cssText='position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:5;';host.appendChild(_curveGuideCanvas);_curveGuideCtx=_curveGuideCanvas.getContext('2d');
+  if(_curveGuideOverlay||!window.EditorOverlayRenderer)return;
+  _curveGuideOverlay=EditorOverlayRenderer.create('curve-tool-guide',{zIndex:5,draw:function(g,geometry){
+    if(!_curveToolGesture||_curveToolGesture.phase!=='bending')return;
+    const p0=geometry.worldToScreen(_curveToolGesture.start),p1=geometry.worldToScreen(_curveToolGesture.control),p2=geometry.worldToScreen(_curveToolGesture.end);
+    g.strokeStyle='rgba(127,119,221,.9)';g.fillStyle='#7f77dd';g.lineWidth=1;g.setLineDash([4,3]);g.beginPath();g.moveTo(p0.x,p0.y);g.lineTo(p1.x,p1.y);g.lineTo(p2.x,p2.y);g.stroke();g.setLineDash([]);
+    for(const p of[p0,p1,p2]){g.beginPath();g.arc(p.x,p.y,4,0,Math.PI*2);g.fill();g.strokeStyle='rgba(255,255,255,.9)';g.stroke();}
+  }});
 }
-function _clearCurveGuide(){if(_curveGuideCtx&&_curveGuideCanvas)_curveGuideCtx.clearRect(0,0,_curveGuideCanvas.width,_curveGuideCanvas.height);}
+function _clearCurveGuide(){if(_curveGuideOverlay)_curveGuideOverlay.setVisible(false);}
 function _drawCurveGuide(){
-  _clearCurveGuide();if(!_curveToolGesture||_curveToolGesture.phase!=='bending')return;_ensureCurveGuide();if(!_curveGuideCtx)return;
-  const g=_curveGuideCtx,p0=_curveToolGesture.start,p1=_curveToolGesture.control,p2=_curveToolGesture.end,r=Math.max(3,4/Math.max(.01,zoom)),w=Math.max(1,1/Math.max(.01,zoom));
-  g.save();g.setTransform(1,0,0,1,0,0);g.strokeStyle='rgba(127,119,221,.9)';g.fillStyle='#7f77dd';g.lineWidth=w;g.setLineDash([4*w,3*w]);g.beginPath();g.moveTo(p0.x,p0.y);g.lineTo(p1.x,p1.y);g.lineTo(p2.x,p2.y);g.stroke();g.setLineDash([]);for(const p of[p0,p1,p2]){g.beginPath();g.arc(p.x,p.y,r,0,Math.PI*2);g.fill();g.strokeStyle='rgba(255,255,255,.9)';g.stroke();}g.restore();
+  _ensureCurveGuide();if(!_curveGuideOverlay)return;
+  const visible=!!(_curveToolGesture&&_curveToolGesture.phase==='bending');
+  _curveGuideOverlay.setVisible(visible);if(visible)_curveGuideOverlay.invalidate();
 }
 function _includeLinePreviewFrameBounds(bounds){
   if(!bounds)return;

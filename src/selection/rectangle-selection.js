@@ -2,23 +2,20 @@
   'use strict';
 
   var active=false,pointerId=null,start=null,current=null,startClient=null,mode='replace';
-  var preview=null,previewContext=null,previewRaf=0,previousBounds=null;
+  var preview=null;
 
   function ensurePreview(){
-    if(!preview){preview=document.createElement('canvas');preview.id='rectangle-selection-preview';preview.style.cssText='position:absolute;left:0;top:0;display:none;pointer-events:none;z-index:7;';document.getElementById('canvas-wrap').appendChild(preview);}
-    if(preview.width!==CW||preview.height!==CH){preview.width=CW;preview.height=CH;previewContext=preview.getContext('2d');}
-  }
-  function rect(){if(!start||!current)return null;var x=Math.min(start.x,current.x),y=Math.min(start.y,current.y);return{x:x,y:y,w:Math.abs(current.x-start.x),h:Math.abs(current.y-start.y)};}
-  function clearPreview(){if(previewContext&&previousBounds)previewContext.clearRect(previousBounds.x,previousBounds.y,previousBounds.w,previousBounds.h);previousBounds=null;}
-  function drawPreview(){
-    previewRaf=0;if(!active)return;ensurePreview();clearPreview();var r=rect();if(!r||!r.w||!r.h)return;
-    var pad=4/Math.max(.0001,zoom);previousBounds={x:Math.floor(r.x-pad),y:Math.floor(r.y-pad),w:Math.ceil(r.w+pad*2),h:Math.ceil(r.h+pad*2)};
-    previewContext.save();previewContext.strokeStyle='#7f77dd';previewContext.lineWidth=Math.max(1,1/Math.max(.0001,zoom));previewContext.setLineDash([5/Math.max(.0001,zoom),3/Math.max(.0001,zoom)]);previewContext.strokeRect(r.x,r.y,r.w,r.h);previewContext.restore();
-  }
-  function schedulePreview(){if(!previewRaf)previewRaf=requestAnimationFrame(drawPreview);}
-  function cancel(){
+    if(preview||!window.EditorOverlayRenderer)return;
+    preview=EditorOverlayRenderer.create('rectangle-selection-preview',{zIndex:7,draw:function(context,geometry){
+      var r=rect();if(!active||!r||!r.w||!r.h)return;
+      var p0=geometry.worldToScreen({x:r.x,y:r.y}),p1=geometry.worldToScreen({x:r.x+r.w,y:r.y}),p2=geometry.worldToScreen({x:r.x+r.w,y:r.y+r.h}),p3=geometry.worldToScreen({x:r.x,y:r.y+r.h});
+      context.strokeStyle='#7f77dd';context.lineWidth=1.5;context.setLineDash([5,3]);context.beginPath();context.moveTo(p0.x,p0.y);context.lineTo(p1.x,p1.y);context.lineTo(p2.x,p2.y);context.lineTo(p3.x,p3.y);context.closePath();context.stroke();
+    }});
+  }  function rect(){if(!start||!current)return null;var x=Math.min(start.x,current.x),y=Math.min(start.y,current.y);return{x:x,y:y,w:Math.abs(current.x-start.x),h:Math.abs(current.y-start.y)};}
+  function clearPreview(){if(preview)preview.setVisible(false);}
+  function schedulePreview(){ensurePreview();if(preview){preview.setVisible(active);preview.invalidate();}}  function cancel(){
     if(!active)return false;var capturedId=pointerId;active=false;pointerId=null;start=null;current=null;startClient=null;
-    if(previewRaf){cancelAnimationFrame(previewRaf);previewRaf=0;}clearPreview();if(preview)preview.style.display='none';if(activeC.hasPointerCapture&&activeC.hasPointerCapture(capturedId))activeC.releasePointerCapture(capturedId);return true;
+    clearPreview();if(activeC.hasPointerCapture&&activeC.hasPointerCapture(capturedId))activeC.releasePointerCapture(capturedId);return true;
   }
   function meaningful(event){return startClient&&Math.abs(event.clientX-startClient.x)>=3&&Math.abs(event.clientY-startClient.y)>=3;}
   function commit(event){
@@ -29,7 +26,7 @@
   function pointerDown(event){
     if(tool!=='rectangle-select'||activeGroupId||panning||spaceHeld)return;
     if(event.pointerType==='mouse'?event.button!==0:(!(event.buttons&1)&&event.pointerType!=='touch'))return;
-    event.preventDefault();event.stopImmediatePropagation();ensurePreview();preview.style.display='block';active=true;pointerId=event.pointerId;start=current=getPos(event);startClient={x:event.clientX,y:event.clientY};mode=window.SelectionToolSettings?SelectionToolSettings.modeFromEvent('rectangle-select',event):(window.PixelSelection?PixelSelection.modeFromEvent(event):'replace');previousBounds=null;activeC.setPointerCapture(event.pointerId);schedulePreview();
+    event.preventDefault();event.stopImmediatePropagation();ensurePreview();active=true;pointerId=event.pointerId;start=current=getPos(event);startClient={x:event.clientX,y:event.clientY};mode=window.SelectionToolSettings?SelectionToolSettings.modeFromEvent('rectangle-select',event):(window.PixelSelection?PixelSelection.modeFromEvent(event):'replace');activeC.setPointerCapture(event.pointerId);schedulePreview();
   }
   function pointerMove(event){if(!active||event.pointerId!==pointerId)return;event.preventDefault();event.stopImmediatePropagation();current=getPos(event);schedulePreview();}
   function pointerEnd(event){
