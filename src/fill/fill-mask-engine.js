@@ -65,7 +65,7 @@
     data[offset+2]=Math.round((b*sa+data[offset+2]*da*(1-sa))/oa);data[offset+3]=Math.round(oa*255);
   }
   function applyCoverageMask(maskCanvas,bounds,options){
-    options=options||{};var rect=clampBounds(bounds,0);if(!maskCanvas||!rect.w||!rect.h)return false;
+    options=options||{};if(typeof isLayerLocked==='function'&&isLayerLocked(curLayer))return false;var rect=clampBounds(bounds,0);if(!maskCanvas||!rect.w||!rect.h)return false;
     var mask=maskCanvas.getContext('2d',{willReadFrequently:true}).getImageData(rect.x,rect.y,rect.w,rect.h).data,hasCoverage=false;
     for(var alpha=3;alpha<mask.length;alpha+=4)if(mask[alpha]){hasCoverage=true;break;}if(!hasCoverage)return false;
     if(options.manageDocument!==false){pushUndo();ensureKey();}

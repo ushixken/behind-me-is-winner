@@ -5,6 +5,7 @@ const ONION_SKIN_PREF_KEY='animator_onion_skin_enabled';
 function updateOnion(){
   octx.clearRect(0,0,CW,CH);
   if(!document.getElementById('onion-chk').checked) return;
+  if(layers[curLayer]&&layers[curLayer].onionSkin===false) return;
   const p=typeof getPreviousVisibleDrawingKey==='function'?getPreviousVisibleDrawingKey(curLayer,curFrame-1):null;
   if(p){octx.globalAlpha=0.28;octx.drawImage(p.canvas,0,0);octx.globalAlpha=1;}
   const n=typeof getNextVisibleDrawingKey==='function'?getNextVisibleDrawingKey(curLayer,curFrame+1):null;

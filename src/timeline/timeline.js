@@ -615,7 +615,7 @@ function tlZoomToSpan(newSpan, anchorFrame, anchorScreenX){
   function syncGutter(){
     const col = document.getElementById('tl-labels-col');
     const rsz = document.getElementById('tl-labels-resize');
-    const w   = (col ? col.offsetWidth : 150) + (rsz ? rsz.offsetWidth : 1);
+    const w   = (col ? col.offsetWidth : 220) + (rsz ? rsz.offsetWidth : 1);
     gutter.style.width = w + 'px';
   }
 
@@ -1090,6 +1090,32 @@ let tlLabelLastClicked=null; // for shift-range
 // Rubber-band for timeline label column
 let tlLbSelecting=false,tlLbStartX=0,tlLbStartY=0,tlLbBoxEl=null;
 
+let _timelineSoloState=null;
+function _toggleTimelineLayerSolo(layer){
+  if(_timelineSoloState&&!layers.includes(_timelineSoloState.layer))_timelineSoloState=null;
+  if(_timelineSoloState&&_timelineSoloState.layer===layer){
+    layers.forEach(item=>{if(_timelineSoloState.visibility.has(item))item.visible=_timelineSoloState.visibility.get(item);});
+    _timelineSoloState=null;return;
+  }
+  if(!_timelineSoloState)_timelineSoloState={layer:layer,visibility:new Map(layers.map(item=>[item,item.visible]))};
+  else _timelineSoloState.layer=layer;
+  layers.forEach(item=>{item.visible=item===layer;});
+}
+function _applyTimelineLayerQuickAction(layer,action){
+  const index=layers.indexOf(layer);if(index<0)return;
+  if(action==='lock'){
+    if(typeof setLayerLocked==='function')setLayerLocked(index,!layer.locked);else layer.locked=!layer.locked;
+    renderLabelCol();renderLayerPanel();
+  }else if(action==='onion'){
+    layer.onionSkin=layer.onionSkin===false;
+    if(layer.onionSkin&&document.getElementById('onion-chk')&&!document.getElementById('onion-chk').checked&&typeof setOnionSkinEnabled==='function')setOnionSkinEnabled(true);
+    else updateOnion();
+    renderLabelCol();
+  }else if(action==='solo'){
+    _toggleTimelineLayerSolo(layer);recomposite(curLayer,curFrame);updateOnion();renderLayerPanel();renderTimeline();
+  }
+}
+window.addEventListener('project-loaded',()=>{_timelineSoloState=null;});
 function renderLabelCol(){
   const el=document.getElementById('tl-labels-rows');el.innerHTML='';
   const visibleIndices=timelineLayerIndices();
@@ -1100,7 +1126,7 @@ function renderLabelCol(){
     lbl.style.height=CellH+'px';
     lbl.dataset.idx=i;
     lbl.title='Click to select. Shift+click range, Ctrl+click individual. Drag name to Hide zone to remove from timeline. Drag empty space to rubber-band select.';
-    lbl.innerHTML='<span class="tl-lbl-draghandle" draggable="true"><div class="tl-lbl-dot" style="background:'+l.color+'"></div><span class="tl-lbl-name">'+l.name+'</span></span><span class="tl-lbl-rbzone"></span>';
+lbl.innerHTML='<span class="tl-lbl-draghandle" draggable="true"><div class="tl-lbl-dot" style="background:'+l.color+'"></div><span class="tl-lbl-name">'+l.name+'</span></span><span class="tl-layer-inline-actions"><button type="button" class="tl-layer-quick-btn'+(_timelineSoloState&&_timelineSoloState.layer===l?' active':'')+'" data-action="solo" title="Solo Mode" aria-label="Solo Mode" aria-pressed="'+String(!!(_timelineSoloState&&_timelineSoloState.layer===l))+'"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8s2.3-4 6.5-4 6.5 4 6.5 4-2.3 4-6.5 4-6.5-4-6.5-4Z"></path><circle cx="8" cy="8" r="2"></circle></svg></button><button type="button" class="tl-layer-quick-btn'+(l.locked?' active':'')+'" data-action="lock" title="Lock Layer" aria-label="Lock Layer" aria-pressed="'+String(!!l.locked)+'"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="7" width="9" height="6.5" rx="1.5"></rect><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"></path></svg></button><button type="button" class="tl-layer-quick-btn'+(l.onionSkin!==false?' active':'')+'" data-action="onion" title="Onion Skin" aria-label="Onion Skin" aria-pressed="'+String(l.onionSkin!==false)+'"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.2 10.3A4.2 4.2 0 1 1 10.8 10.3c-.7.5-1 1-1.1 1.7H6.3c-.1-.7-.4-1.2-1.1-1.7Z"></path><path d="M6.4 14h3.2M8 0v1.2M1.7 2.6l.9.8M14.3 2.6l-.9.8"></path></svg></button></span><span class="tl-lbl-rbzone" title="Drag to select multiple layers" aria-label="Rubber-band layer selection area"></span>';
     const handle=lbl.querySelector('.tl-lbl-draghandle');
 
     lbl.addEventListener('click',ev=>{
@@ -1142,6 +1168,11 @@ function renderLabelCol(){
       if(ev.button!==0) return;
       ev.stopPropagation();
       startTlLabelRubberBand(ev);
+    });
+
+    lbl.querySelectorAll('.tl-layer-quick-btn').forEach(actionButton=>{
+      actionButton.addEventListener('pointerdown',event=>{if(event.pointerType==='mouse'&&event.button!==0)return;event.preventDefault();event.stopPropagation();});
+      actionButton.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();_applyTimelineLayerQuickAction(l,actionButton.dataset.action);});
     });
 
     el.appendChild(lbl);

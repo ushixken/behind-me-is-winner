@@ -3646,6 +3646,7 @@ activeC.addEventListener('pointerdown',e=>{
   }
   if(tool!=='brush'&&tool!=='eraser'&&tool!=='fill'&&tool!=='line'&&tool!=='curve') return;
   if(typeof isDrawingFrameHidden==='function'&&isDrawingFrameHidden(curLayer,curFrame)) return;
+  if(typeof isLayerLocked==='function'&&isLayerLocked(curLayer)) return;
   // Prevent browser from hijacking tablet/stylus events (scroll, pan, zoom)
   e.preventDefault();
   if(tool==='curve'&&_curveToolGesture&&_curveToolGesture.phase==='bending'){_curveCommitPointerId=e.pointerId;_commitCurveTool(e);return;}

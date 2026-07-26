@@ -376,7 +376,7 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
    exactly where the scrollable frame cells start. Width set by JS.        */
 #tl-hscroll-gutter{
   flex-shrink:0;
-  width:151px; /* default; overridden by JS to match actual label col width */
+  width:221px; /* default; overridden by JS to match actual label col width */
   height:100%;
   background:var(--bg3);
   border-right:1px solid var(--border);
@@ -408,7 +408,7 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 #tl-hscroll-row.tl-hscroll-full #tl-hscroll-thumb{
   cursor:default;
 }
-#tl-labels-col{width:150px;flex-shrink:0;border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;}
+#tl-labels-col{width:220px;flex-shrink:0;border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;}
 #tl-labels-ruler-spacer{height:var(--ruler-h);background:var(--bg3);border-bottom:1px solid var(--border);flex-shrink:0;display:flex;align-items:center;justify-content:center;padding:0 4px;position:relative;z-index:30;}
 #tl-hide-zone{
   width:100%;height:16px;border-radius:4px;border:1px dashed var(--border2);
@@ -425,6 +425,11 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 .tl-lbl-draghandle{display:flex;align-items:center;gap:5px;overflow:hidden;white-space:nowrap;flex:1;min-width:0;cursor:grab;touch-action:none;}
 .tl-lbl-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .tl-lbl-rbzone{flex:0 0 18px;width:18px;height:100%;min-width:18px;cursor:default;border-left:1px solid var(--border);margin-left:4px;}
+.tl-layer-inline-actions{display:flex;align-items:center;gap:3px;flex:0 0 72px;}
+.tl-layer-quick-btn{width:22px;height:20px;padding:0;flex:0 0 22px;box-sizing:border-box;border:1px solid var(--border2);border-radius:4px;background:var(--bg2);color:var(--text2);display:flex;align-items:center;justify-content:center;cursor:pointer;touch-action:manipulation;}
+.tl-layer-quick-btn svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:1.35;stroke-linecap:round;stroke-linejoin:round;pointer-events:none;}
+.tl-layer-quick-btn:hover{background:var(--bg4);color:var(--text);}
+.tl-layer-quick-btn.active{background:var(--accent-bg);border-color:var(--accent);color:var(--accent);}
 .tl-lbl-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;border:1px solid var(--border2);}
 
 #tl-labels-resize{

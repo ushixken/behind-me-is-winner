@@ -184,6 +184,8 @@ function makeBlankLayer(layerType,extra){
   return Object.assign({
     name:defaultLayerNameForType(type),
     visible:true,
+    locked:false,
+    onionSkin:true,
     onTimeline:true,
     color:'transparent',
     frames:{},
@@ -199,7 +201,15 @@ function makeBlankLayer(layerType,extra){
     groupId:null
   },extra||{});
 }
-let layers=[{name:'Layer 1',visible:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},indexFrames:{},indexMeta:{},type:'bitmap',opacity:1,stencil:'none',clipTo:null,groupId:null}];
+let layers=[{name:'Layer 1',visible:true,locked:false,onionSkin:true,onTimeline:true,color:'transparent',frames:{},frameMeta:{},indexFrames:{},indexMeta:{},type:'bitmap',opacity:1,stencil:'none',clipTo:null,groupId:null}];
+function isLayerLocked(layerIndex=curLayer){return !!(layers[layerIndex]&&layers[layerIndex].locked);}
+function setLayerLocked(layerIndex,locked){
+  const layer=layers[layerIndex];if(!layer)return false;
+  layer.locked=!!locked;
+  window.dispatchEvent(new CustomEvent('layer-lock-changed',{detail:{layerIndex,locked:layer.locked}}));
+  return layer.locked;
+}
+window.isLayerLocked=isLayerLocked;window.setLayerLocked=setLayerLocked;
 
 // Zoom / Pan / Rotate — stored in canvas-area coordinate space
 let zoom=1,panX=0,panY=0;
