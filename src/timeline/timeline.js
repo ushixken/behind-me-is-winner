@@ -123,7 +123,11 @@ document.getElementById('modal-fps').addEventListener('click',e=>{if(e.target===
 // ════════════════════════════════════════════════════════════════
 // TIMELINE SYNC
 // ════════════════════════════════════════════════════════════════
-tlScroll.addEventListener('scroll',()=>{document.getElementById('tl-labels-rows').style.marginTop=(-tlScroll.scrollTop)+'px';},{passive:true});
+const tlLabelsRows=document.getElementById('tl-labels-rows');
+let syncingTimelineVerticalScroll=false;
+tlScroll.addEventListener('scroll',()=>{if(syncingTimelineVerticalScroll)return;syncingTimelineVerticalScroll=true;tlLabelsRows.scrollTop=tlScroll.scrollTop;syncingTimelineVerticalScroll=false;},{passive:true});
+tlLabelsRows.addEventListener('scroll',()=>{if(syncingTimelineVerticalScroll)return;syncingTimelineVerticalScroll=true;tlScroll.scrollTop=tlLabelsRows.scrollTop;syncingTimelineVerticalScroll=false;},{passive:true});
+tlScroll.addEventListener('wheel',event=>{if(event.ctrlKey||!event.deltaY)return;if(event.shiftKey)tlScroll.scrollLeft+=event.deltaY;else tlLabelsRows.scrollTop+=event.deltaY;event.preventDefault();},{passive:false});
 
 function frameFromX(clientX){
   const r=tlScroll.getBoundingClientRect();
@@ -224,7 +228,7 @@ let kfSelectionAnchor=null;
 let selectedRowLayers=new Set([curLayer]); // which layer indices should show the "selected" cell background band
 
 function timelineSelectionInteractionActive(){
-  return !!(dragKF||tlSelDrag||tlLbSelecting||dragTlLabelIdx!==null||
+  return !!(dragKF||tlSelDrag||tlLbSelecting||dragTlLabelIdx!==null||dragTlGroupId!==null||
     selectedFrames.size>1||selectedRowLayers.size>1||selectedKFs.size>1||selectedTlLabelIndices.size>1);
 }
 
@@ -1085,8 +1089,10 @@ function timelineTreeItems(){
   const all=_buildFlatGeneric({includeCollapsed:true,includeOrphanGroups:true});
   return all.filter(item=>{
     if(item.type==='layer'&&(!layers[item.idx]||layers[item.idx].onTimeline===false))return false;
-    const chain=item.type==='group'?_groupChain(item.id).slice(0,-1):_groupChain(layers[item.idx].groupId);
-    return !chain.some(id=>timelineCollapsedGroupIds.has(id));
+    const chain=item.type==='group'?_groupChain(item.id):_groupChain(layers[item.idx].groupId);
+    if(chain.some(id=>{const group=_groupById(id);return group&&group.onTimeline===false;}))return false;
+    const collapseChain=item.type==='group'?chain.slice(0,-1):chain;
+    return !collapseChain.some(id=>timelineCollapsedGroupIds.has(id));
   });
 }
 // Actual animation rows only; group rows never enter playback or frame operations.
@@ -1094,7 +1100,7 @@ function timelineLayerIndices(){
   return timelineTreeItems().filter(item=>item.type==='layer').map(item=>item.idx);
 }
 
-let dragTlLabelIdx=null;
+let dragTlLabelIdx=null,dragTlGroupId=null;
 let tlLabelLastClicked=null; // for shift-range
 // Rubber-band for timeline label column
 let tlLbSelecting=false,tlLbStartX=0,tlLbStartY=0,tlLbBoxEl=null;
@@ -1140,7 +1146,7 @@ function _applyTimelineGroupQuickAction(group,action){
 }
 function _makeTimelineGroupLabel(item){
   const group=_groupById(item.id);if(!group)return null;
-  if(group.visible==null)group.visible=true;if(group.locked==null)group.locked=false;if(group.onionSkin==null)group.onionSkin=false;
+  if(group.visible==null)group.visible=true;if(group.locked==null)group.locked=false;if(group.onionSkin==null)group.onionSkin=false;if(group.onTimeline==null)group.onTimeline=true;
   const row=document.createElement('div');
   row.className='tl-layer-lbl tl-group-lbl'+(activeGroupId===group.id?' active':'');
   if(group.color&&group.color!=='transparent'){const hex=group.color,r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);row.style.background=`rgba(${r},${g},${b},0.22)`;row.style.boxShadow=`inset 3px 0 0 ${group.color}`;}
@@ -1156,6 +1162,7 @@ function _makeTimelineGroupLabel(item){
   const rubberbandZone=document.createElement('span');rubberbandZone.className='tl-lbl-rbzone';rubberbandZone.title='Drag to select multiple layers';rubberbandZone.setAttribute('aria-label','Rubber-band layer selection area');
   rubberbandZone.onpointerdown=event=>{if(event.button!==0)return;event.stopPropagation();startTlLabelRubberBand(event);};
   row.append(toggle,folder,name,actions,rubberbandZone);
+  [folder,name].forEach(handle=>handle.onpointerdown=event=>{if(event.button!==0)return;event.preventDefault();event.stopPropagation();dragTlGroupId=group.id;row.classList.add('tl-lbl-dragging');document.addEventListener('pointermove',onTlGroupDragMove);document.addEventListener('pointerup',onTlGroupDragUp);});
   row.onclick=()=>{selectedTlLabelIndices.clear();selectedLayerIndices.clear();selectedGroupIds.clear();selectedGroupIds.add(group.id);activeGroupId=group.id;renderLayerPanel();renderTimeline();};
   return row;
 }
@@ -1233,6 +1240,19 @@ lbl.innerHTML='<span class="tl-lbl-draghandle" draggable="true"><span class="tl-
   }
 }
 
+function onTlGroupDragMove(ev){
+  if(dragTlGroupId===null)return;
+  const rect=tlHideZone.getBoundingClientRect(),over=ev.clientX>=rect.left&&ev.clientX<=rect.right&&ev.clientY>=rect.top&&ev.clientY<=rect.bottom;
+  tlHideZone.classList.toggle('drag-over',over);
+}
+function onTlGroupDragUp(ev){
+  document.removeEventListener('pointermove',onTlGroupDragMove);document.removeEventListener('pointerup',onTlGroupDragUp);
+  if(dragTlGroupId===null)return;
+  const rect=tlHideZone.getBoundingClientRect(),over=ev.clientX>=rect.left&&ev.clientX<=rect.right&&ev.clientY>=rect.top&&ev.clientY<=rect.bottom;
+  tlHideZone.classList.remove('drag-over');document.querySelectorAll('.tl-lbl-dragging').forEach(element=>element.classList.remove('tl-lbl-dragging'));
+  if(over){const group=_groupById(dragTlGroupId);if(group)group.onTimeline=false;renderLayerPanel();renderTimeline();}
+  dragTlGroupId=null;
+}
 function onTlLabelDragMove(ev){
   if(dragTlLabelIdx===null) return;
   const r=tlHideZone.getBoundingClientRect();
@@ -2676,7 +2696,7 @@ function makeGroupRow(grp,depth){
   const isMultiSel=selectedGroupIds.has(grp.id);
   const isChildActive=!isActive&&!activeGroupId&&layers[curLayer]&&layers[curLayer].groupId===grp.id;
   // No background highlight in layer panel for groups — bold name only
-  row.className='layer-group-row'+(isActive?' active':'')+(isChildActive?' child-active':'')+(isMultiSel?' multi-sel':'');
+  row.className='layer-group-row'+(isActive?' active':'')+(isChildActive?' child-active':'')+(isMultiSel?' multi-sel':'')+(grp.onTimeline===false?' tl-hidden':'');
   row.dataset.gid=grp.id;
   if(depth>0) row.style.marginLeft=(depth*16)+'px';
   if(grp.color&&grp.color!=='transparent'){
@@ -2698,12 +2718,14 @@ function makeGroupRow(grp,depth){
   const opPct=Math.round((grp.opacity??1)*100);
   const opTag=opPct<100?`<span style="font-size:9px;color:var(--text2);flex-shrink:0;">${opPct}%</span>`:'';
   const nameBold=isActive||isMultiSel;
+  const groupHiddenFromTimeline=grp.onTimeline===false;
   const grpDotStyle=grp.color&&grp.color!=='transparent'?'background:'+grp.color:'background:repeating-conic-gradient(#999 0% 25%,#ddd 0% 50%) 0 0/8px 8px;border:1px solid var(--border2);';
   const grpClipArrow=((grp.clipToGroup!=null||grp.clipTo!=null)&&grp.stencil&&grp.stencil!=='none')?`<span class="layer-clip-arrow" title="Clipped ${grp.stencil==='outside'?'outside':'inside'} ${grp.clipToGroup!=null?'group':'layer'} below">${grp.stencil==='outside'?'⬇out':'⬇in'}</span>`:'';
   row.innerHTML=
-    `<span class="layer-drag-zone">${grpClipArrow}<span class="layer-group-toggle" style="${toggleStyle}">${chevron}</span><div class="layer-dot" style="${grpDotStyle};cursor:pointer;" title="Click to change group color"></div><span class="layer-group-icon">📁</span><span class="layer-group-name" style="${nameBold?'font-weight:700;color:var(--text);':''}">${grp.name}</span></span>`+
+    `<span class="layer-drag-zone">${grpClipArrow}<span class="layer-group-toggle" style="${toggleStyle}">${chevron}</span><div class="layer-dot" style="${grpDotStyle};cursor:pointer;" title="Click to change group color"></div><span class="layer-group-icon">📁</span><span class="layer-group-name" style="${nameBold?'font-weight:700;color:var(--text);':''}">${grp.name}</span>${groupHiddenFromTimeline?'<span class="layer-unhide" title="Restore group to timeline">&#10548;</span>':''}</span>`+
     `<span class="layer-rb-zone">${opTag}<span class="${eyeCls}">${eyeVis}</span></span>`;
   row.querySelector('.layer-group-toggle').onclick=e=>{e.stopPropagation();grp.collapsed=!grp.collapsed;renderLayerPanel();renderTimeline();};
+  const groupUnhide=row.querySelector('.layer-unhide');if(groupUnhide)groupUnhide.onclick=event=>{event.stopPropagation();grp.onTimeline=true;renderLayerPanel();renderTimeline();};
   const grpEyeEl=row.querySelector('.layer-group-vis');
   if(grpEyeEl){
     grpEyeEl.addEventListener('pointerdown',e=>{
@@ -2721,7 +2743,7 @@ function makeGroupRow(grp,depth){
   if(grpDotEl) grpDotEl.addEventListener('click',e=>{e.stopPropagation();showGroupColorPicker(grp,e.currentTarget);});
   // Drag-zone: whole zone starts reorder (excluding toggle)
   row.querySelector('.layer-drag-zone').addEventListener('pointerdown',e=>{
-    if(e.target.classList.contains('layer-group-toggle')||e.target.classList.contains('layer-dot')) return;
+    if(e.target.classList.contains('layer-group-toggle')||e.target.classList.contains('layer-dot')||e.target.classList.contains('layer-unhide')) return;
     if(e.target.closest('.layer-group-name')?.contentEditable==='true') return;
     if(e.pointerType==='pen'?(!(e.buttons&1)):(e.button!==0)) return;
     e.preventDefault();
@@ -2738,7 +2760,7 @@ function makeGroupRow(grp,depth){
   });
   // Click to select (blue highlight) — clear ALL layer selections when clicking a group
   row.addEventListener('click',e=>{
-    if(e.target.classList.contains('layer-group-vis')||e.target.classList.contains('layer-group-toggle')||e.target.classList.contains('drag-handle')||e.target.classList.contains('layer-dot')) return;
+    if(e.target.classList.contains('layer-group-vis')||e.target.classList.contains('layer-group-toggle')||e.target.classList.contains('drag-handle')||e.target.classList.contains('layer-dot')||e.target.classList.contains('layer-unhide')) return;
     if(row.querySelector('.layer-group-name').contentEditable==='true') return;
     if(e.ctrlKey||e.metaKey){
       // Toggle this group; don't touch layer selection
@@ -3168,7 +3190,7 @@ function _createGroupFromSelection(parentId){
   const before=_captureLayerHierarchy();
   const id=makeGroupId();
   const name='Group '+(groups.length+1);
-  groups.push({id,name,visible:true,locked:false,onionSkin:false,collapsed:false,opacity:1,color:'transparent',stencil:'none',clipToGroup:null,parentId:parentId||null});
+  groups.push({id,name,visible:true,locked:false,onionSkin:false,onTimeline:true,collapsed:false,opacity:1,color:'transparent',stencil:'none',clipToGroup:null,parentId:parentId||null});
   // Collect layers to group: selected layers (directly) + selected groups become NESTED subfolders
   const toGroupLayers=new Set();
   const selectedLayers=selectedLayerIndices.size>0?selectedLayerIndices:selectedTlLabelIndices;
@@ -3203,7 +3225,7 @@ function _insertGroupInsideGroup(targetGroupId){
   saveActiveToKey();
   const id=makeGroupId();
   const name='Group '+(groups.length+1);
-  groups.push({id,name,visible:true,locked:false,onionSkin:false,collapsed:false,opacity:1,color:'transparent',stencil:'none',clipToGroup:null,parentId:targetGroupId});
+  groups.push({id,name,visible:true,locked:false,onionSkin:false,onTimeline:true,collapsed:false,opacity:1,color:'transparent',stencil:'none',clipToGroup:null,parentId:targetGroupId});
   const newLayer=makeBlankLayer('bitmap',{groupId:id});
   let topIdx=-1;
   layers.forEach((l,i)=>{if(l.groupId===targetGroupId&&i>topIdx) topIdx=i;});
@@ -3223,7 +3245,7 @@ function _wrapSingleGroup(gid){
   const before=_captureLayerHierarchy();
   const id=makeGroupId();
   const name='Group '+(groups.length+1);
-  groups.push({id,name,visible:true,locked:false,onionSkin:false,collapsed:false,opacity:1,color:'transparent',stencil:'none',clipToGroup:null,parentId:g.parentId||null});
+  groups.push({id,name,visible:true,locked:false,onionSkin:false,onTimeline:true,collapsed:false,opacity:1,color:'transparent',stencil:'none',clipToGroup:null,parentId:g.parentId||null});
   g.parentId=id;
   selectedLayerIndices.clear();selectedGroupIds.clear();activeGroupId=id;
   _reanchorAllStencils();
