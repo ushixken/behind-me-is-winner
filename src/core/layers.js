@@ -545,6 +545,15 @@ document.getElementById('modal-new-project-cancel').onclick=()=>document.getElem
 document.getElementById('modal-new-project').addEventListener('click',e=>{if(e.target===document.getElementById('modal-new-project'))document.getElementById('modal-new-project').classList.remove('visible');});
 document.getElementById('modal-new-project-ok').onclick=()=>{
   document.getElementById('modal-new-project').classList.remove('visible');
+  TOTAL=PROJECT_DEFAULTS.totalFrames;
+  MAX_FPS=PROJECT_DEFAULTS.fps;
+  rangeStart=0;
+  rangeEnd=Math.min(TOTAL,PROJECT_DEFAULTS.outPointFrame)-1;
+  loopRange=false;
+  fpsTl.max=MAX_FPS;
+  fpsTl.value=PROJECT_DEFAULTS.fps;
+  fpsVal.textContent=PROJECT_DEFAULTS.fps;
+  updateFpsSliderColor();
   groups=[];
   layers=[];
   layers.push(makeBlankLayer('bitmap'));

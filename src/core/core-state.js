@@ -11,11 +11,21 @@ document.addEventListener('DOMContentLoaded',()=>{
 // ════════════════════════════════════════════════════════════════
 // STATE
 // ════════════════════════════════════════════════════════════════
-let CW=1920,CH=1080,TOTAL=48,MAX_FPS=24;
+const PROJECT_DEFAULTS=(()=>{
+  const fps=24,durationSeconds=2,durationFrames=15;
+  return Object.freeze({
+    fps:fps,
+    durationSeconds:durationSeconds,
+    durationFrames:durationFrames,
+    totalFrames:durationSeconds*fps+durationFrames,
+    outPointFrame:40
+  });
+})();
+let CW=1920,CH=1080,TOTAL=PROJECT_DEFAULTS.totalFrames,MAX_FPS=PROJECT_DEFAULTS.fps;
 let CellW=28;const CellH=28;
 let curFrame=0,curLayer=0,playing=false,playTimer=null;
 let tool='brush',color='#000000',bgColor='#ffffff';
-let rangeStart=0,rangeEnd=47,loopRange=false,rulerCtxFrame=0;
+let rangeStart=0,rangeEnd=Math.min(TOTAL,PROJECT_DEFAULTS.outPointFrame)-1,loopRange=false,rulerCtxFrame=0;
 const toolSizes={brush:6,eraser:20,fill:6};
 // The Line tool is a brush geometry mode, not a separate brush preset. Keep
 // its public legacy key as an alias so older callers/settings continue to
@@ -350,14 +360,17 @@ function _toUnflippedNavPoint(x,y){
   };
 }
 
-/** Compute a zoom level that fits the whole canvas inside canvas-area (with padding), then center it.
+/** Compute a zoom level that fits the whole canvas inside the actual clear canvas-area, then center it.
  * Used for initial layout and "Reset Layout" so large canvases (e.g. 1920×1080) don't start zoomed
  * in past the visible viewport. */
 function fitCanvasToView(){
   const {clearW,clearH}=_getClearArea();
   if(clearW<=0||clearH<=0) return; // layout not settled yet
-  const pad=40;
-  const fitZoom=Math.min((clearW-pad)/CW,(clearH-pad)/CH);
+  // canvas-area already ends exactly at the Timeline and _getClearArea()
+  // already subtracts every visible dock. Adding another fixed inset here
+  // made the default zoom smaller than the real available space and left a
+  // visible gap beside the limiting edge.
+  const fitZoom=Math.min(clearW/CW,clearH/CH);
   zoom=Math.max(zoomMin,Math.min(zoomMax,fitZoom>0?fitZoom:1));
   centerCanvas();showZoom();
 }

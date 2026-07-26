@@ -167,7 +167,7 @@ function updateCanvasFramesModalTotal(){
 document.getElementById('canvas-frames-sec-input').addEventListener('change',updateCanvasFramesModalTotal);
 document.getElementById('canvas-frames-fr-input').addEventListener('change',updateCanvasFramesModalTotal);
 document.getElementById('canvas-maxfps-input').addEventListener('input',()=>{
-  const fps=Math.max(1,Math.min(120,parseInt(document.getElementById('canvas-maxfps-input').value)||24));
+  const fps=Math.max(1,Math.min(120,parseInt(document.getElementById('canvas-maxfps-input').value)||PROJECT_DEFAULTS.fps));
   document.getElementById('canvas-frames-fps-label').textContent=fps;
   updateCanvasFramesModalTotal();
 });
@@ -183,7 +183,7 @@ document.getElementById('modal-canvas-ok').onclick=()=>{
   const nw=parseInt(document.getElementById('canvas-w-input').value)||1920;
   const nh=parseInt(document.getElementById('canvas-h-input').value)||1080;
   if(nw<8||nh<8||nw>4096||nh>4096){showInfo('Dimensions must be 8–4096.','Invalid Size');return;}
-  MAX_FPS=Math.max(1,Math.min(120,parseInt(document.getElementById('canvas-maxfps-input').value)||24));
+  MAX_FPS=Math.max(1,Math.min(120,parseInt(document.getElementById('canvas-maxfps-input').value)||PROJECT_DEFAULTS.fps));
   const fSec=Math.max(0,parseInt(document.getElementById('canvas-frames-sec-input').value)||0);
   const fFr=Math.max(0,parseInt(document.getElementById('canvas-frames-fr-input').value)||0);
   const norm=normalizeSecFr(fSec,fFr,MAX_FPS);

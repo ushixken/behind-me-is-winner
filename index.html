@@ -540,7 +540,7 @@
         <span class="tlabel">FPS</span>
         <input type="range" id="fps-tl" min="1" max="24" value="24"/>
         <span class="tval" id="fps-val" title="Click to set FPS">24</span>
-        <span id="frame-info" title="Click to set total frame count">Frame 1 / 48</span>
+        <span id="frame-info" title="Click to set total frame count">Frame 1 / 63</span>
       </div>
     </div>
     <div id="tl-body">
@@ -682,12 +682,12 @@
     <div class="modal-row">
       <label>Duration</label>
       <div class="timing-pair">
-        <input type="number" id="canvas-frames-sec-input" min="0" max="999" value="4"/>
+        <input type="number" id="canvas-frames-sec-input" min="0" max="999" value="2"/>
         <span class="timing-colon">:</span>
-        <input type="number" id="canvas-frames-fr-input" min="0" max="999" value="0" style="text-align:center;"/>
+        <input type="number" id="canvas-frames-fr-input" min="0" max="999" value="15" style="text-align:center;"/>
       </div>
     </div>
-    <p style="font-size:11px;color:var(--text2);margin:-4px 0 10px;">Seconds : Frames @ <span id="canvas-frames-fps-label">24</span> fps — <span id="canvas-frames-total-label">48</span> total frames</p>
+    <p style="font-size:11px;color:var(--text2);margin:-4px 0 10px;">Seconds : Frames @ <span id="canvas-frames-fps-label">24</span> fps — <span id="canvas-frames-total-label">63</span> total frames</p>
     <div class="modal-section">Background Color</div>
     <div class="color-swatch-grid" id="bg-swatch-grid">
       <div class="bg-swatch" data-color="#1a1a1e" style="background:#1a1a1e;" title="Dark"></div>
@@ -714,12 +714,12 @@
     <div class="modal-row">
       <label>Duration</label>
       <div class="timing-pair">
-        <input type="number" id="frames-sec-input" min="0" max="999" value="4"/>
+        <input type="number" id="frames-sec-input" min="0" max="999" value="2"/>
         <span class="timing-colon">:</span>
-        <input type="number" id="frames-fr-input" min="0" max="999" value="0" style="text-align:center;"/>
+        <input type="number" id="frames-fr-input" min="0" max="999" value="15" style="text-align:center;"/>
       </div>
     </div>
-    <p style="font-size:11px;color:var(--text2);">Seconds : Frames @ <span id="frames-fps-label">24</span> fps — <span id="frames-total-label">48</span> total frames</p>
+    <p style="font-size:11px;color:var(--text2);">Seconds : Frames @ <span id="frames-fps-label">24</span> fps — <span id="frames-total-label">63</span> total frames</p>
     <p style="font-size:11px;color:var(--text2);margin-top:4px;">Keyframes beyond the new total are preserved but hidden.</p>
     <div class="modal-actions">
       <button class="modal-btn" id="modal-frames-cancel">Cancel</button>
