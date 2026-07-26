@@ -5,9 +5,9 @@ input[type=number]::-webkit-inner-spin-button,
 input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}
 input[type=number]{-moz-appearance:textfield;appearance:textfield;}
 
-/* ── FOCUS OUTLINE ────────────────────────────────────────────
+/* â”€â”€ FOCUS OUTLINE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
    Browsers draw their own default focus ring (often a stark white/blue
-   outline) on any button/element that receives focus — including just
+   outline) on any button/element that receives focus â€” including just
    from a mouse click. Reset it
    everywhere, but keep a themed ring for :focus-visible (keyboard
    navigation) so the app doesn't lose keyboard-accessibility outlines,
@@ -17,7 +17,7 @@ button:focus,.tbtn:focus,input:focus,select:focus,textarea:focus,[tabindex]:focu
 button:focus-visible,.tbtn:focus-visible,input:focus-visible,select:focus-visible,
 textarea:focus-visible,[tabindex]:focus-visible{outline:none;}
 
-/* ── SCROLLBARS ───────────────────────────────────────────────
+/* â”€â”€ SCROLLBARS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
    Replace the default OS/Chrome scrollbar everywhere with the same
    slim themed scrollbar already used in the timeline panel (#tl-scroll). */
 *{scrollbar-width:thin;scrollbar-color:var(--border2) var(--bg2);}
@@ -26,6 +26,7 @@ textarea:focus-visible,[tabindex]:focus-visible{outline:none;}
 *::-webkit-scrollbar-thumb{background:var(--border2);border-radius:4px;}
 *::-webkit-scrollbar-thumb:hover{background:var(--text2);}
 *::-webkit-scrollbar-corner{background:var(--bg2);}
+*::-webkit-scrollbar-button{display:none!important;width:0!important;height:0!important;}
 
 :root{
   --bg:#1a1a1e;--bg2:#222228;--bg3:#2a2a32;--bg4:#32323c;
@@ -43,7 +44,7 @@ textarea:focus-visible,[tabindex]:focus-visible{outline:none;}
   --timeline-second-fill-on-layer-color:color-mix(in srgb,var(--bg) 48%,transparent);
 }
 
-/* ── UNIFIED CHECKBOX DESIGN ──────────────────────────────────
+/* â”€â”€ UNIFIED CHECKBOX DESIGN â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
    One consistent look for every checkbox in the app: a small dark
    square with a subtle border when unchecked, filled with the accent
    color and a checkmark when checked. Matches the style already used
@@ -89,11 +90,11 @@ input[type="checkbox"]:focus-visible{
   outline:1.5px solid var(--accent);outline-offset:1px;
 }
 
-/* ── BASE ─────────────────────────────────────────────────── */
+/* â”€â”€ BASE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;font-size:13px;
   display:flex;flex-direction:column;height:100vh;overflow:hidden;user-select:none;}
 
-/* ── MENU BAR ─────────────────────────────────────────────── */
+/* â”€â”€ MENU BAR â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 #menubar{
   height:var(--menubar-h);background:var(--bg2);border-bottom:1px solid var(--border);
   display:flex;align-items:stretch;padding:0 6px;flex-shrink:0;position:relative;z-index:500;
@@ -120,7 +121,7 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;fon
 .dd-shortcut{margin-left:auto;font-size:10px;color:var(--text2);padding-left:16px;}
 .dd-check{width:14px;text-align:center;font-size:11px;color:var(--accent);}
 
-/* ── TOOLBAR ──────────────────────────────────────────────── */
+/* â”€â”€ TOOLBAR â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 #toolbar{
   height:var(--toolbar-h);background:var(--bg2);border-bottom:1px solid var(--border);
   display:flex;align-items:center;gap:3px;padding:0 10px;flex-shrink:0;overflow:hidden;
@@ -152,16 +153,16 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;fon
 .toolbar-palette-separator{flex:0 0 10px;width:10px;height:22px;position:relative;pointer-events:none;} .toolbar-palette-separator::before{content:"";position:absolute;left:50%;top:2px;bottom:2px;width:2px;transform:translateX(-50%);border-radius:2px;background:var(--border2);}
 .palette-side-menu button.active{background:var(--accent-bg);color:var(--accent);}
 
-/* ── MAIN AREA ────────────────────────────────────────────── */
+/* â”€â”€ MAIN AREA â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 #main-area{display:flex;flex:1;overflow:visible;position:relative;z-index:2;min-height:0;}
 
-/* ── CANVAS AREA ──────────────────────────────────────────── */
+/* â”€â”€ CANVAS AREA â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 #canvas-area{
   flex:1;background:#0e0e12;position:relative;overflow:hidden;min-width:100px;z-index:1;
   touch-action:none;-ms-touch-action:none;
 }
 /* Sits directly on top of canvas-area with the exact same box, but does NOT
-   clip its contents — this is what holds the floating/dockable panels so a
+   clip its contents â€” this is what holds the floating/dockable panels so a
    panel can never be cut off/hidden behind the timeline or anything else
    when it's positioned near an edge. pointer-events:none lets clicks pass
    through the empty parts of this layer to the canvas underneath; each
@@ -180,7 +181,7 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;fon
 #transform-canvas{pointer-events:none;touch-action:none;-ms-touch-action:none;}
 #transform-canvas.tf-active{pointer-events:auto;cursor:move;}
 /* Sized to the canvas-area VIEWPORT (JS keeps its width/height attrs in
-   sync — see _tfResizeGuideCanvas in transform-tool.js), not to the
+   sync â€” see _tfResizeGuideCanvas in transform-tool.js), not to the
    artwork. Lives outside #canvas-wrap so it's unaffected by the wrap's
    pan/zoom/rotate CSS transform; points are pre-transformed in JS instead
    (see _tfToViewportPoint), and drawing is clipped by this element's own
@@ -192,7 +193,7 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;fon
 #perspective-guide-canvas.tf-persp-active{pointer-events:auto;cursor:move;}
 #transform-ui-canvas{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none;z-index:3;}
 /* composite-canvas is now a data-only buffer (eyedropper/export/etc read pixel-
-   exact data from it) — display-canvas is what's actually shown on screen. */
+   exact data from it) â€” display-canvas is what's actually shown on screen. */
 #composite-canvas{visibility:hidden;}
 
 #zoom-indicator{
@@ -210,7 +211,7 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;fon
 #rotation-indicator.show{opacity:1;}
 body.draw-mode #rotation-indicator{display:none!important;}
 
-/* Crosshair marking the canvas-area center — the pivot Shift+Space+drag
+/* Crosshair marking the canvas-area center â€” the pivot Shift+Space+drag
    rotates around. Always centered on canvas-area regardless of zoom/pan;
    only visible while priming or performing a rotate-drag. */
 #rotation-pivot{
@@ -227,7 +228,7 @@ body.draw-mode #rotation-indicator{display:none!important;}
 #rotation-pivot::before{left:50%;top:-6px;bottom:-6px;width:1px;margin-left:-0.5px;}
 #rotation-pivot::after{top:50%;left:-6px;right:-6px;height:1px;margin-top:-0.5px;}
 
-/* ── RESIZE HANDLE ────────────────────────────────────────── */
+/* â”€â”€ RESIZE HANDLE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .resize-handle-v{
   width:4px;background:var(--border);cursor:col-resize;flex-shrink:0;
   transition:background .15s;position:relative;z-index:10;
@@ -237,7 +238,7 @@ body.draw-mode #rotation-indicator{display:none!important;}
   transition:background .15s;touch-action:none;-ms-touch-action:none;
 }
 
-/* ── LAYERS (RIGHT) PANEL ─────────────────────────────────── */
+/* â”€â”€ LAYERS (RIGHT) PANEL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 /* #right-panel is now a .float-panel (see generic panel framework above);
    width/height come from inline style + resizing, not fixed CSS here. */
 #right-panel.hidden{display:none;}
@@ -306,7 +307,7 @@ body.draw-mode #rotation-indicator{display:none!important;}
 .layer-clip-badge{font-size:8px;color:#7dd3fc;background:rgba(125,211,252,0.12);border:1px solid rgba(125,211,252,0.35);border-radius:3px;padding:1px 4px;white-space:nowrap;flex-shrink:0;}
 .layer-clip-arrow{font-size:11px;color:#7dd3fc;flex-shrink:0;line-height:1;}
 /* While actively dragging a layer or group row to reorder it, show the hand
-   (grabbing) cursor everywhere — overrides the default-arrow rule above. */
+   (grabbing) cursor everywhere â€” overrides the default-arrow rule above. */
 body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 /* Layer row zones */
 .layer-drag-zone{display:flex;align-items:center;gap:5px;flex:1;cursor:default;min-width:0;overflow:hidden;touch-action:none;}
@@ -337,11 +338,11 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 .layer-group-row.eye-drop-target{border-color:#7dd3fc !important;background:rgba(125,211,252,0.12) !important;}
 .layer-row.eye-blocked{border-color:var(--red) !important;background:rgba(226,75,74,0.08) !important;}
 .layer-group-row.eye-blocked{border-color:var(--red) !important;background:rgba(226,75,74,0.08) !important;}
-/* ── BOTTOM AREA (timeline + resize) ─────────────────────── */
+/* â”€â”€ BOTTOM AREA (timeline + resize) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 #bottom-area{display:flex;flex-direction:column;flex-shrink:0;position:relative;z-index:1;}
 #bottom-area.hidden{display:none;}
 
-/* ── TIMELINE ─────────────────────────────────────────────── */
+/* â”€â”€ TIMELINE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 #timeline-area{
   height:210px;min-height:80px;max-height:500px;background:var(--bg2);
   display:flex;flex-direction:column;overflow:hidden;
@@ -366,7 +367,7 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 
 #tl-body{display:flex;flex:1 1 0;min-height:0;overflow:hidden;}
 
-/* ── FL-style horizontal scrollbar row ───────────────────────────────── */
+/* â”€â”€ FL-style horizontal scrollbar row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 /* Sits as a flex sibling of #tl-body inside #timeline-area (flex column).
    Fixed height so it always has space; never clipped by overflow:hidden on
    #timeline-area because it's a proper flex child, not an overflow child.  */
@@ -404,6 +405,9 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
   background:var(--border2);
   border-radius:2px;
   cursor:grab;
+  touch-action:none;
+  user-select:none;
+  -webkit-user-select:none;
   transition:background .12s;
 }
 #tl-hscroll-thumb:hover,
@@ -507,14 +511,14 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 #ruler-start-label{color:var(--green);}
 #ruler-end-label{color:var(--red);}
 
-/* ── STATUS ───────────────────────────────────────────────── */
+/* â”€â”€ STATUS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 #status{
   height:var(--status-h);background:var(--bg3);border-top:1px solid var(--border);
   display:flex;align-items:center;padding:0 10px;gap:14px;flex-shrink:0;
 }
 .stat{font-size:10px;color:var(--text2);}
 
-/* ⚠ TEMPORARY: Advanced Palette style-index debug readout — remove before release */
+/* âš  TEMPORARY: Advanced Palette style-index debug readout â€” remove before release */
 #stat-style-debug{
   display:flex;align-items:center;gap:8px;
   margin-left:auto;          /* push to the right end of the status bar */
@@ -542,7 +546,7 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
   color:rgba(180,220,255,0.9);
 }
 
-/* ── CONTEXT MENUS ────────────────────────────────────────── */
+/* â”€â”€ CONTEXT MENUS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .ctx-menu{position:fixed;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:4px;z-index:9999;min-width:165px;box-shadow:0 8px 32px rgba(0,0,0,0.5);display:none;}
 .ctx-menu.visible{display:block;}
 .ctx-item{padding:6px 12px;border-radius:5px;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:8px;color:var(--text);}
@@ -557,7 +561,7 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 #layer-ctx-menu.mode-group .ctx-sep.layer-ctx-group-only{display:block;}
 .ctx-shortcut{margin-left:auto;font-size:10px;color:var(--text2);}
 
-/* ── MODALS ───────────────────────────────────────────────── */
+/* â”€â”€ MODALS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:30000;display:none;align-items:center;justify-content:center;pointer-events:auto;isolation:isolate;}
 .modal-overlay.visible{display:flex;}
 .modal{position:relative;z-index:1;background:var(--bg2);border:1px solid var(--border2);border-radius:12px;padding:20px;min-width:320px;box-shadow:0 16px 48px rgba(0,0,0,0.6);}
@@ -640,7 +644,7 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 .preset-btn:hover{background:var(--bg3);color:var(--text);}
 .modal-section{font-size:10px;font-weight:600;color:var(--text2);letter-spacing:.08em;text-transform:uppercase;margin:14px 0 8px;}
 
-/* Themed confirm/alert dialog — replaces window.confirm()/window.alert() */
+/* Themed confirm/alert dialog â€” replaces window.confirm()/window.alert() */
 #modal-site-dialog{z-index:40000;}
 .site-dialog-modal{min-width:320px;max-width:440px;}
 .site-dialog-message{font-size:12px;line-height:1.6;color:var(--text2);white-space:pre-line;}
@@ -648,7 +652,7 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 .bg-swatch{width:28px;height:28px;border-radius:5px;border:2px solid transparent;cursor:pointer;}
 .bg-swatch.active{border-color:var(--accent);}
 
-/* ── GENERIC FLOATING / DOCKABLE PANEL FRAMEWORK ──────────── */
+/* â”€â”€ GENERIC FLOATING / DOCKABLE PANEL FRAMEWORK â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 /* Used by the Tools, Layers, and Color panels. Each panel is a
    .float-panel with a .fp-titlebar (drag handle + name) and a
    .fp-body. Panels can float anywhere over the canvas, snap-dock
@@ -659,10 +663,10 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
   box-shadow:0 8px 28px rgba(0,0,0,0.5);z-index:700;display:flex;flex-direction:column;
   user-select:none;min-width:0;min-height:0;overflow:hidden;pointer-events:auto;touch-action:none;
   cursor:default;
-  /* min-width/min-height are intentionally NOT hardcoded here — each panel's
+  /* min-width/min-height are intentionally NOT hardcoded here â€” each panel's
      real minimum is enforced in JS via PANEL_CFG's minSize (panels.js) or
      MIN_W/MIN_H (tools-color.js etc). A CSS floor here previously fought
-     panels with a configured minimum below 40px (Tools: minSize 38) —
+     panels with a configured minimum below 40px (Tools: minSize 38) â€”
      the browser would silently clamp to 40px while JS-positioned neighbors
      assumed 38px, a 2px mismatch that let the next panel overlap and hide
      this panel's border-right dock-separator line. */
@@ -716,7 +720,7 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 }
 .fp-mergezone.show{display:block;}
 
-/* ── CLOSE BUTTON on panel titlebar ─── */
+/* â”€â”€ CLOSE BUTTON on panel titlebar â”€â”€â”€ */
 .fp-close{
   flex-shrink:0;width:16px;height:16px;display:flex;align-items:center;justify-content:center;
   border-radius:3px;font-size:11px;color:var(--text2);cursor:pointer;
@@ -724,7 +728,7 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 }
 .fp-close:hover{background:rgba(226,75,74,0.25);color:var(--red);}
 
-/* ── SPLIT RESIZE HANDLE (seam between vertically stacked panels in a column) ─── */
+/* â”€â”€ SPLIT RESIZE HANDLE (seam between vertically stacked panels in a column) â”€â”€â”€ */
 /* Rendered as a fixed-positioned element by JS (_syncSplitResizeHandle).
    The transparent 8px hit area sits over the seam; its child draws the independent 1px divider. */
 .fp-split-resize{
@@ -738,7 +742,7 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 }
 
 
-/* ── FLOATING RESIZE HANDLES (4 edges of a free-floating panel) ─── */
+/* â”€â”€ FLOATING RESIZE HANDLES (4 edges of a free-floating panel) â”€â”€â”€ */
 .fp-float-resize{position:absolute;background:transparent;touch-action:none;-ms-touch-action:none;}
 .fp-float-resize-left,.fp-float-resize-right{cursor:col-resize;}
 .fp-float-resize-top,.fp-float-resize-bottom{cursor:row-resize;}
@@ -751,7 +755,7 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 
 /* Floating resize edges belong only to floating windows. Once docked, column
    sizing is owned exclusively by the exterior .fp-dock-resize gutter. This
-   keeps every internal edge—including scrollbars and header controls—free of
+   keeps every internal edgeâ€”including scrollbars and header controlsâ€”free of
    resize cursors and pointer interception. */
 .float-panel.docked > .fp-float-resize,
 .float-panel.docked > .cp-re{
@@ -785,7 +789,7 @@ body:has(#palette-color-modal) .fp-split-resize{
 #color-swatch-stack{flex:0 0 30px;width:30px;height:30px;position:relative;cursor:pointer;}
 #color-swatch-stack #color-swatch{width:100%;height:100%;}
 
-/* ── MINI COLOR PICKER POPUP ─────────────────────────────── */
+/* â”€â”€ MINI COLOR PICKER POPUP â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 #mini-picker{
   position:fixed;z-index:10000;pointer-events:auto;
   filter:drop-shadow(0 8px 32px rgba(0,0,0,0.7));
@@ -813,7 +817,7 @@ body:has(#palette-color-modal) .fp-split-resize{
   touch-action:none;-ms-touch-action:none;
 }
 
-/* ── COLOR PANEL — free-resize, centered wheel, stretchy sliders ── */
+/* â”€â”€ COLOR PANEL â€” free-resize, centered wheel, stretchy sliders â”€â”€ */
 :root{--cp-scale:1;}
 
 /* fp-body must not scroll */
@@ -828,7 +832,7 @@ body:has(#palette-color-modal) .fp-split-resize{
 .cp-wheel-wrap{position:relative;flex-shrink:0;margin:0 auto;}
 #cp-wheel-canvas{position:absolute;top:0;left:0;cursor:default;touch-action:none;-ms-touch-action:none;}
 #cp-sq-canvas{position:absolute;cursor:default;touch-action:none;-ms-touch-action:none;}
-/* Synthetic pick-point indicator shown while dragging on the wheel/square —
+/* Synthetic pick-point indicator shown while dragging on the wheel/square â€”
    the native cursor can be suppressed by the browser while a pen pointer
    is under setPointerCapture, so this guarantees you can always see where
    you're picking from regardless of input device. */
@@ -838,7 +842,7 @@ body:has(#palette-color-modal) .fp-split-resize{
   pointer-events:none;z-index:10001;display:none;transform:translate(-50%,-50%);box-sizing:border-box;
 }
 
-/* FG/BG swatches — scale with --cp-scale (JS keeps it in sync with wheel size) */
+/* FG/BG swatches â€” scale with --cp-scale (JS keeps it in sync with wheel size) */
 #cp-swatch-stack{
   position:absolute;
   bottom:calc(8px * var(--cp-scale));left:calc(-2px * var(--cp-scale));
@@ -864,7 +868,7 @@ body:has(#palette-color-modal) .fp-split-resize{
 #cp-sw-transparent.active{outline:1.5px solid var(--accent);}
 .cs-swatch-checker{background:repeating-conic-gradient(#999 0% 25%,#444 0% 50%) 0 0/8px 8px !important;}
 
-/* Toggle rows — stretch full width */
+/* Toggle rows â€” stretch full width */
 #cp-toggle-rows{
   display:flex;flex-direction:row;flex-wrap:wrap;gap:3px;
   justify-content:center;align-items:center;width:100%;flex-shrink:0;
@@ -879,7 +883,7 @@ body:has(#palette-color-modal) .fp-split-resize{
 .cp-toggle-btn:hover{background:var(--bg3);color:var(--text);}
 .cp-toggle-btn.active{background:var(--accent-bg);border-color:var(--accent);color:var(--accent);}
 
-/* Sliders — stretch to fill full panel width */
+/* Sliders â€” stretch to fill full panel width */
 #cp-sliders-wrap{width:100%;flex-shrink:0;}
 .cp-slider-row{display:flex;align-items:center;gap:5px;width:100%;}
 .cp-slider-row label{font-size:10px;color:var(--text2);width:14px;flex-shrink:0;}
@@ -902,11 +906,11 @@ body:has(#palette-color-modal) .fp-split-resize{
 .cp-re-sw{bottom:0;left:0;width:10px;height:10px;cursor:nesw-resize;}
 .cp-re-se{bottom:0;right:0;width:10px;height:10px;cursor:nwse-resize;}
 
-/* Layers panel — body fills available height when floating/docked */
+/* Layers panel â€” body fills available height when floating/docked */
 .float-panel #layer-panel-header{flex-shrink:0;}
 .float-panel #layers-list{flex:1;min-height:60px;}
 
-/* ── BRUSH PRESET PANEL ─────────────────────────────────────── */
+/* â”€â”€ BRUSH PRESET PANEL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 #brush-preset-tool-tabs{display:flex;gap:3px;padding:7px 8px 5px;}
 .bp-tool-tab{
   padding:3px 10px;border-radius:5px;border:1px solid var(--border2);
@@ -916,7 +920,7 @@ body:has(#palette-color-modal) .fp-split-resize{
 }
 .bp-tool-tab:hover{background:var(--bg3);color:var(--text);}
 .bp-tool-tab.active{background:var(--accent-bg);border-color:var(--accent);color:var(--accent);}
-/* ── TOOL SETTINGS & BRUSH PRESETS PANELS (dockable) ─────── */
+/* â”€â”€ TOOL SETTINGS & BRUSH PRESETS PANELS (dockable) â”€â”€â”€â”€â”€â”€â”€ */
 /* Both panels scroll their body content when docked/floating */
 #tool-settings-panel .fp-body,
 #brush-presets-panel .fp-body{
@@ -994,7 +998,7 @@ body:has(#palette-color-modal) .fp-split-resize{
 .kfsw-row{display:flex;align-items:center;justify-content:space-between;font-size:11px;color:var(--text);}
 .kfsw-row span:first-child{color:var(--text2);}
 .kfsw-row span:last-child{font-weight:600;}
-/* Nav buttons — styled with visible border so they don't look plain */
+/* Nav buttons â€” styled with visible border so they don't look plain */
 .kfsw-nav{display:flex;gap:6px;}
 .kfsw-nav .tbtn{
   flex:1;height:28px;font-size:12px;font-weight:600;letter-spacing:.02em;
@@ -1007,7 +1011,7 @@ body:has(#palette-color-modal) .fp-split-resize{
 .kfsw-options input[type=number]{width:52px;background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);font-size:12px;padding:2px 5px;outline:none;}
 .kfsw-options input[type=number]:focus{border-color:var(--accent);}
 .kfsw-checkbox{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text);cursor:pointer;}
-/* Progressive row hiding as panel shrinks (widest → narrowest) */
+/* Progressive row hiding as panel shrinks (widest â†’ narrowest) */
 #keyframe-switcher-panel.kfsw-hide-next    #kfsw-row-next{display:none;}
 #keyframe-switcher-panel.kfsw-hide-prev    #kfsw-row-prev{display:none;}
 #keyframe-switcher-panel.kfsw-hide-keyframes #kfsw-row-keyframes{display:none;}
@@ -1026,7 +1030,7 @@ body:has(#palette-color-modal) .fp-split-resize{
 /* Hard minimum size so the panel never crushes below its nav buttons */
 #keyframe-switcher-panel{min-width:106px;}
 
-/* ── Flip Through filter section ────────────────────────────────── */
+/* â”€â”€ Flip Through filter section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .kfsw-flipthrough{display:flex;flex-direction:column;gap:4px;}
 .kfsw-ft-btns{display:flex;gap:3px;justify-content:center;width:100%;}
 .kfsw-ft-item{display:flex;align-items:center;cursor:pointer;}
@@ -1048,9 +1052,9 @@ body:has(#palette-color-modal) .fp-split-resize{
 #keyframe-switcher-panel.kfsw-hide-flipthrough .kfsw-flipthrough{display:none;}
 #keyframe-switcher-panel.kfsw-hide-options .kfsw-options{display:none;}
 
-/* ── Drawing Marks panel ────────────────────────────────────────── */
+/* â”€â”€ Drawing Marks panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 #drawing-marks-panel{min-width:40px;}
-/* .fp-body-wrap has global flex:1 which forces it to fill panel height —
+/* .fp-body-wrap has global flex:1 which forces it to fill panel height â€”
    override so the panel shrink-wraps to its single row of content. */
 #drawing-marks-panel .fp-body-wrap{flex:0 0 auto !important;overflow:hidden;width:100% !important;align-self:stretch;box-sizing:border-box;}
 #drawing-marks-panel .fp-body{
@@ -1139,7 +1143,7 @@ body:has(#palette-color-modal) .fp-split-resize{
   max-width:100%;
   margin-inline:auto;
 }
-/* ── KEYFRAME EXPOSURE PANEL ──────────────────────────────────── */
+/* â”€â”€ KEYFRAME EXPOSURE PANEL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 #keyframe-exposure-panel{min-width:106px;}
 #keyframe-exposure-panel .fp-body{padding:8px;gap:8px;overflow:hidden;}
 #keyframe-exposure-panel .fp-body-wrap{overflow:hidden;}
@@ -1167,17 +1171,17 @@ body:has(#palette-color-modal) .fp-split-resize{
 .kfexp-hint{font-size:10px;color:var(--text2);font-style:italic;line-height:1.4;}
 .kfexp-status{font-size:11px;color:var(--text);line-height:1.45;word-break:break-word;}
 .kfexp-status:empty{display:none;}
-/* Full/short label spans — full visible by default */
+/* Full/short label spans â€” full visible by default */
 .kfexp-label-full{display:inline;}
 .kfexp-label-short{display:none;}
 .kfexp-bypass-full{display:inline;}
 .kfexp-bypass-short{display:none;}
-/* ── Progressive hiding (height-driven) ── */
+/* â”€â”€ Progressive hiding (height-driven) â”€â”€ */
 #keyframe-exposure-panel.kfexp-hide-hint #kfexp-hint-box{display:none;}
 /* kfexp-hide-info: hide info box AND the Options section label */
 #keyframe-exposure-panel.kfexp-hide-info #kfexp-info-box{display:none;}
 #keyframe-exposure-panel.kfexp-hide-info #kfexp-options-label{display:none;}
-/* ── Compact (width-driven, w<140) ── */
+/* â”€â”€ Compact (width-driven, w<140) â”€â”€ */
 #keyframe-exposure-panel.kfexp-compact .kfexp-info-box{display:none;}
 #keyframe-exposure-panel.kfexp-compact #kfexp-options-label{display:none;}
 #keyframe-exposure-panel.kfexp-compact .fp-body{gap:5px;}
@@ -1265,7 +1269,7 @@ button.ts-brush-blend-mode-option:hover,button.ts-brush-blend-mode-option:focus-
 .ts-preset-chip:hover{border-color:var(--accent);color:var(--accent);}
 .ts-divider{height:1px;background:var(--border);margin:2px 0;}
 
-/* ── TOOL SETTINGS MODAL ──────────────────────────────────── */
+/* â”€â”€ TOOL SETTINGS MODAL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .ts-mode-toggle{display:flex;gap:2px;background:var(--bg4);border-radius:6px;padding:2px;flex-shrink:0;}
 .ts-mode-btn{
   padding:3px 10px;border-radius:5px;border:none;background:transparent;color:var(--text2);
@@ -1276,7 +1280,7 @@ button.ts-brush-blend-mode-option:hover,button.ts-brush-blend-mode-option:focus-
 .ts-mode-btn.active{background:var(--accent-bg);color:var(--accent);}
 #tool-settings-modal-body{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;}
 
-/* ── PS-STYLE TWO-COLUMN LAYOUT ── */
+/* â”€â”€ PS-STYLE TWO-COLUMN LAYOUT â”€â”€ */
 #tool-settings-body{
   display:flex;flex-direction:row;flex:1;min-height:0;overflow:hidden;
 }
@@ -1313,12 +1317,12 @@ button.ts-brush-blend-mode-option:hover,button.ts-brush-blend-mode-option:focus-
   width:12px;height:12px;
 }
 
-/* RIGHT CONTENT PANELS — fixed size, internal scroll */
+/* RIGHT CONTENT PANELS â€” fixed size, internal scroll */
 .ts-ps-panels{
   flex:1;min-width:0;min-height:0;position:relative;overflow:hidden;
 }
 
-/* Each panel is absolutely positioned to fill the panels area — ensures
+/* Each panel is absolutely positioned to fill the panels area â€” ensures
    the modal never resizes when switching between panels */
 .ts-ps-panel{
   position:absolute;inset:0;
@@ -1343,7 +1347,7 @@ button.ts-brush-blend-mode-option:hover,button.ts-brush-blend-mode-option:focus-
   letter-spacing:.05em;text-transform:uppercase;
 }
 .ts-placeholder-panel::after{
-  content:attr(data-placeholder) "\A\A Control                         Disabled\A\A Amount                         ─────────  0%";
+  content:attr(data-placeholder) "\A\A Control                         Disabled\A\A Amount                         â”€â”€â”€â”€â”€â”€â”€â”€â”€  0%";
   white-space:pre-wrap;position:absolute;top:42px;left:10px;right:10px;
   padding:12px;border:1px solid var(--border2);border-radius:6px;
   color:var(--text2);background:var(--bg2);font-size:10px;line-height:1.7;
@@ -1407,7 +1411,7 @@ button.ts-brush-blend-mode-option:hover,button.ts-brush-blend-mode-option:focus-
 .ts-simple-popup-title{font-size:11px;font-weight:600;padding-bottom:6px;border-bottom:1px solid var(--border);}
 .ts-simple-popup-empty{font-size:10px;color:var(--text2);padding:6px 0;}
 
-/* Per-setting "eye" visibility toggle (Advanced tab only) — lets any
+/* Per-setting "eye" visibility toggle (Advanced tab only) â€” lets any
    Basic-panel setting be shown/hidden in the Simple tab individually,
    like a layer visibility toggle. The eye button itself is already
    .ts-advanced-only so it only ever appears in Advanced mode. */
@@ -1441,7 +1445,7 @@ button.ts-brush-blend-mode-option:hover,button.ts-brush-blend-mode-option:focus-
   overflow:visible;
 }
 
-/* ── BRUSH PRESETS PHOTOSHOP STYLE ────────────────────────── */
+/* â”€â”€ BRUSH PRESETS PHOTOSHOP STYLE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 /* Brush size control bar at the top of brush panel */
 #bp-size-bar{
   display:flex;align-items:center;gap:6px;padding:6px 8px;
@@ -1470,7 +1474,7 @@ input.size-val-input{
 /* Brush preset groups */
 #brush-preset-grid{min-height:0;min-width:0;width:100%;box-sizing:border-box;} /* FIX: without this, flex children with
   intrinsic content taller than the panel force the *whole* fp-body to scroll instead
-  of just this grid — this is the real cause of "brush presets aren't scrollable". */
+  of just this grid â€” this is the real cause of "brush presets aren't scrollable". */
 .bp-group{margin-bottom:2px;}
 .bp-group.drop-before{box-shadow:inset 0 2px 0 0 var(--accent);}
 .bp-group.drop-after{box-shadow:inset 0 -2px 0 0 var(--accent);}
@@ -1543,7 +1547,7 @@ input.size-val-input{
   text-align:center;padding:20px;font-size:11px;color:var(--text2);display:none;
 }
 
-/* ── IMAGE IMPORT ──────────────────────────────────────────── */
+/* â”€â”€ IMAGE IMPORT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 /* Full-app drag-over overlay */
 #img-drop-overlay{
   position:fixed;inset:0;z-index:7000;pointer-events:none;
@@ -1589,9 +1593,9 @@ input.size-val-input{
   color:var(--text);font-size:11px;padding:4px 6px;outline:none;cursor:pointer;
 }
 .img-fit-row select:focus{border-color:var(--accent);}
-/* ── PREFERENCES MODAL — PS-style two-column layout (mirrors the
+/* â”€â”€ PREFERENCES MODAL â€” PS-style two-column layout (mirrors the
    Advanced Tool Settings sidebar, but its own classes since ts-ps-*
-   selectors are queried globally by brush-presets.js) ── */
+   selectors are queried globally by brush-presets.js) â”€â”€ */
 #modal-preferences .modal{width:min(1160px,85vw);height:min(760px,82vh);min-width:0;min-height:min(520px,calc(100vh - 32px));max-width:1160px;max-height:calc(100vh - 32px);display:flex;flex-direction:column;}
 #pref-body{display:flex;flex:1;flex-direction:row;gap:0;min-height:0;max-height:none;}
 #modal-preferences .modal-actions{flex-shrink:0;}
@@ -1651,7 +1655,7 @@ input.size-val-input{
 #palette-panel{min-width:160px;min-height:180px;}
 #palette-panel .fp-body-wrap{min-height:0;overflow:hidden;}
 #palette-panel .fp-body{padding:0;overflow:hidden;min-height:0;}
-#palette-body{--normal-palette-swatch-size:30px;--advanced-palette-swatch-size:30px;display:flex;flex-direction:column;gap:8px;box-sizing:border-box;width:100%;height:100%;min-height:0;padding:var(--dock-scroll-inset);outline:none;}
+#palette-body{position:relative;--normal-palette-swatch-size:30px;--advanced-palette-swatch-size:30px;display:flex;flex-direction:column;gap:8px;box-sizing:border-box;width:100%;height:100%;min-height:0;padding:var(--dock-scroll-inset);outline:none;}
 #palette-body:focus,#palette-grid:focus{outline:none;}
 .palette-label{font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;line-height:1.2;flex-shrink:0;}
 
@@ -1985,3 +1989,18 @@ body.draw-mode #draw-mode-exit-zone{display:flex;}
 #draw-mode-exit-zone:hover #draw-mode-exit,
 #draw-mode-exit:focus-visible{opacity:.92;pointer-events:auto;}
 #draw-mode-exit:hover{background:var(--bg4);}
+
+/* Shared capturable panel scrollbars */
+.app-scrollbar-source{scrollbar-width:none!important;-ms-overflow-style:none!important;}
+#brush-preset-grid.app-scrollbar-source,
+#tool-settings-panel .fp-body.app-scrollbar-source,
+.tool-options-drawer-content.app-scrollbar-source{padding-right:calc(var(--dock-scroll-inset) + 2px)!important;box-sizing:border-box;}
+#brush-preset-grid.app-scrollbar-source .bp-group-grid{padding-right:0;}
+
+.app-scrollbar-source::-webkit-scrollbar{display:none!important;width:0!important;height:0!important;}
+.app-scrollbar-track{position:fixed;box-sizing:border-box;border-radius:3px;background:transparent;pointer-events:auto;touch-action:none;user-select:none;-webkit-user-select:none;}
+.app-scrollbar-track-local{position:absolute;}
+.app-scrollbar-thumb{position:absolute;inset:0 0 auto 0;min-height:24px;border-radius:3px;background:var(--border2);cursor:grab;touch-action:none;}
+.app-scrollbar-track-x .app-scrollbar-thumb{min-width:24px;min-height:0;}
+.app-scrollbar-thumb:hover,.app-scrollbar-thumb.is-dragging{background:var(--text2);cursor:grabbing;}
+body.app-scrollbar-dragging{user-select:none!important;-webkit-user-select:none!important;cursor:grabbing!important;}

@@ -711,6 +711,9 @@ function tlZoomToSpan(newSpan, anchorFrame, anchorScreenX){
     // Capture can occasionally fail to establish (rare, but not zero) so
     // a document-level fallback below also watches for up/cancel.
     try{ thumb.setPointerCapture(e.pointerId); }catch(err){}
+    window.addEventListener('pointermove',globalDragMove,{capture:true,passive:false});
+    window.addEventListener('pointerup',endDrag,{capture:true});
+    window.addEventListener('pointercancel',endDrag,{capture:true});
   }
 
   thumb.addEventListener('pointerdown', e => {
@@ -791,10 +794,11 @@ function tlZoomToSpan(newSpan, anchorFrame, anchorScreenX){
   // reliably maintain capture across element boundaries).
   // applyDrag is idempotent for the same event — calling it twice (once
   // from the captured thumb listener, once here via bubbling) is harmless.
-  document.addEventListener('pointermove', e => {
-    if(!dragging || e.pointerId !== activePointerId) return;
+  function globalDragMove(e){
+    if(!dragging||e.pointerId!==activePointerId)return;
+    e.preventDefault();
     applyDrag(e);
-  });
+  }
 
   function endDrag(e){
     if(!dragging) return;
@@ -807,18 +811,19 @@ function tlZoomToSpan(newSpan, anchorFrame, anchorScreenX){
     thumb.classList.remove('tl-thumb-drag');
     thumb.style.cursor = '';
     document.body.style.userSelect = '';
+    window.removeEventListener('pointermove',globalDragMove,{capture:true});
+    window.removeEventListener('pointerup',endDrag,{capture:true});
+    window.removeEventListener('pointercancel',endDrag,{capture:true});
   }
   thumb.addEventListener('pointerup',       endDrag);
   thumb.addEventListener('pointercancel',   endDrag);
   // lostpointercapture fires whenever capture ends for any reason (up,
   // cancel, or the browser revoking it) — final safety net so drag state
   // can never get stuck active with no way to clear it.
-  thumb.addEventListener('lostpointercapture', endDrag);
-  // Document-level fallback for pointerup/cancel, in case the pointer
-  // capture never took (so events wouldn't otherwise reach thumb once the
-  // pointer left it) and the pointer is released elsewhere entirely.
-  document.addEventListener('pointerup',     endDrag);
-  document.addEventListener('pointercancel', endDrag);
+  thumb.addEventListener('lostpointercapture',event=>{
+    if(!dragging||event.pointerId!==activePointerId)return;
+    try{thumb.setPointerCapture(activePointerId);}catch(_){}
+  });
 
   // Re-sync on resize (panel height drag, window resize, zoom change)
   const ro = new ResizeObserver(() => { syncGutter(); updateTlHScroll(); });
