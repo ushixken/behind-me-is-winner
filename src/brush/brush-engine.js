@@ -409,8 +409,9 @@ function _ensureStrokeCanvas(){
 // Opacity is already baked into each dab's alpha as it was painted (see
 // _computeEffectiveParams), so this only needs to apply the constant
 // brushOpacity ceiling Ã¢â‚¬â€ no separate end-of-stroke multiplier.
+function _usesBrushPaintPipeline(){return tool==='brush'||tool==='line';}
 function _brushPaintCompositeOperation(){
-  if(tool!=='brush') return 'source-over';
+  if(!_usesBrushPaintPipeline()) return 'source-over';
   switch(window.brushBlendMode){
     case 'draw-behind': return 'destination-over';
     case 'darken': return 'darken';
@@ -440,7 +441,7 @@ function _drawBrushComposite(targetCtx,src){
   const alpha=targetCtx.globalAlpha;
   targetCtx.globalCompositeOperation=_brushPaintCompositeOperation();
   targetCtx.drawImage(src,0,0);
-  if(tool==='brush'&&window.brushBlendMode==='add-glow'){
+  if(_usesBrushPaintPipeline()&&window.brushBlendMode==='add-glow'){
     targetCtx.globalAlpha=alpha*0.65;
     targetCtx.drawImage(src,0,0);
     targetCtx.globalAlpha=alpha;
@@ -457,8 +458,8 @@ function _commitStrokeCanvas(){
   if(window.SelectionScope)src=SelectionScope.clipCanvas(src);
   const styleId=typeof activeAdvancedStyleIdForPainting==='function'
     ?activeAdvancedStyleIdForPainting():null;
-  const brushBlendMode=tool==='brush'&&typeof window.brushBlendMode==='string'?window.brushBlendMode:'normal';
-  const smartOwnership=tool==='brush'&&styleId&&
+  const brushBlendMode=_usesBrushPaintPipeline()&&typeof window.brushBlendMode==='string'?window.brushBlendMode:'normal';
+  const smartOwnership=_usesBrushPaintPipeline()&&styleId&&
     typeof advancedPalettePaintingEnabled==='function'&&advancedPalettePaintingEnabled()&&
     layers[curLayer]&&layers[curLayer].type==='smart-raster';
   const ownershipDirtyRect=smartOwnership?_consumeStrokeDirtyRect():null;
@@ -530,7 +531,7 @@ function _getLiveStrokePreview(){
     const styleId = typeof activeAdvancedStyleIdForPainting === 'function'
       ? activeAdvancedStyleIdForPainting() : null;
     if(perf&&layers[curLayer]&&layers[curLayer].type==='smart-raster')perf.measure('smart-raster-active-style-resolution',smartStyleStart,{styleId});
-    const isSmartRaster = tool === 'brush' && !!styleId
+    const isSmartRaster = _usesBrushPaintPipeline() && !!styleId
       && typeof advancedPalettePaintingEnabled === 'function'
       && advancedPalettePaintingEnabled();
 
@@ -603,7 +604,7 @@ function _getLiveStrokePreview(){
     _strokePreviewCtx.globalAlpha = Math.max(0, Math.min(1, brushOpacity));
     _drawBrushComposite(_strokePreviewCtx,strokeSrc);
     _strokePreviewCtx.restore();
-    if(perf)perf.measure('live-stroke-compositing',blendStart,{blendMode:tool==='brush'?window.brushBlendMode:'eraser',opacity:brushOpacity,width:w,height:h});
+    if(perf)perf.measure('live-stroke-compositing',blendStart,{blendMode:_usesBrushPaintPipeline()?window.brushBlendMode:'eraser',opacity:brushOpacity,width:w,height:h});
   }
   if(perf)perf.measure('live-preview-total',previewTotalStart,{path:'normal-raster-or-v3',width:w,height:h});
   return _strokePreviewCanvas;
@@ -3735,7 +3736,7 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
   finally{_flowSpacingRatio=previousSpacingRatio;}
   if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.firstDabEnd(diagnosticDabStart);
   if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.event('first-dab-rasterization-complete');
-  if(latencyProfiler){latencyProfiler.point('first-dab-rasterization-finish');latencyProfiler.measure('first-dab-pipeline-total',firstDabStart,{dirtyRect:_frameDirty?{minX:_frameDirty.minX,minY:_frameDirty.minY,maxX:_frameDirty.maxX,maxY:_frameDirty.maxY}:null,blendMode:tool==='brush'?window.brushBlendMode:'eraser'});latencyProfiler.point('first-dab-generated');}
+  if(latencyProfiler){latencyProfiler.point('first-dab-rasterization-finish');latencyProfiler.measure('first-dab-pipeline-total',firstDabStart,{dirtyRect:_frameDirty?{minX:_frameDirty.minX,minY:_frameDirty.minY,maxX:_frameDirty.maxX,maxY:_frameDirty.maxY}:null,blendMode:_usesBrushPaintPipeline()?window.brushBlendMode:'eraser'});latencyProfiler.point('first-dab-generated');}
   if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.event('recomposite-scheduling-begins');
   _scheduleRecomposite({firstDab:true});
   if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.event('recomposite-scheduled');
