@@ -185,28 +185,57 @@
   function toolActivation(toolId,label,after){return()=>{setTool(toolId,label);if(after)after();};}
   function placeholder(id,name,icon){return{id,name,icon,status:'coming-soon'};}
 
-  function renderLineOptions(body){
-    const section=document.createElement('div');section.className='tool-group-inline-options';
-    function rangeRow(label,min,max,step,value,onInput,kind){const row=document.createElement('label');row.className='tool-group-option-row';const text=document.createElement('span');text.textContent=label;const input=document.createElement('input');input.type='range';input.min=min;input.max=max;input.step=step;input.value=value;if(kind)input.dataset.optionKind=kind;const output=document.createElement('span');output.className='tool-group-option-value';output.textContent=value;if(kind)output.dataset.optionValueKind=kind;input.oninput=()=>{output.textContent=input.value;onInput(+input.value);};row.append(text,input,output);section.appendChild(row);}
-    rangeRow('Width / Size',1,2000,.1,toolSizes.brush||6,value=>{window._lineSizeUpdateSource='line-slider';toolSizes.line=value;window._lineSizeUpdateSource=null;if(tool==='line'){szSlider.value=value;if(typeof refreshSizeUI==='function')refreshSizeUI();}},'line-size');
-    rangeRow('Opacity',1,100,1,Math.round(brushOpacity*100),value=>{brushOpacity=value/100;const existing=document.getElementById('ts-opacity');if(existing){existing.value=value;existing.dispatchEvent(new Event('input',{bubbles:true}));}});
-    const pressureGroup=document.createElement('div');pressureGroup.className='tool-group-option-row compact tool-line-pressure-group';
-    const pressureLabel=document.createElement('span');pressureLabel.textContent='Pressure';pressureGroup.appendChild(pressureLabel);
-    const pressureOptions=document.createElement('div');pressureOptions.className='tool-line-pressure-options';pressureOptions.setAttribute('role','radiogroup');pressureOptions.setAttribute('aria-label','Line Pressure Mode');
-    const currentMode=(typeof window.getLinePressureMode==='function')?window.getLinePressureMode():'pen';
-    [['fixed','Fixed'],['pen','Pen Pressure']].forEach(([mode,text])=>{
-      const optionLabel=document.createElement('label');optionLabel.className='tool-line-pressure-option';
-      const radio=document.createElement('input');radio.type='radio';radio.name='line-pressure-mode';radio.value=mode;radio.checked=(currentMode===mode);
-      radio.onchange=()=>{if(radio.checked&&typeof window.setLinePressureMode==='function')window.setLinePressureMode(mode);};
-      const radioText=document.createElement('span');radioText.textContent=text;
-      optionLabel.append(radio,radioText);pressureOptions.appendChild(optionLabel);
-    });
-    pressureGroup.appendChild(pressureOptions);section.appendChild(pressureGroup);
-    const aaRow=document.createElement('label');aaRow.className='tool-group-option-row compact';const aa=document.createElement('input');aa.type='checkbox';aa.checked=!!brushAA;const aaText=document.createElement('span');aaText.textContent='Anti-aliasing';aa.onchange=()=>{if(aa.checked!==!!brushAA&&typeof window._setBrushAA==='function')window._setBrushAA(aa.checked);};aaRow.append(aa,aaText);section.appendChild(aaRow);
-    const colorRow=document.createElement('div');colorRow.className='tool-group-option-row compact';const colorPreview=document.createElement('span');colorPreview.className='tool-group-line-color';colorPreview.style.background=typeof color==='string'?color:'#000';const colorText=document.createElement('span');colorText.textContent='Current Color  '+(typeof color==='string'?color:'');colorRow.append(colorPreview,colorText);section.appendChild(colorRow);
-    body.appendChild(section);
-  }
+  const ToolSettingsUI={
+    panel(){const panel=document.createElement('div');panel.className='tool-settings-panel ts-docked-simple-settings';return panel;},
+    group(panel,className){const group=document.createElement('div');group.className='tool-settings-group'+(className?' '+className:'');panel.appendChild(group);return group;},
+    slider(parent,options){
+      const field=document.createElement('div');field.className='ts-field tool-setting tool-setting--slider';
+      const row=document.createElement('div');row.className='ts-row tool-setting__control-row';
+      const label=document.createElement('label');label.className='ts-label tool-setting__label';label.textContent=options.label;
+      const input=document.createElement('input');input.type='range';input.className='ts-range tool-slider';input.min=options.min;input.max=options.max;input.step=options.step;input.value=options.value;
+      const output=document.createElement('output');output.className='ts-val tool-setting__value';output.textContent=options.format?options.format(options.value):options.value;
+      if(options.kind){input.dataset.optionKind=options.kind;output.dataset.optionValueKind=options.kind;}
+      input.oninput=()=>{const value=+input.value;output.textContent=options.format?options.format(value):input.value;options.onInput(value);};
+      row.append(label,input,output);field.appendChild(row);parent.appendChild(field);return{field,input,output};
+    },
+    select(parent,options){
+      const field=document.createElement('div');field.className='ts-field tool-setting tool-setting--select tool-setting--responsive-select';
+      const label=document.createElement('label');label.className='ts-label tool-setting__label';label.textContent=options.label;
+      const control=document.createElement('div');control.className='ts-row tool-aa-quality-row tool-setting__control';
+      const select=document.createElement('select');select.className='ts-select tool-aa-quality';select.dataset.responsiveMinWidth=String(options.minWidth||96);
+      options.items.forEach(([value,text])=>{const option=document.createElement('option');option.value=value;option.textContent=text;select.appendChild(option);});
+      select.value=options.value;select.disabled=!!options.disabled;select.onchange=()=>options.onChange(select.value);
+      control.appendChild(select);field.append(label,control);parent.appendChild(field);return{field,select};
+    },
+    checkbox(parent,options){
+      const field=document.createElement('div');field.className='ts-field tool-setting tool-setting--checkbox';
+      const row=document.createElement('label');row.className='ts-row ts-label-sm tool-setting__checkbox-row';
+      const input=document.createElement('input');input.type='checkbox';input.className='ts-check tool-checkbox';input.checked=!!options.checked;input.disabled=!!options.disabled;
+      const text=document.createElement('span');text.textContent=options.label;input.onchange=()=>options.onChange(input.checked);
+      row.append(input,text);field.appendChild(row);parent.appendChild(field);return{field,input};
+    },
+    separator(parent){const separator=document.createElement('div');separator.className='ts-divider tool-setting-separator';parent.appendChild(separator);return separator;},
+    disabled(parent,label,status){const row=document.createElement('div');row.className='ts-row ts-disabled tool-setting tool-setting--disabled';row.textContent=label+(status?' — '+status:'');parent.appendChild(row);return row;},
+    help(parent,text){const help=document.createElement('div');help.className='tool-setting-help';help.textContent=text;parent.appendChild(help);return help;}
+  };
+  window.ToolSettingsUI=ToolSettingsUI;
 
+  function renderLineOptions(body){
+    const panel=ToolSettingsUI.panel();
+    ToolSettingsUI.slider(panel,{label:'Size',min:1,max:2000,step:.1,value:toolSizes.brush||6,kind:'line-size',format:value=>typeof window.formatBrushSize==='function'?window.formatBrushSize(value):String(value),onInput:value=>{window._lineSizeUpdateSource='line-slider';toolSizes.line=value;window._lineSizeUpdateSource=null;if(tool==='line'){szSlider.value=value;if(typeof refreshSizeUI==='function')refreshSizeUI();}}});
+    ToolSettingsUI.slider(panel,{label:'Opacity',min:1,max:100,step:1,value:Math.round(brushOpacity*100),format:value=>String(Math.round(value)),onInput:value=>{brushOpacity=value/100;const existing=document.getElementById('ts-opacity');if(existing){existing.value=value;existing.dispatchEvent(new Event('input',{bubbles:true}));}}});
+    ToolSettingsUI.select(panel,{label:'Pressure',value:typeof window.getLinePressureMode==='function'?window.getLinePressureMode():'pen',items:[['fixed','Fixed'],['pen','Pen Pressure']],onChange:mode=>{if(typeof window.setLinePressureMode==='function')window.setLinePressureMode(mode);}});
+    const currentAAMode=brushAA&&['weak','medium','strong'].includes(window.brushAAMode)?window.brushAAMode:'none';
+    ToolSettingsUI.select(panel,{label:'Anti-aliasing (AA)',value:currentAAMode,items:[['none','None'],['weak','Low'],['medium','Medium'],['strong','High']],onChange:mode=>{
+      if(mode==='none'){
+        if(typeof window._setBrushAA==='function')window._setBrushAA(false);
+      }else if(typeof window._setBrushAAMode==='function'){
+        window._setBrushAAMode(mode);
+      }
+      if(typeof window._captureActiveBrushPreset==='function')window._captureActiveBrushPreset(false);
+    }});
+    body.appendChild(panel);
+  }
   window.addEventListener('brush-size-changed',event=>{
     const input=document.querySelector('[data-option-kind=\"line-size\"]');
     const output=document.querySelector('[data-option-value-kind=\"line-size\"]');
@@ -363,25 +392,38 @@
     modeFromEvent:selectionModeForEvent
   };
   window.ToolGroups={registerGroup,getGroup,getGroups:()=>Array.from(groups.values()),activateGroup,activateSubTool,get activeGroupId(){return activeGroupId;}};
-  const responsiveAaControls=new WeakSet();
-  const aaLayoutObserver=typeof ResizeObserver==='undefined'?null:new ResizeObserver(entries=>{
+  const responsiveToolControls=new WeakSet();
+  const toolLayoutObserver=typeof ResizeObserver==='undefined'?null:new ResizeObserver(entries=>{
     entries.forEach(entry=>{
       const control=entry.target,children=Array.from(control.children);
-      const toggle=children.find(child=>child.classList&&child.classList.contains('tool-aa-toggle'));
-      const qualityHost=children.find(child=>child.classList&&(child.classList.contains('tool-aa-quality-row')||child.classList.contains('tool-aa-quality')));
+      const isAa=control.classList.contains('tool-aa-controls');
+      const toggle=isAa?children.find(child=>child.classList&&child.classList.contains('tool-aa-toggle')):control.querySelector('.tool-setting__label');
+      const qualityHost=isAa?children.find(child=>child.classList&&(child.classList.contains('tool-aa-quality-row')||child.classList.contains('tool-aa-quality'))):control.querySelector('.tool-setting__control');
       const select=qualityHost&&(qualityHost.matches('select')?qualityHost:qualityHost.querySelector('select'));
-      if(!toggle||!select)return;
+      if(!toggle||!qualityHost||!select)return;
       const gap=parseFloat(getComputedStyle(control).columnGap)||0;
-      const requiredWidth=Math.ceil(toggle.scrollWidth+select.offsetWidth+gap);
-      control.classList.toggle('aa-stacked',control.clientWidth<requiredWidth);
+      if(isAa){
+        const requiredWidth=Math.ceil(toggle.scrollWidth+select.offsetWidth+gap);
+        control.classList.toggle('aa-stacked',control.clientWidth<requiredWidth);
+        return;
+      }
+      const panel=control.closest('.tool-settings-panel');
+      const peers=panel?Array.from(panel.querySelectorAll('.tool-setting--responsive-select')):[control];
+      const labelWidth=Math.max(...peers.map(peer=>peer.querySelector('.tool-setting__label')?.scrollWidth||0));
+      const selectWidth=Math.max(...peers.map(peer=>Number(peer.querySelector('select')?.dataset.responsiveMinWidth)||96));
+      const requiredWidth=Math.ceil(labelWidth+selectWidth+gap);
+      const stacked=control.clientWidth<requiredWidth;
+      peers.forEach(peer=>peer.classList.toggle('tool-setting--stacked',stacked));
     });
   });
-  function observeResponsiveAaControls(root){
-    if(!aaLayoutObserver)return;
-    const controls=[];if(root.nodeType===1&&root.matches('.tool-aa-controls'))controls.push(root);
-    if(root.querySelectorAll)controls.push(...root.querySelectorAll('.tool-aa-controls'));
-    controls.forEach(control=>{if(!responsiveAaControls.has(control)){responsiveAaControls.add(control);aaLayoutObserver.observe(control);}});
+  function observeResponsiveToolControls(root){
+    if(!toolLayoutObserver)return;
+    const selector='.tool-aa-controls,.tool-setting--responsive-select';
+    const controls=[];if(root.nodeType===1&&root.matches(selector))controls.push(root);
+    if(root.querySelectorAll)controls.push(...root.querySelectorAll(selector));
+    controls.forEach(control=>{if(!responsiveToolControls.has(control)){responsiveToolControls.add(control);toolLayoutObserver.observe(control);}});
   }
-  observeResponsiveAaControls(document);
-  new MutationObserver(records=>records.forEach(record=>record.addedNodes.forEach(observeResponsiveAaControls))).observe(document.body,{childList:true,subtree:true});  window.dispatchEvent(new CustomEvent('tool-groups-ready'));
+  observeResponsiveToolControls(document);
+  new MutationObserver(records=>records.forEach(record=>record.addedNodes.forEach(observeResponsiveToolControls))).observe(document.body,{childList:true,subtree:true});
+  window.dispatchEvent(new CustomEvent('tool-groups-ready'));
 })();
