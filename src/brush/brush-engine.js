@@ -2696,97 +2696,81 @@ function _flushCurveTail(e){
   _curveP0=null;_curveP1=null;
 }
 
-// Line tool pressure profile. Raw samples remain live while the initial line
-// is being drawn outward. The first endpoint-adjustment gesture (rotation or
-// rotation), or pointerup when no adjustment occurred, projects them once
-// into normalized t/pressure pairs. Later geometry reuses that locked profile.
-function _normalizeLinePressureSamples(samples,sx,sy,ex,ey){
-  if(!samples||!samples.length)return[{t:0,pressure:1},{t:1,pressure:1}];
-  if(samples.length===1){const pressure=samples[0].pressure;return[{t:0,pressure},{t:1,pressure}];}
-  const length=Math.max(.0001,Math.hypot(ex-sx,ey-sy));
-  let furthest=0;
-  const radialProfile=samples.map(sample=>{
-    // Pressure belongs to normalized progress along the original outward
-    // gesture, not to projection onto a later rotated line. Monotonic radial
-    // progress preserves the digitizer profile while endpoint adjustment
-    // changes only reconstructed x/y positions.
-    furthest=Math.max(furthest,Math.hypot(sample.x-sx,sample.y-sy));
-    return{t:Math.max(0,Math.min(1,furthest/length)),pressure:sample.pressure};
-  });
-  // Shortening crops the previously captured line. Multiple later samples
-  // can therefore land at t=1; keep the newest pressure at that endpoint
-  // instead of letting the first cropped sample hide subsequent changes.
-  const profile=[];
-  radialProfile.forEach(sample=>{
-    const previous=profile[profile.length-1];
-    if(previous&&Math.abs(previous.t-sample.t)<1e-6)previous.pressure=sample.pressure;
-    else profile.push(sample);
-  });
-  const startPressure=samples[0].pressure,endPressure=samples[samples.length-1].pressure;
-  if(profile[0].t>0)profile.unshift({t:0,pressure:profile[0].pressure});
-  if(profile[profile.length-1].t<1)profile.push({t:1,pressure:profile[profile.length-1].pressure});
-  profile[0].t=0;profile[0].pressure=startPressure;
-  profile[profile.length-1].t=1;profile[profile.length-1].pressure=endPressure;
-  return profile;
-}
-function _linePressureFunction(profile){
-  return function pressureAt(t){
-    t=Math.max(0,Math.min(1,t));if(window.DEBUG_LINE_TOOL)_lineDiagnosticCurrentT=t;let lo=profile[0];
-    for(let i=1;i<profile.length;i++){
-      const hi=profile[i];
-      if(t<=hi.t){const span=hi.t-lo.t,f=span>0?(t-lo.t)/span:0;return lo.pressure+(hi.pressure-lo.pressure)*f;}
-      lo=hi;
-    }
-    return profile[profile.length-1].pressure;
-  };
-}
-function _lineAngleDelta(a,b){
-  let delta=Math.abs(a-b)%(Math.PI*2);if(delta>Math.PI)delta=Math.PI*2-delta;return delta;
-}
-function _updateLineGestureGeometry(point){
-  if(!_lineGesture||_lineGesture.pressureProfileLocked)return false;
-  const sx=_lineGesture.startPoint.x,sy=_lineGesture.startPoint.y;
-  const dx=point.x-sx,dy=point.y-sy,length=Math.hypot(dx,dy),angle=length?Math.atan2(dy,dx):_lineGesture.referenceAngle;
-  if(_lineGesture.geometryEstablished){
-    // An outward extension or shortening remains pressure capture. Rotation
-    // at approximately the same radius is endpoint adjustment and locks the
-    // profile; shortening instead crops it and permits a new endpoint
-    // pressure, matching Toon Boom's line interaction.
-    const extending=length>_lineGesture.maxLength+1;
-    const shortened=length<_lineGesture.maxLength-Math.max(2,_lineGesture.maxLength*.03);
-    const rotated=!extending&&!shortened&&length>0&&_lineAngleDelta(angle,_lineGesture.referenceAngle)>Math.PI/18;
-    if(rotated){
-      const captured=_lineGesture.captureEndpoint;
-      _lockLinePressureProfile(captured.x,captured.y);
-      return true;
-    }
-  }else if(length>=4&&_linePressureSamples.length>=4){
-    _lineGesture.geometryEstablished=true;_lineGesture.referenceAngle=angle;
+// Line tool editable pressure profile. Samples live in a mutable distance
+// domain. Shortening destructively truncates the tail; extension appends
+// fresh tablet pressure; rotation at effectively constant length changes
+// geometry only.
+const _LINE_LENGTH_EDIT_EPSILON=.75;
+function _linePressureAtDistance(samples,distance){
+  if(!samples||!samples.length)return 1;
+  if(distance<=samples[0].distance)return samples[0].pressure;
+  let lo=samples[0];
+  for(let i=1;i<samples.length;i++){
+    const hi=samples[i];
+    if(distance<=hi.distance){const span=hi.distance-lo.distance,f=span>0?(distance-lo.distance)/span:0;return lo.pressure+(hi.pressure-lo.pressure)*f;}
+    lo=hi;
   }
-  if(length>=_lineGesture.maxLength){
-    _lineGesture.maxLength=length;
-    _lineGesture.referenceAngle=angle;
-    _lineGesture.captureEndpoint={x:point.x,y:point.y};
-  }
-  return false;
+  return samples[samples.length-1].pressure;
 }
-function _lockLinePressureProfile(ex,ey){
-  if(!_lineGesture||_lineGesture.pressureProfileLocked)return;
-  const profile=_normalizeLinePressureSamples(_linePressureSamples,_lineGesture.startPoint.x,_lineGesture.startPoint.y,ex,ey);
-  _lineGesture.endPoint={x:ex,y:ey};
-  _lineGesture.pressureSamples=profile.map(sample=>({t:sample.t,pressure:sample.pressure}));
-  _lineGesture.startPressure=profile[0].pressure;
-  _lineGesture.endPressure=profile[profile.length-1].pressure;
-  _lineGesture.pressureProfileLocked=true;
+function _cropLinePressureProfile(newLength){
+  const gesture=_lineGesture,samples=gesture.pressureSamples;
+  const removed=samples.reduce((count,sample)=>count+(sample.distance>newLength+.0001?1:0),0);
+  const boundaryPressure=_linePressureAtDistance(samples,newLength);
+  const retained=samples.filter(sample=>sample.distance<newLength-.0001);
+  if(!retained.length||retained[0].distance>0)retained.unshift({distance:0,pressure:samples[0].pressure});
+  const last=retained[retained.length-1];
+  if(!last||Math.abs(last.distance-newLength)>.0001)retained.push({distance:newLength,pressure:boundaryPressure});
+  else last.pressure=boundaryPressure;
+  gesture.pressureSamples=retained;
+  gesture.recordedLength=newLength;
+  currentPressure=boundaryPressure;_prevRawPressure=boundaryPressure;_lastKnownPressure=boundaryPressure;
+  return removed;
+}
+function _editLinePressureProfile(lineEvents){
+  const gesture=_lineGesture,latest=lineEvents[lineEvents.length-1];
+  const sx=gesture.startPoint.x,sy=gesture.startPoint.y;
+  const previousLength=gesture.currentLength;
+  const sampleCountBefore=gesture.pressureSamples.length;
+  let action='rotate',removedSampleCount=0,appendedSampleCount=0,currentEventPressure=Number(latest.event.pressure);
+  if(getLinePressureMode()==='pen'){
+    // Process the coalesced packet chronologically. A packet may extend and
+    // retract before its final event; sequential editing guarantees that an
+    // overshot tail is destructively cropped instead of surviving hidden.
+    for(const sample of lineEvents){
+      const distance=Math.hypot(sample.point.x-sx,sample.point.y-sy);
+      if(distance<gesture.recordedLength-_LINE_LENGTH_EDIT_EPSILON){
+        action='crop';removedSampleCount+=_cropLinePressureProfile(distance);
+        currentEventPressure=gesture.pressureSamples[gesture.pressureSamples.length-1].pressure;
+      }else if(distance>gesture.recordedLength+_LINE_LENGTH_EDIT_EPSILON){
+        action='extend';
+        const pressure=_getPressure(sample.event);
+        gesture.pressureSamples.push({distance,pressure});
+        _linePressureSamples.push({x:sample.point.x,y:sample.point.y,pressure});
+        gesture.recordedLength=distance;currentEventPressure=pressure;appendedSampleCount++;
+      }
+    }
+  }
+  const newLength=Math.hypot(latest.point.x-sx,latest.point.y-sy);
+  gesture.currentLength=newLength;gesture.endPoint={x:latest.point.x,y:latest.point.y};gesture.currentEventPressure=currentEventPressure;
+  const samples=gesture.pressureSamples;
+  gesture.lastEditDiagnostic={previousLength,newLength,recordedLength:gesture.recordedLength,action,currentEventPressure,sampleCountBefore,sampleCountAfter:samples.length,removedSampleCount,appendedSampleCount,maxStoredDistance:samples.length?samples[samples.length-1].distance:0};
+  return gesture.lastEditDiagnostic;
 }
 function _getLinePressureProfile(sx,sy,ex,ey){
-  const profile=_lineGesture&&_lineGesture.pressureProfileLocked
-    ?_lineGesture.pressureSamples
-    :_normalizeLinePressureSamples(_linePressureSamples,sx,sy,ex,ey);
-  return profile.map(sample=>({t:sample.t,pressure:sample.pressure}));
+  const length=Math.max(.0001,Math.hypot(ex-sx,ey-sy));
+  if(!_lineGesture||!_lineGesture.pressureSamples.length)return[{t:0,pressure:1,distance:0},{t:1,pressure:1,distance:length}];
+  const profile=_lineGesture.pressureSamples.map(sample=>({t:Math.max(0,Math.min(1,sample.distance/length)),pressure:sample.pressure,distance:sample.distance}));
+  const last=profile[profile.length-1];
+  if(last.t<1)profile.push({t:1,pressure:last.pressure,distance:length});
+  return profile;
 }
 function _buildLinePressureProfile(sx,sy,ex,ey){
-  return _linePressureFunction(_getLinePressureProfile(sx,sy,ex,ey));
+  const length=Math.max(.0001,Math.hypot(ex-sx,ey-sy));
+  const samples=_lineGesture&&_lineGesture.pressureSamples||[];
+  return function pressureAt(t){
+    t=Math.max(0,Math.min(1,t));if(window.DEBUG_LINE_TOOL)_lineDiagnosticCurrentT=t;
+    return _linePressureAtDistance(samples,t*length);
+  };
 }
 // Renders the Line tool's current drag (or its final committed state) into
 // _strokeCanvas from scratch: clears any previous stamp, then re-walks the
@@ -2900,7 +2884,7 @@ function _renderLineDrag(ex,ey,e,phase){
   if(window.DEBUG_LINE_TOOL){
     const storedProfile=usePenPressure?_getLinePressureProfile(lineStart.x,lineStart.y,ex,ey):[{t:0,pressure:1},{t:1,pressure:1}];
     const diagnostic={
-      tool:'line',phase:phase||'preview',pressureMode:getLinePressureMode(),
+      tool:'line',phase:_lineGesture?_lineGesture.phase:'unknown',renderPhase:phase||'preview',pressureMode:getLinePressureMode(),
       rawPressureSamples:_linePressureSamples.map(sample=>({x:sample.x,y:sample.y,pressure:sample.pressure})),
       storedPressureSamples:storedProfile,
       effectivePressureSamples:_lineEffectivePressureSamples.slice(),
@@ -2909,7 +2893,12 @@ function _renderLineDrag(ex,ey,e,phase){
       shortcutUpdatedSize:window._lastLineShortcutSize||null,
       effectiveDiameter:getBrushSize(),canvasScale:1,zoom,
       stampCount:_strokeDabCount-dabsBefore,
-      pressureProfileLocked:!!(_lineGesture&&_lineGesture.pressureProfileLocked)
+      currentEventPressure:_lineGesture?_lineGesture.currentEventPressure:null,
+      storedPressureProfile:_lineGesture?_lineGesture.pressureSamples.map(sample=>({distance:sample.distance,pressure:sample.pressure})):storedProfile,
+      profileSampleCount:_lineGesture?_lineGesture.pressureSamples.length:storedProfile.length,
+      lineLength:Math.hypot(ex-lineStart.x,ey-lineStart.y),
+      endpoint:{x:ex,y:ey},
+      ...(_lineGesture&&_lineGesture.lastEditDiagnostic||{})
     };
     const records=window.__lineToolDiagnostics||(window.__lineToolDiagnostics=[]);records.push(diagnostic);if(records.length>200)records.splice(0,records.length-200);
     console.debug('[LineToolDiagnostics]',diagnostic);
@@ -3644,7 +3633,7 @@ activeC.addEventListener('pointerdown',e=>{
     const fixedLinePressure=getLinePressureMode()==='fixed';
     const storedLinePressure=fixedLinePressure?1:currentPressure;
     _linePressureSamples=[{x:p.x,y:p.y,pressure:storedLinePressure}];
-    _lineGesture={startPoint:{x:p.x,y:p.y},endPoint:{x:p.x,y:p.y},captureEndpoint:{x:p.x,y:p.y},startPressure:storedLinePressure,endPressure:storedLinePressure,pressureSamples:fixedLinePressure?[{t:0,pressure:1},{t:1,pressure:1}]:[],pressureProfileLocked:fixedLinePressure,geometryEstablished:false,referenceAngle:0,maxLength:0};
+    _lineGesture={phase:'editing',startPoint:{x:p.x,y:p.y},endPoint:{x:p.x,y:p.y},currentLength:0,recordedLength:0,pressureSamples:[{distance:0,pressure:storedLinePressure}],currentEventPressure:Number(e.pressure),lastEditDiagnostic:null};
     _linePreviewBounds=null;_linePreviewPreviousEndpoint=null;_linePreviewFrameId=0;_linePreviewMoveSequence=0;_linePreviewGeneration++;
     activeC.setPointerCapture(e.pointerId);
     _ensureStrokeCanvas();
@@ -3792,14 +3781,11 @@ function _handleMoveEvent(e){
     // applied to the endpoint tracking itself. Recording happens on every
     // call regardless of rendering -- see _scheduleLinePreview above for
     // why rendering itself is decoupled from this.
-    const lineEvents=events.map(ev=>({event:ev,pressure:_getPressure(ev),point:getPos(ev)}));
+    const lineEvents=events.map(ev=>({event:ev,point:getPos(ev)}));
     const latest=lineEvents[lineEvents.length-1];
-    if(_lineGesture&&!_lineGesture.pressureProfileLocked)_updateLineGestureGeometry(latest.point);
-    if(!_lineGesture||!_lineGesture.pressureProfileLocked){
-      lineEvents.forEach(sample=>_linePressureSamples.push({x:sample.point.x,y:sample.point.y,pressure:sample.pressure}));
-      currentPressure=latest.pressure;
-    }else currentPressure=_lineGesture.endPressure;
-    if(_lineGesture)_lineGesture.endPoint={x:latest.point.x,y:latest.point.y};
+    _editLinePressureProfile(lineEvents);
+    const retained=_lineGesture.pressureSamples;
+    currentPressure=retained.length?retained[retained.length-1].pressure:1;
     lx=latest.point.x;ly=latest.point.y;_lastPointerEvent=latest.event;
     _scheduleLinePreview(latest.point.x,latest.point.y,latest.event);
     return;
@@ -3854,10 +3840,9 @@ function _pointerEndStroke(e){
   if(activeGroupId){drawing=false;lineStart=null;_lineDragging=false;_linePressureSamples=[];_lineGesture=null;_linePreviewBounds=null;_linePreviewPreviousEndpoint=null;_pendingDabs.length=0;_endColorEraserStroke();_activeStrokePointerId=null;return;}
   if(tool==='line'&&lineStart){
     pushUndo();ensureKey();const p=getPos(e);
-    const finalPressure=_getPressure(e);
-    if(_lineGesture&&!_lineGesture.pressureProfileLocked){_linePressureSamples.push({x:p.x,y:p.y,pressure:finalPressure});_lockLinePressureProfile(p.x,p.y);}
-    if(_lineGesture)_lineGesture.endPoint={x:p.x,y:p.y};
-    currentPressure=_lineGesture?_lineGesture.endPressure:finalPressure;
+    if(_lineGesture)_editLinePressureProfile([{event:e,point:p}]);
+    const retainedPressure=_lineGesture&&_lineGesture.pressureSamples.length?_lineGesture.pressureSamples[_lineGesture.pressureSamples.length-1].pressure:currentPressure;
+    currentPressure=retainedPressure;
     if(!_strokeCanvas||!_inStroke){_ensureStrokeCanvas();_inStroke=true;}
   if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.event('stroke-state-initialization-complete',{strokeCanvas:!!_strokeCanvas,inStroke:_inStroke});
     // Final commit shares the exact same renderer used for every live
