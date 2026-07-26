@@ -206,7 +206,7 @@
     refreshMarks();
   }
 
-  function _visibleStepTarget(start,direction){
+function _visibleStepTarget(start,direction){
     for(let f=start;f>=rangeStart&&f<=rangeEnd;f+=direction){
       if(!(typeof isDrawingFrameHidden==='function'&&isDrawingFrameHidden(curLayer,f)))return f;
     }
@@ -219,8 +219,8 @@
     // At the out point, "next frame" wraps to the in point (and vice versa),
     // same as the timeline's step forward/back buttons — this takes priority
     // over jumping to the next/prev keyframe or bypass-stepping.
-    if(direction>0&&curFrame>=rangeEnd){const wrapped=_visibleStepTarget(rangeStart,1);if(wrapped!==null)goToFrame(wrapped);refresh();return;}
-    if(direction<0&&curFrame<=rangeStart){const wrapped=_visibleStepTarget(rangeEnd,-1);if(wrapped!==null)goToFrame(wrapped);refresh();return;}
+    if(direction>0&&curFrame>=rangeEnd){const target=chkBypass.checked?rangeStart:_visibleStepTarget(rangeStart,1);if(target!==null)goToFrame(target);refresh();return;}
+    if(direction<0&&curFrame<=rangeStart){const target=chkBypass.checked?rangeEnd:_visibleStepTarget(rangeEnd,-1);if(target!==null)goToFrame(target);refresh();return;}
 
     let target;
 
@@ -242,7 +242,7 @@
     }
 
     target=Math.max(0,Math.min(TOTAL-1,target));
-    if(typeof isDrawingFrameHidden==='function'&&isDrawingFrameHidden(curLayer,target)){const visible=_visibleStepTarget(target,direction);if(visible===null){refresh();return;}target=visible;}
+    if(!chkBypass.checked&&typeof isDrawingFrameHidden==='function'&&isDrawingFrameHidden(curLayer,target)){const visible=_visibleStepTarget(target,direction);if(visible===null){refresh();return;}target=visible;}
     goToFrame(target);
     refresh();
   }
