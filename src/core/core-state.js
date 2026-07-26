@@ -415,6 +415,7 @@ function applyTransform(){
     c.style.imageRendering=useNN?'pixelated':'auto';
   });
   _updateDisplayBlur();
+  _syncZoomStatus();
   window.dispatchEvent(new Event('canvas-view-transform-changed'));
 }
 
@@ -448,11 +449,16 @@ function _updateDisplayBlur(){
   _displayBlurPx = zoom<_ZOOM_BLUR_START ? Math.min(6, (_ZOOM_BLUR_START/zoom - 1) * 0.8) : 0;
 }
 
+function _syncZoomStatus(){
+  const status=document.getElementById('stat-zoom');
+  if(status)status.textContent='Zoom: '+Math.round(zoom*100)+'%';
+}
+
 function showZoom(){
   const pct=Math.round(zoom*100)+'%';
   zoomInd.textContent=pct;
   zoomInd.classList.add('show');
-  document.getElementById('stat-zoom').textContent='Zoom: '+pct;
+  _syncZoomStatus();
   clearTimeout(zoomInd._t);
   zoomInd._t=setTimeout(()=>zoomInd.classList.remove('show'),1100);
 }

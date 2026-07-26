@@ -1,4 +1,4 @@
-﻿(function(){
+(function(){
   'use strict';
   const layers=new Map();
   let resizeObserver=null;

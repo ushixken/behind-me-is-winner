@@ -1498,11 +1498,40 @@ function updatePlayhead(){
   }
 }
 
+function _statusKeyframeTarget(){
+  let layerIndex=curLayer,frameIndex=curFrame;
+  if(selectedKFs.size){
+    let key=null;
+    if(kfSelectionAnchor){
+      const anchorKey=kfSelectionAnchor.layerIndex+':'+kfSelectionAnchor.frameIndex;
+      if(selectedKFs.has(anchorKey))key=anchorKey;
+    }
+    key=key||selectedKFs.values().next().value;
+    const split=String(key).split(':');
+    if(split.length===2){layerIndex=Number(split[0]);frameIndex=Number(split[1]);}
+  }
+  return {layerIndex,frameIndex};
+}
+
 function updateStatus(){
-  document.getElementById('stat-kf').textContent='KF: '+Object.keys(layers[curLayer]?.frames||{}).length;
+  const target=_statusKeyframeTarget(),layer=layers[target.layerIndex];
+  const keyframes=layer&&layer.frames?Object.keys(layer.frames).map(Number).sort((a,b)=>a-b):[];
+  let keyframeIndex=keyframes.indexOf(target.frameIndex);
+  if(keyframeIndex<0){
+    for(let index=keyframes.length-1;index>=0;index--){
+      if(keyframes[index]<=target.frameIndex){keyframeIndex=index;break;}
+    }
+  }
+  const keyframe=keyframeIndex>=0?keyframes[keyframeIndex]:null;
+  document.getElementById('stat-kf').textContent='KF: '+(keyframeIndex>=0?keyframeIndex+1:'—');
+  document.getElementById('stat-frame').textContent='F: '+(keyframe===null?'—':frameLabel(keyframe));
   document.getElementById('stat-range').textContent='Range: '+frameLabel(rangeStart)+'–'+frameLabel(rangeEnd);
-  const sel=[...selectedFrames].sort((a,b)=>a-b);
-  document.getElementById('stat-sel').textContent='Sel: '+(sel.length?sel.map(f=>frameLabel(f)).join(','):'—');
+  let exposure='—';
+  if(keyframe!==null){
+    const next=keyframes[keyframeIndex+1];
+    exposure=next===undefined?1:Math.max(1,next-keyframe);
+  }
+  document.getElementById('stat-expo').textContent='Expo: '+exposure;
 }
 
 // ════════════════════════════════════════════════════════════════
