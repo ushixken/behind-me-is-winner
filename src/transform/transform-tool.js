@@ -158,7 +158,6 @@ let tfCornerDrag=null;      // index of corner currently being dragged, or null
 
 
 const TF_HANDLE_R=9;       // corner handle hit radius, canvas px (scales visually with zoom via CSS)
-const TF_ROTATE_OFFSET=36; // distance above the box the rotate handle sits, canvas px
 
 function _tfCenter(state){
   state=state||tfState;
@@ -893,15 +892,6 @@ function _tfCorners(){
   const pts=[[-hw,-hh],[hw,-hh],[hw,hh],[-hw,hh]];
   return pts.map(([lx,ly])=>({x:c.x+lx*cosR-ly*sinR, y:c.y+lx*sinR+ly*cosR}));
 }
-function _tfRotateHandlePos(){
-  const c=_tfCenter();
-  const hh=(tfBox.h/2)*tfState.scale;
-  const rad=tfState.rotation*Math.PI/180;
-  const cosR=Math.cos(rad),sinR=Math.sin(rad);
-  const lx=0, ly=-hh-TF_ROTATE_OFFSET;
-  return {x:c.x+lx*cosR-ly*sinR, y:c.y+lx*sinR+ly*cosR};
-}
-
 function _tfHideFloatingActions(){tfActionControls.hidden=true;}
 function _tfPositionFloatingActions(points){
   if(!tfActive||tfAwaitingRepeat||!points||!points.length){_tfHideFloatingActions();return;}
@@ -911,12 +901,11 @@ function _tfPositionFloatingActions(points){
 }
 
 function _tfDrawHandles(clearFirst){
-  _tfResizeGuideCanvas();const corners=_tfCorners().map(_tfToViewportPoint),rHandle=_tfToViewportPoint(_tfRotateHandlePos());_tfClearUi();
+  _tfResizeGuideCanvas();const corners=_tfCorners().map(_tfToViewportPoint);_tfClearUi();
   const idle=tfAwaitingRepeat,c=tfUiCtx;c.save();c.globalAlpha=idle?.38:1;c.strokeStyle=idle?'#9a9aa6':(tfGroupMode?'#ff9f4d':'#4da3ff');c.lineWidth=1.5;c.lineJoin='round';c.lineCap='round';c.setLineDash([6,4]);
   c.beginPath();corners.forEach((p,i)=>{i?c.lineTo(p.x,p.y):c.moveTo(p.x,p.y);});c.closePath();c.stroke();c.setLineDash([]);
-  const topMid={x:(corners[0].x+corners[1].x)/2,y:(corners[0].y+corners[1].y)/2};c.beginPath();c.moveTo(topMid.x,topMid.y);c.lineTo(rHandle.x,rHandle.y);c.stroke();
   _tfPositionFloatingActions(corners);
-  const hr=TF_HANDLE_R;c.fillStyle=idle?'#8c8c96':'#fff';corners.forEach(p=>{c.beginPath();c.rect(p.x-hr/2,p.y-hr/2,hr,hr);c.fill();c.stroke();});c.beginPath();c.arc(rHandle.x,rHandle.y,hr/2,0,Math.PI*2);c.fill();c.stroke();_tfDrawPivotHandle();c.restore();
+  const hr=TF_HANDLE_R;c.fillStyle=idle?'#8c8c96':'#fff';corners.forEach(p=>{c.beginPath();c.rect(p.x-hr/2,p.y-hr/2,hr,hr);c.fill();c.stroke();});const mids=_tfPolyEdgeMidpoints(corners),er=hr*.42;mids.forEach(p=>{c.beginPath();c.rect(p.x-er,p.y-er,er*2,er*2);c.fill();c.stroke();});_tfDrawPivotHandle();c.restore();
 }
 
 function _tfDrawPivotHandle(){
@@ -929,7 +918,7 @@ function _tfDrawHandlesPerspective(clearFirst){
   if(tfOptionValues.perspectiveGuidesEnabled){const analysis=PerspectiveController.analyze(tfCorners),viewAnalysis=_tfAnalysisToViewport(analysis);PerspectiveController.draw(perspGuideCtx,viewAnalysis,{scale:1,width:geometry.width,height:geometry.height});}
   const corners=tfCorners.map(_tfToViewportPoint),idle=tfAwaitingRepeat,c=tfUiCtx,hr=TF_HANDLE_R;c.save();c.globalAlpha=idle?.38:1;c.strokeStyle=idle?'#9a9aa6':(tfGroupMode?'#ff9f4d':'#a24dff');c.lineWidth=1.5;c.lineJoin='round';c.lineCap='round';c.setLineDash([6,4]);c.beginPath();corners.forEach((p,i)=>{i?c.lineTo(p.x,p.y):c.moveTo(p.x,p.y);});c.closePath();c.stroke();c.setLineDash([]);c.fillStyle=idle?'#8c8c96':'#fff';corners.forEach(p=>{c.beginPath();c.rect(p.x-hr/2,p.y-hr/2,hr,hr);c.fill();c.stroke();});
   _tfPositionFloatingActions(corners);
-  const mids=_tfPolyEdgeMidpoints(corners),dr=hr*.62;mids.forEach(p=>{c.beginPath();c.moveTo(p.x,p.y-dr);c.lineTo(p.x+dr,p.y);c.lineTo(p.x,p.y+dr);c.lineTo(p.x-dr,p.y);c.closePath();c.fill();c.stroke();});c.restore();
+  const mids=_tfPolyEdgeMidpoints(corners),dr=hr*.62;mids.forEach(p=>{c.beginPath();c.moveTo(p.x,p.y-dr);c.lineTo(p.x+dr,p.y);c.lineTo(p.x,p.y+dr);c.lineTo(p.x-dr,p.y);c.closePath();c.fill();c.stroke();});_tfDrawPivotHandle();c.restore();
 }
 
 function _tfDist(ax,ay,bx,by){ return Math.hypot(ax-bx,ay-by); }
@@ -947,26 +936,17 @@ function _tfPolyEdgeMidpoints(poly){
   });
 }
 
+const TF_ROTATE_CURSOR='url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2724%27 height=%2724%27 viewBox=%270 0 24 24%27%3E%3Cpath d=%27M6 8a7 7 0 1 1-1 7%27 fill=%27none%27 stroke=%27white%27 stroke-width=%273%27/%3E%3Cpath d=%27M3 5v6h6%27 fill=%27none%27 stroke=%27white%27 stroke-width=%273%27/%3E%3Cpath d=%27M6 8a7 7 0 1 1-1 7%27 fill=%27none%27 stroke=%27000%27 stroke-width=%271.2%27/%3E%3Cpath d=%27M3 5v6h6%27 fill=%27none%27 stroke=%27000%27 stroke-width=%271.2%27/%3E%3C/svg%3E") 12 12, crosshair';
+function _tfResizeCursor(angle){const normalized=((angle%180)+180)%180;if(normalized<22.5||normalized>=157.5)return 'ew-resize';if(normalized<67.5)return 'nwse-resize';if(normalized<112.5)return 'ns-resize';return 'nesw-resize';}
+function _tfHitCursor(hit){if(!hit)return 'default';if(hit.mode==='pivot')return 'crosshair';if(hit.mode==='move'||hit.mode==='pmove')return 'move';if(hit.mode==='rotate'||hit.mode==='protate')return TF_ROTATE_CURSOR;if(hit.cursorAngle!=null)return _tfResizeCursor(hit.cursorAngle);return hit.mode==='vp'?'crosshair':hit.mode==='horizon'?'ns-resize':'move';}
+
 function _tfHitTest(p){
-  const hitR=TF_HANDLE_R/zoom+4/zoom;
-  if(tfPivot){
-    const pivP=_tfPivotWorld();
-    if(_tfDist(p.x,p.y,pivP.x,pivP.y)<=hitR) return {mode:'pivot'};
-  }
-  const rHandle=_tfRotateHandlePos();
-  if(_tfDist(p.x,p.y,rHandle.x,rHandle.y)<=hitR) return {mode:'rotate'};
-  const corners=_tfCorners();
-  for(let i=0;i<corners.length;i++){
-    if(_tfDist(p.x,p.y,corners[i].x,corners[i].y)<=hitR) return {mode:'scale',cornerIndex:i};
-  }
-  const c=_tfCenter();
-  const rad=-tfState.rotation*Math.PI/180;
-  const cosR=Math.cos(rad),sinR=Math.sin(rad);
-  const dx=p.x-c.x, dy=p.y-c.y;
-  const lx=dx*cosR-dy*sinR, ly=dx*sinR+dy*cosR;
-  const hw=(tfBox.w/2)*tfState.scale, hh=(tfBox.h/2)*tfState.scale;
-  if(Math.abs(lx)<=hw&&Math.abs(ly)<=hh) return {mode:'move'};
-  return null;
+  const hitR=TF_HANDLE_R/zoom+4/zoom,corners=_tfCorners(),rotation=tfState.rotation;
+  for(let i=0;i<corners.length;i++)if(_tfDist(p.x,p.y,corners[i].x,corners[i].y)<=hitR)return {mode:'scale',cornerIndex:i,cursorAngle:rotation+(i===0||i===2?45:135)};
+  const mids=_tfPolyEdgeMidpoints(corners);for(let i=0;i<mids.length;i++)if(_tfDist(p.x,p.y,mids[i].x,mids[i].y)<=hitR)return {mode:'scale',edgeIndex:i,cursorAngle:rotation+(i%2===0?90:0)};
+  if(tfPivot){const pivot=_tfPivotWorld();if(_tfDist(p.x,p.y,pivot.x,pivot.y)<=hitR)return {mode:'pivot'};}
+  const c=_tfCenter(),rad=-rotation*Math.PI/180,cosR=Math.cos(rad),sinR=Math.sin(rad),dx=p.x-c.x,dy=p.y-c.y,lx=dx*cosR-dy*sinR,ly=dx*sinR+dy*cosR,hw=tfBox.w/2*tfState.scale,hh=tfBox.h/2*tfState.scale;
+  if(Math.abs(lx)<=hw&&Math.abs(ly)<=hh)return {mode:'move'};return {mode:'rotate'};
 }
 
 // Point-in-polygon (ray casting) — used to hit-test the perspective quad's
@@ -984,8 +964,9 @@ function _tfPointInPoly(p,poly){
 function _tfHitTestPerspective(p){
   const hitR=TF_HANDLE_R/zoom+4/zoom;
   for(let i=0;i<tfCorners.length;i++){
-    if(_tfDist(p.x,p.y,tfCorners[i].x,tfCorners[i].y)<=hitR) return {mode:'pcorner',cornerIndex:i};
+    if(_tfDist(p.x,p.y,tfCorners[i].x,tfCorners[i].y)<=hitR){const previous=tfCorners[(i+tfCorners.length-1)%tfCorners.length],next=tfCorners[(i+1)%tfCorners.length];return {mode:'pcorner',cornerIndex:i,cursorAngle:Math.atan2(next.y-previous.y,next.x-previous.x)*180/Math.PI};}
   }
+  if(tfPivot){const pivot=_tfPivotWorld();if(_tfDist(p.x,p.y,pivot.x,pivot.y)<=hitR)return {mode:'pivot'};}
   // VP / horizon handles are checked before edge-midpoint handles: once
   // one axis has been dragged, the *other* (still-unconverged) axis's
   // placeholder handle is re-derived from the now-skewed quad and can
@@ -1001,10 +982,9 @@ function _tfHitTestPerspective(p){
   }
   const mids=_tfPolyEdgeMidpoints(tfCorners);
   for(let i=0;i<mids.length;i++){
-    if(_tfDist(p.x,p.y,mids[i].x,mids[i].y)<=hitR) return {mode:'pedge',edgeIndex:i};
+    if(_tfDist(p.x,p.y,mids[i].x,mids[i].y)<=hitR){const a=tfCorners[i],b=tfCorners[(i+1)%tfCorners.length];return {mode:'pedge',edgeIndex:i,cursorAngle:Math.atan2(b.y-a.y,b.x-a.x)*180/Math.PI+90};}
   }
-  if(_tfPointInPoly(p,tfCorners)) return {mode:'pmove'};
-  return null;
+  if(_tfPointInPoly(p,tfCorners))return {mode:'pmove'};return {mode:'protate'};
 }
 
 function _tfPerspPointerDown(e){
@@ -1015,6 +995,7 @@ function _tfPerspPointerDown(e){
   if(!hit) return;
   perspGuideC.setPointerCapture(e.pointerId);
   tfDrag=hit.mode;
+  if(hit.mode==='pivot'){tfDragInfo={};return;}
   if(hit.mode==='pcorner'){
     tfCornerDrag=hit.cornerIndex;
     tfDragInfo={startP:p,startCorner:Object.assign({},tfCorners[hit.cornerIndex])};
@@ -1042,9 +1023,8 @@ function _tfPerspPointerDown(e){
     tfDragInfo={startP:p,startCorners:tfCorners.map(c=>({x:c.x,y:c.y})),
       startVP1:Object.assign({},analysis.vanishingPoints[0]),
       startVP2:Object.assign({},analysis.vanishingPoints[1])};
-  } else {
-    tfDragInfo={startP:p,startCorners:tfCorners.map(c=>({x:c.x,y:c.y}))};
-  }
+  } else if(hit.mode==='protate'){const pivot=tfPivot?_tfPivotWorld():{x:tfBox.x+tfBox.w/2,y:tfBox.y+tfBox.h/2};tfDragInfo={startP:p,startCorners:tfCorners.map(c=>({x:c.x,y:c.y})),pivot,startAngle:Math.atan2(p.y-pivot.y,p.x-pivot.x)};
+  } else {tfDragInfo={startP:p,startCorners:tfCorners.map(c=>({x:c.x,y:c.y}))};}
 }
 // perspGuideC is a viewport-sized canvas that sits ABOVE transformC and
 // becomes pointer-interactive only in Perspective mode (see
@@ -1075,7 +1055,7 @@ function _tfFreePointerDown(e){
     startState:Object.assign({},tfState),
     startCenter:c,
     startDist:_tfDist(p.x,p.y,c.x,c.y),
-    startAngle:Math.atan2(p.y-c.y,p.x-c.x),
+    startAngle:Math.atan2(p.y-_tfPivotWorld(tfState).y,p.x-_tfPivotWorld(tfState).x),
     // Fixed pivot world-position for the duration of a scale/rotate drag —
     // captured once here so scale/rotate can keep re-solving tx/ty against
     // the *same* anchor point rather than one that drifts frame to frame.
@@ -1088,6 +1068,7 @@ function _tfPerspPointerMoveDrag(e){
   if(!tfActive||!tfDrag) return;
   e.preventDefault();
   const p=getPos(e);
+  if(tfDrag==='pivot'){tfPivot=_tfWorldToLocal(p,tfState);_tfSyncStateFields();_tfDrawHandlesPerspective(true);return;}
   let candidate=tfCorners;
   if(tfDrag==='pcorner'){
     candidate=tfCorners.map((c,i)=>i===tfCornerDrag?{
@@ -1121,8 +1102,8 @@ function _tfPerspPointerMoveDrag(e){
     // whatever the previous frame's output happened to be.
     candidate=PerspectiveController.dragAxisVP(tfDragInfo.startCorners,tfDragInfo.axisId,p,tfDragInfo.fixedOtherVP);
   } else if(tfDrag==='horizon'){
-    const dy=p.y-tfDragInfo.startP.y;
-    candidate=PerspectiveController.dragHorizon(tfDragInfo.startCorners,tfDragInfo.startVP1,tfDragInfo.startVP2,dy);
+    const dy=p.y-tfDragInfo.startP.y;candidate=PerspectiveController.dragHorizon(tfDragInfo.startCorners,tfDragInfo.startVP1,tfDragInfo.startVP2,dy);
+  } else if(tfDrag==='protate'){const angle=Math.atan2(p.y-tfDragInfo.pivot.y,p.x-tfDragInfo.pivot.x)-tfDragInfo.startAngle,cos=Math.cos(angle),sin=Math.sin(angle);candidate=tfDragInfo.startCorners.map(point=>{const dx=point.x-tfDragInfo.pivot.x,dy=point.y-tfDragInfo.pivot.y;return{x:tfDragInfo.pivot.x+dx*cos-dy*sin,y:tfDragInfo.pivot.y+dx*sin+dy*cos};});
   }
   // Reject any update that would fold the quad into a self-intersecting
   // or reflex shape — that's exactly the configuration that sends the
@@ -1167,7 +1148,7 @@ function _tfFreePointerMoveDrag(e){
     // pivot's on-screen position (captured at drag start) doesn't move.
     _tfSetStateForPivot(tfDragInfo.startPivotWorld,tfDragInfo.startState.rotation,newScale);
   }else if(tfDrag==='rotate'){
-    const ang=Math.atan2(p.y-tfDragInfo.startCenter.y,p.x-tfDragInfo.startCenter.x);
+    const ang=Math.atan2(p.y-tfDragInfo.startPivotWorld.y,p.x-tfDragInfo.startPivotWorld.x);
     const deltaDeg=(ang-tfDragInfo.startAngle)*180/Math.PI;
     let newRot=tfDragInfo.startState.rotation+deltaDeg;
     if(e.shiftKey) newRot=Math.round(newRot/15)*15;
@@ -1198,12 +1179,12 @@ perspGuideC.addEventListener('pointercancel',_tfEndDrag);
 perspGuideC.addEventListener('pointermove',e=>{
   if(!tfActive||tfDrag||!tfPerspective) return;
   const hit=_tfHitTestPerspective(getPos(e));
-  perspGuideC.style.cursor=hit?((hit.mode==='pcorner'||hit.mode==='pedge'||hit.mode==='vp')?'crosshair':hit.mode==='horizon'?'ns-resize':'move'):'default';
+  perspGuideC.style.cursor=_tfHitCursor(hit);
 });
 
 function _tfFreePointerHover(e){
   if(!tfActive||tfDrag||tfPerspective)return;
-  const hit=_tfHitTest(getPos(e)),cursor=hit?(hit.mode==='pivot'?'crosshair':hit.mode==='rotate'?'grab':hit.mode==='scale'?'nwse-resize':'move'):'default';
+  const hit=_tfHitTest(getPos(e)),cursor=_tfHitCursor(hit);
   transformC.style.cursor=cursor;tfUiC.style.cursor=cursor;
 }
 transformC.addEventListener('pointermove',_tfFreePointerHover);
