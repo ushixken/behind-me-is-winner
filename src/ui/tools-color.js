@@ -45,13 +45,14 @@ function _currentUndoSnapshot(){
   const layer=layers[curLayer];
   const selectionSnapshot=window.PixelSelection&&PixelSelection.capture?PixelSelection.capture():null;
   const layerType=layer&&layer.type==='smart-raster'?'smart-raster':'bitmap';
+  const extendedSnapshot=typeof getExtendedLayerFrame==='function'&&typeof cloneExtendedFrameRecord==='function'?cloneExtendedFrameRecord(getExtendedLayerFrame(curLayer,curFrame)):null;
   if(layerType==='smart-raster'){
     const styleBundle=typeof getStyleFrameBundle==='function'?getStyleFrameBundle(curLayer,curFrame):null;
-    return {snap:null,styleBundle,frame:curFrame,layer:curLayer,layerType,selectionSnapshot};
+    return {snap:null,styleBundle,extendedSnapshot,frame:curFrame,layer:curLayer,layerType,selectionSnapshot};
   }
   const snap=mkLayerCanvas();
   snap.getContext('2d').drawImage(activeC,0,0);
-  return {snap,styleBundle:null,frame:curFrame,layer:curLayer,layerType,selectionSnapshot};
+  return {snap,styleBundle:null,extendedSnapshot,frame:curFrame,layer:curLayer,layerType,selectionSnapshot};
 }
 
 function pushUndo(){
@@ -65,6 +66,7 @@ function restoreBitmapUndo(action){
   if(action.frame!==curFrame) curFrame=action.frame;
   const layer=layers[action.layer];
   if(!layer||!action.snap) return;
+  if(action.extendedSnapshot&&typeof setExtendedLayerFrame==='function')setExtendedLayerFrame(action.layer,action.frame,action.extendedSnapshot.canvas,action.extendedSnapshot.x,action.extendedSnapshot.y);else if(typeof clearExtendedLayerFrame==='function')clearExtendedLayerFrame(action.layer,action.frame);
   if(!layer.frames[action.frame]) layer.frames[action.frame]=mkLayerCanvas();
   ctx.clearRect(0,0,CW,CH);
   ctx.drawImage(action.snap,0,0);
@@ -81,6 +83,7 @@ function restoreSmartRasterUndo(action){
   const layer=layers[action.layer];
   if(!layer) return;
   SmartRasterLayer.restoreFrameBundle(action.layer,action.frame,action.styleBundle);
+  if(action.extendedSnapshot&&typeof setExtendedLayerFrame==='function')setExtendedLayerFrame(action.layer,action.frame,action.extendedSnapshot.canvas,action.extendedSnapshot.x,action.extendedSnapshot.y);else if(typeof clearExtendedLayerFrame==='function')clearExtendedLayerFrame(action.layer,action.frame);
   recomposite(curLayer,curFrame);
   renderTimeline();
 }

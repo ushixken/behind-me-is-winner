@@ -378,7 +378,8 @@ function startKFDrag(li,fi,e){
       layerIndex,frameIndex,
       data:l&&l.frames[frameIndex],
       meta:(l&&l.frameMeta&&l.frameMeta[frameIndex])?Object.assign({},l.frameMeta[frameIndex]):null,
-      styleBundle:(typeof getStyleFrameBundle==='function')?getStyleFrameBundle(layerIndex,frameIndex):null
+      styleBundle:(typeof getStyleFrameBundle==='function')?getStyleFrameBundle(layerIndex,frameIndex):null,
+      extended:(typeof getExtendedLayerFrame==='function'&&typeof cloneExtendedFrameRecord==='function')?cloneExtendedFrameRecord(getExtendedLayerFrame(layerIndex,frameIndex)):null
     };
   }).filter(item=>item.data);
   const layerIndices=Array.from(new Set(items.map(item=>item.layerIndex)));
@@ -448,13 +449,13 @@ function onKFDragMove(e){
   if(destinations.some(move=>dragKF.occupied.has(`${move.item.layerIndex}:${move.target}`))) return;
   dragKF.items.forEach(item=>{
     const li=item.layerIndex,src=item.frameIndex+dragKF.appliedDelta;
-    delete layers[li].frames[src];
+    delete layers[li].frames[src];if(typeof clearExtendedLayerFrame==='function')clearExtendedLayerFrame(li,src);
     if(layers[li].frameMeta) delete layers[li].frameMeta[src];
     if(typeof deleteStyleFrame==='function') deleteStyleFrame(li,src);
   });
   destinations.forEach(move=>{
     const li=move.item.layerIndex;
-    layers[li].frames[move.target]=move.item.data;
+    layers[li].frames[move.target]=move.item.data;if(move.item.extended&&typeof setExtendedLayerFrame==='function')setExtendedLayerFrame(li,move.target,move.item.extended.canvas,move.item.extended.x,move.item.extended.y);else if(typeof clearExtendedLayerFrame==='function')clearExtendedLayerFrame(li,move.target);
     if(!layers[li].frameMeta) layers[li].frameMeta={};
     if(move.item.meta) layers[li].frameMeta[move.target]=Object.assign({},move.item.meta);
     else delete layers[li].frameMeta[move.target];

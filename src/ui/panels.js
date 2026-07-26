@@ -73,6 +73,11 @@ function floodFill(x,y,fc){
 // LAYER CANVAS
 // ════════════════════════════════════════════════════════════════
 function mkLayerCanvas(){const o=document.createElement('canvas');o.width=CW;o.height=CH;return o;}
+function cloneExtendedFrameRecord(record){if(!record||!record.canvas)return null;const canvas=document.createElement('canvas');canvas.width=record.canvas.width;canvas.height=record.canvas.height;canvas.getContext('2d').drawImage(record.canvas,0,0);return {canvas,x:Number(record.x)||0,y:Number(record.y)||0};}
+function getExtendedLayerFrame(li,fi){const layer=layers[li];return layer&&layer.extendedFrames&&layer.extendedFrames[fi]||null;}
+function setExtendedLayerFrame(li,fi,canvas,x,y){const layer=layers[li];if(!layer||!canvas)return null;if(!layer.extendedFrames)layer.extendedFrames={};const record={canvas,x:Math.floor(Number(x)||0),y:Math.floor(Number(y)||0)};layer.extendedFrames[fi]=record;let key=layer.frames[fi];if(!key||key.width!==CW||key.height!==CH)key=layer.frames[fi]=mkLayerCanvas();const keyContext=key.getContext('2d');keyContext.clearRect(0,0,CW,CH);keyContext.drawImage(canvas,record.x,record.y);return record;}
+function clearExtendedLayerFrame(li,fi){const layer=layers[li];if(layer&&layer.extendedFrames)delete layer.extendedFrames[fi];}
+window.cloneExtendedFrameRecord=cloneExtendedFrameRecord;window.getExtendedLayerFrame=getExtendedLayerFrame;window.setExtendedLayerFrame=setExtendedLayerFrame;window.clearExtendedLayerFrame=clearExtendedLayerFrame;
 // ── Smart Raster index canvas helpers ────────────────────────────
 // All Smart Raster logic has moved to smart-raster-layer.js which must be
 // loaded before this file.  The helpers below are thin shims that forward
@@ -294,14 +299,21 @@ function ensureKey(options){
 }
 function saveActiveToKey(){
   if(typeof isDrawingFrameHidden==='function'&&isDrawingFrameHidden(curLayer,curFrame))return;
-  const kf=layers[curLayer].frames[curFrame];if(!kf)return;
+  const layer=layers[curLayer],kf=layer.frames[curFrame];if(!kf)return;
+  const extended=getExtendedLayerFrame(curLayer,curFrame);
+  if(extended){
+    const minX=Math.min(extended.x,0),minY=Math.min(extended.y,0),maxX=Math.max(extended.x+extended.canvas.width,CW),maxY=Math.max(extended.y+extended.canvas.height,CH);
+    const full=document.createElement('canvas');full.width=maxX-minX;full.height=maxY-minY;const fullContext=full.getContext('2d');
+    fullContext.drawImage(extended.canvas,extended.x-minX,extended.y-minY);fullContext.clearRect(-minX,-minY,CW,CH);fullContext.drawImage(activeC,-minX,-minY);
+    setExtendedLayerFrame(curLayer,curFrame,full,minX,minY);return;
+  }
   const kctx=kf.getContext('2d');kctx.clearRect(0,0,CW,CH);kctx.drawImage(activeC,0,0);
 }
 
 function loadFrame(li,fi){
   if(typeof window.finishActiveDrawingBeforeArtworkChange==='function')window.finishActiveDrawingBeforeArtworkChange(li,fi);
   ctx.clearRect(0,0,CW,CH);
-  const k=getHeldKey(li,fi);if(k)ctx.drawImage(k,0,0);
+  const k=getHeldKey(li,fi);if(k){const keyFrame=Object.keys(layers[li].frames).find(frame=>layers[li].frames[frame]===k),extended=keyFrame==null?null:getExtendedLayerFrame(li,keyFrame);if(extended)ctx.drawImage(extended.canvas,extended.x,extended.y);else ctx.drawImage(k,0,0);}
   recomposite(li,fi);updateOnion();updatePlayhead();
   document.getElementById('frame-info').textContent=frameLabel(fi)+' / '+frameLabel(TOTAL-1);
   updateStatus();

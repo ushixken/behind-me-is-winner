@@ -192,6 +192,7 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;fon
 }
 #perspective-guide-canvas.tf-persp-active{pointer-events:auto;cursor:move;}
 #transform-ui-canvas{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none;z-index:3;}
+#transform-ui-canvas.tf-free-active{pointer-events:auto;}
 /* composite-canvas is now a data-only buffer (eyedropper/export/etc read pixel-
    exact data from it) — display-canvas is what's actually shown on screen. */
 #composite-canvas{visibility:hidden;}

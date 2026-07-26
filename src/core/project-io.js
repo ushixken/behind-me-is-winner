@@ -1,8 +1,8 @@
 // Versioned, transactional project export/import.
 (function(){
   'use strict';
-  const FORMAT='AnimateWebsiteProject',VERSION=1,EXT='.awproj',MANIFEST='project.json';
-  const OMIT=new Set(['frames','frameMeta','indexFrames','indexMeta','smartStyleFrames','cmFrames','__smartRasterV4Snapshot']);
+  const FORMAT='AnimateWebsiteProject',VERSION=2,EXT='.awproj',MANIFEST='project.json';
+  const OMIT=new Set(['frames','frameMeta','indexFrames','indexMeta','smartStyleFrames','cmFrames','__smartRasterV4Snapshot','extendedFrames']);
   const clone=value=>value==null?value:JSON.parse(JSON.stringify(value));
   function fail(message){throw new Error(message);}
   function int(value,name,min,max){const n=Number(value);if(!Number.isInteger(n)||n<min||(max!=null&&n>max))fail(name+' is invalid');return n;}
@@ -13,9 +13,9 @@
   async function dataUrlBlob(url){const response=await fetch(url);if(!response.ok)fail('Embedded Smart Raster artwork is invalid');return response.blob();}
   async function decodePng(blob,width,height,label){
     if(typeof createImageBitmap==='function'){
-      let bitmap;try{bitmap=await createImageBitmap(blob);if(bitmap.width!==width||bitmap.height!==height)fail(label+' dimensions do not match the project canvas');const canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;canvas.getContext('2d').drawImage(bitmap,0,0);return canvas;}finally{if(bitmap)bitmap.close();}
+      let bitmap;try{bitmap=await createImageBitmap(blob);if(width!=null&&(bitmap.width!==width||bitmap.height!==height))fail(label+' dimensions do not match the project canvas');const canvas=document.createElement('canvas');canvas.width=width==null?bitmap.width:width;canvas.height=height==null?bitmap.height:height;canvas.getContext('2d').drawImage(bitmap,0,0);return canvas;}finally{if(bitmap)bitmap.close();}
     }
-    return new Promise((resolve,reject)=>{const url=URL.createObjectURL(blob),image=new Image();image.onload=()=>{URL.revokeObjectURL(url);if(image.width!==width||image.height!==height){reject(new Error(label+' dimensions do not match the project canvas'));return;}const canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;canvas.getContext('2d').drawImage(image,0,0);resolve(canvas);};image.onerror=()=>{URL.revokeObjectURL(url);reject(new Error(label+' could not be decoded'));};image.src=url;});
+    return new Promise((resolve,reject)=>{const url=URL.createObjectURL(blob),image=new Image();image.onload=()=>{URL.revokeObjectURL(url);if(width!=null&&(image.width!==width||image.height!==height)){reject(new Error(label+' dimensions do not match the project canvas'));return;}const canvas=document.createElement('canvas');canvas.width=width==null?image.width:width;canvas.height=height==null?image.height:height;canvas.getContext('2d').drawImage(image,0,0);resolve(canvas);};image.onerror=()=>{URL.revokeObjectURL(url);reject(new Error(label+' could not be decoded'));};image.src=url;});
   }
   function bytesBase64(bytes){let binary='';for(let i=0;i<bytes.length;i+=0x8000)binary+=String.fromCharCode.apply(null,bytes.subarray(i,i+0x8000));return btoa(binary);}
   function base64Bytes(text,length,label){let binary;try{binary=atob(String(text||''));}catch(_){fail(label+' is corrupt');}if(binary.length!==length)fail(label+' length is invalid');const bytes=new Uint8Array(length);for(let i=0;i<length;i++)bytes[i]=binary.charCodeAt(i);return bytes;}
@@ -36,6 +36,8 @@
         if(fi<0||fi>=TOTAL)continue;const canvas=layer.frames[fi];if(!canvas)continue;if(canvas.width!==CW||canvas.height!==CH)fail('Layer '+(li+1)+', frame '+(fi+1)+' has unexpected dimensions');
         const path='assets/layers/'+li+'/frames/'+fi+'.png';zip.file(path,await canvasBlob(canvas));saved.frames.push({frame:fi,path});
       }
+      const extendedEntries=Object.entries(layer.extendedFrames||{}).filter(([,record])=>record&&record.canvas);
+      if(extendedEntries.length){saved.extendedFrames=[];for(const [fi,record] of extendedEntries){const path='assets/layers/'+li+'/extended/'+fi+'.png';zip.file(path,await canvasBlob(record.canvas));saved.extendedFrames.push({frame:Number(fi),path,x:Number(record.x)||0,y:Number(record.y)||0,width:record.canvas.width,height:record.canvas.height});}}
       if(layer.type==='smart-raster'&&window.SmartRasterLayer&&window.SmartRasterLayer.serializeLayer){
         const smart=clone(window.SmartRasterLayer.serializeLayer(layer));
         for(const [fi,frame] of Object.entries(smart&&smart.frames||{})){if(frame&&frame.rgba){const path='assets/layers/'+li+'/smart/'+fi+'.png';zip.file(path,await dataUrlBlob(frame.rgba));delete frame.rgba;frame.rgbaPath=path;}}
@@ -52,7 +54,7 @@
     if(!manifest||typeof manifest!=='object')fail('project.json is missing or invalid');if(manifest.format!==FORMAT)fail('This is not an Animate Website project file');if(!Number.isInteger(manifest.version))fail('The project version is missing');if(manifest.version>VERSION)fail('This project was created by a newer unsupported version ('+manifest.version+')');if(manifest.version<1)fail('This project version is unsupported');
     const doc=manifest.document;if(!doc||typeof doc!=='object')fail('Document settings are missing');const width=int(doc.width,'Canvas width',1,16384),height=int(doc.height,'Canvas height',1,16384),total=int(doc.totalFrames,'Frame count',1,100000);int(doc.currentFrame,'Current frame',0,total-1);number(doc.framesPerSecond,'Frame rate',1,120);int(doc.maxFps,'Maximum frame rate',1,120);
     if(!Array.isArray(manifest.layers)||!manifest.layers.length)fail('The project contains no layers');int(doc.currentLayer,'Current layer',0,manifest.layers.length-1);
-    manifest.layers.forEach((layer,li)=>{if(!layer||typeof layer!=='object'||!layer.properties)fail('Layer '+(li+1)+' is invalid');if(!Array.isArray(layer.frames))fail('Layer '+(li+1)+' frame list is invalid');const seen=new Set();layer.frames.forEach(item=>{const fi=int(item&&item.frame,'Frame index',0,total-1);if(seen.has(fi))fail('Layer '+(li+1)+' contains duplicate frame '+(fi+1));seen.add(fi);if(!item.path||typeof item.path!=='string')fail('Layer '+(li+1)+' frame '+(fi+1)+' asset is missing');});});return{width,height,total};
+    manifest.layers.forEach((layer,li)=>{if(!layer||typeof layer!=='object'||!layer.properties)fail('Layer '+(li+1)+' is invalid');if(!Array.isArray(layer.frames))fail('Layer '+(li+1)+' frame list is invalid');if(layer.extendedFrames!=null&&!Array.isArray(layer.extendedFrames))fail('Layer '+(li+1)+' extended frame list is invalid');const seen=new Set();layer.frames.forEach(item=>{const fi=int(item&&item.frame,'Frame index',0,total-1);if(seen.has(fi))fail('Layer '+(li+1)+' contains duplicate frame '+(fi+1));seen.add(fi);if(!item.path||typeof item.path!=='string')fail('Layer '+(li+1)+' frame '+(fi+1)+' asset is missing');});(layer.extendedFrames||[]).forEach(item=>{int(item&&item.frame,'Extended frame index',0,total-1);int(item&&item.width,'Extended frame width',1,32768);int(item&&item.height,'Extended frame height',1,32768);number(item&&item.x,'Extended frame X',-1000000,1000000);number(item&&item.y,'Extended frame Y',-1000000,1000000);if(!item.path||typeof item.path!=='string')fail('Layer '+(li+1)+' extended frame asset is missing');});});return{width,height,total};
   }
   async function zipBlob(zip,path,label){const entry=zip.file(path);if(!entry)fail(label+' is missing');return entry.async('blob');}
   async function stageProject(file){
@@ -60,6 +62,7 @@
     for(let li=0;li<manifest.layers.length;li++){
       const saved=manifest.layers[li],props=clone(saved.properties),layer=Object.assign(makeBlankLayer(props.type),props,{frames:{},frameMeta:clone(saved.frameMeta||{}),indexFrames:{},indexMeta:{},smartStyleFrames:{}});
       for(const item of saved.frames){const blob=await zipBlob(zip,item.path,'Layer '+(li+1)+', frame '+(item.frame+1));layer.frames[item.frame]=await decodePng(blob,dimensions.width,dimensions.height,'Layer '+(li+1)+', frame '+(item.frame+1));}
+      if(saved.extendedFrames&&saved.extendedFrames.length){layer.extendedFrames={};for(const item of saved.extendedFrames){const blob=await zipBlob(zip,item.path,'Extended artwork for layer '+(li+1)+', frame '+(item.frame+1)),canvas=await decodePng(blob,null,null,'Extended artwork for layer '+(li+1)+', frame '+(item.frame+1));if(canvas.width!==item.width||canvas.height!==item.height)fail('Extended artwork dimensions are invalid');layer.extendedFrames[item.frame]={canvas,x:Number(item.x)||0,y:Number(item.y)||0};}}
       if(saved.smartRaster){const smart=clone(saved.smartRaster);for(const [fi,frame] of Object.entries(smart.frames||{})){if(frame&&frame.rgbaPath){const blob=await zipBlob(zip,frame.rgbaPath,'Smart Raster artwork for layer '+(li+1)+', frame '+(Number(fi)+1));await decodePng(blob,dimensions.width,dimensions.height,'Smart Raster artwork for layer '+(li+1)+', frame '+(Number(fi)+1));frame.rgba=await blobDataUrl(blob);delete frame.rgbaPath;}}const oldW=CW,oldH=CH;try{CW=dimensions.width;CH=dimensions.height;await window.SmartRasterLayer.deserializeLayer(layer,smart);}finally{CW=oldW;CH=oldH;}}
       if(saved.cmFrames){layer.cmFrames={};Object.entries(saved.cmFrames).forEach(([fi,frame])=>{const width=int(frame.width,'CM frame width',1,16384),height=int(frame.height,'CM frame height',1,16384);if(width!==dimensions.width||height!==dimensions.height)fail('CM frame dimensions do not match the project canvas');const bytes=base64Bytes(frame.pixels,width*height*4,'CM frame');layer.cmFrames[fi]={width,height,pixels:new Uint32Array(bytes.buffer)};});}
       stagedLayers.push(layer);

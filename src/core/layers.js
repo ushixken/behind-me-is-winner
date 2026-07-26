@@ -260,7 +260,7 @@ function duplicateFrame(){
   const beforeSlot=isSmartRaster?_captureSmartRasterFrameSlot(curLayer,n):null;
   const sourceFrame=curFrame,layerIndex=curLayer;
   const d=mkLayerCanvas();if(k) d.getContext('2d').drawImage(k,0,0);
-  l.frames[n]=d;
+  l.frames[n]=d;const sourceExtended=typeof getExtendedLayerFrame==='function'?getExtendedLayerFrame(curLayer,curFrame):null;if(sourceExtended&&typeof cloneExtendedFrameRecord==='function'&&typeof setExtendedLayerFrame==='function'){const copy=cloneExtendedFrameRecord(sourceExtended);setExtendedLayerFrame(curLayer,n,copy.canvas,copy.x,copy.y);}else if(typeof clearExtendedLayerFrame==='function')clearExtendedLayerFrame(curLayer,n);
   if(typeof getStyleFrameBundle==='function'&&typeof restoreStyleFrameBundle==='function') restoreStyleFrameBundle(curLayer,n,getStyleFrameBundle(curLayer,curFrame));
   // Carry the source frame's mark to the duplicate
   if(!l.frameMeta) l.frameMeta={};
@@ -329,7 +329,7 @@ document.getElementById('ctx-cut').onclick=()=>{cutFrame();hideAllMenus();};
 document.getElementById('ctx-copy').onclick=()=>{copyFrame();hideAllMenus();};
 document.getElementById('ctx-paste').onclick=()=>{pasteFrame();hideAllMenus();};
 document.getElementById('ctx-duplicate').onclick=()=>{duplicateFrame();hideAllMenus();};
-document.getElementById('ctx-delete').onclick=()=>{delete layers[curLayer].frames[curFrame];if(typeof deleteStyleFrame==='function') deleteStyleFrame(curLayer,curFrame);ctx.clearRect(0,0,CW,CH);loadFrame(curLayer,curFrame);renderTimeline();hideAllMenus();};
+document.getElementById('ctx-delete').onclick=()=>{delete layers[curLayer].frames[curFrame];if(typeof clearExtendedLayerFrame==='function')clearExtendedLayerFrame(curLayer,curFrame);if(typeof deleteStyleFrame==='function') deleteStyleFrame(curLayer,curFrame);ctx.clearRect(0,0,CW,CH);loadFrame(curLayer,curFrame);renderTimeline();hideAllMenus();};
 // Layer panel context menu actions
 function _startLayerRename(idx,gid){
   if(gid!=null){
@@ -366,7 +366,7 @@ document.getElementById('layer-ctx-rename').onclick=()=>{hideAllMenus();_startLa
 let _layerObjClipboard=null; // stores a deep copy of a layer object
 
 function _deepCopyLayer(l){
-  const copy={...l,frames:{},frameMeta:{},indexFrames:{},indexMeta:{},smartStyleFrames:{},type:l.type||'bitmap'};
+  const copy={...l,frames:{},extendedFrames:{},frameMeta:{},indexFrames:{},indexMeta:{},smartStyleFrames:{},type:l.type||'bitmap'};
   Object.entries(l.frames).forEach(([f,src])=>{
     const c=mkLayerCanvas();
     if(l.type==='smart-raster'){
@@ -375,6 +375,7 @@ function _deepCopyLayer(l){
     }else c.getContext('2d').drawImage(src,0,0);
     copy.frames[f]=c;
   });
+  if(l.extendedFrames&&typeof cloneExtendedFrameRecord==='function')Object.entries(l.extendedFrames).forEach(([f,record])=>{const cloned=cloneExtendedFrameRecord(record);if(cloned)copy.extendedFrames[f]=cloned;});
   // Deep-copy per-frame metadata so the duplicate is fully independent
   if(l.frameMeta){
     Object.entries(l.frameMeta).forEach(([f,meta])=>{copy.frameMeta[f]=Object.assign({},meta);});
@@ -605,7 +606,7 @@ document.getElementById('dd-cut').onclick=()=>{cutLayer(curLayer);closeAllDropdo
 document.getElementById('dd-copy').onclick=()=>{copyLayer(curLayer);closeAllDropdowns();};
 document.getElementById('dd-paste').onclick=()=>{pasteLayer(curLayer);closeAllDropdowns();};
 document.getElementById('dd-duplicate').onclick=()=>{duplicateLayer(curLayer);closeAllDropdowns();};
-function clearCurrentFrame(){pushUndo();ensureKey();ctx.clearRect(0,0,CW,CH);if(typeof deleteStyleFrame==='function') deleteStyleFrame(curLayer,curFrame);saveActiveToKey();recomposite(curLayer,curFrame);}
+function clearCurrentFrame(){pushUndo();ensureKey();ctx.clearRect(0,0,CW,CH);if(typeof clearExtendedLayerFrame==='function')clearExtendedLayerFrame(curLayer,curFrame);if(typeof deleteStyleFrame==='function') deleteStyleFrame(curLayer,curFrame);saveActiveToKey();recomposite(curLayer,curFrame);}
 document.getElementById('dd-clear').onclick=()=>{clearCurrentFrame();closeAllDropdowns();};
 
 // Window menu
