@@ -990,45 +990,94 @@ function tlZoomToSpan(newSpan, anchorFrame, anchorScreenX){
   document.addEventListener('pointercancel', endDrag);
 })();
 
+let _rulerMajorInterval=0,_rulerRenderRaf=0;
+const _rulerMeasureContext=document.createElement('canvas').getContext('2d');
+function _niceRulerInterval(minimumFrames){
+  if(minimumFrames<=1)return 1;
+  const magnitude=Math.pow(10,Math.floor(Math.log10(minimumFrames)));
+  const normalized=minimumFrames/magnitude;
+  return (normalized<=1?1:normalized<=2?2:normalized<=2.5?2.5:normalized<=5?5:10)*magnitude;
+}
+function _adaptiveRulerInterval(){
+  const style=getComputedStyle(rulerEl);
+  _rulerMeasureContext.font='9px '+style.fontFamily;
+  const labelWidth=Math.max(
+    _rulerMeasureContext.measureText(String(frameLabel(0))).width,
+    _rulerMeasureContext.measureText(String(frameLabel(TOTAL-1))).width
+  );
+  const minimumSpacing=Math.max(52,labelWidth+32);
+  const ideal=_niceRulerInterval(minimumSpacing/Math.max(.0001,CellW));
+  if(!_rulerMajorInterval)return ideal;
+  // A small dead band prevents tiny wheel/trackpad changes around a boundary
+  // from alternating between two intervals on consecutive frames.
+  if(ideal>_rulerMajorInterval&&_rulerMajorInterval*CellW>=minimumSpacing*.94)return _rulerMajorInterval;
+  if(ideal<_rulerMajorInterval&&ideal*CellW<minimumSpacing*1.15)return _rulerMajorInterval;
+  return ideal;
+}
+function _firstAlignedRulerFrame(start,interval){
+  const label=frameLabel(start),remainder=((label%interval)+interval)%interval;
+  return start+((interval-remainder)%interval);
+}
+function _appendRulerLabel(frame,intervalChanged){
+  const tick=document.createElement('div');
+  tick.className='ruler-major-tick'+(intervalChanged?' ruler-tick-enter':'');
+  tick.dataset.frame=frame;
+  tick.style.left=(frame*CellW+CellW/2)+'px';
+  tick.textContent=frameLabel(frame);
+  rulerEl.appendChild(tick);
+}
 function renderRuler(){
+  const nextInterval=_adaptiveRulerInterval(),intervalChanged=nextInterval!==_rulerMajorInterval;
+  _rulerMajorInterval=nextInterval;
   rulerEl.innerHTML='';
-  const totalW=TOTAL*CellW;rulerEl.style.width=totalW+'px';
-  for(let f=0;f<TOTAL;f++){
-    const c=document.createElement('div');
-    let cls='ruler-tick';
-    if(f===curFrame) cls+=' cur';
-    if(f===rangeStart) cls+=' range-start';
-    else if(f===rangeEnd) cls+=' range-end';
-    else if(f>rangeStart&&f<rangeEnd) cls+=' in-range';
-    c.className=cls;c.style.width=CellW+'px';
-    // Show tick label when the *displayed* frame number is a multiple of 5
-    // (or is the very first frame in the clip). Using the internal index
-    // (f) here would put labels on wrong columns whenever frameLabelOffset
-    // is non-zero (i.e. after blank frames have been prepended for a
-    // negative-frame drag). frameLabel() returns the user-visible number.
-    const lbl=frameLabel(f);
-    c.textContent=(lbl%5===0||f===0)?lbl:'';
-    c.addEventListener('click',e=>{
-      e.stopPropagation();
-      goToFrame(f,false,true);
-    });
-    rulerEl.appendChild(c);
-  }
-  // Start/End marker lines
+  const totalW=TOTAL*CellW,viewLeft=tlScroll.scrollLeft,viewRight=viewLeft+tlScroll.clientWidth;
+  const bufferFrames=Math.max(2,_rulerMajorInterval);
+  const firstVisible=Math.max(0,Math.floor(viewLeft/CellW)-bufferFrames);
+  const lastVisible=Math.min(TOTAL-1,Math.ceil(viewRight/CellW)+bufferFrames);
+  const minorInterval=_rulerMajorInterval===1?1:Math.max(1,_rulerMajorInterval/(_rulerMajorInterval%5===0?5:2));
+  rulerEl.style.width=totalW+'px';
+  rulerEl.style.setProperty('--ruler-minor-step',(minorInterval*CellW)+'px');
+  rulerEl.style.setProperty('--ruler-tick-offset',(CellW/2)+'px');
+
+  const rangeFill=document.createElement('div');rangeFill.className='ruler-range-fill';
+  rangeFill.style.left=(rangeStart*CellW)+'px';rangeFill.style.width=((rangeEnd-rangeStart+1)*CellW)+'px';rulerEl.appendChild(rangeFill);
+  const rangeStartFill=document.createElement('div');rangeStartFill.className='ruler-range-edge ruler-range-start-fill';rangeStartFill.style.left=(rangeStart*CellW)+'px';rangeStartFill.style.width=CellW+'px';rulerEl.appendChild(rangeStartFill);
+  const rangeEndFill=document.createElement('div');rangeEndFill.className='ruler-range-edge ruler-range-end-fill';rangeEndFill.style.left=(rangeEnd*CellW)+'px';rangeEndFill.style.width=CellW+'px';rulerEl.appendChild(rangeEndFill);
+  const currentFill=document.createElement('div');currentFill.className='ruler-current-fill';currentFill.style.left=(curFrame*CellW)+'px';currentFill.style.width=CellW+'px';rulerEl.appendChild(currentFill);
+
+  const firstAligned=_firstAlignedRulerFrame(firstVisible,_rulerMajorInterval);
+  if(firstVisible===0&&firstAligned!==0)_appendRulerLabel(0,intervalChanged);
+  for(let frame=firstAligned;frame<=lastVisible;frame+=_rulerMajorInterval)_appendRulerLabel(frame,intervalChanged);
+
+  // Start/End marker lines remain document-aligned and are independent of
+  // label density, so editing the playback range behaves exactly as before.
   ['start','end'].forEach(which=>{
     const line=document.createElement('div');
     line.id='ruler-'+which+'-line';line.className='range-marker-line';
-    const f=which==='start'?rangeStart:rangeEnd;
-    line.style.left=(f*CellW+CellW/2)+'px';
-    const lbl=document.createElement('div');lbl.className='range-marker-label';lbl.id='ruler-'+which+'-label';lbl.textContent=which==='start'?'I':'O';
-    line.appendChild(lbl);rulerEl.appendChild(line);
+    const frame=which==='start'?rangeStart:rangeEnd;
+    line.style.left=(frame*CellW+CellW/2)+'px';
+    const label=document.createElement('div');label.className='range-marker-label';label.id='ruler-'+which+'-label';label.textContent=which==='start'?'I':'O';
+    line.appendChild(label);rulerEl.appendChild(line);
   });
+  renderRulerHighlight();
 }
+function _scheduleRulerViewportRender(){
+  if(_rulerRenderRaf)return;
+  _rulerRenderRaf=requestAnimationFrame(()=>{_rulerRenderRaf=0;renderRuler();});
+}
+tlScroll.addEventListener('scroll',_scheduleRulerViewportRender,{passive:true});
 
 function renderRulerHighlight(){
-  document.querySelectorAll('.ruler-tick').forEach((c,i)=>c.classList.toggle('cur',i===curFrame));
+  rulerEl.querySelectorAll('.ruler-current-label').forEach(label=>label.remove());
+  const existing=Array.from(rulerEl.querySelectorAll('.ruler-major-tick')).some(label=>Number(label.dataset.frame)===curFrame);
+  if(!existing){
+    _appendRulerLabel(curFrame,false);
+    const currentLabel=rulerEl.lastElementChild;
+    if(currentLabel)currentLabel.classList.add('ruler-current-label');
+  }
+  const fill=rulerEl.querySelector('.ruler-current-fill');
+  if(fill){fill.style.left=(curFrame*CellW)+'px';fill.style.width=CellW+'px';}
 }
-
 // Returns indices (top-to-bottom render order) of layers currently shown on the timeline
 function timelineLayerIndices(){
   const idx=[];
@@ -1333,32 +1382,8 @@ function updatePlayhead(){
   const ph=document.getElementById('playhead');if(!ph) return;
   const left=curFrame*CellW+CellW/2-1;
   ph.style.left=left+'px';ph.style.height=(timelineLayerIndices().length*CellH)+'px';ph.style.top='0';
-  // Frame-number label above the handle (like TVPaint's scrubber tooltip).
-  // Create it once as a child element and update its text each call.
-  let lbl=ph.querySelector('.ph-frame-label');
-  if(!lbl){
-    lbl=document.createElement('span');
-    lbl.className='ph-frame-label';
-    Object.assign(lbl.style,{
-      position:'absolute',
-      bottom:'100%',       // sits above the ruler triangle
-      left:'50%',
-      transform:'translateX(-50%)',
-      fontSize:'9px',
-      lineHeight:'1',
-      padding:'1px 3px',
-      background:'var(--red)',
-      color:'#fff',
-      borderRadius:'2px',
-      whiteSpace:'nowrap',
-      pointerEvents:'none',
-      userSelect:'none',
-      // small gap between label and the triangle
-      marginBottom:'2px',
-    });
-    ph.appendChild(lbl);
-  }
-  lbl.textContent=frameLabel(curFrame);
+  const oldFrameLabel=ph.querySelector('.ph-frame-label');
+  if(oldFrameLabel)oldFrameLabel.remove();
   // Auto-scroll to keep the playhead in view — but NOT while the scrollbar
   // edge handles are actively driving zoom (window._tlEdgeZooming). During
   // an edge drag, scrollLeft is derived purely from the dragged boundary's

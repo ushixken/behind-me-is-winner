@@ -441,14 +441,27 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 #tl-inner{position:relative;display:inline-flex;flex-direction:column;min-width:100%;}
 
 #tl-ruler{
-  height:var(--ruler-h);display:flex;background:var(--bg3);border-bottom:1px solid var(--border);
+  height:var(--ruler-h);display:block;background-color:var(--bg3);border-bottom:1px solid var(--border);
   position:sticky;top:0;z-index:15;cursor:col-resize;touch-action:none;-ms-touch-action:none;
 }
-.ruler-tick{flex-shrink:0;font-size:9px;color:var(--text2);text-align:center;border-right:1px solid var(--border);height:100%;display:flex;align-items:center;justify-content:center;position:relative;}
-.ruler-tick.cur{color:var(--accent);font-weight:700;}
-.ruler-tick.in-range{background:rgba(127,119,221,0.1);}
-.ruler-tick.range-start{background:rgba(29,158,117,0.18);}
-.ruler-tick.range-end{background:rgba(226,75,74,0.18);}
+#tl-ruler::before{
+  content:"";position:absolute;left:var(--ruler-tick-offset,0);right:0;bottom:0;height:5px;
+  background-image:linear-gradient(to right,transparent calc(100% - 1px),var(--border) 0);
+  background-size:var(--ruler-minor-step,28px) 100%;pointer-events:none;z-index:1;
+}
+.ruler-major-tick{
+  position:absolute;top:0;bottom:0;height:auto;transform:translateX(-50%);font-size:9px;color:var(--text2);
+  display:flex;align-items:center;justify-content:center;line-height:1;text-align:center;white-space:nowrap;pointer-events:none;z-index:3;
+}
+
+
+.ruler-tick-enter{animation:rulerTickFade .14s ease-out both;}
+@keyframes rulerTickFade{from{opacity:0}to{opacity:1}}
+.ruler-range-fill,.ruler-range-edge,.ruler-current-fill{position:absolute;top:0;bottom:0;pointer-events:none;}
+.ruler-range-fill{background:rgba(127,119,221,0.1);z-index:0;}
+.ruler-range-start-fill{background:rgba(29,158,117,0.18);z-index:0;}
+.ruler-range-end-fill{background:rgba(226,75,74,0.18);z-index:0;}
+.ruler-current-fill{background:rgba(127,119,221,0.08);z-index:0;}
 
 #tl-rows-wrap{position:relative;}
 .tl-row{height:var(--cell-h);display:flex;border-bottom:1px solid var(--border);position:relative;}
