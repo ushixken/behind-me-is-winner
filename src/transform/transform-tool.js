@@ -108,8 +108,20 @@ let tfFreePreviewRaf=0;
 let tfPerspectivePreviewFast=false;
 let tfPerspectivePreviewExact=false;
 const TF_ANTIALIAS_KEY='transform_antialiasing';
-let tfAntialiasing='medium';
-try{const savedMode=localStorage.getItem(TF_ANTIALIAS_KEY);if(['none','weak','medium','strong'].includes(savedMode))tfAntialiasing=savedMode;}catch(_){}
+const TF_ANTIALIAS_ENABLED_KEY='transform_antialiasing_enabled';
+const TF_ANTIALIAS_QUALITY_KEY='transform_antialiasing_quality';
+let tfAntialiasingEnabled=true,tfAntialiasingQuality='medium',tfAntialiasing='medium';
+try{
+  const legacy=localStorage.getItem(TF_ANTIALIAS_KEY),savedEnabled=localStorage.getItem(TF_ANTIALIAS_ENABLED_KEY),savedQuality=localStorage.getItem(TF_ANTIALIAS_QUALITY_KEY);
+  if(['weak','medium','strong'].includes(savedQuality))tfAntialiasingQuality=savedQuality;else if(['weak','medium','strong'].includes(legacy))tfAntialiasingQuality=legacy;
+  tfAntialiasingEnabled=savedEnabled===null?legacy!=='none':savedEnabled==='true';
+  tfAntialiasing=tfAntialiasingEnabled?tfAntialiasingQuality:'none';
+}catch(_){}
+function _tfPersistAntialiasing(){
+  tfAntialiasing=tfAntialiasingEnabled?tfAntialiasingQuality:'none';
+  try{localStorage.setItem(TF_ANTIALIAS_ENABLED_KEY,String(tfAntialiasingEnabled));localStorage.setItem(TF_ANTIALIAS_QUALITY_KEY,tfAntialiasingQuality);localStorage.setItem(TF_ANTIALIAS_KEY,tfAntialiasing);}catch(_){}
+  if(tfActive)_tfRedraw(false);
+}
 let tfBox=null;          // {x,y,w,h} axis-aligned bbox of the artwork, in original canvas coords
 let tfState=null;        // {tx,ty,scale,rotation} — cumulative transform applied to tfBox's center
 let tfLastCommittedOperation=null; // operation-relative delta retained for TVPaint-style repeated Enter
@@ -1260,12 +1272,11 @@ function _tfRenderOptionsPanel(){
   const opts=TF_MODE_OPTIONS[_tfCurrentModeKey()]||[];
   _tfOptionsBody.innerHTML='';
   _tfAppendStateFields(_tfOptionsBody);
-  const aaRow=document.createElement('label');aaRow.className='tf-option-row tf-antialias-row';
-  const aaLabel=document.createElement('span');aaLabel.textContent='Anti-aliasing';
-  const aaSelect=document.createElement('select');aaSelect.className='ts-select tf-antialias-select';
-  [['none','None'],['weak','Weak'],['medium','Medium'],['strong','Strong']].forEach(entry=>{const option=document.createElement('option');option.value=entry[0];option.textContent=entry[1];aaSelect.appendChild(option);});
-  aaSelect.value=tfAntialiasing;aaSelect.addEventListener('change',()=>{tfAntialiasing=aaSelect.value;try{localStorage.setItem(TF_ANTIALIAS_KEY,tfAntialiasing);}catch(_){}if(tfActive)_tfRedraw(false);});
-  aaRow.append(aaLabel,aaSelect);_tfOptionsBody.appendChild(aaRow);
+  if(window.ToolSettingsUI&&typeof ToolSettingsUI.antialiasing==='function')ToolSettingsUI.antialiasing(_tfOptionsBody,{
+    enabled:tfAntialiasingEnabled,quality:tfAntialiasingQuality,
+    onEnabledChange:enabled=>{tfAntialiasingEnabled=!!enabled;_tfPersistAntialiasing();},
+    onQualityChange:quality=>{if(['weak','medium','strong'].includes(quality))tfAntialiasingQuality=quality;_tfPersistAntialiasing();}
+  });
   opts.forEach(o=>{
     const row=document.createElement('label');
     row.className='tf-option-row';
@@ -1283,7 +1294,7 @@ function _tfRenderOptionsPanel(){
   });
 }
 _tfRenderOptionsPanel();
-
+window.addEventListener('tool-groups-ready',_tfRenderOptionsPanel);
 // ── Transform mode buttons — Free / Perspective ────────────────────
 // Live inside the Brush Presets docker's "transform" body (see
 // index.html / _syncBrushPresetsDocker in tools-color.js), which swaps

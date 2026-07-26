@@ -1886,10 +1886,8 @@ input.size-val-input{
 .tool-options-message,.tf-options-empty{padding:2px 0;color:var(--text2);font-size:10px;line-height:1.4;}
 body.tool-options-resizing{cursor:ns-resize!important;user-select:none!important;}
 #tf-options-body{gap:6px;}
-.tf-antialias-row{display:grid;grid-template-columns:minmax(0,1fr) 104px;align-items:center;gap:8px;color:var(--text);font-size:11px;}
 .tf-state-row{display:grid;grid-template-columns:minmax(0,1fr) 104px;align-items:center;gap:8px;color:var(--text);font-size:11px;}
 .tf-state-input{width:104px;min-width:0;box-sizing:border-box;padding:4px 6px;border:1px solid var(--border2);border-radius:4px;background:var(--bg2);color:var(--text);font:inherit;text-align:right;}
-.tf-antialias-select{width:104px;min-width:0;padding:4px 6px;font-size:10px;}
 .tool-group-settings{padding:14px;overflow:auto;color:var(--text);}
 .tool-group-settings h3{margin:0 0 8px;font-size:14px;}
 .tool-group-settings p{margin:0;color:var(--text2);font-size:11px;line-height:1.5;}
