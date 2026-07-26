@@ -187,8 +187,8 @@
 
   function renderLineOptions(body){
     const section=document.createElement('div');section.className='tool-group-inline-options';
-    function rangeRow(label,min,max,step,value,onInput){const row=document.createElement('label');row.className='tool-group-option-row';const text=document.createElement('span');text.textContent=label;const input=document.createElement('input');input.type='range';input.min=min;input.max=max;input.step=step;input.value=value;const output=document.createElement('span');output.className='tool-group-option-value';output.textContent=value;input.oninput=()=>{output.textContent=input.value;onInput(+input.value);};row.append(text,input,output);section.appendChild(row);}
-    rangeRow('Width / Size',1,2000,.1,toolSizes.line||6,value=>{toolSizes.line=value;if(tool==='line'){szSlider.value=value;if(typeof refreshSizeUI==='function')refreshSizeUI();}});
+    function rangeRow(label,min,max,step,value,onInput,kind){const row=document.createElement('label');row.className='tool-group-option-row';const text=document.createElement('span');text.textContent=label;const input=document.createElement('input');input.type='range';input.min=min;input.max=max;input.step=step;input.value=value;if(kind)input.dataset.optionKind=kind;const output=document.createElement('span');output.className='tool-group-option-value';output.textContent=value;if(kind)output.dataset.optionValueKind=kind;input.oninput=()=>{output.textContent=input.value;onInput(+input.value);};row.append(text,input,output);section.appendChild(row);}
+    rangeRow('Width / Size',1,2000,.1,toolSizes.brush||6,value=>{window._lineSizeUpdateSource='line-slider';toolSizes.line=value;window._lineSizeUpdateSource=null;if(tool==='line'){szSlider.value=value;if(typeof refreshSizeUI==='function')refreshSizeUI();}},'line-size');
     rangeRow('Opacity',1,100,1,Math.round(brushOpacity*100),value=>{brushOpacity=value/100;const existing=document.getElementById('ts-opacity');if(existing){existing.value=value;existing.dispatchEvent(new Event('input',{bubbles:true}));}});
     const pressureGroup=document.createElement('div');pressureGroup.className='tool-group-option-row compact tool-line-pressure-group';
     const pressureLabel=document.createElement('span');pressureLabel.textContent='Pressure';pressureGroup.appendChild(pressureLabel);
@@ -206,6 +206,16 @@
     const colorRow=document.createElement('div');colorRow.className='tool-group-option-row compact';const colorPreview=document.createElement('span');colorPreview.className='tool-group-line-color';colorPreview.style.background=typeof color==='string'?color:'#000';const colorText=document.createElement('span');colorText.textContent='Current Color  '+(typeof color==='string'?color:'');colorRow.append(colorPreview,colorText);section.appendChild(colorRow);
     body.appendChild(section);
   }
+
+  window.addEventListener('brush-size-changed',event=>{
+    const input=document.querySelector('[data-option-kind=\"line-size\"]');
+    const output=document.querySelector('[data-option-value-kind=\"line-size\"]');
+    if(!input||!output)return;
+    const size=Number(event.detail&&event.detail.size);
+    if(!Number.isFinite(size))return;
+    input.value=size;
+    output.textContent=typeof window.formatBrushSize==='function'?window.formatBrushSize(size):String(size);
+  });
 
   function renderFillOptions(body,group,activeSubTool){
     const state=window.FillMaskEngine?FillMaskEngine.getSettings():{antialiasing:true,quality:'medium'};

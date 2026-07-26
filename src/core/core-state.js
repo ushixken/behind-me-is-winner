@@ -16,7 +16,19 @@ let CellW=28;const CellH=28;
 let curFrame=0,curLayer=0,playing=false,playTimer=null;
 let tool='brush',color='#000000',bgColor='#ffffff';
 let rangeStart=0,rangeEnd=47,loopRange=false,rulerCtxFrame=0;
-const toolSizes={brush:6,eraser:20,fill:6,line:3};
+const toolSizes={brush:6,eraser:20,fill:6};
+// The Line tool is a brush geometry mode, not a separate brush preset. Keep
+// its public legacy key as an alias so older callers/settings continue to
+// work while every read and write uses the Brush tool's canonical size.
+Object.defineProperty(toolSizes,'line',{
+  enumerable:true,
+  configurable:false,
+  get(){return this.brush;},
+  set(value){
+    this.brush=value;
+    window.dispatchEvent(new CustomEvent('brush-size-changed',{detail:{tool:'line',size:value,source:window._lineSizeUpdateSource||'unknown'}}));
+  }
+});
 let drawing=false,lx=0,ly=0,lineStart=null;
 // TVPaint-style brush engine state
 let brushOpacity=1.0; // flow/opacity 0-1

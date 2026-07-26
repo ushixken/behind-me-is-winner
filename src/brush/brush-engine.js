@@ -272,8 +272,10 @@ window.setLinePressureMode=setLinePressureMode;
 // tool, in canvas coordinates. Cleared at the start/end of every drag.
 let _lineDragging = false;
 let _linePressureSamples = [];
+let _lineGesture=null;
 let _linePreviewBounds=null,_linePreviewPreviousEndpoint=null;
 let _linePreviewFrameId=0,_linePreviewMoveSequence=0,_linePreviewGeneration=0;
+let _lineDiagnosticCurrentT=0,_lineEffectivePressureSamples=[];
 let _selectionScopeBase = null;
 let _colorEraserBase = null;
 let _colorEraserOwnership = null;
@@ -2694,65 +2696,97 @@ function _flushCurveTail(e){
   _curveP0=null;_curveP1=null;
 }
 
-//  Line tool — Pen Pressure profile
-// Projects every {x,y,pressure} sample recorded during the drag onto the
-// FINAL straight line (start -> end), turning the freeform drag path into
-// a 0..1 parametric pressure curve along that line. Samples are collected
-// continuously in _handleMoveEvent while the line is being dragged (not
-// just the pointerdown/pointerup pressure), so the whole gesture — every
-// press and release in between — shapes the width, not just the two
-// endpoints. A small moving-average smooths tablet jitter without
-// flattening real pressure changes, and the profile is interpolated
-// piecewise-linearly for a continuous, non-stepped taper.
-function _buildLinePressureProfile(sx,sy,ex,ey){
-  const samples=_linePressureSamples;
-  if(!samples||samples.length===0) return function(){return 1;};
-  if(samples.length===1){const p=samples[0].pressure;return function(){return p;};}
-  // Pin the true start/end pressure BEFORE projection/sorting. These are
-  // identity-stable (always the first and most-recently-recorded sample),
-  // unlike anything derived from the projected/sorted array below, whose
-  // ordering and t=0/t=1 clustering shifts every frame as the projection
-  // axis (sx,sy)->(ex,ey) rotates with the live drag endpoint.
-  const startPressure=samples[0].pressure;
-  const endPressure=samples[samples.length-1].pressure;
-  const dx=ex-sx,dy=ey-sy,lenSq=dx*dx+dy*dy;
-  const projected=samples.map(s=>({
-    t: lenSq>0 ? Math.max(0,Math.min(1,((s.x-sx)*dx+(s.y-sy)*dy)/lenSq)) : 0,
-    pressure: s.pressure
-  }));
-  projected.sort((a,b)=>a.t-b.t);
-  const SMOOTH_RADIUS=2; // samples on each side averaged together
-  const smoothed=projected.map((p,i)=>{
-    let sum=0,count=0;
-    for(let j=Math.max(0,i-SMOOTH_RADIUS);j<=Math.min(projected.length-1,i+SMOOTH_RADIUS);j++){sum+=projected[j].pressure;count++;}
-    return {t:p.t,pressure:sum/count};
+// Line tool pressure profile. Raw samples remain live while the initial line
+// is being drawn outward. The first endpoint-adjustment gesture (rotation or
+// rotation), or pointerup when no adjustment occurred, projects them once
+// into normalized t/pressure pairs. Later geometry reuses that locked profile.
+function _normalizeLinePressureSamples(samples,sx,sy,ex,ey){
+  if(!samples||!samples.length)return[{t:0,pressure:1},{t:1,pressure:1}];
+  if(samples.length===1){const pressure=samples[0].pressure;return[{t:0,pressure},{t:1,pressure}];}
+  const length=Math.max(.0001,Math.hypot(ex-sx,ey-sy));
+  let furthest=0;
+  const radialProfile=samples.map(sample=>{
+    // Pressure belongs to normalized progress along the original outward
+    // gesture, not to projection onto a later rotated line. Monotonic radial
+    // progress preserves the digitizer profile while endpoint adjustment
+    // changes only reconstructed x/y positions.
+    furthest=Math.max(furthest,Math.hypot(sample.x-sx,sample.y-sy));
+    return{t:Math.max(0,Math.min(1,furthest/length)),pressure:sample.pressure};
   });
-  // Make sure the curve actually reaches both endpoints of the line so the
-  // start/end of the stroke reflect real recorded pressure rather than
-  // whatever interior sample happened to project nearest to t=0 or t=1.
-  if(smoothed[0].t>0) smoothed.unshift({t:0,pressure:smoothed[0].pressure});
-  if(smoothed[smoothed.length-1].t<1) smoothed.push({t:1,pressure:smoothed[smoothed.length-1].pressure});
-  // Overwrite the anchor pressures with the pinned values so the rendered
-  // start/end width always reflects the actual first/latest recorded
-  // pressure, not an index-windowed average whose membership is unstable
-  // across frames. Only the anchors are overwritten -- the interior of the
-  // curve still benefits from the smoothing pass above.
-  smoothed[0].pressure=startPressure;
-  smoothed[smoothed.length-1].pressure=endPressure;
+  // Shortening crops the previously captured line. Multiple later samples
+  // can therefore land at t=1; keep the newest pressure at that endpoint
+  // instead of letting the first cropped sample hide subsequent changes.
+  const profile=[];
+  radialProfile.forEach(sample=>{
+    const previous=profile[profile.length-1];
+    if(previous&&Math.abs(previous.t-sample.t)<1e-6)previous.pressure=sample.pressure;
+    else profile.push(sample);
+  });
+  const startPressure=samples[0].pressure,endPressure=samples[samples.length-1].pressure;
+  if(profile[0].t>0)profile.unshift({t:0,pressure:profile[0].pressure});
+  if(profile[profile.length-1].t<1)profile.push({t:1,pressure:profile[profile.length-1].pressure});
+  profile[0].t=0;profile[0].pressure=startPressure;
+  profile[profile.length-1].t=1;profile[profile.length-1].pressure=endPressure;
+  return profile;
+}
+function _linePressureFunction(profile){
   return function pressureAt(t){
-    t=Math.max(0,Math.min(1,t));
-    let lo=smoothed[0];
-    for(let i=1;i<smoothed.length;i++){
-      const hi=smoothed[i];
-      if(t<=hi.t){
-        const span=hi.t-lo.t;
-        const f=span>0?(t-lo.t)/span:0;
-        return lo.pressure+(hi.pressure-lo.pressure)*f;
-      }
+    t=Math.max(0,Math.min(1,t));if(window.DEBUG_LINE_TOOL)_lineDiagnosticCurrentT=t;let lo=profile[0];
+    for(let i=1;i<profile.length;i++){
+      const hi=profile[i];
+      if(t<=hi.t){const span=hi.t-lo.t,f=span>0?(t-lo.t)/span:0;return lo.pressure+(hi.pressure-lo.pressure)*f;}
       lo=hi;
     }
-    return smoothed[smoothed.length-1].pressure;
+    return profile[profile.length-1].pressure;
   };
+}
+function _lineAngleDelta(a,b){
+  let delta=Math.abs(a-b)%(Math.PI*2);if(delta>Math.PI)delta=Math.PI*2-delta;return delta;
+}
+function _updateLineGestureGeometry(point){
+  if(!_lineGesture||_lineGesture.pressureProfileLocked)return false;
+  const sx=_lineGesture.startPoint.x,sy=_lineGesture.startPoint.y;
+  const dx=point.x-sx,dy=point.y-sy,length=Math.hypot(dx,dy),angle=length?Math.atan2(dy,dx):_lineGesture.referenceAngle;
+  if(_lineGesture.geometryEstablished){
+    // An outward extension or shortening remains pressure capture. Rotation
+    // at approximately the same radius is endpoint adjustment and locks the
+    // profile; shortening instead crops it and permits a new endpoint
+    // pressure, matching Toon Boom's line interaction.
+    const extending=length>_lineGesture.maxLength+1;
+    const shortened=length<_lineGesture.maxLength-Math.max(2,_lineGesture.maxLength*.03);
+    const rotated=!extending&&!shortened&&length>0&&_lineAngleDelta(angle,_lineGesture.referenceAngle)>Math.PI/18;
+    if(rotated){
+      const captured=_lineGesture.captureEndpoint;
+      _lockLinePressureProfile(captured.x,captured.y);
+      return true;
+    }
+  }else if(length>=4&&_linePressureSamples.length>=4){
+    _lineGesture.geometryEstablished=true;_lineGesture.referenceAngle=angle;
+  }
+  if(length>=_lineGesture.maxLength){
+    _lineGesture.maxLength=length;
+    _lineGesture.referenceAngle=angle;
+    _lineGesture.captureEndpoint={x:point.x,y:point.y};
+  }
+  return false;
+}
+function _lockLinePressureProfile(ex,ey){
+  if(!_lineGesture||_lineGesture.pressureProfileLocked)return;
+  const profile=_normalizeLinePressureSamples(_linePressureSamples,_lineGesture.startPoint.x,_lineGesture.startPoint.y,ex,ey);
+  _lineGesture.endPoint={x:ex,y:ey};
+  _lineGesture.pressureSamples=profile.map(sample=>({t:sample.t,pressure:sample.pressure}));
+  _lineGesture.startPressure=profile[0].pressure;
+  _lineGesture.endPressure=profile[profile.length-1].pressure;
+  _lineGesture.pressureProfileLocked=true;
+}
+function _getLinePressureProfile(sx,sy,ex,ey){
+  const profile=_lineGesture&&_lineGesture.pressureProfileLocked
+    ?_lineGesture.pressureSamples
+    :_normalizeLinePressureSamples(_linePressureSamples,sx,sy,ex,ey);
+  return profile.map(sample=>({t:sample.t,pressure:sample.pressure}));
+}
+function _buildLinePressureProfile(sx,sy,ex,ey){
+  return _linePressureFunction(_getLinePressureProfile(sx,sy,ex,ey));
 }
 // Renders the Line tool's current drag (or its final committed state) into
 // _strokeCanvas from scratch: clears any previous stamp, then re-walks the
@@ -2782,7 +2816,7 @@ function _clearLinePreviewCanvas(canvas,context){
   context.globalAlpha=1;
   context.globalCompositeOperation='source-over';
 }
-function _renderLineDrag(ex,ey,e){
+function _renderLineDrag(ex,ey,e,phase){
   if(!lineStart) return;
   const previousEndpoint=_linePreviewPreviousEndpoint&&{x:_linePreviewPreviousEndpoint.x,y:_linePreviewPreviousEndpoint.y};
   const previousBounds=_linePreviewBounds&&{minX:_linePreviewBounds.minX,minY:_linePreviewBounds.minY,maxX:_linePreviewBounds.maxX,maxY:_linePreviewBounds.maxY};
@@ -2800,6 +2834,7 @@ function _renderLineDrag(ex,ey,e){
   _rotationPrevValid=false;
   _beginEndTaperCapture();
   const usePenPressure=_isDrawingWithPen&&getLinePressureMode()==='pen';
+  if(window.DEBUG_LINE_TOOL)_lineEffectivePressureSamples=[];
   // Deterministic pressure-smoothing seed for THIS replay ------------------
   // _renderLineDrag fully re-walks the whole line from t=0 on every single
   // pointermove (live preview) and once more at commit -- each call is an
@@ -2833,6 +2868,9 @@ function _renderLineDrag(ex,ey,e){
   try{
     if(usePenPressure){
       const pressureAt=_buildLinePressureProfile(lineStart.x,lineStart.y,ex,ey);
+      const startPressure=pressureAt(0),savedFlowSpacingRatio=_flowSpacingRatio;
+      currentPressure=startPressure;_flowSpacingRatio=_initialDabSpacingRatio(e,startPressure);
+      try{_stampDab(lineStart.x,lineStart.y,e);}finally{_flowSpacingRatio=savedFlowSpacingRatio;}
       currentPressure=pressureAt(1);
       _strokeSegmentProfile(lineStart.x,lineStart.y,ex,ey,e,pressureAt);
     }else{
@@ -2846,7 +2884,11 @@ function _renderLineDrag(ex,ey,e){
       const savedIsDrawingWithPen=_isDrawingWithPen;
       _isDrawingWithPen=false;
       currentPressure=1;
-      try{ _strokeSegment(lineStart.x,lineStart.y,ex,ey,e,1,1); }
+      try{
+        const savedFlowSpacingRatio=_flowSpacingRatio;_flowSpacingRatio=_initialDabSpacingRatio(e,1);
+        try{_stampDab(lineStart.x,lineStart.y,e);}finally{_flowSpacingRatio=savedFlowSpacingRatio;}
+        _strokeSegment(lineStart.x,lineStart.y,ex,ey,e,1,1);
+      }
       finally{ _isDrawingWithPen=savedIsDrawingWithPen; }
     }
   } finally {
@@ -2855,6 +2897,23 @@ function _renderLineDrag(ex,ey,e){
   _flushStrokeTail();
   _linePreviewBounds=_strokeDirty?{minX:_strokeDirty.minX,minY:_strokeDirty.minY,maxX:_strokeDirty.maxX,maxY:_strokeDirty.maxY}:null;
   _linePreviewPreviousEndpoint={x:ex,y:ey};
+  if(window.DEBUG_LINE_TOOL){
+    const storedProfile=usePenPressure?_getLinePressureProfile(lineStart.x,lineStart.y,ex,ey):[{t:0,pressure:1},{t:1,pressure:1}];
+    const diagnostic={
+      tool:'line',phase:phase||'preview',pressureMode:getLinePressureMode(),
+      rawPressureSamples:_linePressureSamples.map(sample=>({x:sample.x,y:sample.y,pressure:sample.pressure})),
+      storedPressureSamples:storedProfile,
+      effectivePressureSamples:_lineEffectivePressureSamples.slice(),
+      canonicalBrushSize:toolSizes.brush,
+      lineSliderSize:Number(document.querySelector('[data-option-kind="line-size"]')?.value||toolSizes.line),
+      shortcutUpdatedSize:window._lastLineShortcutSize||null,
+      effectiveDiameter:getBrushSize(),canvasScale:1,zoom,
+      stampCount:_strokeDabCount-dabsBefore,
+      pressureProfileLocked:!!(_lineGesture&&_lineGesture.pressureProfileLocked)
+    };
+    const records=window.__lineToolDiagnostics||(window.__lineToolDiagnostics=[]);records.push(diagnostic);if(records.length>200)records.splice(0,records.length-200);
+    console.debug('[LineToolDiagnostics]',diagnostic);
+  }
   if(window.DEBUG_LINE_PREVIEW){
     const matrix=transformBeforeClear?{a:transformBeforeClear.a,b:transformBeforeClear.b,c:transformBeforeClear.c,d:transformBeforeClear.d,e:transformBeforeClear.e,f:transformBeforeClear.f}:null;
     console.debug('[LinePreview]',{previewFrameId,pointermoveSequence:_linePreviewMoveSequence,generation:_linePreviewGeneration,canvasWidth:_strokeCanvas&&_strokeCanvas.width||0,canvasHeight:_strokeCanvas&&_strokeCanvas.height||0,transformBeforeClear:matrix,clearRectangle:{x:0,y:0,width:_strokeCanvas&&_strokeCanvas.width||0,height:_strokeCanvas&&_strokeCanvas.height||0},previousEndpoint,currentEndpoint:{x:ex,y:ey},brushTipDiameter:getBrushSize(),stampCount:_strokeDabCount-dabsBefore,stalePreviewDiscarded:false,previousBounds,currentBounds:_linePreviewBounds});
@@ -2976,6 +3035,7 @@ function _endStroke(pointerId){
   _lineDragging=false;
   _linePreviewBounds=null;_linePreviewPreviousEndpoint=null;
   _linePressureSamples=[];
+  _lineGesture=null;
   _pendingDabs.length=0;
   _curveP0=null;_curveP1=null;
   _strokeSegCarryOver=0;
@@ -3228,7 +3288,10 @@ function _computeEffectiveParams(e){
   // instantaneous pressure sample.
   let _pressureInfluence = null;
   function _getPressureInfluence(){
-    if(_pressureInfluence===null) _pressureInfluence = _resolveControl('pressure', e);
+    if(_pressureInfluence===null){
+      _pressureInfluence = _resolveControl('pressure', e);
+      if(window.DEBUG_LINE_TOOL&&tool==='line')_lineEffectivePressureSamples.push({t:_lineDiagnosticCurrentT,rawPressure:currentPressure,effectivePressure:_pressureInfluence});
+    }
     return _pressureInfluence;
   }
 
@@ -3578,12 +3641,15 @@ activeC.addEventListener('pointerdown',e=>{
   if(tool==='line'){
     lineStart=p;
     _lineDragging=true;
-    _linePressureSamples=[{x:p.x,y:p.y,pressure:currentPressure}];
+    const fixedLinePressure=getLinePressureMode()==='fixed';
+    const storedLinePressure=fixedLinePressure?1:currentPressure;
+    _linePressureSamples=[{x:p.x,y:p.y,pressure:storedLinePressure}];
+    _lineGesture={startPoint:{x:p.x,y:p.y},endPoint:{x:p.x,y:p.y},captureEndpoint:{x:p.x,y:p.y},startPressure:storedLinePressure,endPressure:storedLinePressure,pressureSamples:fixedLinePressure?[{t:0,pressure:1},{t:1,pressure:1}]:[],pressureProfileLocked:fixedLinePressure,geometryEstablished:false,referenceAngle:0,maxLength:0};
     _linePreviewBounds=null;_linePreviewPreviousEndpoint=null;_linePreviewFrameId=0;_linePreviewMoveSequence=0;_linePreviewGeneration++;
     activeC.setPointerCapture(e.pointerId);
     _ensureStrokeCanvas();
     _inStroke=true;
-    _renderLineDrag(p.x,p.y,e);
+    _renderLineDrag(p.x,p.y,e,'preview');
     _scheduleRecomposite({firstDab:true});
     return;
   }
@@ -3696,7 +3762,7 @@ function _scheduleLinePreview(x,y,e){
   _linePreviewRAFHandle=requestAnimationFrame(()=>{
     _linePreviewRAFPending=false;_linePreviewRAFHandle=0;
     if(!lineStart||!_lineDragging) return;
-    _renderLineDrag(_linePreviewLatestX,_linePreviewLatestY,_linePreviewLatestEvent);
+    _renderLineDrag(_linePreviewLatestX,_linePreviewLatestY,_linePreviewLatestEvent,'preview');
     _scheduleRecomposite();
   });
 }
@@ -3726,18 +3792,16 @@ function _handleMoveEvent(e){
     // applied to the endpoint tracking itself. Recording happens on every
     // call regardless of rendering -- see _scheduleLinePreview above for
     // why rendering itself is decoupled from this.
-    let lastRaw=null,lastEvent=e;
-    for(const ev of events){
-      const pressure=_getPressure(ev);
-      const raw=getPos(ev);
-      _linePressureSamples.push({x:raw.x,y:raw.y,pressure});
-      currentPressure=pressure;
-      lastRaw=raw;lastEvent=ev;
-    }
-    if(lastRaw){
-      lx=lastRaw.x;ly=lastRaw.y;_lastPointerEvent=lastEvent;
-      _scheduleLinePreview(lastRaw.x,lastRaw.y,lastEvent);
-    }
+    const lineEvents=events.map(ev=>({event:ev,pressure:_getPressure(ev),point:getPos(ev)}));
+    const latest=lineEvents[lineEvents.length-1];
+    if(_lineGesture&&!_lineGesture.pressureProfileLocked)_updateLineGestureGeometry(latest.point);
+    if(!_lineGesture||!_lineGesture.pressureProfileLocked){
+      lineEvents.forEach(sample=>_linePressureSamples.push({x:sample.point.x,y:sample.point.y,pressure:sample.pressure}));
+      currentPressure=latest.pressure;
+    }else currentPressure=_lineGesture.endPressure;
+    if(_lineGesture)_lineGesture.endPoint={x:latest.point.x,y:latest.point.y};
+    lx=latest.point.x;ly=latest.point.y;_lastPointerEvent=latest.event;
+    _scheduleLinePreview(latest.point.x,latest.point.y,latest.event);
     return;
   }
   for(const ev of events){
@@ -3787,12 +3851,13 @@ function _pointerEndStroke(e){
   _strokeCompletionStarted=true;
   _stopAirbrushSpray();
   _cancelLinePreview();
-  if(activeGroupId){drawing=false;lineStart=null;_lineDragging=false;_linePressureSamples=[];_linePreviewBounds=null;_linePreviewPreviousEndpoint=null;_pendingDabs.length=0;_endColorEraserStroke();_activeStrokePointerId=null;return;}
+  if(activeGroupId){drawing=false;lineStart=null;_lineDragging=false;_linePressureSamples=[];_lineGesture=null;_linePreviewBounds=null;_linePreviewPreviousEndpoint=null;_pendingDabs.length=0;_endColorEraserStroke();_activeStrokePointerId=null;return;}
   if(tool==='line'&&lineStart){
     pushUndo();ensureKey();const p=getPos(e);
     const finalPressure=_getPressure(e);
-    _linePressureSamples.push({x:p.x,y:p.y,pressure:finalPressure});
-    currentPressure=finalPressure;
+    if(_lineGesture&&!_lineGesture.pressureProfileLocked){_linePressureSamples.push({x:p.x,y:p.y,pressure:finalPressure});_lockLinePressureProfile(p.x,p.y);}
+    if(_lineGesture)_lineGesture.endPoint={x:p.x,y:p.y};
+    currentPressure=_lineGesture?_lineGesture.endPressure:finalPressure;
     if(!_strokeCanvas||!_inStroke){_ensureStrokeCanvas();_inStroke=true;}
   if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.event('stroke-state-initialization-complete',{strokeCanvas:!!_strokeCanvas,inStroke:_inStroke});
     // Final commit shares the exact same renderer used for every live
@@ -3801,9 +3866,9 @@ function _pointerEndStroke(e){
     // preview RAF that was still pending from the last pointermove was
     // already cancelled above -- this call always uses the true final
     // pointerup position, never a stale queued endpoint.
-    _renderLineDrag(p.x,p.y,e);
+    _renderLineDrag(p.x,p.y,e,'commit');
     if(_inStroke){_inStroke=false;_commitStrokeCanvas();}
-    _cleanupErasedSmartOwnership();_clearLinePreviewCanvas(_strokeCanvas,_strokeCtx);_clearLinePreviewCanvas(_texturedStrokeCanvas,_texturedStrokeCtx);_clearLinePreviewCanvas(_strokePreviewCanvas,_strokePreviewCtx);lineStart=null;_lineDragging=false;_linePressureSamples=[];_linePreviewBounds=null;_linePreviewPreviousEndpoint=null;saveActiveToKey();
+    _cleanupErasedSmartOwnership();_clearLinePreviewCanvas(_strokeCanvas,_strokeCtx);_clearLinePreviewCanvas(_texturedStrokeCanvas,_texturedStrokeCtx);_clearLinePreviewCanvas(_strokePreviewCanvas,_strokePreviewCtx);lineStart=null;_lineDragging=false;_linePressureSamples=[];_lineGesture=null;_linePreviewBounds=null;_linePreviewPreviousEndpoint=null;saveActiveToKey();
   }else if(drawing){
     drawing=false;
     _flushCurveTail(e);

@@ -90,7 +90,10 @@
   function _applySize(px){
     px=Math.max(_sizeMin(),Math.min(_sizeMax(),px));
     px=Math.round(px*10)/10;
+    window._lineSizeUpdateSource='keyboard-shortcut';
     toolSizes[tool]=px;
+    window._lineSizeUpdateSource=null;
+    if(tool==='line')window._lastLineShortcutSize=px;
     const tsSz=document.getElementById('ts-size'); if(tsSz) tsSz.value=px;
     const bpSz=document.getElementById('bp-sz'); if(bpSz) bpSz.value=px;
     if(typeof _aaDabCache!=='undefined') _aaDabCache.clear();
