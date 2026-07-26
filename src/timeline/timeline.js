@@ -1268,16 +1268,18 @@ function renderRows(){
   const rowWrap=document.getElementById('tl-rows-wrap');rowWrap.innerHTML='';
   const ph=document.createElement('div');ph.id='playhead';rowWrap.appendChild(ph);
   const ro=document.createElement('div');ro.id='range-overlay';rowWrap.appendChild(ro);
-  const totalW=TOTAL*CellW;rowWrap.style.width=totalW+'px';
+  const totalW=TOTAL*CellW,timelineFps=Math.max(1,getFPS());rowWrap.style.width=totalW+'px';
+  document.getElementById('tl-inner').style.setProperty('--timeline-second-span',(timelineFps*CellW)+'px');
 
   timelineLayerIndices().forEach(i=>{
     const l=layers[i];const row=document.createElement('div');
-    row.className='tl-row';row.style.width=totalW+'px';row.style.position='relative';
+    row.className='tl-row'+(l.color&&l.color!=='transparent'?' has-layer-color':'');row.style.width=totalW+'px';row.style.position='relative';
     if(l.color&&l.color!=='transparent'){const hex=l.color;const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);row.style.background=`rgba(${r},${g},${b},0.22)`;}
 
     for(let f=0;f<TOTAL;f++){
       const cell=document.createElement('div');
       let cls='tl-cell';
+      if(Math.floor(f/timelineFps)%2===1)cls+=' second-band';
       if(f===curFrame&&i===curLayer) cls+=' cur-col';
       if(selectedFrames.has(f)&&selectedRowLayers.has(i)) cls+=' selected';
       cell.className=cls;cell.style.cssText='left:'+(f*CellW)+'px;position:absolute;width:'+CellW+'px;height:'+CellH+'px;';
@@ -1406,7 +1408,7 @@ function renderRows(){
 function updateRangeOverlay(){
   const ro=document.getElementById('range-overlay');if(!ro) return;
   const left=rangeStart*CellW,width=(rangeEnd-rangeStart+1)*CellW,totalH=timelineLayerIndices().length*CellH;
-  ro.style.cssText='position:absolute;top:0;left:'+left+'px;width:'+width+'px;height:'+totalH+'px;background:rgba(127,119,221,0.07);border-left:2px solid rgba(29,158,117,0.6);border-right:2px solid rgba(226,75,74,0.6);pointer-events:none;z-index:6;';
+  ro.style.cssText='position:absolute;top:0;left:'+left+'px;width:'+width+'px;height:'+totalH+'px;border-left:2px solid rgba(29,158,117,0.6);border-right:2px solid rgba(226,75,74,0.6);pointer-events:none;z-index:6;';
 }
 
 function updatePlayhead(){
