@@ -697,6 +697,10 @@
     if(!btn) return;
     btn.classList.toggle('active',ltTransformMode);
     btn.setAttribute('aria-pressed',String(ltTransformMode));
+    // UI-only hook: lets the toolbar CSS reveal/hide the Flip/Reset/Align
+    // cluster based on Transform Mode. Purely visual — no behavior change.
+    const toolbar=btn.closest('.lt-toolbar');
+    if(toolbar) toolbar.classList.toggle('lt-transform-on',ltTransformMode);
   }
 
   // Continuous per-frame resync (same pattern as transform-tool.js's own

@@ -1,4 +1,4 @@
-*{box-sizing:border-box;margin:0;padding:0;}
+﻿*{box-sizing:border-box;margin:0;padding:0;}
 
 /* Hide number input spinners globally */
 input[type=number]::-webkit-inner-spin-button,
@@ -2083,14 +2083,77 @@ body.app-scrollbar-dragging{user-select:none!important;-webkit-user-select:none!
 
 /* ── LIGHT TABLE ──────────────────────────────────────────── */
 #light-table-panel .fp-body{display:flex;flex-direction:column;height:100%;padding:6px;gap:6px;}
-.lt-toolbar{display:flex;align-items:center;gap:4px;flex-shrink:0;border-bottom:1px solid var(--border);padding-bottom:6px;min-width:0;overflow-x:auto;scrollbar-width:none;-ms-overflow-style:none;}
-.lt-toolbar::-webkit-scrollbar{display:none;}
-.lt-toolbar-group{display:flex;align-items:center;gap:3px;flex:1 1 auto;min-width:0;}
-.lt-toolbar .tsep{align-self:center;margin:0 2px;height:18px;flex-shrink:0;}
-.lt-toolbar .lt-btn{flex:1 1 auto;min-width:0;height:28px;padding:0 5px;gap:4px;justify-content:center;align-items:center;}
+.lt-toolbar{
+  display:flex;flex-direction:column;flex-shrink:0;
+  border-bottom:1px solid var(--border);
+  padding:2px 4px 8px;margin-bottom:2px;min-width:0;
+  container-type:inline-size;container-name:lt-toolbar;
+  /* No gap here on purpose: the transform row supplies its own
+     margin/padding/border, and only when it's actually open, so a
+     collapsed row contributes exactly zero extra space below row 1. */
+}
+
+/* Row 1: Insert/Delete left, a flexible spacer, Transform right-aligned. */
+.lt-toolbar-row-main{display:flex;align-items:center;gap:0;min-width:0;width:100%;}
+.lt-group-primary{flex:0 0 auto;display:flex;align-items:center;gap:6px;min-width:0;}
+.lt-toolbar-spacer{flex:1 1 auto;min-width:12px;}
+#lt-btn-transform{flex:0 0 auto;}
+
+.lt-toolbar-row{min-width:0;}
+.lt-toolbar-group{display:flex;align-items:center;min-width:0;}
+
+.lt-toolbar .lt-btn{
+  flex:0 0 auto;min-width:0;height:30px;padding:0 12px;gap:6px;
+  justify-content:center;align-items:center;white-space:nowrap;
+  border-radius:6px;border:1px solid transparent;background:transparent;
+}
 .lt-toolbar .lt-btn:disabled{opacity:.4;cursor:not-allowed;pointer-events:none;}
 .lt-toolbar .lt-btn svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0;}
-.lt-toolbar .lt-btn .tlabel{font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.lt-toolbar .lt-btn .tlabel{font-size:11px;white-space:nowrap;}
+
+/* Insert / Delete: lightweight setup actions, minimal visual weight */
+.lt-btn-plain{color:var(--text2);}
+.lt-btn-plain:hover{color:var(--text);}
+
+/* Transform: same plain look as Insert/Delete at rest — no box, no
+   border, no fill — so it doesn't read as a separate UI element. Bold
+   label is the only resting cue that it's the primary action; the
+   filled/accent look only appears once it's actually toggled on. */
+.lt-btn-primary{font-weight:600;color:var(--text2);}
+.lt-btn-primary:hover{color:var(--text);}
+.lt-btn-primary svg{width:15px;height:15px;}
+.lt-btn-primary.active{background:var(--accent);color:var(--bg1,#fff);border-color:var(--accent);}
+
+/* Row 2: the transform utilities. Collapsed to true zero height (0
+   margin/padding/border, not just hidden content) when Transform Mode
+   is off — so it never adds dead space beneath row 1. Opens into a
+   centered, evenly-spaced group below Transform once it's on. */
+.lt-toolbar-row-transform{
+  display:grid;grid-template-rows:0fr;opacity:0;
+  margin-top:0;padding-top:0;border-top:0 solid var(--border);
+  transition:grid-template-rows .18s ease,opacity .12s ease,
+             margin-top .18s ease,padding-top .18s ease,border-top-width .18s ease;
+}
+.lt-toolbar-row-transform > .lt-toolbar-group{overflow:hidden;min-height:0;}
+.lt-toolbar.lt-transform-on .lt-toolbar-row-transform{
+  grid-template-rows:1fr;opacity:1;
+  margin-top:8px;padding-top:8px;border-top-width:1px;
+}
+.lt-group-transform{justify-content:center;gap:8px;width:100%;}
+.lt-btn-secondary{opacity:.85;flex:1 1 0;padding:0 10px;color:var(--text2);}
+.lt-btn-secondary .tlabel{font-size:10.5px;}
+.lt-btn-secondary:hover{opacity:1;color:var(--text);}
+
+/* Narrow docker widths: utilities shrink to icon-only, then Insert/Delete,
+   before anything wraps or overlaps. */
+@container lt-toolbar (max-width: 300px){
+  .lt-btn-secondary .tlabel{display:none;}
+  .lt-btn-secondary{padding:0 8px;}
+}
+@container lt-toolbar (max-width: 220px){
+  .lt-group-primary .tlabel{display:none;}
+  .lt-group-primary .lt-btn{padding:0 8px;}
+}
 #lt-list{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:2px;scrollbar-width:none;-ms-overflow-style:none;outline:none;}
 #lt-list::-webkit-scrollbar{display:none;}
 .lt-row{position:relative;display:flex;align-items:center;gap:6px;padding:5px 7px;border-radius:5px;cursor:grab;border:1px solid transparent;transition:background .1s;}
