@@ -864,10 +864,13 @@
     const flipHBtn=document.getElementById('lt-btn-flip-h');
     const flipVBtn=document.getElementById('lt-btn-flip-v');
     const resetBtn=document.getElementById('lt-btn-reset');
+    const alignBtn=document.getElementById('lt-btn-align-centers');
     const validTarget=!!_ltValidTransformTarget();
+    const hasUnlockedTarget=references.some(r=>selectedIds.has(r.id)&&!r.locked&&!isMissing(r));
     if(flipHBtn){ flipHBtn.disabled=!validTarget; flipHBtn.setAttribute('aria-disabled',String(!validTarget)); }
     if(flipVBtn){ flipVBtn.disabled=!validTarget; flipVBtn.setAttribute('aria-disabled',String(!validTarget)); }
     if(resetBtn){ resetBtn.disabled=!validTarget; resetBtn.setAttribute('aria-disabled',String(!validTarget)); }
+    if(alignBtn){ alignBtn.disabled=!hasUnlockedTarget; alignBtn.setAttribute('aria-disabled',String(!hasUnlockedTarget)); }
     syncTransformToolbarState();
   }
 
@@ -1013,6 +1016,52 @@
     requestRepaint();
   }
 
+  // ── Phase 5C: Align Centers ─────────────────────────────────────────
+  // Moves selected Light Table reference(s) together so their combined reference
+  // canvas center aligns with the document canvas center (Clip Studio Paint style).
+  // Calculates the translation offset from the original reference canvas center to
+  // document center, and applies that exact shift (dx, dy) to every selected unlocked reference.
+  function alignCenters(){
+    const targets=references.filter(r=>selectedIds.has(r.id)&&!r.locked&&!isMissing(r));
+    if(!targets.length) return;
+
+    const dw=(typeof mainCanvas!=='undefined'&&mainCanvas.width)?mainCanvas.width:targets[0].drawing.width;
+    const dh=(typeof mainCanvas!=='undefined'&&mainCanvas.height)?mainCanvas.height:targets[0].drawing.height;
+    const docCenterX=dw/2;
+    const docCenterY=dh/2;
+
+    if(targets.length===1){
+      const ref=targets[0];
+      const t=ref.transform||(ref.transform=_ltDefaultTransform(ref));
+      const refCenterX=ref.drawing.width/2+t.positionX;
+      const refCenterY=ref.drawing.height/2+t.positionY;
+      const dx=docCenterX-refCenterX;
+      const dy=docCenterY-refCenterY;
+      t.positionX+=dx;
+      t.positionY+=dy;
+    } else {
+      let sumX=0, sumY=0;
+      targets.forEach(ref=>{
+        const t=ref.transform||(ref.transform=_ltDefaultTransform(ref));
+        sumX+=ref.drawing.width/2+t.positionX;
+        sumY+=ref.drawing.height/2+t.positionY;
+      });
+      const avgCenterX=sumX/targets.length;
+      const avgCenterY=sumY/targets.length;
+      const dx=docCenterX-avgCenterX;
+      const dy=docCenterY-avgCenterY;
+
+      targets.forEach(ref=>{
+        const t=ref.transform||(ref.transform=_ltDefaultTransform(ref));
+        t.positionX+=dx;
+        t.positionY+=dy;
+      });
+    }
+
+    if(ltTransformMode) _ltDrawOverlay();
+    requestRepaint();
+  }
+
   function init(){
     const insBtn=document.getElementById('lt-btn-insert');
     const delBtn=document.getElementById('lt-btn-delete');
@@ -1024,9 +1073,11 @@
     const flipHBtn=document.getElementById('lt-btn-flip-h');
     const flipVBtn=document.getElementById('lt-btn-flip-v');
     const resetBtn=document.getElementById('lt-btn-reset');
+    const alignBtn=document.getElementById('lt-btn-align-centers');
     if(flipHBtn) flipHBtn.addEventListener('click',flipHorizontal);
     if(flipVBtn) flipVBtn.addEventListener('click',flipVertical);
     if(resetBtn) resetBtn.addEventListener('click',resetTransform);
+    if(alignBtn) alignBtn.addEventListener('click',alignCenters);
     if(listEl){
       // Clicking empty space inside the list (not a row) clears selection.
       listEl.addEventListener('click',e=>{
@@ -1099,6 +1150,7 @@
     flipHorizontal,
     flipVertical,
     resetTransform,
+    alignCenters,
     get references(){return references.slice();},
     get selectedIds(){return new Set(selectedIds);},
     get transformMode(){return ltTransformMode;},
