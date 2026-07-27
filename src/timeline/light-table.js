@@ -866,11 +866,10 @@
     const resetBtn=document.getElementById('lt-btn-reset');
     const alignBtn=document.getElementById('lt-btn-align-centers');
     const validTarget=!!_ltValidTransformTarget();
-    const hasUnlockedTarget=references.some(r=>selectedIds.has(r.id)&&!r.locked&&!isMissing(r));
     if(flipHBtn){ flipHBtn.disabled=!validTarget; flipHBtn.setAttribute('aria-disabled',String(!validTarget)); }
     if(flipVBtn){ flipVBtn.disabled=!validTarget; flipVBtn.setAttribute('aria-disabled',String(!validTarget)); }
     if(resetBtn){ resetBtn.disabled=!validTarget; resetBtn.setAttribute('aria-disabled',String(!validTarget)); }
-    if(alignBtn){ alignBtn.disabled=!hasUnlockedTarget; alignBtn.setAttribute('aria-disabled',String(!hasUnlockedTarget)); }
+    if(alignBtn){ alignBtn.disabled=!validTarget; alignBtn.setAttribute('aria-disabled',String(!validTarget)); }
     syncTransformToolbarState();
   }
 
@@ -1017,46 +1016,44 @@
   }
 
   // ── Phase 5C: Align Centers ─────────────────────────────────────────
-  // Moves selected Light Table reference(s) together so their combined reference
-  // canvas center aligns with the document canvas center (Clip Studio Paint style).
-  // Calculates the translation offset from the original reference canvas center to
-  // document center, and applies that exact shift (dx, dy) to every selected unlocked reference.
+  // Moves ALL Light Table references together as one group so their overall group center
+  // aligns with the document canvas center (Clip Studio Paint style).
+  // Computes the combined center of all visible active references, calculates the translation offset to
+  // document center, and applies that exact shift (dx, dy) to every reference in the arrangement.
   function alignCenters(){
-    const targets=references.filter(r=>selectedIds.has(r.id)&&!r.locked&&!isMissing(r));
-    if(!targets.length) return;
+    const targetRef=_ltValidTransformTarget();
+    if(!targetRef) return;
 
-    const dw=(typeof mainCanvas!=='undefined'&&mainCanvas.width)?mainCanvas.width:targets[0].drawing.width;
-    const dh=(typeof mainCanvas!=='undefined'&&mainCanvas.height)?mainCanvas.height:targets[0].drawing.height;
+    const activeRefs=references.filter(r=>!r.hidden&&!isMissing(r));
+    if(!activeRefs.length) return;
+
+    let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
+    activeRefs.forEach(r=>{
+      const corners=_ltCorners(r);
+      corners.forEach(p=>{
+        if(p.x<minX) minX=p.x;
+        if(p.x>maxX) maxX=p.x;
+        if(p.y<minY) minY=p.y;
+        if(p.y>maxY) maxY=p.y;
+      });
+    });
+
+    const groupCenterX=(minX+maxX)/2;
+    const groupCenterY=(minY+maxY)/2;
+
+    const dw=(typeof mainCanvas!=='undefined'&&mainCanvas.width)?mainCanvas.width:targetRef.drawing.width;
+    const dh=(typeof mainCanvas!=='undefined'&&mainCanvas.height)?mainCanvas.height:targetRef.drawing.height;
     const docCenterX=dw/2;
     const docCenterY=dh/2;
 
-    if(targets.length===1){
-      const ref=targets[0];
-      const t=ref.transform||(ref.transform=_ltDefaultTransform(ref));
-      const refCenterX=ref.drawing.width/2+t.positionX;
-      const refCenterY=ref.drawing.height/2+t.positionY;
-      const dx=docCenterX-refCenterX;
-      const dy=docCenterY-refCenterY;
-      t.positionX+=dx;
-      t.positionY+=dy;
-    } else {
-      let sumX=0, sumY=0;
-      targets.forEach(ref=>{
-        const t=ref.transform||(ref.transform=_ltDefaultTransform(ref));
-        sumX+=ref.drawing.width/2+t.positionX;
-        sumY+=ref.drawing.height/2+t.positionY;
-      });
-      const avgCenterX=sumX/targets.length;
-      const avgCenterY=sumY/targets.length;
-      const dx=docCenterX-avgCenterX;
-      const dy=docCenterY-avgCenterY;
+    const dx=docCenterX-groupCenterX;
+    const dy=docCenterY-groupCenterY;
 
-      targets.forEach(ref=>{
-        const t=ref.transform||(ref.transform=_ltDefaultTransform(ref));
-        t.positionX+=dx;
-        t.positionY+=dy;
-      });
-    }
+    references.forEach(r=>{
+      const rt=r.transform||(r.transform=_ltDefaultTransform(r));
+      rt.positionX+=dx;
+      rt.positionY+=dy;
+    });
 
     if(ltTransformMode) _ltDrawOverlay();
     requestRepaint();
