@@ -1,5 +1,5 @@
 // ════════════════════════════════════════════════════════════════
-// LIGHT TABLE — Phase 1
+// LIGHT TABLE — Phase 1 + Phase 2
 //
 // A manual animation-reference system, deliberately kept separate from
 // Onion Skin, normal layers, normal Transform, and Timeline editing.
@@ -11,18 +11,26 @@
 // drawing's frame index changes — it does NOT depend on the current
 // frame index the way a raw (layerIndex, frameIndex) pair would.
 //
-// Phase 1 explicitly does NOT implement: transform, tint, opacity,
-// locking, drag-and-drop, multi-selection, alignment, flipping, or
-// project persistence. References live only in memory for this session.
+// Phase 1 implemented insertion, single selection, visibility toggling
+// and rendering. Phase 1 explicitly did NOT implement: transform, tint,
+// opacity, locking, drag-and-drop, multi-selection, alignment, flipping,
+// or project persistence.
+//
+// Phase 2 adds, on top of the list (never touching source drawings,
+// Timeline frames, keyframes, layers or exposure lengths):
+//   - multi-selection (Click / Ctrl+Click)
+//   - range selection (Shift+Click)
+//   - batch deletion (Delete button / Delete key)
+//   - keyboard selection controls (Ctrl+A, Escape)
+//   - list reordering via a dedicated drag handle
+// Transform, tint, opacity, locking, flip, align, persistence and
+// undo/redo remain out of scope. References still live only in memory
+// for this session, and Insert remains the only way to add references
+// (no Timeline drag-and-drop).
 // ════════════════════════════════════════════════════════════════
 (function(){
 
   // ── Stable identity ──────────────────────────────────────────────
-  // Layers and keyframe canvases have no built-in unique id in this
-  // codebase (layers are addressed by array index, which is NOT stable
-  // across reordering/deletion). Lazily mint a stable id per object the
-  // first time we see it, keyed off the object itself so identity is
-  // preserved no matter what index it later moves to.
   let _idCounter=1;
   const _layerIds=new WeakMap();
   const _drawingIds=new WeakMap();
@@ -37,7 +45,8 @@
 
   // references: ordered array of
   // { id, layer, layerId, drawing, drawingId, layerNameSnapshot,
-  //   frameIndexSnapshot, hidden, selected }
+  //   frameIndexSnapshot, hidden }
+  // List order == render stacking order (top of list renders above).
   let references=[];
   let _refCounter=1;
 
@@ -46,8 +55,6 @@
   }
   function isDrawingAlive(ref){
     if(!isLayerAlive(ref.layer)) return false;
-    // The drawing is alive as long as it's still stored somewhere in the
-    // source layer's frame map (its frame index may have shifted).
     const frames=ref.layer.frames;
     for(const k in frames){ if(frames[k]===ref.drawing) return true; }
     return false;
@@ -61,12 +68,6 @@
   }
 
   // ── Resolve "the currently selected Timeline drawing/keyframe" ─────
-  // Prefers an explicit keyframe cell selection (selectedKFs, "li:fi"
-  // strings — see timeline.js) and otherwise falls back to whatever
-  // drawing is currently active (curLayer/curFrame). Either way we
-  // resolve down to the *owning* keyframe (the actual canvas object),
-  // never just a bare frame index, per the "avoid depending only on the
-  // current frame index" requirement.
   function resolveSelectedSource(){
     let li=curLayer,fi=curFrame;
     if(typeof selectedKFs!=='undefined'&&selectedKFs.size){
@@ -76,9 +77,6 @@
     }
     const layer=layers[li];
     if(!layer) return null;
-    // Find the actual keyframe canvas that is exposed at fi (walking
-    // backward to the nearest defined key, exactly like getHeldKey()),
-    // plus the frame index that key actually lives at.
     let ownerFrame=-1,drawing=null;
     for(let f=fi;f>=0;f--){
       if(layer.frames[f]){ownerFrame=f;drawing=layer.frames[f];break;}
@@ -87,14 +85,65 @@
     return {layer,layerIndex:li,drawing,ownerFrame};
   }
 
+  // ── Selection state ──────────────────────────────────────────────
+  // Light Table selection is entirely local to this docker. It must
+  // never touch the Timeline's curLayer/curFrame/selectedKFs, the
+  // active layer, or Onion Skin.
+  const selectedIds=new Set();
+  let anchorId=null; // the "pivot" reference id used by Shift+Click ranges
+
+  function clearSelection(){
+    if(selectedIds.size===0) return;
+    selectedIds.clear();
+    renderList();
+  }
+  function selectOnly(id){
+    selectedIds.clear();
+    selectedIds.add(id);
+    anchorId=id;
+    renderList();
+  }
+  function toggleInSelection(id){
+    if(selectedIds.has(id)) selectedIds.delete(id);
+    else selectedIds.add(id);
+    // Per spec, only a plain Click updates the anchor — Ctrl+Click does not.
+    renderList();
+  }
+  function selectRange(toId){
+    if(!anchorId||!references.some(r=>r.id===anchorId)){
+      selectOnly(toId);
+      return;
+    }
+    const fromIdx=references.findIndex(r=>r.id===anchorId);
+    const toIdx=references.findIndex(r=>r.id===toId);
+    if(fromIdx===-1||toIdx===-1) return;
+    const lo=Math.min(fromIdx,toIdx),hi=Math.max(fromIdx,toIdx);
+    selectedIds.clear();
+    for(let i=lo;i<=hi;i++) selectedIds.add(references[i].id);
+    renderList();
+  }
+  function selectAll(){
+    if(references.length===0) return;
+    references.forEach(r=>selectedIds.add(r.id));
+    if(anchorId==null&&references.length) anchorId=references[references.length-1].id;
+    renderList();
+  }
+  function pruneInvalidSelection(){
+    let changed=false;
+    selectedIds.forEach(id=>{
+      if(!references.some(r=>r.id===id)){ selectedIds.delete(id); changed=true; }
+    });
+    if(anchorId!=null&&!references.some(r=>r.id===anchorId)){ anchorId=null; }
+    return changed;
+  }
+
   // ── Insert / Delete ─────────────────────────────────────────────
   function insertSelected(){
     const src=resolveSelectedSource();
     if(!src) return null;
-    // Don't create a duplicate reference to the exact same drawing.
     const existing=references.find(r=>r.layer===src.layer&&r.drawing===src.drawing);
     if(existing){
-      selectReference(existing.id);
+      selectOnly(existing.id);
       return existing;
     }
     const ref={
@@ -108,33 +157,64 @@
       hidden:false,
     };
     references.push(ref);
-    selectReference(ref.id,{skipRender:true});
+    selectedIds.clear();
+    selectedIds.add(ref.id);
+    anchorId=ref.id;
     renderList();
     requestRepaint();
     return ref;
   }
+  // Removes every currently-selected Light Table reference. Used by both
+  // the Delete button and the Delete key. Only Light Table entries are
+  // touched — source drawings, Timeline frames, keyframes, layers and
+  // exposure lengths are never modified.
   function deleteSelected(){
-    const ref=references.find(r=>r.id===selectedId);
-    if(!ref) return;
-    deleteReference(ref.id);
+    if(selectedIds.size===0) return;
+    const toDelete=selectedIds;
+    references=references.filter(r=>!toDelete.has(r.id));
+    selectedIds.clear();
+    anchorId=null;
+    renderList();
+    requestRepaint();
   }
   function deleteReference(id){
     const idx=references.findIndex(r=>r.id===id);
     if(idx===-1) return;
     references.splice(idx,1);
-    if(selectedId===id) selectedId=null;
+    selectedIds.delete(id);
+    if(anchorId===id) anchorId=null;
     renderList();
     requestRepaint();
   }
-  let selectedId=null;
+  // Back-compat single-selection entry point (Phase 1 API shape) — now
+  // implemented in terms of the multi-selection model above.
   function selectReference(id,opts){
-    selectedId=id; // single selection, phase 1
-    if(!opts||!opts.skipRender) renderList();
+    selectOnly(id);
   }
   function toggleVisibility(id){
     const ref=references.find(r=>r.id===id);
     if(!ref) return;
     ref.hidden=!ref.hidden;
+    renderList();
+    requestRepaint();
+  }
+
+  // ── Reordering ───────────────────────────────────────────────────
+  // Moves a reference within the Light Table list only. Never touches
+  // Timeline keyframe positions, source frame numbers, layer order, or
+  // drawing data — this purely reorders entries in `references`, which
+  // in turn determines Light Table render stacking order.
+  function moveReference(dragId,targetId,before){
+    if(dragId===targetId) return;
+    const fromIdx=references.findIndex(r=>r.id===dragId);
+    if(fromIdx===-1) return;
+    const moved=references.splice(fromIdx,1)[0];
+    let toIdx=references.findIndex(r=>r.id===targetId);
+    if(toIdx===-1){ references.push(moved); }
+    else{
+      if(!before) toIdx+=1;
+      references.splice(toIdx,0,moved);
+    }
     renderList();
     requestRepaint();
   }
@@ -151,8 +231,16 @@
   // Each visible reference is drawn at its original canvas position,
   // with its original colours, at full opacity, with no transform and
   // no tint. The source drawing itself is never touched.
+  //
+  // References are painted back-to-front (last list item first), so the
+  // TOP of the visible list ends up painted LAST and renders ABOVE lower
+  // Light Table references, per spec. All Light Table references still
+  // render behind Onion Skin, current artwork and normal tool overlays,
+  // since this function only ever draws into the background stage of
+  // the composite — that part of the Phase 1 render pipeline is
+  // unchanged.
   function render(targetCtx){
-    for(let i=0;i<references.length;i++){
+    for(let i=references.length-1;i>=0;i--){
       const ref=references[i];
       if(ref.hidden) continue;
       if(isMissing(ref)) continue;
@@ -167,17 +255,30 @@
     if(fi==null) return '—';
     return 'Frame '+(fi+1);
   }
+
+  let _dragId=null;
+  function clearDropIndicators(listEl){
+    (listEl||document.getElementById('lt-list')).querySelectorAll('.lt-row.drop-before,.lt-row.drop-after')
+      .forEach(el=>el.classList.remove('drop-before','drop-after'));
+  }
+
   function renderList(){
     const listEl=document.getElementById('lt-list');
     const emptyEl=document.getElementById('lt-empty');
     if(!listEl) return;
+
+    // Selection can go stale if the underlying layer/drawing disappeared
+    // out from under a reference elsewhere in the app; keep it honest.
+    pruneInvalidSelection();
+
     listEl.innerHTML='';
     emptyEl.classList.toggle('show',references.length===0);
 
     references.forEach(ref=>{
       const missing=isMissing(ref);
+      const isSelected=selectedIds.has(ref.id);
       const row=document.createElement('div');
-      row.className='lt-row'+(ref.id===selectedId?' active':'')+(missing?' lt-missing':'');
+      row.className='lt-row'+(isSelected?' active':'')+(missing?' lt-missing':'');
       row.dataset.id=ref.id;
 
       const eyeVis=ref.hidden?'🚫':'👁';
@@ -186,18 +287,63 @@
       const drawingLabel=missing?'Source drawing no longer exists':frameLabelOf(ref);
 
       row.innerHTML=
-        `<span class="${eyeCls}" title="Show/hide only this Light Table reference">${eyeVis}</span>`+
-        `<span class="lt-row-info">`+
-          `<span class="lt-row-name" title="${layerName}">${layerName}</span>`+
-          `<span class="lt-row-sub">${drawingLabel}</span>`+
-        `</span>`;
+        '<span class="lt-row-handle" draggable="true" title="Drag to reorder" aria-label="Reorder handle">\u28FF</span>'+
+        '<span class="'+eyeCls+'" title="Show/hide only this Light Table reference">'+eyeVis+'</span>'+
+        '<span class="lt-row-info">'+
+          '<span class="lt-row-name" title="'+layerName+'">'+layerName+'</span>'+
+          '<span class="lt-row-sub">'+drawingLabel+'</span>'+
+        '</span>';
 
       row.querySelector('.lt-row-vis').addEventListener('click',e=>{
         e.stopPropagation();
         toggleVisibility(ref.id);
       });
-      row.addEventListener('click',()=>{
-        selectReference(ref.id);
+
+      row.addEventListener('click',e=>{
+        _ltFocused=true;
+        if(e.shiftKey){
+          selectRange(ref.id);
+        } else if(e.ctrlKey||e.metaKey){
+          toggleInSelection(ref.id);
+        } else {
+          selectOnly(ref.id);
+        }
+      });
+
+      // ── Reorder handle: dragging must begin only here, never from
+      // anywhere else in the row, so plain row selection and the Eye
+      // control never accidentally start a reorder.
+      const handle=row.querySelector('.lt-row-handle');
+      handle.addEventListener('mousedown',e=>{e.stopPropagation();});
+      handle.addEventListener('click',e=>{e.stopPropagation();});
+      handle.addEventListener('dragstart',e=>{
+        e.stopPropagation();
+        _dragId=ref.id;
+        row.classList.add('dragging');
+        e.dataTransfer.effectAllowed='move';
+        try{ e.dataTransfer.setData('text/plain','lt-ref:'+ref.id); }catch(err){}
+      });
+      handle.addEventListener('dragend',()=>{
+        row.classList.remove('dragging');
+        clearDropIndicators(listEl);
+        _dragId=null;
+      });
+      row.addEventListener('dragover',e=>{
+        if(!_dragId||_dragId===ref.id) return;
+        e.preventDefault();
+        const r=row.getBoundingClientRect();
+        const before=(e.clientY-r.top)<r.height/2;
+        clearDropIndicators(listEl);
+        row.classList.toggle('drop-before',before);
+        row.classList.toggle('drop-after',!before);
+      });
+      row.addEventListener('drop',e=>{
+        if(!_dragId) return;
+        e.preventDefault();e.stopPropagation();
+        const before=row.classList.contains('drop-before');
+        clearDropIndicators(listEl);
+        moveReference(_dragId,ref.id,before);
+        _dragId=null;
       });
 
       listEl.appendChild(row);
@@ -208,19 +354,75 @@
 
   function syncToolbarState(){
     const delBtn=document.getElementById('lt-btn-delete');
-    if(delBtn) delBtn.disabled=!selectedId||!references.some(r=>r.id===selectedId);
+    if(delBtn) delBtn.disabled=selectedIds.size===0;
     const insBtn=document.getElementById('lt-btn-insert');
     if(insBtn) insBtn.disabled=!resolveSelectedSource();
+  }
+
+  // ── Focus tracking ───────────────────────────────────────────────
+  // Keyboard shortcuts (Delete / Escape / Ctrl+A) should apply only when
+  // the Light Table docker is focused or was the most recently
+  // interacted-with control — never while typing in another field,
+  // slider, modal, or editor.
+  let _ltFocused=false;
+  function _isTypingTarget(t){
+    if(!t) return false;
+    if(t.tagName==='TEXTAREA') return true;
+    if(t.tagName==='INPUT') return true;
+    if(t.isContentEditable) return true;
+    return false;
+  }
+
+  function initFocusTracking(){
+    const panel=document.getElementById('light-table-panel');
+    if(!panel) return;
+    document.addEventListener('mousedown',e=>{
+      _ltFocused=panel.contains(e.target);
+    },true);
+    panel.addEventListener('focusin',()=>{ _ltFocused=true; });
+    document.addEventListener('focusin',e=>{
+      if(!panel.contains(e.target)) _ltFocused=false;
+    });
+  }
+
+  function initKeyboard(){
+    document.addEventListener('keydown',e=>{
+      if(_isTypingTarget(e.target)) return;
+      if(!_ltFocused) return;
+
+      if(e.key==='Escape'){
+        if(selectedIds.size){ clearSelection(); }
+        return;
+      }
+      if(e.key==='Delete'){
+        if(selectedIds.size){ e.preventDefault(); deleteSelected(); }
+        return;
+      }
+      if((e.ctrlKey||e.metaKey)&&!e.altKey&&(e.key==='a'||e.key==='A')){
+        e.preventDefault();
+        selectAll();
+      }
+    });
   }
 
   function init(){
     const insBtn=document.getElementById('lt-btn-insert');
     const delBtn=document.getElementById('lt-btn-delete');
+    const listEl=document.getElementById('lt-list');
     if(insBtn) insBtn.addEventListener('click',insertSelected);
     if(delBtn) delBtn.addEventListener('click',deleteSelected);
+    if(listEl){
+      // Clicking empty space inside the list (not a row) clears selection.
+      listEl.addEventListener('click',e=>{
+        _ltFocused=true;
+        if(e.target===listEl) clearSelection();
+      });
+    }
     // Keep the Insert button's enabled state (and missing-reference
     // display) fresh as the Timeline selection / artwork changes.
     window.addEventListener('active-artwork-changed',()=>{renderList();});
+    initFocusTracking();
+    initKeyboard();
     renderList();
   }
 
@@ -236,8 +438,12 @@
     deleteReference,
     toggleVisibility,
     selectReference,
+    selectAll,
+    clearSelection,
+    moveReference,
     render,
     renderList,
     get references(){return references.slice();},
+    get selectedIds(){return new Set(selectedIds);},
   };
 })();
