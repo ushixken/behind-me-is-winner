@@ -22,7 +22,7 @@
 //   - range selection (Shift+Click)
 //   - batch deletion (Delete button / Delete key)
 //   - keyboard selection controls (Ctrl+A, Escape)
-//   - list reordering via a dedicated drag handle
+//   - list reordering by dragging a row directly, matching the Layers panel
 // Transform, tint, opacity, locking, flip, align, persistence and
 // undo/redo remain out of scope. References still live only in memory
 // for this session, and Insert remains the only way to add references
@@ -256,10 +256,15 @@
     return 'Frame '+(fi+1);
   }
 
-  let _dragId=null;
-  function clearDropIndicators(listEl){
-    (listEl||document.getElementById('lt-list')).querySelectorAll('.lt-row.drop-before,.lt-row.drop-after')
-      .forEach(el=>el.classList.remove('drop-before','drop-after'));
+  // ── Reorder drag: shares the exact interaction model (pointerdown +
+  // threshold, red drop-line, auto-scroll, cleanup) with the Layers panel
+  // via the generic helpers in timeline.js. No dedicated handle — the row
+  // itself is the drag surface, same as the Layers panel's drag-zone.
+  let _ltDropLine=null,_ltAutoScroll=null;
+  function _ltControllers(listEl){
+    if(!_ltDropLine) _ltDropLine=_createDropLineController(listEl);
+    if(!_ltAutoScroll) _ltAutoScroll=_createAutoScrollController(listEl);
+    return {dropLine:_ltDropLine,autoScroll:_ltAutoScroll};
   }
 
   function renderList(){
@@ -286,12 +291,15 @@
       const layerName=missing?ref.layerNameSnapshot+' (missing)':ref.layerNameSnapshot;
       const drawingLabel=missing?'Source drawing no longer exists':frameLabelOf(ref);
 
+      // Frame number is the primary identifier while animating, so it takes
+      // the primary (lt-row-name) typography slot; the layer name becomes
+      // secondary (lt-row-sub). Same classes/hierarchy as before — only the
+      // content assignment is swapped.
       row.innerHTML=
-        '<span class="lt-row-handle" draggable="true" title="Drag to reorder" aria-label="Reorder handle">\u28FF</span>'+
         '<span class="'+eyeCls+'" title="Show/hide only this Light Table reference">'+eyeVis+'</span>'+
         '<span class="lt-row-info">'+
-          '<span class="lt-row-name" title="'+layerName+'">'+layerName+'</span>'+
-          '<span class="lt-row-sub">'+drawingLabel+'</span>'+
+          '<span class="lt-row-name">'+drawingLabel+'</span>'+
+          '<span class="lt-row-sub" title="'+layerName+'">'+layerName+'</span>'+
         '</span>';
 
       row.querySelector('.lt-row-vis').addEventListener('click',e=>{
@@ -310,40 +318,34 @@
         }
       });
 
-      // ── Reorder handle: dragging must begin only here, never from
-      // anywhere else in the row, so plain row selection and the Eye
-      // control never accidentally start a reorder.
-      const handle=row.querySelector('.lt-row-handle');
-      handle.addEventListener('mousedown',e=>{e.stopPropagation();});
-      handle.addEventListener('click',e=>{e.stopPropagation();});
-      handle.addEventListener('dragstart',e=>{
-        e.stopPropagation();
-        _dragId=ref.id;
-        row.classList.add('dragging');
-        e.dataTransfer.effectAllowed='move';
-        try{ e.dataTransfer.setData('text/plain','lt-ref:'+ref.id); }catch(err){}
-      });
-      handle.addEventListener('dragend',()=>{
-        row.classList.remove('dragging');
-        clearDropIndicators(listEl);
-        _dragId=null;
-      });
-      row.addEventListener('dragover',e=>{
-        if(!_dragId||_dragId===ref.id) return;
-        e.preventDefault();
-        const r=row.getBoundingClientRect();
-        const before=(e.clientY-r.top)<r.height/2;
-        clearDropIndicators(listEl);
-        row.classList.toggle('drop-before',before);
-        row.classList.toggle('drop-after',!before);
-      });
-      row.addEventListener('drop',e=>{
-        if(!_dragId) return;
-        e.preventDefault();e.stopPropagation();
-        const before=row.classList.contains('drop-before');
-        clearDropIndicators(listEl);
-        moveReference(_dragId,ref.id,before);
-        _dragId=null;
+      // ── Drag-to-reorder: the whole row is the drag surface (no dedicated
+      // handle), same as the Layers panel's drag-zone. A plain click (no
+      // movement past the threshold) falls through to the click handler
+      // above and just selects, per spec. The Eye toggle is excluded so it
+      // never accidentally starts a drag.
+      row.addEventListener('pointerdown',e=>{
+        if(e.target.closest('.lt-row-vis')) return;
+        const {dropLine,autoScroll}=_ltControllers(listEl);
+        startRowDrag({
+          downEv:e,
+          listEl,
+          rowSelector:'.lt-row[data-id]',
+          getRowId:r=>r.dataset.id,
+          dragId:ref.id,
+          dropLine,
+          autoScroll,
+          onDragStart:()=>{
+            document.body.classList.add('lt-dragging');
+            row.classList.add('dragging');
+          },
+          onDragEnd:()=>{
+            document.body.classList.remove('lt-dragging');
+            row.classList.remove('dragging');
+          },
+          onDrop:(targetId,before)=>{
+            moveReference(ref.id,targetId,before);
+          }
+        });
       });
 
       listEl.appendChild(row);

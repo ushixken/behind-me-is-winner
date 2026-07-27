@@ -2064,6 +2064,139 @@ function hideDropLine(){
   if(layerDropLineEl) layerDropLineEl.style.display='none';
 }
 
+// ── Generic reorder drop-line + auto-scroll controllers, and a generic
+// pointer-based row drag-to-reorder starter. This factors out the parts of
+// the Layers panel's drag interaction (pointerdown threshold, red drop-line
+// gap indicator, edge auto-scroll, cleanup on pointerup/pointercancel/
+// lostpointercapture/Escape) that are not specific to layers/groups, so
+// other panels (e.g. Light Table) can reuse the exact same feel without
+// duplicating it or touching startLayerDrag/showDropLine/hideDropLine
+// themselves. The Layers panel keeps using its own dedicated functions
+// above — this is purely additive.
+function _createDropLineController(listEl){
+  let lineEl=null;
+  return {
+    show(rowEl,position){
+      if(!lineEl||!lineEl.parentNode){
+        lineEl=document.createElement('div');
+        lineEl.style.cssText='position:absolute;left:0;right:0;height:2px;background:var(--red);z-index:100;pointer-events:none;border-radius:2px;box-shadow:0 0 4px rgba(226,75,74,0.6);';
+        listEl.style.position='relative';
+        listEl.appendChild(lineEl);
+      }
+      const listRect=listEl.getBoundingClientRect();
+      const rowRect=rowEl.getBoundingClientRect();
+      const scrollTop=listEl.scrollTop;
+      const neighbor=position==='before'?rowEl.previousElementSibling:rowEl.nextElementSibling;
+      let edge;
+      if(neighbor){
+        const nRect=neighbor.getBoundingClientRect();
+        edge=position==='before'?(rowRect.top+nRect.bottom)/2:(rowRect.bottom+nRect.top)/2;
+      } else {
+        edge=position==='before'?rowRect.top:rowRect.bottom;
+      }
+      lineEl.style.top=(edge-listRect.top+scrollTop)+'px';
+      lineEl.style.display='block';
+    },
+    hide(){ if(lineEl) lineEl.style.display='none'; }
+  };
+}
+function _createAutoScrollController(listEl){
+  let raf=null,speed=0;
+  const step=()=>{
+    if(speed===0||!listEl){raf=null;return;}
+    listEl.scrollTop+=speed;
+    raf=requestAnimationFrame(step);
+  };
+  return {
+    update(clientY){
+      const r=listEl.getBoundingClientRect();const zone=40;
+      if(clientY<r.top+zone){speed=-Math.max(2,Math.round((zone-(clientY-r.top))/4));if(!raf) raf=requestAnimationFrame(step);}
+      else if(clientY>r.bottom-zone){speed=Math.max(2,Math.round((zone-(r.bottom-clientY))/4));if(!raf) raf=requestAnimationFrame(step);}
+      else{speed=0;}
+    },
+    stop(){speed=0;if(raf){cancelAnimationFrame(raf);raf=null;}}
+  };
+}
+
+// Generic pointer-driven drag-to-reorder for a flat list of rows, matching
+// the Layers panel's interaction model: drag starts on pointerdown once a
+// small movement threshold is exceeded (so a plain click still falls through
+// to row selection), shows a drop-line in the gap above/below the hovered
+// row (snapping to the nearest row when the pointer is between rows or
+// outside the list), auto-scrolls near the top/bottom edges, and always
+// cleans up on pointerup/pointercancel/lostpointercapture. Escape cancels
+// the drag without reordering, same as Layers supports.
+//
+// opts: {
+//   downEv, listEl, rowSelector, getRowId(row), dragId,
+//   dropLine, autoScroll,          // from the controllers above
+//   onDragStart(), onDragEnd(),    // optional, for visual state toggling
+//   onDrop(targetId, before)       // called once, only on a real (non-cancelled) drop
+// }
+function startRowDrag(opts){
+  if(opts.downEv.pointerType==='pen'?(!(opts.downEv.buttons&1)):(opts.downEv.button!==0)) return;
+  let active=false;
+  const startX=opts.downEv.clientX,startY=opts.downEv.clientY;
+  let dropTarget=null;
+
+  const onMove=ev=>{
+    if(!active&&(Math.abs(ev.clientX-startX)>4||Math.abs(ev.clientY-startY)>4)){
+      active=true;
+      opts.onDragStart&&opts.onDragStart();
+    }
+    if(!active) return;
+    opts.autoScroll.update(ev.clientY);
+    const el=document.elementFromPoint(ev.clientX,ev.clientY);
+    let row=el&&el.closest(opts.rowSelector);
+    if(row&&opts.getRowId(row)===opts.dragId) row=null;
+    if(row){
+      const rr=row.getBoundingClientRect();
+      const before=ev.clientY<rr.top+rr.height/2;
+      dropTarget={id:opts.getRowId(row),before};
+      opts.dropLine.show(row,before?'before':'after');
+    } else {
+      const rows=[...opts.listEl.querySelectorAll(opts.rowSelector)].filter(r=>opts.getRowId(r)!==opts.dragId);
+      if(rows.length){
+        let nearest=rows[0],nd=Infinity;
+        for(const r of rows){
+          const rr=r.getBoundingClientRect();
+          const mid=(rr.top+rr.bottom)/2;
+          const d=Math.abs(ev.clientY-mid);
+          if(d<nd){nd=d;nearest=r;}
+        }
+        const nr=nearest.getBoundingClientRect();
+        const before=ev.clientY<(nr.top+nr.bottom)/2;
+        dropTarget={id:opts.getRowId(nearest),before};
+        opts.dropLine.show(nearest,before?'before':'after');
+      } else {
+        dropTarget=null;
+        opts.dropLine.hide();
+      }
+    }
+  };
+  const finish=cancelled=>{
+    opts.autoScroll.stop();
+    opts.dropLine.hide();
+    document.removeEventListener('pointermove',onMove);
+    document.removeEventListener('pointerup',onUp);
+    document.removeEventListener('pointercancel',onCancel);
+    document.removeEventListener('lostpointercapture',onCancel);
+    document.removeEventListener('keydown',onKey);
+    const wasActive=active;
+    active=false;
+    opts.onDragEnd&&opts.onDragEnd();
+    if(!cancelled&&wasActive&&dropTarget) opts.onDrop(dropTarget.id,dropTarget.before);
+  };
+  const onUp=()=>finish(false);
+  const onCancel=()=>finish(true);
+  const onKey=e=>{ if(e.key==='Escape') finish(true); };
+  document.addEventListener('pointermove',onMove);
+  document.addEventListener('pointerup',onUp);
+  document.addEventListener('pointercancel',onCancel);
+  document.addEventListener('lostpointercapture',onCancel);
+  document.addEventListener('keydown',onKey);
+}
+
 // ── Rubber-band multi-select in layers panel
 let lbSelecting=false,lbStartX=0,lbStartY=0;
 let lbBoxEl=null;
