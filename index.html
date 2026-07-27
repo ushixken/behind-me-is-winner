@@ -116,6 +116,7 @@
       <div class="dd-item" id="dd-show-keyframe-switcher"><span class="dd-check" id="chk-keyframe-switcher"></span>Flipper</div>
       <div class="dd-item" id="dd-show-keyframe-exposure"><span class="dd-check" id="chk-keyframe-exposure"></span>Exposure</div>
       <div class="dd-item" id="dd-show-drawing-marks"><span class="dd-check" id="chk-drawing-marks"></span>Drawing Marks</div>
+      <div class="dd-item" id="dd-show-onion-skin"><span class="dd-check" id="chk-onion-skin-panel"></span>Onion Skin</div>
       <div class="dd-item" id="dd-show-toolbar"><span class="dd-check" id="chk-toolbar">✓</span>Toolbar</div>
       <div class="dd-sep"></div>
       <div class="dd-item" id="dd-toggle-draw-mode"><span class="dd-check" id="chk-draw-mode"></span>Draw Mode<span class="dd-shortcut">9</span></div>
@@ -367,6 +368,22 @@
               <button class="tbtn dm-btn dm-btn-hidden" id="dm-btn-hidden" title="Hide or restore this drawing without deleting it">X</button>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ONION SKIN PANEL -->
+    <div id="onion-skin-panel" class="float-panel fp-hidden" data-panel="onion-skin" style="top:16px;left:990px;width:340px;">
+      <div class="fp-tabbar" style="display:none;"></div>
+      <div class="fp-titlebar"><span class="fp-name">Onion Skin</span><span class="fp-close" title="Close panel">&times;</span></div>
+      <div class="fp-body-wrap">
+        <div class="fp-body active" data-body="onion-skin">
+          <div class="onion-settings-row">
+            <label class="onion-color-control" title="Previous drawing color"><span>Previous</span><input id="onion-previous-color" class="onion-color-chip" type="color" value="#e24b4a" aria-label="Previous onion skin color"></label>
+            <label class="onion-type-control"><span>Type</span><select id="onion-type-select" class="themed-select" aria-label="Onion skin drawing type"><option value="frame">Frame</option><option value="keyframe">Keyframe</option><option value="inbetween">Inbetween</option><option value="breakdown">Breakdown</option></select></label>
+            <label class="onion-color-control onion-color-control-next" title="Next drawing color"><span>Next</span><input id="onion-next-color" class="onion-color-chip" type="color" value="#1d9e75" aria-label="Next onion skin color"></label>
+          </div>
+          <div id="onion-exposure-graph" class="onion-exposure-graph" aria-label="Onion skin exposures"></div>
         </div>
       </div>
     </div>

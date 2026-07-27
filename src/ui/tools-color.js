@@ -2,43 +2,114 @@
 // ONION SKIN
 // ════════════════════════════════════════════════════════════════
 const ONION_SKIN_PREF_KEY='animator_onion_skin_enabled';
+const ONION_SKIN_SETTINGS_KEY='animator_onion_skin_settings_v1';
+const ONION_EXPOSURE_COUNT=10;
+const onionSkinSettings={
+  type:'frame',
+  previousColor:'#e24b4a',
+  nextColor:'#1d9e75',
+  previousEnabled:Array(ONION_EXPOSURE_COUNT).fill(true),
+  nextEnabled:Array(ONION_EXPOSURE_COUNT).fill(true)
+};
+let onionTintCanvas=null,onionTintContext=null;
+
+function _normalizeOnionSettings(saved){
+  if(!saved||typeof saved!=='object')return;
+  if(['frame','keyframe','inbetween','breakdown'].includes(saved.type))onionSkinSettings.type=saved.type;
+  if(/^#[0-9a-f]{6}$/i.test(saved.previousColor||''))onionSkinSettings.previousColor=saved.previousColor;
+  if(/^#[0-9a-f]{6}$/i.test(saved.nextColor||''))onionSkinSettings.nextColor=saved.nextColor;
+  for(const side of ['previousEnabled','nextEnabled']){
+    if(Array.isArray(saved[side]))onionSkinSettings[side]=Array.from({length:ONION_EXPOSURE_COUNT},(_,i)=>saved[side][i]!==false);
+  }
+}
+function _saveOnionSettings(){
+  try{localStorage.setItem(ONION_SKIN_SETTINGS_KEY,JSON.stringify(onionSkinSettings));}catch(_){}
+}
+function _onionDrawingMatches(li,fi){
+  return onionSkinSettings.type==='frame'||(typeof getDrawingMark==='function'&&getDrawingMark(li,fi)===onionSkinSettings.type);
+}
+function _collectOnionDrawings(li,startFrame,direction){
+  const layer=layers[li],found=[];
+  if(!layer||!layer.frames)return found;
+  for(let frame=startFrame;frame>=1&&frame<=totalFrames&&found.length<ONION_EXPOSURE_COUNT;frame+=direction){
+    if(!layer.frames[frame])continue;
+    if(typeof isDrawingFrameHidden==='function'&&isDrawingFrameHidden(li,frame))continue;
+    if(!_onionDrawingMatches(li,frame))continue;
+    found.push({frameIndex:frame,canvas:layer.frames[frame]});
+  }
+  return found;
+}
+function _drawTintedOnion(canvas,color,alpha){
+  if(!onionTintCanvas||onionTintCanvas.width!==CW||onionTintCanvas.height!==CH){
+    onionTintCanvas=document.createElement('canvas');onionTintCanvas.width=CW;onionTintCanvas.height=CH;
+    onionTintContext=onionTintCanvas.getContext('2d');
+  }
+  onionTintContext.setTransform(1,0,0,1,0,0);
+  onionTintContext.globalAlpha=1;onionTintContext.globalCompositeOperation='source-over';
+  onionTintContext.clearRect(0,0,CW,CH);onionTintContext.drawImage(canvas,0,0);
+  onionTintContext.globalCompositeOperation='source-in';onionTintContext.fillStyle=color;onionTintContext.fillRect(0,0,CW,CH);
+  onionTintContext.globalCompositeOperation='source-over';
+  octx.globalAlpha=alpha;octx.drawImage(onionTintCanvas,0,0);octx.globalAlpha=1;
+}
 function updateOnion(){
   octx.clearRect(0,0,CW,CH);
-  if(!document.getElementById('onion-chk').checked) return;
+  const enabledCheckbox=document.getElementById('onion-chk');
+  if(!enabledCheckbox||!enabledCheckbox.checked)return;
   const activeLayer=layers[curLayer];
-  if(activeLayer&&activeLayer.onionSkin!==true) return;
+  if(activeLayer&&activeLayer.onionSkin!==true)return;
   let groupId=activeLayer&&activeLayer.groupId,seenGroups=new Set();
   while(groupId&&!seenGroups.has(groupId)){seenGroups.add(groupId);const group=groups.find(item=>item.id===groupId);if(!group)break;if(group.onionSkin!==true)return;groupId=group.parentId||null;}
-  const p=typeof getPreviousVisibleDrawingKey==='function'?getPreviousVisibleDrawingKey(curLayer,curFrame-1):null;
-  if(p){octx.globalAlpha=0.28;octx.drawImage(p.canvas,0,0);octx.globalAlpha=1;}
-  const n=typeof getNextVisibleDrawingKey==='function'?getNextVisibleDrawingKey(curLayer,curFrame+1):null;
-  if(n){octx.globalAlpha=0.15;octx.drawImage(n.canvas,0,0);octx.globalAlpha=1;}
+  const previous=_collectOnionDrawings(curLayer,curFrame-1,-1);
+  const next=_collectOnionDrawings(curLayer,curFrame+1,1);
+  for(let i=Math.min(previous.length,ONION_EXPOSURE_COUNT)-1;i>=0;i--){
+    if(onionSkinSettings.previousEnabled[i])_drawTintedOnion(previous[i].canvas,onionSkinSettings.previousColor,.32*((ONION_EXPOSURE_COUNT-i)/ONION_EXPOSURE_COUNT));
+  }
+  for(let i=Math.min(next.length,ONION_EXPOSURE_COUNT)-1;i>=0;i--){
+    if(onionSkinSettings.nextEnabled[i])_drawTintedOnion(next[i].canvas,onionSkinSettings.nextColor,.24*((ONION_EXPOSURE_COUNT-i)/ONION_EXPOSURE_COUNT));
+  }
 }
 function setOnionSkinEnabled(enabled,{persist=true}={}){
   const checkbox=document.getElementById('onion-chk');
   checkbox.checked=!!enabled;
-  if(persist){
-    try{localStorage.setItem(ONION_SKIN_PREF_KEY,checkbox.checked?'true':'false');}catch(_){}
-  }
+  if(persist){try{localStorage.setItem(ONION_SKIN_PREF_KEY,checkbox.checked?'true':'false');}catch(_){}}
   updateOnion();
 }
 function toggleOnionSkin(){setOnionSkinEnabled(!document.getElementById('onion-chk').checked);}
-window.setOnionSkinEnabled=setOnionSkinEnabled;
-window.toggleOnionSkin=toggleOnionSkin;
+function _renderOnionExposureGraph(){
+  const graph=document.getElementById('onion-exposure-graph');if(!graph)return;graph.replaceChildren();
+  const addExposure=(side,distance,label)=>{
+    const button=document.createElement('button');button.type='button';button.className='onion-exposure';
+    const key=side==='previous'?'previousEnabled':'nextEnabled';
+    button.classList.toggle('is-off',!onionSkinSettings[key][distance-1]);
+    button.style.setProperty('--onion-color',side==='previous'?onionSkinSettings.previousColor:onionSkinSettings.nextColor);
+    button.style.setProperty('--onion-level',(8+(ONION_EXPOSURE_COUNT-distance)*4)+'px');
+    button.style.setProperty('--onion-opacity',String(.3+(ONION_EXPOSURE_COUNT-distance)*.065));
+    button.title=(side==='previous'?'Previous ':'Next ')+distance;button.setAttribute('aria-pressed',String(onionSkinSettings[key][distance-1]));
+    const text=document.createElement('span');text.textContent=label;button.appendChild(text);
+    button.addEventListener('click',()=>{onionSkinSettings[key][distance-1]=!onionSkinSettings[key][distance-1];_saveOnionSettings();_renderOnionExposureGraph();updateOnion();});
+    graph.appendChild(button);
+  };
+  for(let distance=10;distance>=1;distance--)addExposure('previous',distance,String(distance));
+  const current=document.createElement('div');current.className='onion-current';current.title='Current drawing';const text=document.createElement('span');text.textContent='Current';current.appendChild(text);graph.appendChild(current);
+  for(let distance=1;distance<=10;distance++)addExposure('next',distance,String(distance));
+}
+function _syncOnionPanel(){
+  const type=document.getElementById('onion-type-select'),previous=document.getElementById('onion-previous-color'),next=document.getElementById('onion-next-color');
+  if(type)type.value=onionSkinSettings.type;if(previous)previous.value=onionSkinSettings.previousColor;if(next)next.value=onionSkinSettings.nextColor;_renderOnionExposureGraph();
+}
+window.setOnionSkinEnabled=setOnionSkinEnabled;window.toggleOnionSkin=toggleOnionSkin;window.updateOnionSkinPanel=_syncOnionPanel;
 (function initOnionSkinPreference(){
   let enabled=false;
-  try{
-    const saved=localStorage.getItem(ONION_SKIN_PREF_KEY);
-    if(saved!==null)enabled=saved==='true';
-  }catch(_){}
-  setOnionSkinEnabled(enabled,{persist:false});
+  try{const saved=localStorage.getItem(ONION_SKIN_PREF_KEY);if(saved!==null)enabled=saved==='true';_normalizeOnionSettings(JSON.parse(localStorage.getItem(ONION_SKIN_SETTINGS_KEY)||'null'));}catch(_){}
+  _syncOnionPanel();setOnionSkinEnabled(enabled,{persist:false});
   document.getElementById('onion-chk').addEventListener('change',event=>setOnionSkinEnabled(event.currentTarget.checked));
-  window.addEventListener('local-storage-preference-removed',event=>{
-    if(event.detail&&event.detail.key===ONION_SKIN_PREF_KEY)setOnionSkinEnabled(false,{persist:false});
-  });
+  const type=document.getElementById('onion-type-select'),previous=document.getElementById('onion-previous-color'),next=document.getElementById('onion-next-color');
+  type&&type.addEventListener('change',event=>{onionSkinSettings.type=event.currentTarget.value;_saveOnionSettings();updateOnion();});
+  previous&&previous.addEventListener('input',event=>{onionSkinSettings.previousColor=event.currentTarget.value;_saveOnionSettings();_renderOnionExposureGraph();updateOnion();});
+  next&&next.addEventListener('input',event=>{onionSkinSettings.nextColor=event.currentTarget.value;_saveOnionSettings();_renderOnionExposureGraph();updateOnion();});
+  window.addEventListener('local-storage-preference-removed',event=>{if(event.detail&&event.detail.key===ONION_SKIN_PREF_KEY)setOnionSkinEnabled(false,{persist:false});});
 })();
 
-// ════════════════════════════════════════════════════════════════
 // UNDO / REDO
 // ════════════════════════════════════════════════════════════════
 function _currentUndoSnapshot(){
