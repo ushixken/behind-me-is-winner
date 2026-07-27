@@ -34,8 +34,12 @@
   // (4B move, 4C scale/rotate, 4D flip/reset/align) will mutate these
   // same fields in place, which is why they live on the reference itself
   // from the start instead of being bolted on later.
-  function _ltDefaultTransform(){
-    return {positionX:0,positionY:0,rotation:0,scaleX:1,scaleY:1};
+  function _ltDefaultTransform(ref){
+    const t={positionX:0,positionY:0,rotation:0,scaleX:1,scaleY:1};
+    if(ref && ref.drawing){
+      t.pivot={x:ref.drawing.width/2, y:ref.drawing.height/2};
+    }
+    return t;
   }
 
   function isLayerAlive(layer){
@@ -859,9 +863,11 @@
     }
     const flipHBtn=document.getElementById('lt-btn-flip-h');
     const flipVBtn=document.getElementById('lt-btn-flip-v');
+    const resetBtn=document.getElementById('lt-btn-reset');
     const validTarget=!!_ltValidTransformTarget();
     if(flipHBtn){ flipHBtn.disabled=!validTarget; flipHBtn.setAttribute('aria-disabled',String(!validTarget)); }
     if(flipVBtn){ flipVBtn.disabled=!validTarget; flipVBtn.setAttribute('aria-disabled',String(!validTarget)); }
+    if(resetBtn){ resetBtn.disabled=!validTarget; resetBtn.setAttribute('aria-disabled',String(!validTarget)); }
     syncTransformToolbarState();
   }
 
@@ -965,7 +971,7 @@
   function flipHorizontal(){
     const ref=_ltValidTransformTarget();
     if(!ref) return;
-    const t=ref.transform||(ref.transform=_ltDefaultTransform());
+    const t=ref.transform||(ref.transform=_ltDefaultTransform(ref));
     const pivotWorld=_ltPivotWorld(ref);
     const pivotLocal=_ltPivotLocal(ref);
     const w=ref.drawing.width, h=ref.drawing.height;
@@ -983,7 +989,7 @@
   function flipVertical(){
     const ref=_ltValidTransformTarget();
     if(!ref) return;
-    const t=ref.transform||(ref.transform=_ltDefaultTransform());
+    const t=ref.transform||(ref.transform=_ltDefaultTransform(ref));
     const pivotWorld=_ltPivotWorld(ref);
     const pivotLocal=_ltPivotLocal(ref);
     const w=ref.drawing.width, h=ref.drawing.height;
@@ -998,6 +1004,15 @@
     requestRepaint();
   }
 
+  // ── Phase 5B: Reset Transform ──────────────────────────────────────
+  function resetTransform(){
+    const ref=_ltValidTransformTarget();
+    if(!ref) return;
+    ref.transform=_ltDefaultTransform(ref);
+    if(ltTransformMode) _ltDrawOverlay();
+    requestRepaint();
+  }
+
   function init(){
     const insBtn=document.getElementById('lt-btn-insert');
     const delBtn=document.getElementById('lt-btn-delete');
@@ -1008,8 +1023,10 @@
     if(transBtn) transBtn.addEventListener('click',toggleTransformMode);
     const flipHBtn=document.getElementById('lt-btn-flip-h');
     const flipVBtn=document.getElementById('lt-btn-flip-v');
+    const resetBtn=document.getElementById('lt-btn-reset');
     if(flipHBtn) flipHBtn.addEventListener('click',flipHorizontal);
     if(flipVBtn) flipVBtn.addEventListener('click',flipVertical);
+    if(resetBtn) resetBtn.addEventListener('click',resetTransform);
     if(listEl){
       // Clicking empty space inside the list (not a row) clears selection.
       listEl.addEventListener('click',e=>{
@@ -1081,6 +1098,7 @@
     toggleTransformMode,
     flipHorizontal,
     flipVertical,
+    resetTransform,
     get references(){return references.slice();},
     get selectedIds(){return new Set(selectedIds);},
     get transformMode(){return ltTransformMode;},
