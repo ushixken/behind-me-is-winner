@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
@@ -117,6 +117,7 @@
       <div class="dd-item" id="dd-show-keyframe-exposure"><span class="dd-check" id="chk-keyframe-exposure"></span>Exposure</div>
       <div class="dd-item" id="dd-show-drawing-marks"><span class="dd-check" id="chk-drawing-marks"></span>Drawing Marks</div>
       <div class="dd-item" id="dd-show-onion-skin"><span class="dd-check" id="chk-onion-skin-panel"></span>Onion Skin</div>
+      <div class="dd-item" id="dd-show-light-table"><span class="dd-check" id="chk-light-table"></span>Light Table</div>
       <div class="dd-item" id="dd-show-toolbar"><span class="dd-check" id="chk-toolbar">✓</span>Toolbar</div>
       <div class="dd-sep"></div>
       <div class="dd-item" id="dd-toggle-draw-mode"><span class="dd-check" id="chk-draw-mode"></span>Draw Mode<span class="dd-shortcut">9</span></div>
@@ -384,6 +385,28 @@
             <label class="onion-color-control onion-color-control-next" title="Next drawing color"><span>Next</span><input id="onion-next-color" class="onion-color-chip" type="color" value="#1d9e75" aria-label="Next onion skin color"></label>
           </div>
           <div id="onion-exposure-graph" class="onion-exposure-graph" aria-label="Onion skin exposures"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- LIGHT TABLE PANEL -->
+    <div id="light-table-panel" class="float-panel fp-hidden" data-panel="light-table" style="top:16px;left:1340px;width:260px;height:320px;">
+      <div class="fp-tabbar" style="display:none;"></div>
+      <div class="fp-titlebar"><span class="fp-name">Light Table</span><span class="fp-close" title="Close panel">&times;</span></div>
+      <div class="fp-body-wrap">
+        <div class="fp-body active" data-body="light-table" style="flex-direction:column;">
+          <div class="lt-toolbar">
+            <button type="button" class="tbtn lt-btn" id="lt-btn-insert" title="Insert the selected Timeline drawing as a Light Table reference">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v12M2 8h12"></path></svg>
+              <span class="tlabel">Insert</span>
+            </button>
+            <button type="button" class="tbtn lt-btn" id="lt-btn-delete" title="Delete the selected Light Table reference">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4h10M6.5 4V2.5h3V4M4.5 4l.6 9.5h5.8L11.5 4"></path></svg>
+              <span class="tlabel">Delete</span>
+            </button>
+          </div>
+          <div id="lt-list" aria-label="Light Table references"></div>
+          <div id="lt-empty" class="lt-empty">No references yet. Select a Timeline drawing and press Insert.</div>
         </div>
       </div>
     </div>
@@ -1532,6 +1555,7 @@
 <script src="src/timeline/keyframe-switcher.js"></script>
 <script src="src/timeline/keyframe-exposure.js"></script>
 <script src="src/geometry/freehand-closed-path.js"></script>
+<script src="src/timeline/light-table.js"></script>
 <script src="src/core/keybinds.js"></script>
 <script src="src/selection/linked-pixel-selection.js"></script>
 <script src="src/selection/lasso-selection.js"></script>

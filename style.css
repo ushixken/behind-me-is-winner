@@ -1,4 +1,4 @@
-*{box-sizing:border-box;margin:0;padding:0;}
+﻿*{box-sizing:border-box;margin:0;padding:0;}
 
 /* Hide number input spinners globally */
 input[type=number]::-webkit-inner-spin-button,
@@ -2055,3 +2055,25 @@ body.app-scrollbar-dragging{user-select:none!important;-webkit-user-select:none!
 
 .timeline-onion-toggle{touch-action:none;}
 .timeline-onion-toggle.pressed{background:var(--accent-bg);border-color:var(--accent);color:var(--accent);}
+
+/* ── LIGHT TABLE ──────────────────────────────────────────── */
+#light-table-panel .fp-body{display:flex;flex-direction:column;height:100%;padding:6px;gap:6px;}
+.lt-toolbar{display:flex;gap:4px;flex-shrink:0;border-bottom:1px solid var(--border);padding-bottom:6px;}
+.lt-toolbar .lt-btn{flex:1 1 auto;gap:5px;}
+.lt-toolbar .lt-btn:disabled{opacity:.4;cursor:not-allowed;pointer-events:none;}
+.lt-toolbar .lt-btn svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0;}
+#lt-list{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:2px;scrollbar-width:none;-ms-overflow-style:none;}
+#lt-list::-webkit-scrollbar{display:none;}
+.lt-row{display:flex;align-items:center;gap:6px;padding:5px 7px;border-radius:5px;cursor:default;border:1px solid transparent;transition:background .1s;}
+.lt-row:hover{background:var(--bg3);}
+.lt-row.active{background:var(--accent-bg);border-color:var(--accent);}
+.lt-row.lt-missing{opacity:.65;border-color:var(--red);background:rgba(226,75,74,0.08);}
+.lt-row.lt-missing .lt-row-name{font-style:italic;color:var(--red);}
+.lt-row-vis{font-size:13px;color:var(--text2);cursor:default;line-height:1;padding:2px;flex-shrink:0;user-select:none;}
+.lt-row-vis:hover{color:var(--text);}
+.lt-row-vis.vis-hidden{color:var(--border2);opacity:.5;}
+.lt-row-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;}
+.lt-row-name{font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text);}
+.lt-row-sub{font-size:9.5px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.lt-empty{display:none;font-size:11px;color:var(--text2);text-align:center;padding:14px 8px;}
+.lt-empty.show{display:block;}
