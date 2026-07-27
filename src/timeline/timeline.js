@@ -38,6 +38,7 @@ function togglePlay(){
         if(loopRange){next=rangeStart;}
         else{clearInterval(playTimer);playing=false;btn.textContent='▶ Play';btn.classList.remove('playing');loadFrame(curLayer,curFrame);renderTimeline();return;}
       }
+      if(typeof window.prepareTransformForArtworkChange==='function')window.prepareTransformForArtworkChange(curLayer,next);
       curFrame=next;artworkCompositeCtx.clearRect(0,0,CW,CH);
       for(let i=0;i<layers.length;i++){
         if(!layers[i].visible)continue;
@@ -47,6 +48,7 @@ function togglePlay(){
       }
       artworkCompositeCtx.globalAlpha=1;drawBg();compCtx.globalAlpha=1;compCtx.drawImage(artworkCompositeC,0,0);ctx.clearRect(0,0,CW,CH);
       updateOnion();
+      window.dispatchEvent(new CustomEvent('active-artwork-changed',{detail:{layerIndex:curLayer,frameIndex:curFrame}}));
       updatePlayhead();
       document.getElementById('frame-info').textContent=frameLabel(curFrame)+' / '+frameLabel(TOTAL-1);
       renderRulerHighlight();

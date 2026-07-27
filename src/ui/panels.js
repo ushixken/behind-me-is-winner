@@ -311,6 +311,7 @@ function saveActiveToKey(){
 }
 
 function loadFrame(li,fi){
+  if(typeof window.prepareTransformForArtworkChange==='function')window.prepareTransformForArtworkChange(li,fi);
   if(typeof window.finishActiveDrawingBeforeArtworkChange==='function')window.finishActiveDrawingBeforeArtworkChange(li,fi);
   ctx.clearRect(0,0,CW,CH);
   const k=getHeldKey(li,fi);if(k){const keyFrame=Object.keys(layers[li].frames).find(frame=>layers[li].frames[frame]===k),extended=keyFrame==null?null:getExtendedLayerFrame(li,keyFrame);if(extended)ctx.drawImage(extended.canvas,extended.x,extended.y);else ctx.drawImage(k,0,0);}
@@ -713,6 +714,7 @@ const KeyframeLatencyExperiment=(function(){
 })();
 window.KeyframeLatencyExperiment=KeyframeLatencyExperiment;
 function goToFrame(f,addSel,noSel,selectionOnly){
+  if(typeof window.prepareTransformForArtworkChange==='function')window.prepareTransformForArtworkChange(curLayer,f);
   saveActiveToKey();curFrame=Math.max(0,Math.min(TOTAL-1,f));
   if(!noSel){if(!addSel) selectedFrames.clear();selectedFrames.add(curFrame);}
   loadFrame(curLayer,curFrame);
@@ -721,6 +723,7 @@ function goToFrame(f,addSel,noSel,selectionOnly){
 }
 function switchLayer(li,options){
   options=options||{};
+  if(typeof window.prepareTransformForArtworkChange==='function')window.prepareTransformForArtworkChange(li,curFrame);
   saveActiveToKey();curLayer=li;activeGroupId=null;selectedGroupIds.clear();layerShiftAnchor=li;groupShiftAnchor=null;
   if(!options.preserveTimelineSelection&&typeof syncTimelineSelectionToActiveLayer==='function')syncTimelineSelectionToActiveLayer();
   if(!options.skipLoadFrame)loadFrame(curLayer,curFrame);

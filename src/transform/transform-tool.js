@@ -99,6 +99,9 @@ function _tfAnalysisToViewport(analysis){
 }
 
 let tfActive=false;
+let tfContext=null; // immutable owner: {layerIndex, frameIndex, drawingFrameIndex}
+let tfContextRefreshPending=false;
+let tfContextRefreshPerspective=false;
 let tfGroupMode=false;   // true when the transform is acting on a whole active group, not a single layer
 let tfGroupId=null;
 let tfMemberIdx=null;    // layer indices belonging to the active group (group mode only)
@@ -620,8 +623,49 @@ function _tfCommitSmartPerspectiveTransform(){
   };
 }
 
+function _tfResolveDrawingFrameIndex(layerIndex,frameIndex){
+  const info=typeof getPreviousVisibleDrawingKey==='function'?getPreviousVisibleDrawingKey(layerIndex,frameIndex):null;
+  if(info&&Number.isInteger(info.frameIndex))return info.frameIndex;
+  const layer=layers[layerIndex],held=layer&&typeof getHeldKey==='function'?getHeldKey(layerIndex,frameIndex):null;
+  if(layer&&held){const key=Object.keys(layer.frames||{}).find(value=>layer.frames[value]===held);if(key!=null)return Number(key);}
+  return frameIndex;
+}
+function _tfResetSessionReferences(){
+  tfSnapshot=null;tfSmartMove=null;tfPixelSelection=null;tfViewportPreviewEntries=null;tfRasterPerspectivePreview=null;tfPerspectiveFastPreview=null;
+  tfMembers=null;tfMemberIdx=null;tfGroupMode=false;tfGroupId=null;tfBox=null;tfState=null;tfPivot=null;tfCorners=null;tfContext=null;
+}
+function _tfDiscardSessionForContextChange(){
+  if(!tfActive)return false;
+  const sameOwner=!!tfContext&&curLayer===tfContext.layerIndex&&curFrame===tfContext.frameIndex;
+  _tfHideFloatingActions();_tfCancelFreePreview(false);_tfCancelPerspectivePreview();tfActive=false;
+  transformC.classList.remove('tf-active');tfCtx.clearRect(0,0,CW,CH);_tfClearUi();perspGuideCtx.clearRect(0,0,perspGuideC.width,perspGuideC.height);_tfHiddenLayers=new Set();_tfSyncGuideCanvasActive();
+  if(sameOwner&&!tfGroupMode&&tfSnapshot){ctx.clearRect(0,0,CW,CH);ctx.drawImage(tfSnapshot,Number(tfSnapshot._tfOriginX)||0,Number(tfSnapshot._tfOriginY)||0);}
+  if(tfPixelSelection&&window.PixelSelection){PixelSelection.clearTransformPreview();PixelSelection.setOverlayVisible(true);}
+  _tfResetSessionReferences();
+  if(sameOwner)recomposite(curLayer,curFrame);
+  return true;
+}
+function _tfPrepareForArtworkChange(nextLayer,nextFrame){
+  if(tool!=='transform'||!tfActive)return false;
+  tfContextRefreshPerspective=!!tfPerspective;tfContextRefreshPending=true;
+  return _tfDiscardSessionForContextChange();
+}
+window.prepareTransformForArtworkChange=_tfPrepareForArtworkChange;
+window.addEventListener('active-artwork-changed',event=>{
+  if(tool!=='transform')return;
+  const detail=event.detail||{};
+  if(tfActive){
+    const drawingFrame=_tfResolveDrawingFrameIndex(detail.layerIndex,detail.frameIndex);
+    if(tfContext&&tfContext.layerIndex===detail.layerIndex&&tfContext.frameIndex===detail.frameIndex&&tfContext.drawingFrameIndex===drawingFrame)return;
+    tfContextRefreshPerspective=!!tfPerspective;_tfDiscardSessionForContextChange();
+  }
+  const restorePerspective=tfContextRefreshPending&&tfContextRefreshPerspective;
+  if(window.PixelSelection&&PixelSelection.isActive())PixelSelection.clear();
+  tfContextRefreshPending=false;enterTransformTool();if(restorePerspective&&tfActive)_tfSetPerspective(true);
+});
 function enterTransformTool(){
   if(tfActive) return;
+  tfContext={layerIndex:curLayer,frameIndex:curFrame,drawingFrameIndex:_tfResolveDrawingFrameIndex(curLayer,curFrame)};
   tfAwaitingRepeat=false;
   tfSmartMove=null;
   tfPixelSelection=null;
@@ -653,8 +697,8 @@ function enterTransformTool(){
       return;
     }
     tfMembers=tfMemberIdx.map(li=>{
-      const heldInfo=typeof getPreviousVisibleDrawingKey==='function'?getPreviousVisibleDrawingKey(li,curFrame):null,held=heldInfo&&heldInfo.canvas||getHeldKey(li,curFrame),extended=heldInfo&&typeof getExtendedLayerFrame==='function'?getExtendedLayerFrame(li,heldInfo.frameIndex):null;
-      let base;if(extended){base=document.createElement('canvas');base.width=extended.canvas.width;base.height=extended.canvas.height;base.getContext('2d').drawImage(extended.canvas,0,0);base._tfOriginX=extended.x;base._tfOriginY=extended.y;}else{base=mkLayerCanvas();if(held)base.getContext('2d').drawImage(held,0,0);base._tfOriginX=0;base._tfOriginY=0;}return {li,base};
+      const heldInfo=typeof getPreviousVisibleDrawingKey==='function'?getPreviousVisibleDrawingKey(li,curFrame):null,held=heldInfo&&heldInfo.canvas||getHeldKey(li,curFrame),drawingFrameIndex=heldInfo&&Number.isInteger(heldInfo.frameIndex)?heldInfo.frameIndex:_tfResolveDrawingFrameIndex(li,curFrame),extended=typeof getExtendedLayerFrame==='function'?getExtendedLayerFrame(li,drawingFrameIndex):null;
+      let base;if(extended){base=document.createElement('canvas');base.width=extended.canvas.width;base.height=extended.canvas.height;base.getContext('2d').drawImage(extended.canvas,0,0);base._tfOriginX=extended.x;base._tfOriginY=extended.y;}else{base=mkLayerCanvas();if(held)base.getContext('2d').drawImage(held,0,0);base._tfOriginX=0;base._tfOriginY=0;}return {li,base,frameIndex:drawingFrameIndex};
     });
     const memberBoxes=tfMembers.map(member=>_computeOpaqueBBox(member.base)),minMemberX=Math.min(...memberBoxes.map(box=>box.x)),minMemberY=Math.min(...memberBoxes.map(box=>box.y)),maxMemberX=Math.max(...memberBoxes.map(box=>box.x+box.w)),maxMemberY=Math.max(...memberBoxes.map(box=>box.y+box.h));
     tfBox={x:minMemberX,y:minMemberY,w:maxMemberX-minMemberX,h:maxMemberY-minMemberY};
@@ -663,7 +707,7 @@ function enterTransformTool(){
     recomposite(curLayer,curFrame);
   } else {
     const pixelState=window.PixelSelection&&PixelSelection.isActive()?PixelSelection.getState():null;
-    const extended=!pixelState&&typeof getExtendedLayerFrame==='function'?getExtendedLayerFrame(curLayer,curFrame):null;
+    const extended=!pixelState&&typeof getExtendedLayerFrame==='function'?getExtendedLayerFrame(curLayer,tfContext.drawingFrameIndex):null;
     if(extended){tfSnapshot=document.createElement('canvas');tfSnapshot.width=extended.canvas.width;tfSnapshot.height=extended.canvas.height;tfSnapshot.getContext('2d').drawImage(extended.canvas,0,0);tfSnapshot._tfOriginX=extended.x;tfSnapshot._tfOriginY=extended.y;}
     else{tfSnapshot=mkLayerCanvas();tfSnapshot.getContext('2d').drawImage(activeC,0,0);tfSnapshot._tfOriginX=0;tfSnapshot._tfOriginY=0;}
     if(pixelState&&pixelState.layerIndex===curLayer&&pixelState.bounds){
@@ -677,7 +721,7 @@ function enterTransformTool(){
       tfBox={x:pixelState.bounds.x,y:pixelState.bounds.y,w:pixelState.bounds.width,h:pixelState.bounds.height};
       PixelSelection.clearTransformPreview();PixelSelection.setOverlayVisible(true);
     } else tfBox=_computeOpaqueBBox(tfSnapshot);
-    tfSmartMove=_tfCaptureSmartMove(curLayer,pixelState&&pixelState.frameIndex!=null?pixelState.frameIndex:curFrame,tfBox,pixelState&&pixelState.styleId);
+    tfSmartMove=_tfCaptureSmartMove(curLayer,pixelState&&pixelState.frameIndex!=null?pixelState.frameIndex:tfContext.drawingFrameIndex,tfBox,pixelState&&pixelState.styleId);
     if(tfSmartMove){
       if(tfSmartMove.contribution&&tfPixelSelection){
         tfPixelSelection.source=_tfCanvasFromRgba(tfSmartMove.contribution.sourceRgba,CW,CH);
@@ -745,11 +789,11 @@ function commitTransformTool(options){
   if(tfGroupMode){
     const c=_tfCenter();
     const rad=tfState.rotation*Math.PI/180;
-    tfMembers.forEach(m=>{_tfStoreFullTransform(m.li,curFrame,m.base,{perspective:tfPerspective});if(m.li===curLayer){ctx.clearRect(0,0,CW,CH);const key=layers[m.li].frames[curFrame];if(key)ctx.drawImage(key,0,0);}});
+    tfMembers.forEach(m=>{_tfStoreFullTransform(m.li,m.frameIndex,m.base,{perspective:tfPerspective});if(m.li===tfContext.layerIndex){ctx.clearRect(0,0,CW,CH);const key=layers[m.li].frames[m.frameIndex];if(key)ctx.drawImage(key,0,0);}});
     _tfHiddenLayers=new Set();
     recomposite(curLayer,curFrame);
     renderTimeline();
-    tfMembers=null;tfMemberIdx=null;tfGroupMode=false;tfGroupId=null;tfViewportPreviewEntries=null;tfBox=null;tfState=null;tfPivot=null;
+    tfMembers=null;tfMemberIdx=null;tfGroupMode=false;tfGroupId=null;tfViewportPreviewEntries=null;tfBox=null;tfState=null;tfPivot=null;tfContext=null;
     tfPerspective=false;tfCorners=null;
     return;
   }
@@ -767,14 +811,15 @@ function commitTransformTool(options){
 
   const storageSource=tfPerspective&&tfRasterPerspectivePreview?tfRasterPerspectivePreview.canvas:(tfPixelSelection?tfPixelSelection.source:tfSnapshot),storageOptions={perspective:tfPerspective,background:tfPixelSelection&&tfPixelSelection.background,above:tfPixelSelection&&tfPixelSelection.above};
   if(tfPerspective&&tfRasterPerspectivePreview)storageOptions.sourceRect={x:0,y:0,w:tfRasterPerspectivePreview.width,h:tfRasterPerspectivePreview.height};
-  const storedExtended=!!_tfStoreFullTransform(curLayer,curFrame,storageSource,storageOptions);
+  const targetLayer=tfContext?tfContext.layerIndex:curLayer,targetFrame=tfContext?tfContext.drawingFrameIndex:curFrame;
+  const storedExtended=!!_tfStoreFullTransform(targetLayer,targetFrame,storageSource,storageOptions);
   if(tfPerspective)_tfCommitSmartPerspectiveTransform();
   else _tfCommitSmartFreeTransform();
   if(!storedExtended)saveActiveToKey();
   recomposite(curLayer,curFrame);
   renderTimeline();
   if(tfPixelSelection&&window.PixelSelection){const transformedMask=_tfCurrentSelectionMask(),selectionIdentity=tfSmartMove&&tfSmartMove.contribution?{layerIndex:tfSmartMove.layer,frameIndex:tfSmartMove.frame,styleId:tfSmartMove.contribution.styleId}:null;PixelSelection.clearTransformPreview();if(transformedMask)PixelSelection.replaceMask(transformedMask,tfPixelSelection.width||CW,tfPixelSelection.height||CH,'selection-transform',selectionIdentity);}
-  tfSnapshot=null;tfSmartMove=null;tfPixelSelection=null;tfViewportPreviewEntries=null;tfRasterPerspectivePreview=null;tfPerspectiveFastPreview=null;tfBox=null;tfState=null;tfPivot=null;
+  tfSnapshot=null;tfSmartMove=null;tfPixelSelection=null;tfViewportPreviewEntries=null;tfRasterPerspectivePreview=null;tfPerspectiveFastPreview=null;tfBox=null;tfState=null;tfPivot=null;tfContext=null;
   tfPerspective=false;tfCorners=null;
 }
 
@@ -794,7 +839,7 @@ function cancelTransformTool(){
     _tfHiddenLayers=new Set();
     recomposite(curLayer,curFrame);
     renderTimeline();
-    tfMembers=null;tfMemberIdx=null;tfGroupMode=false;tfGroupId=null;tfViewportPreviewEntries=null;tfBox=null;tfState=null;tfPivot=null;
+    tfMembers=null;tfMemberIdx=null;tfGroupMode=false;tfGroupId=null;tfViewportPreviewEntries=null;tfBox=null;tfState=null;tfPivot=null;tfContext=null;
     tfPerspective=false;tfCorners=null;
     return;
   }
@@ -805,7 +850,7 @@ function cancelTransformTool(){
   recomposite(curLayer,curFrame);
   renderTimeline();
   if(tfPixelSelection&&window.PixelSelection){PixelSelection.clearTransformPreview();PixelSelection.setOverlayVisible(true);}
-  tfSnapshot=null;tfSmartMove=null;tfPixelSelection=null;tfViewportPreviewEntries=null;tfRasterPerspectivePreview=null;tfPerspectiveFastPreview=null;tfBox=null;tfState=null;tfPivot=null;
+  tfSnapshot=null;tfSmartMove=null;tfPixelSelection=null;tfViewportPreviewEntries=null;tfRasterPerspectivePreview=null;tfPerspectiveFastPreview=null;tfBox=null;tfState=null;tfPivot=null;tfContext=null;
   tfPerspective=false;tfCorners=null;
 }
 
