@@ -403,30 +403,35 @@
       <div class="fp-body-wrap">
         <div class="fp-body active" data-body="light-table" style="flex-direction:column;">
           <div class="lt-toolbar">
-            <button type="button" class="tbtn lt-btn" id="lt-btn-insert" title="Insert the selected Timeline drawing as a Light Table reference">
-              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v12M2 8h12"></path></svg>
-              <span class="tlabel">Insert</span>
-            </button>
-            <button type="button" class="tbtn lt-btn" id="lt-btn-delete" title="Delete the selected Light Table reference">
-              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4h10M6.5 4V2.5h3V4M4.5 4l.6 9.5h5.8L11.5 4"></path></svg>
-              <span class="tlabel">Delete</span>
-            </button>
-            <button type="button" class="tbtn lt-btn" id="lt-btn-transform" title="Toggle Light Table Transform Mode (independent from the normal Transform tool)" aria-pressed="false">
-              <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="1"></rect><path d="M3 6.5h10M3 9.5h10M6.5 3v10M9.5 3v10"></path></svg>
-              <span class="tlabel">Transform</span>
-            </button>
-            <button type="button" class="tbtn lt-btn" id="lt-btn-flip-h" title="Flip Horizontal selected Light Table reference">
-              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v12M2 8l4-4M2 8l4 4M14 8l-4-4M14 8l-4 4"></path></svg>
-              <span class="tlabel">Flip H</span>
-            </button>
-            <button type="button" class="tbtn lt-btn" id="lt-btn-flip-v" title="Flip Vertical selected Light Table reference">
-              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8h12M8 2l-4 4M8 2l4 4M8 14l-4-4M8 14l4-4"></path></svg>
-              <span class="tlabel">Flip V</span>
-            </button>
-            <button type="button" class="tbtn lt-btn" id="lt-btn-reset" title="Reset transform for the selected Light Table reference">
-              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8a4.5 4.5 0 1 0 1.3-3.2L3.5 3.5V7h3.5"></path></svg>
-              <span class="tlabel">Reset</span>
-            </button>
+            <div class="lt-toolbar-group lt-group-primary">
+              <button type="button" class="tbtn lt-btn" id="lt-btn-insert" title="Insert the selected Timeline drawing as a Light Table reference">
+                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v12M2 8h12"></path></svg>
+                <span class="tlabel">Insert</span>
+              </button>
+              <button type="button" class="tbtn lt-btn" id="lt-btn-delete" title="Delete the selected Light Table reference">
+                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4h10M6.5 4V2.5h3V4M4.5 4l.6 9.5h5.8L11.5 4"></path></svg>
+                <span class="tlabel">Delete</span>
+              </button>
+            </div>
+            <div class="tsep"></div>
+            <div class="lt-toolbar-group lt-group-transform">
+              <button type="button" class="tbtn lt-btn" id="lt-btn-transform" title="Toggle Light Table Transform Mode (independent from the normal Transform tool)" aria-pressed="false">
+                <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="1"></rect><path d="M3 6.5h10M3 9.5h10M6.5 3v10M9.5 3v10"></path></svg>
+                <span class="tlabel">Transform</span>
+              </button>
+              <button type="button" class="tbtn lt-btn" id="lt-btn-flip-h" title="Flip Horizontal selected Light Table reference">
+                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v12M2 8l4-4M2 8l4 4M14 8l-4-4M14 8l-4 4"></path></svg>
+                <span class="tlabel">Flip H</span>
+              </button>
+              <button type="button" class="tbtn lt-btn" id="lt-btn-flip-v" title="Flip Vertical selected Light Table reference">
+                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8h12M8 2l-4 4M8 2l4 4M8 14l-4-4M8 14l4-4"></path></svg>
+                <span class="tlabel">Flip V</span>
+              </button>
+              <button type="button" class="tbtn lt-btn" id="lt-btn-reset" title="Reset transform for the selected Light Table reference">
+                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8a4.5 4.5 0 1 0 1.3-3.2L3.5 3.5V7h3.5"></path></svg>
+                <span class="tlabel">Reset</span>
+              </button>
+            </div>
           </div>
           <div id="lt-list" tabindex="0" class="docker-kbd-focus" aria-label="Light Table references" aria-multiselectable="true"></div>
           <div id="lt-empty" class="lt-empty">No references yet. Select a Timeline drawing and press Insert.</div>
