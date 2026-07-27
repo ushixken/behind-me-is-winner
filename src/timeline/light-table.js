@@ -1,5 +1,5 @@
 // ════════════════════════════════════════════════════════════════
-// LIGHT TABLE — Phase 1 + Phase 2
+// LIGHT TABLE — Phase 1 + Phase 2 + Phase 3
 //
 // A manual animation-reference system, deliberately kept separate from
 // Onion Skin, normal layers, normal Transform, and Timeline editing.
@@ -16,17 +16,25 @@
 // opacity, locking, drag-and-drop, multi-selection, alignment, flipping,
 // or project persistence.
 //
-// Phase 2 adds, on top of the list (never touching source drawings,
+// Phase 2 added, on top of the list (never touching source drawings,
 // Timeline frames, keyframes, layers or exposure lengths):
 //   - multi-selection (Click / Ctrl+Click)
 //   - range selection (Shift+Click)
 //   - batch deletion (Delete button / Delete key)
 //   - keyboard selection controls (Ctrl+A, Escape)
 //   - list reordering by dragging a row directly, matching the Layers panel
-// Transform, tint, opacity, locking, flip, align, persistence and
-// undo/redo remain out of scope. References still live only in memory
-// for this session, and Insert remains the only way to add references
-// (no Timeline drag-and-drop).
+//
+// Phase 3 adds independent per-reference DISPLAY properties, still only
+// ever affecting the Light Table preview — never the source drawing:
+//   - locked (blocks opacity/tint edits for that reference; selection,
+//     visibility, delete and reorder remain unaffected)
+//   - opacity (0–100%, default 100%)
+//   - tint (enable + colour), preserving the reference's own alpha shape
+// Changing opacity/tint applies to every currently selected UNLOCKED
+// reference at once. Transform, flip, align, persistence and undo/redo
+// remain out of scope. References still live only in memory for this
+// session, and Insert remains the only way to add references (no
+// Timeline drag-and-drop).
 // ════════════════════════════════════════════════════════════════
 (function(){
 
@@ -45,8 +53,12 @@
 
   // references: ordered array of
   // { id, layer, layerId, drawing, drawingId, layerNameSnapshot,
-  //   frameIndexSnapshot, hidden }
+  //   frameIndexSnapshot, hidden,
+  //   locked, opacity, tintEnabled, tintColor }
   // List order == render stacking order (top of list renders above).
+  // locked/opacity/tintEnabled/tintColor are Light-Table-only DISPLAY
+  // properties (Phase 3) — they never touch the source drawing/layer.
+  const DEFAULT_TINT_COLOR='#ff2d2d';
   let references=[];
   let _refCounter=1;
 
@@ -155,6 +167,10 @@
       layerNameSnapshot:src.layer.name,
       frameIndexSnapshot:src.ownerFrame,
       hidden:false,
+      locked:false,
+      opacity:100,
+      tintEnabled:false,
+      tintColor:DEFAULT_TINT_COLOR,
     };
     references.push(ref);
     selectedIds.clear();
@@ -199,6 +215,50 @@
     requestRepaint();
   }
 
+  // ── Phase 3: Lock ────────────────────────────────────────────────
+  // Locking only blocks display-property edits (opacity/tint) for now.
+  // Selection, visibility, delete and reorder are explicitly still
+  // allowed on a locked reference — locking is per spec NOT a general
+  // "freeze this row" toggle yet. Transform restrictions come later.
+  function toggleLock(id){
+    const ref=references.find(r=>r.id===id);
+    if(!ref) return;
+    ref.locked=!ref.locked;
+    renderList();
+  }
+
+  // ── Phase 3: Opacity / Tint ─────────────────────────────────────
+  // Both apply to every currently selected UNLOCKED reference at once
+  // (a single selection is just the n=1 case of that). Locked references
+  // in the selection are left completely untouched. Neither ever writes
+  // to ref.drawing/ref.layer — these are Light-Table-only preview
+  // properties consumed by render() below.
+  function _selectedUnlockedRefs(){
+    return references.filter(r=>selectedIds.has(r.id)&&!r.locked);
+  }
+  function setSelectedOpacity(percent){
+    const targets=_selectedUnlockedRefs();
+    if(!targets.length) return;
+    const clamped=Math.max(0,Math.min(100,Math.round(percent)));
+    targets.forEach(r=>{ r.opacity=clamped; });
+    syncPropsPanel();
+    requestRepaint();
+  }
+  function setSelectedTintEnabled(enabled){
+    const targets=_selectedUnlockedRefs();
+    if(!targets.length) return;
+    targets.forEach(r=>{ r.tintEnabled=!!enabled; });
+    syncPropsPanel();
+    requestRepaint();
+  }
+  function setSelectedTintColor(color){
+    const targets=_selectedUnlockedRefs();
+    if(!targets.length) return;
+    targets.forEach(r=>{ r.tintColor=color; });
+    syncPropsPanel();
+    requestRepaint();
+  }
+
   // ── Reordering ───────────────────────────────────────────────────
   // Moves a reference within the Light Table list only. Never touches
   // Timeline keyframe positions, source frame numbers, layer order, or
@@ -228,9 +288,9 @@
   // background is painted and before the real artwork composite is
   // drawn on top — so Light Table references sit strictly between the
   // background and the current artwork/onion skin, exactly as required.
-  // Each visible reference is drawn at its original canvas position,
-  // with its original colours, at full opacity, with no transform and
-  // no tint. The source drawing itself is never touched.
+  // Each visible reference is drawn at its original canvas position, with
+  // its own Phase 3 opacity/tint preview properties applied and no
+  // transform. The source drawing itself is never touched.
   //
   // References are painted back-to-front (last list item first), so the
   // TOP of the visible list ends up painted LAST and renders ABOVE lower
@@ -239,14 +299,45 @@
   // since this function only ever draws into the background stage of
   // the composite — that part of the Phase 1 render pipeline is
   // unchanged.
+  //
+  // Phase 3: opacity and tint are applied here, purely as preview
+  // compositing — ref.drawing itself is only ever read (drawImage),
+  // never written to.
+  let _tintScratch=null;
+  function _tintedCanvasOf(ref){
+    const w=ref.drawing.width,h=ref.drawing.height;
+    if(!_tintScratch) _tintScratch=document.createElement('canvas');
+    if(_tintScratch.width!==w||_tintScratch.height!==h){_tintScratch.width=w;_tintScratch.height=h;}
+    const sctx=_tintScratch.getContext('2d');
+    sctx.clearRect(0,0,w,h);
+    sctx.globalAlpha=1;
+    sctx.globalCompositeOperation='source-over';
+    sctx.drawImage(ref.drawing,0,0);
+    // 'source-atop' only paints where the destination already has alpha,
+    // and keeps that alpha exactly as-is — so antialiased line edges keep
+    // their original per-pixel alpha (line detail preserved), only the
+    // colour underneath changes to the tint.
+    sctx.globalCompositeOperation='source-atop';
+    sctx.fillStyle=ref.tintColor||DEFAULT_TINT_COLOR;
+    sctx.fillRect(0,0,w,h);
+    sctx.globalCompositeOperation='source-over';
+    return _tintScratch;
+  }
   function render(targetCtx){
     for(let i=references.length-1;i>=0;i--){
       const ref=references[i];
       if(ref.hidden) continue;
       if(isMissing(ref)) continue;
-      targetCtx.globalAlpha=1;
-      targetCtx.drawImage(ref.drawing,0,0);
+      const opacity=(ref.opacity==null?100:ref.opacity)/100;
+      if(opacity<=0) continue;
+      targetCtx.globalAlpha=opacity;
+      if(ref.tintEnabled){
+        targetCtx.drawImage(_tintedCanvasOf(ref),0,0);
+      } else {
+        targetCtx.drawImage(ref.drawing,0,0);
+      }
     }
+    targetCtx.globalAlpha=1;
   }
 
   // ── List UI ──────────────────────────────────────────────────────
@@ -283,11 +374,12 @@
       const missing=isMissing(ref);
       const isSelected=selectedIds.has(ref.id);
       const row=document.createElement('div');
-      row.className='lt-row'+(isSelected?' active':'')+(missing?' lt-missing':'');
+      row.className='lt-row'+(isSelected?' active':'')+(missing?' lt-missing':'')+(ref.locked?' lt-locked':'');
       row.dataset.id=ref.id;
 
       const eyeVis=ref.hidden?'🚫':'👁';
       const eyeCls='lt-row-vis'+(ref.hidden?' vis-hidden':'');
+      const lockCls='lt-row-lock'+(ref.locked?' active':'');
       const layerName=missing?ref.layerNameSnapshot+' (missing)':ref.layerNameSnapshot;
       const drawingLabel=missing?'Source drawing no longer exists':frameLabelOf(ref);
 
@@ -297,6 +389,7 @@
       // content assignment is swapped.
       row.innerHTML=
         '<span class="'+eyeCls+'" title="Show/hide only this Light Table reference">'+eyeVis+'</span>'+
+        '<button type="button" class="'+lockCls+'" title="'+(ref.locked?'Unlock (allow opacity/tint edits)':'Lock (prevent opacity/tint edits)')+'" aria-pressed="'+String(!!ref.locked)+'"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="7" width="9" height="6.5" rx="1.5"></rect><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"></path></svg></button>'+
         '<span class="lt-row-info">'+
           '<span class="lt-row-name">'+drawingLabel+'</span>'+
           '<span class="lt-row-sub" title="'+layerName+'">'+layerName+'</span>'+
@@ -305,6 +398,11 @@
       row.querySelector('.lt-row-vis').addEventListener('click',e=>{
         e.stopPropagation();
         toggleVisibility(ref.id);
+      });
+
+      row.querySelector('.lt-row-lock').addEventListener('click',e=>{
+        e.stopPropagation();
+        toggleLock(ref.id);
       });
 
       row.addEventListener('click',e=>{
@@ -324,7 +422,7 @@
       // above and just selects, per spec. The Eye toggle is excluded so it
       // never accidentally starts a drag.
       row.addEventListener('pointerdown',e=>{
-        if(e.target.closest('.lt-row-vis')) return;
+        if(e.target.closest('.lt-row-vis')||e.target.closest('.lt-row-lock')) return;
         const {dropLine,autoScroll}=_ltControllers(listEl);
         startRowDrag({
           downEv:e,
@@ -352,6 +450,7 @@
     });
 
     syncToolbarState();
+    syncPropsPanel();
   }
 
   function syncToolbarState(){
@@ -359,6 +458,65 @@
     if(delBtn) delBtn.disabled=selectedIds.size===0;
     const insBtn=document.getElementById('lt-btn-insert');
     if(insBtn) insBtn.disabled=!resolveSelectedSource();
+  }
+
+  // ── Phase 3: Property panel ─────────────────────────────────────
+  // No selection → controls disabled/at rest.
+  // One selection → shows that reference's own values.
+  // Multiple selections → shows shared controls; if the unlocked members
+  // of the selection disagree on a value, that control shows the first
+  // unlocked reference's value but is marked "mixed" so it's clear editing
+  // it will overwrite everyone rather than reflect a single source of truth.
+  // Locked references are excluded from the "editable basis"; a selection
+  // that is entirely locked still shows its (read-only) values but every
+  // control stays disabled, since nothing in it can actually be changed.
+  function syncPropsPanel(){
+    const opacitySlider=document.getElementById('lt-opacity-slider');
+    const opacityVal=document.getElementById('lt-opacity-val');
+    const tintToggle=document.getElementById('lt-tint-toggle');
+    const tintColor=document.getElementById('lt-tint-color');
+    if(!opacitySlider||!opacityVal||!tintToggle||!tintColor) return;
+
+    const selected=references.filter(r=>selectedIds.has(r.id));
+    const unlocked=selected.filter(r=>!r.locked);
+    const editable=unlocked.length>0;
+
+    if(selected.length===0){
+      opacitySlider.disabled=true;
+      opacitySlider.value=100;
+      opacityVal.textContent='100%';
+      tintToggle.disabled=true;
+      tintToggle.checked=false;
+      tintToggle.indeterminate=false;
+      tintColor.disabled=true;
+      tintColor.value=DEFAULT_TINT_COLOR;
+      return;
+    }
+
+    // Prefer the unlocked members as the basis for displayed values (that's
+    // what an edit would actually apply to); if every selected reference
+    // happens to be locked, fall back to the full (read-only) selection so
+    // the panel still shows something meaningful instead of blanking out.
+    const basis=editable?unlocked:selected;
+
+    const firstOpacity=basis[0].opacity;
+    const mixedOpacity=basis.some(r=>r.opacity!==firstOpacity);
+    opacitySlider.disabled=!editable;
+    opacitySlider.value=firstOpacity;
+    opacityVal.textContent=firstOpacity+'%'+(mixedOpacity?' *':'');
+    opacitySlider.title=mixedOpacity?'Selection has mixed opacity values':'';
+
+    const firstTintEnabled=basis[0].tintEnabled;
+    const mixedTintEnabled=basis.some(r=>r.tintEnabled!==firstTintEnabled);
+    tintToggle.disabled=!editable;
+    tintToggle.checked=!mixedTintEnabled&&firstTintEnabled;
+    tintToggle.indeterminate=mixedTintEnabled;
+
+    const firstColor=basis[0].tintColor||DEFAULT_TINT_COLOR;
+    const mixedColor=basis.some(r=>(r.tintColor||DEFAULT_TINT_COLOR)!==firstColor);
+    tintColor.disabled=!editable;
+    tintColor.value=firstColor;
+    tintColor.title=mixedColor?'Selection has mixed tint colours':'';
   }
 
   // ── Focus tracking ───────────────────────────────────────────────
@@ -420,6 +578,30 @@
         if(e.target===listEl) clearSelection();
       });
     }
+
+    // ── Phase 3 property panel wiring ──────────────────────────────
+    const opacitySlider=document.getElementById('lt-opacity-slider');
+    if(opacitySlider){
+      opacitySlider.addEventListener('input',e=>{
+        _ltFocused=true;
+        setSelectedOpacity(Number(e.target.value));
+      });
+    }
+    const tintToggle=document.getElementById('lt-tint-toggle');
+    if(tintToggle){
+      tintToggle.addEventListener('change',e=>{
+        _ltFocused=true;
+        setSelectedTintEnabled(e.target.checked);
+      });
+    }
+    const tintColorInput=document.getElementById('lt-tint-color');
+    if(tintColorInput){
+      tintColorInput.addEventListener('input',e=>{
+        _ltFocused=true;
+        setSelectedTintColor(e.target.value);
+      });
+    }
+
     // Keep the Insert button's enabled state (and missing-reference
     // display) fresh as the Timeline selection / artwork changes.
     window.addEventListener('active-artwork-changed',()=>{renderList();});
@@ -439,6 +621,10 @@
     deleteSelected,
     deleteReference,
     toggleVisibility,
+    toggleLock,
+    setSelectedOpacity,
+    setSelectedTintEnabled,
+    setSelectedTintColor,
     selectReference,
     selectAll,
     clearSelection,
