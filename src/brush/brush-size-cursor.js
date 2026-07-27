@@ -17,7 +17,8 @@
   function paintTool(){return tool==='brush'||tool==='eraser';}
   function strokeActive(){return typeof drawing!=='undefined'&&drawing&&paintTool();}
   function shouldShow(){
-    return paintTool()&&(hovering||strokeActive())&&!activeGroupId&&!panning&&!_zoomDrag&&!_rotateDrag&&!spaceHeld&&!window._brushResizePreviewActive;
+    const transformActive=(typeof tool!=='undefined'&&tool==='transform')||(typeof window.LightTable!=='undefined'&&window.LightTable.transformMode);
+    return paintTool()&&(hovering||strokeActive())&&!activeGroupId&&!panning&&!_zoomDrag&&!_rotateDrag&&!spaceHeld&&!window._brushResizePreviewActive&&!transformActive;
   }
   function setPosition(){cursorCanvas.style.left=lastX+'px';cursorCanvas.style.top=lastY+'px';}
   function prepare(cssSize){

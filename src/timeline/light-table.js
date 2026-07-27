@@ -355,6 +355,7 @@
     const active=ltTransformMode&&!!_ltValidTransformRef();
     c.classList.toggle('lt-transform-active',active);
     if(!active) c.style.cursor='default';
+    if(typeof _refreshActiveCursor==='function') _refreshActiveCursor();
   }
 
   function _ltBoxCenter(ref){

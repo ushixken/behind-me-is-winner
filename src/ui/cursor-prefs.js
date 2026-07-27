@@ -20,6 +20,7 @@ const _EYEDROPPER_CURSOR_CSS="url(\"data:image/svg+xml;utf8,<svg xmlns='http://w
 // hides the native cursor entirely — brush-size-cursor.js draws a live
 // circle overlay in its place.
 function _baseCursorCSS(){
+  if(typeof window.LightTable!=='undefined'&&window.LightTable.transformMode) return 'default';
   if(typeof tool!=='undefined'&&tool==='eyedropper') return _EYEDROPPER_CURSOR_CSS;
   const paintTool=typeof tool!=='undefined'&&(tool==='brush'||tool==='eraser');
   if(paintTool&&(cursorStyle==='crosshair'||cursorStyle==='point'||cursorStyle==='brush'||cursorStyle==='brush-shape')) return 'none';
