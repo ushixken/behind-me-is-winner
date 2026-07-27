@@ -75,6 +75,17 @@
   let references=[];
   let _refCounter=1;
 
+  // ── Phase 4A: per-reference transform values ─────────────────────
+  // Light-Table-only, never touching the source drawing/layer. This phase
+  // only stores/defaults/reads these values and draws a visual-only
+  // overlay from them — no interaction writes to them yet. Later phases
+  // (4B move, 4C scale/rotate, 4D flip/reset/align) will mutate these
+  // same fields in place, which is why they live on the reference itself
+  // from the start instead of being bolted on later.
+  function _ltDefaultTransform(){
+    return {positionX:0,positionY:0,rotation:0,scaleX:1,scaleY:1};
+  }
+
   function isLayerAlive(layer){
     return typeof layers!=='undefined'&&layers.indexOf(layer)!==-1;
   }
@@ -183,6 +194,7 @@
       locked:false,
       opacity:DEFAULT_OPACITY,
       tintColor:DEFAULT_TINT_COLOR,
+      transform:_ltDefaultTransform(),
     };
     references.push(ref);
     selectedIds.clear();
@@ -263,6 +275,140 @@
     syncPropsPanel();
     requestRepaint();
   }
+
+  // ── Phase 4A: Transform Mode ─────────────────────────────────────
+  // Completely separate system from the application's normal Transform
+  // tool (transform-tool.js). Does not share tfActive/tfState/tfBox/
+  // tfCorners/tfPivot/selection/undo session/active tool with it — see
+  // the module doc at the top of transform-tool.js for what those own.
+  // The only things reused here are STATELESS viewport-mapping helpers
+  // (_tfToViewportPoint / getNavPivot / zoom / pan / rotation / flip),
+  // which just reproduce canvas-wrap's current CSS transform in JS and
+  // hold no transform-session state of their own.
+  let ltTransformMode=false;
+
+  // Mode-independent target check: exactly one selected reference, still
+  // present in the list, unlocked, and with a live source. Used both to
+  // enable/disable the Transform button and (combined with ltTransformMode)
+  // to decide whether the overlay should be showing.
+  function _ltValidTransformTarget(){
+    if(selectedIds.size!==1) return null;
+    const id=selectedIds.values().next().value;
+    const ref=references.find(r=>r.id===id);
+    if(!ref) return null;
+    if(ref.locked) return null;
+    if(isMissing(ref)) return null;
+    return ref;
+  }
+
+  // Valid only when Transform Mode is ON *and* there's a valid target.
+  // Locked references, no selection, and multi-selection all yield null,
+  // which means "no overlay, no transform interactions" everywhere below.
+  function _ltValidTransformRef(){
+    if(!ltTransformMode) return null;
+    return _ltValidTransformTarget();
+  }
+
+  // Whole-canvas bounds: the transform box always covers the FULL source
+  // canvas (ref.drawing.width/height), never a painted-pixel bbox — every
+  // reference is treated like a complete animation sheet, per spec.
+  function _ltCorners(ref){
+    const w=ref.drawing.width,h=ref.drawing.height;
+    const t=ref.transform||_ltDefaultTransform();
+    const cx=w/2+t.positionX, cy=h/2+t.positionY;
+    const hw=(w/2)*t.scaleX, hh=(h/2)*t.scaleY;
+    const rad=t.rotation*Math.PI/180;
+    const cosR=Math.cos(rad),sinR=Math.sin(rad);
+    const pts=[[-hw,-hh],[hw,-hh],[hw,hh],[-hw,hh]];
+    return pts.map(([lx,ly])=>({x:cx+lx*cosR-ly*sinR,y:cy+lx*sinR+ly*cosR}));
+  }
+
+  const LT_HANDLE_R=9; // matches TF_HANDLE_R in transform-tool.js (visual parity only)
+
+  function _ltOverlayCanvas(){
+    return document.getElementById('lt-transform-ui-canvas');
+  }
+  function _ltResizeOverlay(c){
+    const area=document.getElementById('canvas-area');
+    if(!area) return 1;
+    const r=area.getBoundingClientRect(),dpr=Math.max(1,window.devicePixelRatio||1);
+    const w=Math.max(1,Math.round(r.width*dpr)),h=Math.max(1,Math.round(r.height*dpr));
+    if(c.width!==w) c.width=w;
+    if(c.height!==h) c.height=h;
+    return dpr;
+  }
+  function _ltClearOverlay(){
+    const c=_ltOverlayCanvas();
+    if(!c) return;
+    const ctx=c.getContext('2d');
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.clearRect(0,0,c.width,c.height);
+  }
+
+  // Overlay is visual only in Phase 4A — no dragging, scaling or rotation
+  // is wired up yet. Reuses the app's existing transform visual style
+  // (dashed box, square corner + edge-midpoint handles) for consistency,
+  // but is drawn on lt-transform-ui-canvas, entirely its own element/ctx.
+  function _ltDrawOverlay(){
+    const c=_ltOverlayCanvas();
+    if(!c) return;
+    const dpr=_ltResizeOverlay(c);
+    const ctx=c.getContext('2d');
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.clearRect(0,0,c.width,c.height);
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+
+    const ref=_ltValidTransformRef();
+    if(!ref) return;
+    if(typeof _tfToViewportPoint!=='function') return; // transform-tool.js not loaded yet
+
+    const corners=_ltCorners(ref).map(_tfToViewportPoint);
+    const hr=LT_HANDLE_R;
+    ctx.save();
+    ctx.strokeStyle='#4da3ff';
+    ctx.lineWidth=1.5;ctx.lineJoin='round';ctx.lineCap='round';
+    ctx.setLineDash([6,4]);
+    ctx.beginPath();
+    corners.forEach((p,i)=>{ i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y); });
+    ctx.closePath();ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.fillStyle='#fff';
+    corners.forEach(p=>{ ctx.beginPath();ctx.rect(p.x-hr/2,p.y-hr/2,hr,hr);ctx.fill();ctx.stroke(); });
+
+    const er=hr*.42;
+    corners.forEach((p,i)=>{
+      const q=corners[(i+1)%corners.length];
+      const mx=(p.x+q.x)/2, my=(p.y+q.y)/2;
+      ctx.beginPath();ctx.rect(mx-er,my-er,er*2,er*2);ctx.fill();ctx.stroke();
+    });
+    ctx.restore();
+  }
+
+  function toggleTransformMode(){
+    if(!ltTransformMode&&!_ltValidTransformTarget()) return; // native `disabled` already blocks this; belt-and-suspenders
+    ltTransformMode=!ltTransformMode;
+    syncTransformToolbarState();
+    if(ltTransformMode) _ltDrawOverlay();
+    else _ltClearOverlay(); // hide overlay, clear temp state; stored transform values are untouched
+  }
+  function syncTransformToolbarState(){
+    const btn=document.getElementById('lt-btn-transform');
+    if(!btn) return;
+    btn.classList.toggle('active',ltTransformMode);
+    btn.setAttribute('aria-pressed',String(ltTransformMode));
+  }
+
+  // Continuous per-frame resync (same pattern as transform-tool.js's own
+  // _tfGuideSyncLoop): selection/lock changes call this indirectly via
+  // renderList, but pan/zoom/rotate of the canvas never routes through
+  // this module at all, so without a per-frame redraw the overlay would
+  // drift out of alignment with the artwork the moment the view moves.
+  (function _ltOverlaySyncLoop(){
+    if(ltTransformMode) _ltDrawOverlay();
+    requestAnimationFrame(_ltOverlaySyncLoop);
+  })();
+  window.addEventListener('resize',()=>{ if(ltTransformMode) _ltDrawOverlay(); });
 
   // ── Reordering ───────────────────────────────────────────────────
   // Moves a reference within the Light Table list only. Never touches
@@ -460,6 +606,24 @@
     if(delBtn) delBtn.disabled=selectedIds.size===0;
     const insBtn=document.getElementById('lt-btn-insert');
     if(insBtn) insBtn.disabled=!resolveSelectedSource();
+    // Transform button: reuses the exact same disabled mechanism (native
+    // `disabled` attribute + the toolbar's existing .lt-btn:disabled CSS)
+    // as Insert/Delete above — no Transform-specific styling.
+    const transBtn=document.getElementById('lt-btn-transform');
+    if(transBtn){
+      const valid=!!_ltValidTransformTarget();
+      transBtn.disabled=!valid;
+      transBtn.setAttribute('aria-disabled',String(!valid));
+      // If Transform Mode is already on and its target just became invalid
+      // (deleted, locked, deselected, multi-selected, list emptied, etc.),
+      // turn Transform Mode off: hide the overlay and clear temp state,
+      // same as a manual toggle-off. Stored transform values are untouched.
+      if(ltTransformMode&&!valid){
+        ltTransformMode=false;
+        _ltClearOverlay();
+      }
+    }
+    syncTransformToolbarState();
   }
 
   // ── Phase 3: Property panel ─────────────────────────────────────
@@ -564,6 +728,8 @@
     const listEl=document.getElementById('lt-list');
     if(insBtn) insBtn.addEventListener('click',insertSelected);
     if(delBtn) delBtn.addEventListener('click',deleteSelected);
+    const transBtn=document.getElementById('lt-btn-transform');
+    if(transBtn) transBtn.addEventListener('click',toggleTransformMode);
     if(listEl){
       // Clicking empty space inside the list (not a row) clears selection.
       listEl.addEventListener('click',e=>{
@@ -631,7 +797,9 @@
     moveReference,
     render,
     renderList,
+    toggleTransformMode,
     get references(){return references.slice();},
     get selectedIds(){return new Set(selectedIds);},
+    get transformMode(){return ltTransformMode;},
   };
 })();

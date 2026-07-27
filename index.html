@@ -178,6 +178,13 @@
          clipped at the visible workspace edge — see perspective-controller.js. -->
     <canvas id="perspective-guide-canvas"></canvas>
     <canvas id="transform-ui-canvas" aria-hidden="true"></canvas>
+    <!-- lt-transform-ui-canvas: Light Table's OWN transform overlay (Phase 4A),
+         completely independent from transform-ui-canvas above. Sized to the
+         canvas-area VIEWPORT the same way, so it can reuse the same stateless
+         viewport-mapping math, but it never touches tfActive/tfState/tfBox or
+         any other normal-Transform session state — see light-table.js. Visual
+         only in this phase (pointer-events stay off). -->
+    <canvas id="lt-transform-ui-canvas" aria-hidden="true"></canvas>
     <div id="zoom-indicator">100%</div>
     <div id="rotation-indicator">0°</div>
     <div id="rotation-pivot"></div>
@@ -403,6 +410,10 @@
             <button type="button" class="tbtn lt-btn" id="lt-btn-delete" title="Delete the selected Light Table reference">
               <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4h10M6.5 4V2.5h3V4M4.5 4l.6 9.5h5.8L11.5 4"></path></svg>
               <span class="tlabel">Delete</span>
+            </button>
+            <button type="button" class="tbtn lt-btn" id="lt-btn-transform" title="Toggle Light Table Transform Mode (independent from the normal Transform tool)" aria-pressed="false">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="1"></rect><path d="M3 6.5h10M3 9.5h10M6.5 3v10M9.5 3v10"></path></svg>
+              <span class="tlabel">Transform</span>
             </button>
           </div>
           <div id="lt-list" tabindex="0" class="docker-kbd-focus" aria-label="Light Table references" aria-multiselectable="true"></div>
