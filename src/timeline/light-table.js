@@ -334,20 +334,23 @@
       const mx=(p.x+q.x)/2, my=(p.y+q.y)/2;
       ctx.beginPath();ctx.rect(mx-er,my-er,er*2,er*2);ctx.fill();ctx.stroke();
     });
+
+    if(typeof _tfDrawPivotHandle==='function'){
+      _tfDrawPivotHandle(ctx, _ltPivotWorld(ref));
+    }
+
     ctx.restore();
   }
 
-  // ── Phase 4B: Move ────────────────────────────────────────────────
-  // A tiny, Light-Table-only "pending move" session — deliberately NOT
+  // ── Phase 4B/4C/4D: Move / Scale / Rotate / Pivot ─────────────────
+  // A tiny, Light-Table-only transform session — deliberately NOT
   // the application's normal Transform session (no tfActive/tfState/
-  // undo stack involvement). Only positionX/positionY are ever touched;
-  // rotation/scaleX/scaleY are left exactly as Phase 4A/4C-onward leave
-  // them. A session is active from pointerdown until whichever of
+  // undo stack involvement). A session is active from pointerdown until
   // pointerup/pointercancel/lostpointercapture/Escape/Transform-OFF
   // fires first — there is no separate "pending" state after the
   // pointer is released, so the very next pointerdown can always start
   // a fresh session.
-  let _ltMove=null; // {ref, pointerId, mode, startPointer:{x,y}, startState:{positionX,positionY,rotation,scaleX,scaleY}, startCenter:{x,y}, startDist, startPivotWorld}
+  let _ltMove=null; // {ref, pointerId, mode, startPointer:{x,y}, startState:{positionX,positionY,rotation,scaleX,scaleY,pivot}, startCenter:{x,y}, startDist, startPivotWorld}
 
   function _ltSyncOverlayInteractive(){
     const c=_ltOverlayCanvas();
@@ -364,9 +367,23 @@
     return {x:w/2+t.positionX, y:h/2+t.positionY};
   }
 
+  function _ltPivotLocal(ref){
+    const w=ref.drawing.width, h=ref.drawing.height;
+    const t=ref.transform||_ltDefaultTransform();
+    if(t.pivot && typeof t.pivot.x==='number' && typeof t.pivot.y==='number'){
+      return {x:t.pivot.x, y:t.pivot.y};
+    }
+    return {x:w/2, y:h/2};
+  }
+
   function _ltPivotWorld(ref){
     const w=ref.drawing.width,h=ref.drawing.height;
     const t=ref.transform||_ltDefaultTransform();
+    const box={x:0, y:0, w, h};
+    const pivotLocal=_ltPivotLocal(ref);
+    if(typeof _tfLocalToWorld==='function'){
+      return _tfLocalToWorld(pivotLocal, t, box);
+    }
     return {x:w/2+t.positionX, y:h/2+t.positionY};
   }
 
@@ -376,8 +393,9 @@
     const t=ref.transform||_ltDefaultTransform();
     const corners=_ltCorners(ref);
     const boxCenter={x:w/2+t.positionX, y:h/2+t.positionY};
+    const pivotWorld=_ltPivotWorld(ref);
     // Light Table scaleX and scaleY are isotropic for now, scaleX === scaleY === scale
-    return _tfHitTestGeneric(p, corners, t.rotation, t.scaleX, boxCenter, w, h, null);
+    return _tfHitTestGeneric(p, corners, t.rotation, t.scaleX, boxCenter, w, h, pivotWorld);
   }
 
   function _ltPointerHover(e){
@@ -417,7 +435,14 @@
       mode:hit.mode,
       cursorAngle:hit.cursorAngle,
       startPointer:p,
-      startState:Object.assign({},t),
+      startState:{
+        positionX:t.positionX,
+        positionY:t.positionY,
+        rotation:t.rotation,
+        scaleX:t.scaleX,
+        scaleY:t.scaleY,
+        pivot:t.pivot?{x:t.pivot.x, y:t.pivot.y}:null
+      },
       startCenter:boxCenter,
       startDist:typeof _tfDist==='function'?_tfDist(p.x,p.y,boxCenter.x,boxCenter.y):1,
       startAngle:Math.atan2(p.y-pivotWorld.y, p.x-pivotWorld.x),
@@ -434,9 +459,13 @@
     const t=ref.transform;
     const w=ref.drawing.width, h=ref.drawing.height;
     const box={x:0, y:0, w, h};
-    const pivot={x:w/2, y:h/2};
 
-    if(_ltMove.mode==='move'){
+    if(_ltMove.mode==='pivot'){
+      if(typeof _tfWorldToLocal==='function'){
+        const localPivot=_tfWorldToLocal(p, t, box);
+        t.pivot={x:localPivot.x, y:localPivot.y};
+      }
+    } else if(_ltMove.mode==='move'){
       t.positionX=_ltMove.startState.positionX+(p.x-_ltMove.startPointer.x);
       t.positionY=_ltMove.startState.positionY+(p.y-_ltMove.startPointer.y);
     } else if(_ltMove.mode==='scale'){
@@ -444,6 +473,7 @@
       const ratio=_ltMove.startDist>1?d/_ltMove.startDist:1;
       const newScale=Math.max(0.02,Math.min(50,_ltMove.startState.scaleX*ratio));
       const targetState={tx:t.positionX, ty:t.positionY, rotation:t.rotation, scale:t.scaleX};
+      const pivot=_ltPivotLocal(ref);
       if(typeof _tfSetStateForPivot==='function'){
         _tfSetStateForPivot(_ltMove.startPivotWorld, _ltMove.startState.rotation, newScale, targetState, pivot, box);
         t.positionX=targetState.tx;
@@ -458,6 +488,7 @@
       let newRot=_ltMove.startState.rotation+deltaDeg;
       if(e.shiftKey) newRot=Math.round(newRot/15)*15;
       const targetState={tx:t.positionX, ty:t.positionY, rotation:t.rotation, scale:t.scaleX};
+      const pivot=_ltPivotLocal(ref);
       if(typeof _tfSetStateForPivot==='function'){
         _tfSetStateForPivot(_ltMove.startPivotWorld, newRot, _ltMove.startState.scaleX, targetState, pivot, box);
         t.positionX=targetState.tx;
@@ -502,9 +533,32 @@
     t.rotation=_ltMove.startState.rotation;
     t.scaleX=_ltMove.startState.scaleX;
     t.scaleY=_ltMove.startState.scaleY;
+    if(_ltMove.startState.pivot){
+      t.pivot={x:_ltMove.startState.pivot.x, y:_ltMove.startState.pivot.y};
+    } else {
+      delete t.pivot;
+    }
     _ltReleaseSession(_ltMove.pointerId);
     _ltDrawOverlay();
     requestRepaint();
+  }
+
+  function _ltDblClick(e){
+    if(!ltTransformMode) return;
+    const ref=_ltValidTransformRef();
+    if(!ref) return;
+    if(typeof getPos!=='function'||typeof _tfHitTestGeneric!=='function') return;
+    const p=getPos(e);
+    const hit=_ltHitTest(ref, p);
+    if(hit && hit.mode==='pivot'){
+      e.preventDefault();
+      e.stopPropagation();
+      const w=ref.drawing.width, h=ref.drawing.height;
+      const t=ref.transform||(ref.transform=_ltDefaultTransform());
+      t.pivot={x:w/2, y:h/2};
+      _ltDrawOverlay();
+      requestRepaint();
+    }
   }
 
   function initMoveInteraction(){
@@ -517,6 +571,7 @@
     c.addEventListener('pointerup',_ltEndMove);
     c.addEventListener('pointercancel',_ltCancelMove);
     c.addEventListener('lostpointercapture',_ltCancelMove);
+    c.addEventListener('dblclick',_ltDblClick);
     // Captured at the document level (mirrors transform-tool.js's own
     // Escape handling) so it fires no matter what currently has focus,
     // but only ever acts while Light Table Transform Mode is active.

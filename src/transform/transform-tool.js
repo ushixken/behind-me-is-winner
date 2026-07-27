@@ -241,22 +241,32 @@ function _tfTransformSelectionMaskPerspective(){
 function _tfCurrentSelectionMask(){return tfPerspective?_tfTransformSelectionMaskPerspective():_tfTransformSelectionMaskFree();}
 function _tfPreviewSelectionMask(){if(tfPixelSelection&&window.PixelSelection){const mask=_tfCurrentSelectionMask();if(mask)PixelSelection.setTransformPreview(mask,tfPixelSelection.width||CW,tfPixelSelection.height||CH);}}
 
-function _tfLocalToWorld(local,state){
+function _tfLocalToWorld(local,state,box){
   state=state||tfState;
-  const c=_tfCenter(state);
-  const rad=state.rotation*Math.PI/180, cosR=Math.cos(rad), sinR=Math.sin(rad);
-  const bx=tfBox.x+tfBox.w/2, by=tfBox.y+tfBox.h/2;
-  const dx=(local.x-bx)*state.scale, dy=(local.y-by)*state.scale;
-  return {x:c.x+dx*cosR-dy*sinR, y:c.y+dx*sinR+dy*cosR};
+  box=box||tfBox;
+  if(!local||!state||!box) return {x:0,y:0};
+  const bx=box.x+box.w/2, by=box.y+box.h/2;
+  const tx=state.tx!==undefined?state.tx:(state.positionX||0);
+  const ty=state.ty!==undefined?state.ty:(state.positionY||0);
+  const cx=bx+tx, cy=by+ty;
+  const scale=state.scale!==undefined?state.scale:(state.scaleX||1);
+  const rad=(state.rotation||0)*Math.PI/180, cosR=Math.cos(rad), sinR=Math.sin(rad);
+  const dx=(local.x-bx)*scale, dy=(local.y-by)*scale;
+  return {x:cx+dx*cosR-dy*sinR, y:cy+dx*sinR+dy*cosR};
 }
-function _tfWorldToLocal(world,state){
+function _tfWorldToLocal(world,state,box){
   state=state||tfState;
-  const c=_tfCenter(state);
-  const rad=-state.rotation*Math.PI/180, cosR=Math.cos(rad), sinR=Math.sin(rad);
-  const dx=world.x-c.x, dy=world.y-c.y;
-  const s=state.scale||1;
+  box=box||tfBox;
+  if(!world||!state||!box) return {x:0,y:0};
+  const bx=box.x+box.w/2, by=box.y+box.h/2;
+  const tx=state.tx!==undefined?state.tx:(state.positionX||0);
+  const ty=state.ty!==undefined?state.ty:(state.positionY||0);
+  const cx=bx+tx, cy=by+ty;
+  const scale=state.scale!==undefined?state.scale:(state.scaleX||1);
+  const rad=-(state.rotation||0)*Math.PI/180, cosR=Math.cos(rad), sinR=Math.sin(rad);
+  const dx=world.x-cx, dy=world.y-cy;
+  const s=scale||1;
   const lx=(dx*cosR-dy*sinR)/s, ly=(dx*sinR+dy*cosR)/s;
-  const bx=tfBox.x+tfBox.w/2, by=tfBox.y+tfBox.h/2;
   return {x:bx+lx, y:by+ly};
 }
 // Current on-screen position of the pivot handle.
@@ -956,9 +966,20 @@ function _tfDrawHandles(clearFirst){
   const hr=TF_HANDLE_R;c.fillStyle=idle?'#8c8c96':'#fff';corners.forEach(p=>{c.beginPath();c.rect(p.x-hr/2,p.y-hr/2,hr,hr);c.fill();c.stroke();});const mids=_tfPolyEdgeMidpoints(corners),er=hr*.42;mids.forEach(p=>{c.beginPath();c.rect(p.x-er,p.y-er,er*2,er*2);c.fill();c.stroke();});_tfDrawPivotHandle();c.restore();
 }
 
-function _tfDrawPivotHandle(){
-  if(!tfPivot)return;const p=_tfToViewportPoint(_tfPivotWorld()),hr=TF_HANDLE_R,c=tfUiCtx;c.save();c.strokeStyle=tfAwaitingRepeat?'#92929c':'#ffd24d';c.fillStyle=tfAwaitingRepeat?'rgba(146,146,156,.2)':'rgba(255,210,77,0.25)';c.lineWidth=1.5;c.lineCap='round';
-  c.beginPath();c.arc(p.x,p.y,hr*.7,0,Math.PI*2);c.fill();c.stroke();c.beginPath();c.moveTo(p.x-hr/2,p.y);c.lineTo(p.x+hr/2,p.y);c.moveTo(p.x,p.y-hr/2);c.lineTo(p.x,p.y+hr/2);c.stroke();c.restore();
+function _tfDrawPivotHandle(targetCtx, targetPivotWorld, options){
+  const pWorld = targetPivotWorld || (tfPivot ? _tfPivotWorld() : null);
+  if(!pWorld) return;
+  const c = targetCtx || tfUiCtx;
+  if(!c) return;
+  const p=_tfToViewportPoint(pWorld),hr=TF_HANDLE_R;
+  const idle = options && options.idle;
+  c.save();
+  c.strokeStyle=(idle || tfAwaitingRepeat)?'#92929c':'#ffd24d';
+  c.fillStyle=(idle || tfAwaitingRepeat)?'rgba(146,146,156,.2)':'rgba(255,210,77,0.25)';
+  c.lineWidth=1.5;c.lineCap='round';
+  c.beginPath();c.arc(p.x,p.y,hr*.7,0,Math.PI*2);c.fill();c.stroke();
+  c.beginPath();c.moveTo(p.x-hr/2,p.y);c.lineTo(p.x+hr/2,p.y);c.moveTo(p.x,p.y-hr/2);c.lineTo(p.x,p.y+hr/2);c.stroke();
+  c.restore();
 }
 
 function _tfDrawHandlesPerspective(clearFirst){
