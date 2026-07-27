@@ -247,36 +247,63 @@
   // present in the list, unlocked, and with a live source. Used both to
   // enable/disable the Transform button and (combined with ltTransformMode)
   // to decide whether the overlay should be showing.
-  function _ltValidTransformTarget(){
-    if(selectedIds.size!==1) return null;
-    const id=selectedIds.values().next().value;
-    const ref=references.find(r=>r.id===id);
-    if(!ref) return null;
-    if(ref.locked) return null;
-    if(isMissing(ref)) return null;
-    return ref;
+  // Mode-independent target check: at least one selected reference, all selected
+  // items present in the list, unlocked, and with a live source.
+  function _ltValidTransformTargets(){
+    if(selectedIds.size===0) return [];
+    const targets=[];
+    for(const id of selectedIds){
+      const ref=references.find(r=>r.id===id);
+      if(!ref||ref.locked||isMissing(ref)) return [];
+      targets.push(ref);
+    }
+    return targets;
   }
 
-  // Valid only when Transform Mode is ON *and* there's a valid target.
-  // Locked references, no selection, and multi-selection all yield null,
-  // which means "no overlay, no transform interactions" everywhere below.
+  function _ltValidTransformTarget(){
+    const targets=_ltValidTransformTargets();
+    return targets.length?targets[0]:null;
+  }
+
+  function _ltValidTransformRefs(){
+    if(!ltTransformMode) return [];
+    return _ltValidTransformTargets();
+  }
+
   function _ltValidTransformRef(){
     if(!ltTransformMode) return null;
     return _ltValidTransformTarget();
   }
 
-  // Whole-canvas bounds: the transform box always covers the FULL source
-  // canvas (ref.drawing.width/height), never a painted-pixel bbox — every
-  // reference is treated like a complete animation sheet, per spec.
-  function _ltCorners(ref){
+  // Bounding box / corners calculation:
+  // For a single reference, returns the 4 rotated corners of its canvas.
+  // For multiple references, returns the axis-aligned bounding box of all corners of all selected references.
+  function _ltCornersForRef(ref){
     const w=ref.drawing.width,h=ref.drawing.height;
-    const t=ref.transform||_ltDefaultTransform();
+    const t=ref.transform||_ltDefaultTransform(ref);
     const cx=w/2+t.positionX, cy=h/2+t.positionY;
     const hw=(w/2)*t.scaleX, hh=(h/2)*t.scaleY;
     const rad=t.rotation*Math.PI/180;
     const cosR=Math.cos(rad),sinR=Math.sin(rad);
     const pts=[[-hw,-hh],[hw,-hh],[hw,hh],[-hw,hh]];
     return pts.map(([lx,ly])=>({x:cx+lx*cosR-ly*sinR,y:cy+lx*sinR+ly*cosR}));
+  }
+
+  function _ltCorners(ref){
+    const targets=_ltValidTransformTargets();
+    if(targets.length>1){
+      let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
+      targets.forEach(r=>{
+        _ltCornersForRef(r).forEach(p=>{
+          if(p.x<minX) minX=p.x;
+          if(p.x>maxX) maxX=p.x;
+          if(p.y<minY) minY=p.y;
+          if(p.y>maxY) maxY=p.y;
+        });
+      });
+      return [{x:minX,y:minY},{x:maxX,y:minY},{x:maxX,y:maxY},{x:minX,y:maxY}];
+    }
+    return _ltCornersForRef(ref||targets[0]);
   }
 
   const LT_HANDLE_R=9; // matches TF_HANDLE_R in transform-tool.js (visual parity only)
@@ -301,10 +328,28 @@
     ctx.clearRect(0,0,c.width,c.height);
   }
 
-  // Overlay is visual only in Phase 4A — no dragging, scaling or rotation
-  // is wired up yet. Reuses the app's existing transform visual style
-  // (dashed box, square corner + edge-midpoint handles) for consistency,
-  // but is drawn on lt-transform-ui-canvas, entirely its own element/ctx.
+  // Shared pivot point for multi-selection group, or reference pivot for single selection.
+  let _ltGroupCustomPivot=null;
+
+  function _ltPivotWorld(ref){
+    const targets=_ltValidTransformTargets();
+    if(targets.length>1){
+      if(_ltGroupCustomPivot) return {x:_ltGroupCustomPivot.x, y:_ltGroupCustomPivot.y};
+      const corners=_ltCorners();
+      return {x:(corners[0].x+corners[2].x)/2, y:(corners[0].y+corners[2].y)/2};
+    }
+    const target=ref||targets[0];
+    if(!target) return {x:0,y:0};
+    const w=target.drawing.width,h=target.drawing.height;
+    const t=target.transform||_ltDefaultTransform(target);
+    const box={x:0, y:0, w, h};
+    const pivotLocal=_ltPivotLocal(target);
+    if(typeof _tfLocalToWorld==='function'){
+      return _tfLocalToWorld(pivotLocal, t, box);
+    }
+    return {x:w/2+t.positionX, y:h/2+t.positionY};
+  }
+
   function _ltDrawOverlay(){
     const c=_ltOverlayCanvas();
     if(!c) return;
@@ -314,11 +359,11 @@
     ctx.clearRect(0,0,c.width,c.height);
     ctx.setTransform(dpr,0,0,dpr,0,0);
 
-    const ref=_ltValidTransformRef();
-    if(!ref) return;
+    const targets=_ltValidTransformRefs();
+    if(!targets.length) return;
     if(typeof _tfToViewportPoint!=='function') return; // transform-tool.js not loaded yet
 
-    const corners=_ltCorners(ref).map(_tfToViewportPoint);
+    const corners=_ltCorners().map(_tfToViewportPoint);
     const hr=LT_HANDLE_R;
     ctx.save();
     ctx.strokeStyle='#4da3ff';
@@ -340,66 +385,61 @@
     });
 
     if(typeof _tfDrawPivotHandle==='function'){
-      _tfDrawPivotHandle(ctx, _ltPivotWorld(ref));
+      _tfDrawPivotHandle(ctx, _ltPivotWorld());
     }
 
     ctx.restore();
   }
 
   // ── Phase 4B/4C/4D: Move / Scale / Rotate / Pivot ─────────────────
-  // A tiny, Light-Table-only transform session — deliberately NOT
-  // the application's normal Transform session (no tfActive/tfState/
-  // undo stack involvement). A session is active from pointerdown until
-  // pointerup/pointercancel/lostpointercapture/Escape/Transform-OFF
-  // fires first — there is no separate "pending" state after the
-  // pointer is released, so the very next pointerdown can always start
-  // a fresh session.
-  let _ltMove=null; // {ref, pointerId, mode, startPointer:{x,y}, startState:{positionX,positionY,rotation,scaleX,scaleY,pivot}, startCenter:{x,y}, startDist, startPivotWorld}
+  let _ltMove=null;
 
   function _ltSyncOverlayInteractive(){
     const c=_ltOverlayCanvas();
     if(!c) return;
-    const active=ltTransformMode&&!!_ltValidTransformRef();
+    const active=ltTransformMode&&_ltValidTransformTargets().length>0;
     c.classList.toggle('lt-transform-active',active);
     if(!active) c.style.cursor='default';
     if(typeof _refreshActiveCursor==='function') _refreshActiveCursor();
   }
 
   function _ltBoxCenter(ref){
-    const w=ref.drawing.width,h=ref.drawing.height;
-    const t=ref.transform||_ltDefaultTransform();
+    const targets=_ltValidTransformTargets();
+    if(targets.length>1){
+      const corners=_ltCorners();
+      return {x:(corners[0].x+corners[2].x)/2, y:(corners[0].y+corners[2].y)/2};
+    }
+    const target=ref||targets[0];
+    const w=target.drawing.width,h=target.drawing.height;
+    const t=target.transform||_ltDefaultTransform(target);
     return {x:w/2+t.positionX, y:h/2+t.positionY};
   }
 
   function _ltPivotLocal(ref){
     const w=ref.drawing.width, h=ref.drawing.height;
-    const t=ref.transform||_ltDefaultTransform();
+    const t=ref.transform||_ltDefaultTransform(ref);
     if(t.pivot && typeof t.pivot.x==='number' && typeof t.pivot.y==='number'){
       return {x:t.pivot.x, y:t.pivot.y};
     }
     return {x:w/2, y:h/2};
   }
 
-  function _ltPivotWorld(ref){
-    const w=ref.drawing.width,h=ref.drawing.height;
-    const t=ref.transform||_ltDefaultTransform();
-    const box={x:0, y:0, w, h};
-    const pivotLocal=_ltPivotLocal(ref);
-    if(typeof _tfLocalToWorld==='function'){
-      return _tfLocalToWorld(pivotLocal, t, box);
-    }
-    return {x:w/2+t.positionX, y:h/2+t.positionY};
-  }
-
-  function _ltHitTest(ref, p){
+  function _ltHitTest(p){
     if(typeof _tfHitTestGeneric!=='function') return null;
-    const w=ref.drawing.width,h=ref.drawing.height;
-    const t=ref.transform||_ltDefaultTransform();
-    const corners=_ltCorners(ref);
-    const boxCenter={x:w/2+t.positionX, y:h/2+t.positionY};
-    const pivotWorld=_ltPivotWorld(ref);
-    // Light Table scaleX and scaleY are isotropic for now, scaleX === scaleY === scale
-    return _tfHitTestGeneric(p, corners, t.rotation, t.scaleX, boxCenter, w, h, pivotWorld);
+    const targets=_ltValidTransformTargets();
+    if(!targets.length) return null;
+    const corners=_ltCorners();
+    const boxCenter=_ltBoxCenter();
+    const pivotWorld=_ltPivotWorld();
+    let rotation=0, scaleX=1;
+    if(targets.length===1){
+      const t=targets[0].transform||_ltDefaultTransform(targets[0]);
+      rotation=t.rotation;
+      scaleX=t.scaleX;
+    }
+    const w=Math.abs(corners[1].x-corners[0].x)||targets[0].drawing.width;
+    const h=Math.abs(corners[2].y-corners[1].y)||targets[0].drawing.height;
+    return _tfHitTestGeneric(p, corners, rotation, scaleX, boxCenter, w, h, pivotWorld);
   }
 
   function _ltPointerHover(e){
@@ -411,46 +451,54 @@
       c.style.cursor=cursor;
       return;
     }
-    const ref=_ltValidTransformRef();
-    if(!ref){ c.style.cursor='default'; return; }
+    const targets=_ltValidTransformTargets();
+    if(!targets.length){ c.style.cursor='default'; return; }
     const p=getPos(e);
-    const hit=_ltHitTest(ref, p);
+    const hit=_ltHitTest(p);
     const cursor=(typeof _tfHitCursor==='function')?_tfHitCursor(hit):'default';
     c.style.cursor=cursor;
   }
 
   function _ltPointerDown(e){
     if(!ltTransformMode||_ltMove) return;
-    const ref=_ltValidTransformRef();
-    if(!ref) return;
+    const targets=_ltValidTransformTargets();
+    if(!targets.length) return;
     if(typeof getPos!=='function'||typeof _tfHitTestGeneric!=='function') return;
     const p=getPos(e);
-    const hit=_ltHitTest(ref, p);
+    const hit=_ltHitTest(p);
     if(!hit) return;
     e.preventDefault();
     const c=_ltOverlayCanvas();
     if(c&&c.setPointerCapture) c.setPointerCapture(e.pointerId);
-    const t=ref.transform||(ref.transform=_ltDefaultTransform());
-    const boxCenter=_ltBoxCenter(ref);
-    const pivotWorld=_ltPivotWorld(ref);
-    _ltMove={
-      ref,
-      pointerId:e.pointerId,
-      mode:hit.mode,
-      cursorAngle:hit.cursorAngle,
-      startPointer:p,
-      startState:{
+
+    const startStates=targets.map(r=>{
+      const t=r.transform||(r.transform=_ltDefaultTransform(r));
+      return {
+        ref:r,
         positionX:t.positionX,
         positionY:t.positionY,
         rotation:t.rotation,
         scaleX:t.scaleX,
         scaleY:t.scaleY,
         pivot:t.pivot?{x:t.pivot.x, y:t.pivot.y}:null
-      },
+      };
+    });
+
+    const boxCenter=_ltBoxCenter();
+    const pivotWorld=_ltPivotWorld();
+
+    _ltMove={
+      targets,
+      pointerId:e.pointerId,
+      mode:hit.mode,
+      cursorAngle:hit.cursorAngle,
+      startPointer:p,
+      startStates,
       startCenter:boxCenter,
       startDist:typeof _tfDist==='function'?_tfDist(p.x,p.y,boxCenter.x,boxCenter.y):1,
       startAngle:Math.atan2(p.y-pivotWorld.y, p.x-pivotWorld.x),
-      startPivotWorld:pivotWorld
+      startPivotWorld:pivotWorld,
+      startGroupCustomPivot:_ltGroupCustomPivot?{x:_ltGroupCustomPivot.x,y:_ltGroupCustomPivot.y}:null
     };
     if(c) c.style.cursor=(typeof _tfHitCursor==='function')?_tfHitCursor(hit):'default';
   }
@@ -459,56 +507,75 @@
     if(!_ltMove||e.pointerId!==_ltMove.pointerId) return;
     e.preventDefault();
     const p=getPos(e);
-    const ref=_ltMove.ref;
-    const t=ref.transform;
-    const w=ref.drawing.width, h=ref.drawing.height;
-    const box={x:0, y:0, w, h};
 
     if(_ltMove.mode==='pivot'){
-      if(typeof _tfWorldToLocal==='function'){
-        const localPivot=_tfWorldToLocal(p, t, box);
-        t.pivot={x:localPivot.x, y:localPivot.y};
+      _ltGroupCustomPivot={x:p.x, y:p.y};
+      if(_ltMove.targets.length===1){
+        const ref=_ltMove.targets[0];
+        const t=ref.transform;
+        const w=ref.drawing.width, h=ref.drawing.height;
+        const box={x:0, y:0, w, h};
+        if(typeof _tfWorldToLocal==='function'){
+          const localPivot=_tfWorldToLocal(p, t, box);
+          t.pivot={x:localPivot.x, y:localPivot.y};
+        }
       }
     } else if(_ltMove.mode==='move'){
-      t.positionX=_ltMove.startState.positionX+(p.x-_ltMove.startPointer.x);
-      t.positionY=_ltMove.startState.positionY+(p.y-_ltMove.startPointer.y);
+      const dx=p.x-_ltMove.startPointer.x;
+      const dy=p.y-_ltMove.startPointer.y;
+      _ltMove.startStates.forEach(st=>{
+        st.ref.transform.positionX=st.positionX+dx;
+        st.ref.transform.positionY=st.positionY+dy;
+      });
+      if(_ltMove.startGroupCustomPivot){
+        _ltGroupCustomPivot={
+          x:_ltMove.startGroupCustomPivot.x+dx,
+          y:_ltMove.startGroupCustomPivot.y+dy
+        };
+      }
     } else if(_ltMove.mode==='scale'){
       const d=typeof _tfDist==='function'?_tfDist(p.x,p.y,_ltMove.startCenter.x,_ltMove.startCenter.y):1;
       const ratio=_ltMove.startDist>1?d/_ltMove.startDist:1;
-      const newScale=Math.max(0.02,Math.min(50,_ltMove.startState.scaleX*ratio));
-      const targetState={tx:t.positionX, ty:t.positionY, rotation:t.rotation, scale:t.scaleX};
-      const pivot=_ltPivotLocal(ref);
-      if(typeof _tfSetStateForPivot==='function'){
-        _tfSetStateForPivot(_ltMove.startPivotWorld, _ltMove.startState.rotation, newScale, targetState, pivot, box);
-        t.positionX=targetState.tx;
-        t.positionY=targetState.ty;
-        t.rotation=targetState.rotation;
-        t.scaleX=targetState.scale;
-        t.scaleY=targetState.scale;
-      }
+      const pivot=_ltMove.startPivotWorld;
+
+      _ltMove.startStates.forEach(st=>{
+        const t=st.ref.transform;
+        const newScale=Math.max(0.02,Math.min(50,st.scaleX*ratio));
+        const scaleFactor=st.scaleX>0?newScale/st.scaleX:1;
+        const refCenter={x:st.ref.drawing.width/2+st.positionX, y:st.ref.drawing.height/2+st.positionY};
+        const newCenterX=pivot.x+(refCenter.x-pivot.x)*scaleFactor;
+        const newCenterY=pivot.y+(refCenter.y-pivot.y)*scaleFactor;
+
+        t.positionX=newCenterX-st.ref.drawing.width/2;
+        t.positionY=newCenterY-st.ref.drawing.height/2;
+        t.scaleX=newScale;
+        t.scaleY=newScale;
+      });
     } else if(_ltMove.mode==='rotate'){
       const ang=Math.atan2(p.y-_ltMove.startPivotWorld.y, p.x-_ltMove.startPivotWorld.x);
-      const deltaDeg=(ang-_ltMove.startAngle)*180/Math.PI;
-      let newRot=_ltMove.startState.rotation+deltaDeg;
-      if(e.shiftKey) newRot=Math.round(newRot/15)*15;
-      const targetState={tx:t.positionX, ty:t.positionY, rotation:t.rotation, scale:t.scaleX};
-      const pivot=_ltPivotLocal(ref);
-      if(typeof _tfSetStateForPivot==='function'){
-        _tfSetStateForPivot(_ltMove.startPivotWorld, newRot, _ltMove.startState.scaleX, targetState, pivot, box);
-        t.positionX=targetState.tx;
-        t.positionY=targetState.ty;
-        t.rotation=targetState.rotation;
-        t.scaleX=targetState.scale;
-        t.scaleY=targetState.scale;
-      }
+      let deltaDeg=(ang-_ltMove.startAngle)*180/Math.PI;
+      if(e.shiftKey) deltaDeg=Math.round(deltaDeg/15)*15;
+      const rad=deltaDeg*Math.PI/180;
+      const cos=Math.cos(rad), sin=Math.sin(rad);
+      const pivot=_ltMove.startPivotWorld;
+
+      _ltMove.startStates.forEach(st=>{
+        const t=st.ref.transform;
+        const refCenter={x:st.ref.drawing.width/2+st.positionX, y:st.ref.drawing.height/2+st.positionY};
+        const relX=refCenter.x-pivot.x;
+        const relY=refCenter.y-pivot.y;
+        const newCenterX=pivot.x+relX*cos-relY*sin;
+        const newCenterY=pivot.y+relX*sin+relY*cos;
+
+        t.positionX=newCenterX-st.ref.drawing.width/2;
+        t.positionY=newCenterY-st.ref.drawing.height/2;
+        t.rotation=st.rotation+deltaDeg;
+      });
     }
     _ltDrawOverlay();
     requestRepaint();
   }
 
-  // Releases pointer capture (if still held) and clears the session. Used
-  // by both the commit and cancel paths below so a finished session never
-  // lingers and blocks the next pointerdown.
   function _ltReleaseSession(pointerId){
     const c=_ltOverlayCanvas();
     if(c&&c.hasPointerCapture&&c.hasPointerCapture(pointerId)) c.releasePointerCapture(pointerId);
@@ -516,31 +583,32 @@
     if(c) _ltPointerHover({preventDefault:()=>{}});
   }
 
-  // Normal end of a drag (pointerup): the position already written to
-  // ref.transform on every pointermove IS the final value — nothing left
-  // to commit, just close out the session so the next drag can start.
   function _ltEndMove(e){
     if(!_ltMove||e.pointerId!==_ltMove.pointerId) return;
     _ltReleaseSession(e.pointerId);
     _ltDrawOverlay();
   }
 
-  // Abnormal/explicit cancellation (pointercancel, lostpointercapture,
-  // Escape while dragging, or Transform Mode turned off mid-drag):
-  // restores the pre-drag position before closing out the session.
   function _ltCancelMove(e){
     if(!_ltMove) return;
     if(e&&e.pointerId!==undefined&&e.pointerId!==_ltMove.pointerId) return;
-    const t=_ltMove.ref.transform;
-    t.positionX=_ltMove.startState.positionX;
-    t.positionY=_ltMove.startState.positionY;
-    t.rotation=_ltMove.startState.rotation;
-    t.scaleX=_ltMove.startState.scaleX;
-    t.scaleY=_ltMove.startState.scaleY;
-    if(_ltMove.startState.pivot){
-      t.pivot={x:_ltMove.startState.pivot.x, y:_ltMove.startState.pivot.y};
+    _ltMove.startStates.forEach(st=>{
+      const t=st.ref.transform;
+      t.positionX=st.positionX;
+      t.positionY=st.positionY;
+      t.rotation=st.rotation;
+      t.scaleX=st.scaleX;
+      t.scaleY=st.scaleY;
+      if(st.pivot){
+        t.pivot={x:st.pivot.x, y:st.pivot.y};
+      } else {
+        delete t.pivot;
+      }
+    });
+    if(_ltMove.startGroupCustomPivot){
+      _ltGroupCustomPivot={x:_ltMove.startGroupCustomPivot.x, y:_ltMove.startGroupCustomPivot.y};
     } else {
-      delete t.pivot;
+      _ltGroupCustomPivot=null;
     }
     _ltReleaseSession(_ltMove.pointerId);
     _ltDrawOverlay();
@@ -549,17 +617,20 @@
 
   function _ltDblClick(e){
     if(!ltTransformMode) return;
-    const ref=_ltValidTransformRef();
-    if(!ref) return;
+    const targets=_ltValidTransformTargets();
+    if(!targets.length) return;
     if(typeof getPos!=='function'||typeof _tfHitTestGeneric!=='function') return;
     const p=getPos(e);
-    const hit=_ltHitTest(ref, p);
+    const hit=_ltHitTest(p);
     if(hit && hit.mode==='pivot'){
       e.preventDefault();
       e.stopPropagation();
-      const w=ref.drawing.width, h=ref.drawing.height;
-      const t=ref.transform||(ref.transform=_ltDefaultTransform());
-      t.pivot={x:w/2, y:h/2};
+      _ltGroupCustomPivot=null;
+      targets.forEach(ref=>{
+        const w=ref.drawing.width, h=ref.drawing.height;
+        const t=ref.transform||(ref.transform=_ltDefaultTransform(ref));
+        t.pivot={x:w/2, y:h/2};
+      });
       _ltDrawOverlay();
       requestRepaint();
     }
@@ -844,12 +915,13 @@
     // `disabled` attribute + the toolbar's existing .lt-btn:disabled CSS)
     // as Insert/Delete above — no Transform-specific styling.
     const transBtn=document.getElementById('lt-btn-transform');
+    const validTargets=_ltValidTransformTargets();
+    const valid=validTargets.length>0;
     if(transBtn){
-      const valid=!!_ltValidTransformTarget();
       transBtn.disabled=!valid;
       transBtn.setAttribute('aria-disabled',String(!valid));
       // If Transform Mode is already on and its target just became invalid
-      // (deleted, locked, deselected, multi-selected, list emptied, etc.),
+      // (deleted, locked, deselected, list emptied, etc.),
       // turn Transform Mode off: hide the overlay and clear temp state,
       // same as a manual toggle-off. Stored transform values are untouched.
       if(ltTransformMode&&!valid){
@@ -865,11 +937,10 @@
     const flipVBtn=document.getElementById('lt-btn-flip-v');
     const resetBtn=document.getElementById('lt-btn-reset');
     const alignBtn=document.getElementById('lt-btn-align-centers');
-    const validTarget=!!_ltValidTransformTarget();
-    if(flipHBtn){ flipHBtn.disabled=!validTarget; flipHBtn.setAttribute('aria-disabled',String(!validTarget)); }
-    if(flipVBtn){ flipVBtn.disabled=!validTarget; flipVBtn.setAttribute('aria-disabled',String(!validTarget)); }
-    if(resetBtn){ resetBtn.disabled=!validTarget; resetBtn.setAttribute('aria-disabled',String(!validTarget)); }
-    if(alignBtn){ alignBtn.disabled=!validTarget; alignBtn.setAttribute('aria-disabled',String(!validTarget)); }
+    if(flipHBtn){ flipHBtn.disabled=!valid; flipHBtn.setAttribute('aria-disabled',String(!valid)); }
+    if(flipVBtn){ flipVBtn.disabled=!valid; flipVBtn.setAttribute('aria-disabled',String(!valid)); }
+    if(resetBtn){ resetBtn.disabled=!valid; resetBtn.setAttribute('aria-disabled',String(!valid)); }
+    if(alignBtn){ alignBtn.disabled=!valid; alignBtn.setAttribute('aria-disabled',String(!valid)); }
     syncTransformToolbarState();
   }
 
@@ -971,46 +1042,43 @@
 
   // ── Phase 5A: Flip Horizontal / Vertical ───────────────────────────
   function flipHorizontal(){
-    const ref=_ltValidTransformTarget();
-    if(!ref) return;
-    const t=ref.transform||(ref.transform=_ltDefaultTransform(ref));
-    const pivotWorld=_ltPivotWorld(ref);
-    const pivotLocal=_ltPivotLocal(ref);
-    const w=ref.drawing.width, h=ref.drawing.height;
-    const box={x:0, y:0, w, h};
-    const newScaleX = -t.scaleX;
-    if(typeof _tfSetStateForPivot==='function'){
-      _tfSetStateForPivot(pivotWorld, t.rotation, newScaleX, t, pivotLocal, box, t.scaleY);
-    } else {
-      t.scaleX = newScaleX;
-    }
+    const targets=_ltValidTransformTargets();
+    if(!targets.length) return;
+    const pivot=_ltPivotWorld();
+    targets.forEach(ref=>{
+      const t=ref.transform||(ref.transform=_ltDefaultTransform(ref));
+      const refCenter={x:ref.drawing.width/2+t.positionX, y:ref.drawing.height/2+t.positionY};
+      const newCenterX=pivot.x-(refCenter.x-pivot.x);
+      t.positionX=newCenterX-ref.drawing.width/2;
+      t.scaleX=-t.scaleX;
+    });
     if(ltTransformMode) _ltDrawOverlay();
     requestRepaint();
   }
 
   function flipVertical(){
-    const ref=_ltValidTransformTarget();
-    if(!ref) return;
-    const t=ref.transform||(ref.transform=_ltDefaultTransform(ref));
-    const pivotWorld=_ltPivotWorld(ref);
-    const pivotLocal=_ltPivotLocal(ref);
-    const w=ref.drawing.width, h=ref.drawing.height;
-    const box={x:0, y:0, w, h};
-    const newScaleY = -t.scaleY;
-    if(typeof _tfSetStateForPivot==='function'){
-      _tfSetStateForPivot(pivotWorld, t.rotation, t.scaleX, t, pivotLocal, box, newScaleY);
-    } else {
-      t.scaleY = newScaleY;
-    }
+    const targets=_ltValidTransformTargets();
+    if(!targets.length) return;
+    const pivot=_ltPivotWorld();
+    targets.forEach(ref=>{
+      const t=ref.transform||(ref.transform=_ltDefaultTransform(ref));
+      const refCenter={x:ref.drawing.width/2+t.positionX, y:ref.drawing.height/2+t.positionY};
+      const newCenterY=pivot.y-(refCenter.y-pivot.y);
+      t.positionY=newCenterY-ref.drawing.height/2;
+      t.scaleY=-t.scaleY;
+    });
     if(ltTransformMode) _ltDrawOverlay();
     requestRepaint();
   }
 
   // ── Phase 5B: Reset Transform ──────────────────────────────────────
   function resetTransform(){
-    const ref=_ltValidTransformTarget();
-    if(!ref) return;
-    ref.transform=_ltDefaultTransform(ref);
+    const targets=_ltValidTransformTargets();
+    if(!targets.length) return;
+    targets.forEach(ref=>{
+      ref.transform=_ltDefaultTransform(ref);
+    });
+    _ltGroupCustomPivot=null;
     if(ltTransformMode) _ltDrawOverlay();
     requestRepaint();
   }
