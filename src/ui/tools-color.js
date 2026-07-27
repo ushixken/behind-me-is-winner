@@ -493,6 +493,12 @@ function openColorPanel(){
   let mpH=0,mpS=1,mpV=1;
   let mpOpen=false;
   let sqX=SQ-1,sqY=0,hueY=0;
+  // Optional external target the mini picker is currently editing instead of
+  // the global foreground color — set by openMiniPicker(anchorRect,ev,target).
+  // {getColor(), setColor(hex), anchorEl, swatchEl} lets other themed swatches
+  // (e.g. Light Table's tint swatch) reuse this exact picker UI/interaction
+  // without touching the fg color or the native <input type="color">.
+  let mpTarget=null;
 
   function hsvToHex(h,s,v){const[r,g,b]=hsvToRgb(h,s,v);return '#'+[r,g,b].map(x=>x.toString(16).padStart(2,'0')).join('');}
   function hexToHsv(hex){const[r,g,b]=hexToRgb(hex);return rgbToHsv(r,g,b);}
@@ -527,6 +533,11 @@ function openColorPanel(){
 
   function commitColor(){
     const hex=hsvToHex(mpH,mpS,mpV);
+    if(mpTarget&&mpTarget.setColor){
+      mpTarget.setColor(hex);
+      if(mpTarget.swatchEl) mpTarget.swatchEl.style.background=hex;
+      return;
+    }
     color=hex;swatchEl.style.background=hex;
     document.getElementById('stat-color').textContent='Color: '+hex;
     if(typeof refreshColorSwatches==='function') refreshColorSwatches();
@@ -596,22 +607,27 @@ function openColorPanel(){
   function onPendingUp(e){
     if(e.pointerId!==pendingDragPointerId) return;
     pendingDragPointerId=null;
-    csStack.removeEventListener('pointermove',onPendingMove);
-    csStack.removeEventListener('pointerup',onPendingUp);
-    csStack.removeEventListener('pointercancel',onPendingUp);
-    try{ csStack.releasePointerCapture(e.pointerId); }catch(_){}
+    const anchor=(mpTarget&&mpTarget.anchorEl)||csStack;
+    anchor.removeEventListener('pointermove',onPendingMove);
+    anchor.removeEventListener('pointerup',onPendingUp);
+    anchor.removeEventListener('pointercancel',onPendingUp);
+    try{ anchor.releasePointerCapture(e.pointerId); }catch(_){}
   }
 
-  window.openMiniPicker=function(anchorRect,triggerEvent){
+  window.openMiniPicker=function(anchorRect,triggerEvent,target){
+    const activeAnchor=(target&&target.anchorEl)||csStack;
     // Clean up any stale pending drag from a previous gesture before starting fresh.
     if(pendingDragPointerId!=null){
-      csStack.removeEventListener('pointermove',onPendingMove);
-      csStack.removeEventListener('pointerup',onPendingUp);
-      csStack.removeEventListener('pointercancel',onPendingUp);
-      try{ csStack.releasePointerCapture(pendingDragPointerId); }catch(_){}
+      const prevAnchor=(mpTarget&&mpTarget.anchorEl)||csStack;
+      prevAnchor.removeEventListener('pointermove',onPendingMove);
+      prevAnchor.removeEventListener('pointerup',onPendingUp);
+      prevAnchor.removeEventListener('pointercancel',onPendingUp);
+      try{ prevAnchor.releasePointerCapture(pendingDragPointerId); }catch(_){}
       pendingDragPointerId=null;
     }
-    [mpH,mpS,mpV]=hexToHsv(color&&color!=='transparent'?color:'#000000');
+    mpTarget=target||null;
+    const initial=mpTarget&&mpTarget.getColor?mpTarget.getColor():color;
+    [mpH,mpS,mpV]=hexToHsv(initial&&initial!=='transparent'?initial:'#000000');
     syncThumbs();drawSq();drawHue();
     const W=220,H=202;
     let left=anchorRect.left,top=anchorRect.bottom+6;
@@ -621,14 +637,16 @@ function openColorPanel(){
     mp.style.display='block';mpOpen=true;
 
     // If opened from a tap gesture (triggerEvent provided), capture the pointer
-    // on csStack so the user can drag to pick a color immediately. Capture
-    // auto-releases on pointerup — pen-tablet hover after lifting is ignored.
+    // on the anchor element so the user can drag to pick a color immediately.
+    // Capture auto-releases on pointerup — pen-tablet hover after lifting is
+    // ignored. Targeted swatches (e.g. Light Table's tint swatch) use their
+    // own anchor element instead of the foreground color-swatch-stack.
     if(triggerEvent&&triggerEvent.pointerId!=null){
       pendingDragPointerId=triggerEvent.pointerId;
-      csStack.setPointerCapture(triggerEvent.pointerId);
-      csStack.addEventListener('pointermove',onPendingMove);
-      csStack.addEventListener('pointerup',onPendingUp);
-      csStack.addEventListener('pointercancel',onPendingUp);
+      activeAnchor.setPointerCapture(triggerEvent.pointerId);
+      activeAnchor.addEventListener('pointermove',onPendingMove);
+      activeAnchor.addEventListener('pointerup',onPendingUp);
+      activeAnchor.addEventListener('pointercancel',onPendingUp);
     }
   };
 
@@ -639,7 +657,8 @@ function openColorPanel(){
   window.closeMiniPicker=closeMiniPicker;
 
   document.addEventListener('pointerdown',e=>{
-    if(mpOpen&&!mp.contains(e.target)&&!csStack.contains(e.target)) closeMiniPicker();
+    const anchor=(mpTarget&&mpTarget.anchorEl)||csStack;
+    if(mpOpen&&!mp.contains(e.target)&&!anchor.contains(e.target)) closeMiniPicker();
   },{capture:true});
   document.addEventListener('keydown',e=>{
     if(mpOpen&&e.key==='Escape'){closeMiniPicker();e.stopPropagation();}

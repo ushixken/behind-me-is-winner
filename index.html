@@ -408,14 +408,11 @@
           <div id="lt-list" tabindex="0" class="docker-kbd-focus" aria-label="Light Table references" aria-multiselectable="true"></div>
           <div id="lt-empty" class="lt-empty">No references yet. Select a Timeline drawing and press Insert.</div>
           <div id="lt-props" class="lt-props">
-            <div class="lt-props-row">
-              <label for="lt-opacity-slider">Opacity</label>
-              <input type="range" id="lt-opacity-slider" min="0" max="100" value="100" disabled aria-label="Light Table reference opacity"/>
-              <span id="lt-opacity-val">100%</span>
-            </div>
-            <div class="lt-props-row">
-              <label class="lt-tint-check-label"><input type="checkbox" id="lt-tint-toggle" disabled/> Tint</label>
-              <input type="color" id="lt-tint-color" class="onion-color-chip" value="#ff2d2d" disabled aria-label="Light Table reference tint colour"/>
+            <div class="lt-props-row ts-row">
+              <button type="button" id="lt-tint-swatch" class="lt-tint-swatch" disabled title="Tint colour" aria-label="Light Table reference tint colour"></button>
+              <span class="ts-label">Opacity</span>
+              <input type="range" class="ts-range" id="lt-opacity-slider" min="0" max="100" value="50" disabled aria-label="Light Table reference opacity"/>
+              <span class="ts-val ts-value-edit" id="lt-opacity-val" data-value-target="lt-opacity-slider" tabindex="0">50%</span>
             </div>
           </div>
         </div>

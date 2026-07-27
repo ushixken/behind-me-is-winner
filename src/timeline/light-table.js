@@ -28,13 +28,23 @@
 // ever affecting the Light Table preview — never the source drawing:
 //   - locked (blocks opacity/tint edits for that reference; selection,
 //     visibility, delete and reorder remain unaffected)
-//   - opacity (0–100%, default 100%)
-//   - tint (enable + colour), preserving the reference's own alpha shape
+//   - opacity (0–100%, default 50%)
+//   - tint colour, preserving the reference's own alpha shape. Tint is
+//     always active — there is no enable/disable toggle for it.
 // Changing opacity/tint applies to every currently selected UNLOCKED
 // reference at once. Transform, flip, align, persistence and undo/redo
 // remain out of scope. References still live only in memory for this
 // session, and Insert remains the only way to add references (no
 // Timeline drag-and-drop).
+//
+// Phase 3A refines the property UI on top of the above: newly inserted
+// references now default to 50% opacity / black tint, the old Tint
+// enable checkbox is gone (tint is unconditionally on), the tint swatch
+// reuses the app's themed colour swatch + mini colour picker (never a
+// browser-native <input type="color">), and the Opacity control reuses
+// the exact same slider + click-to-edit numeric field used by Brush
+// Size/Flow/Hardness (.ts-range/.ts-value-edit), laid out in one row as
+// [Tint Swatch] Opacity [Slider] [Editable Number].
 // ════════════════════════════════════════════════════════════════
 (function(){
 
@@ -54,11 +64,14 @@
   // references: ordered array of
   // { id, layer, layerId, drawing, drawingId, layerNameSnapshot,
   //   frameIndexSnapshot, hidden,
-  //   locked, opacity, tintEnabled, tintColor }
+  //   locked, opacity, tintColor }
   // List order == render stacking order (top of list renders above).
-  // locked/opacity/tintEnabled/tintColor are Light-Table-only DISPLAY
-  // properties (Phase 3) — they never touch the source drawing/layer.
-  const DEFAULT_TINT_COLOR='#ff2d2d';
+  // locked/opacity/tintColor are Light-Table-only DISPLAY properties
+  // (Phase 3) — they never touch the source drawing/layer. Tint is
+  // always applied (no enable flag); opacity defaults to 50% and tint
+  // defaults to black on insertion (Phase 3A).
+  const DEFAULT_OPACITY=50;
+  const DEFAULT_TINT_COLOR='#000000';
   let references=[];
   let _refCounter=1;
 
@@ -168,8 +181,7 @@
       frameIndexSnapshot:src.ownerFrame,
       hidden:false,
       locked:false,
-      opacity:100,
-      tintEnabled:false,
+      opacity:DEFAULT_OPACITY,
       tintColor:DEFAULT_TINT_COLOR,
     };
     references.push(ref);
@@ -241,13 +253,6 @@
     if(!targets.length) return;
     const clamped=Math.max(0,Math.min(100,Math.round(percent)));
     targets.forEach(r=>{ r.opacity=clamped; });
-    syncPropsPanel();
-    requestRepaint();
-  }
-  function setSelectedTintEnabled(enabled){
-    const targets=_selectedUnlockedRefs();
-    if(!targets.length) return;
-    targets.forEach(r=>{ r.tintEnabled=!!enabled; });
     syncPropsPanel();
     requestRepaint();
   }
@@ -331,11 +336,8 @@
       const opacity=(ref.opacity==null?100:ref.opacity)/100;
       if(opacity<=0) continue;
       targetCtx.globalAlpha=opacity;
-      if(ref.tintEnabled){
-        targetCtx.drawImage(_tintedCanvasOf(ref),0,0);
-      } else {
-        targetCtx.drawImage(ref.drawing,0,0);
-      }
+      // Tint is always applied (Phase 3A removed the enable/disable toggle).
+      targetCtx.drawImage(_tintedCanvasOf(ref),0,0);
     }
     targetCtx.globalAlpha=1;
   }
@@ -473,9 +475,8 @@
   function syncPropsPanel(){
     const opacitySlider=document.getElementById('lt-opacity-slider');
     const opacityVal=document.getElementById('lt-opacity-val');
-    const tintToggle=document.getElementById('lt-tint-toggle');
-    const tintColor=document.getElementById('lt-tint-color');
-    if(!opacitySlider||!opacityVal||!tintToggle||!tintColor) return;
+    const tintSwatch=document.getElementById('lt-tint-swatch');
+    if(!opacitySlider||!opacityVal||!tintSwatch) return;
 
     const selected=references.filter(r=>selectedIds.has(r.id));
     const unlocked=selected.filter(r=>!r.locked);
@@ -483,13 +484,11 @@
 
     if(selected.length===0){
       opacitySlider.disabled=true;
-      opacitySlider.value=100;
-      opacityVal.textContent='100%';
-      tintToggle.disabled=true;
-      tintToggle.checked=false;
-      tintToggle.indeterminate=false;
-      tintColor.disabled=true;
-      tintColor.value=DEFAULT_TINT_COLOR;
+      opacitySlider.value=DEFAULT_OPACITY;
+      opacityVal.textContent=DEFAULT_OPACITY+'%';
+      tintSwatch.disabled=true;
+      tintSwatch.style.background=DEFAULT_TINT_COLOR;
+      tintSwatch.title='Tint colour';
       return;
     }
 
@@ -506,17 +505,11 @@
     opacityVal.textContent=firstOpacity+'%'+(mixedOpacity?' *':'');
     opacitySlider.title=mixedOpacity?'Selection has mixed opacity values':'';
 
-    const firstTintEnabled=basis[0].tintEnabled;
-    const mixedTintEnabled=basis.some(r=>r.tintEnabled!==firstTintEnabled);
-    tintToggle.disabled=!editable;
-    tintToggle.checked=!mixedTintEnabled&&firstTintEnabled;
-    tintToggle.indeterminate=mixedTintEnabled;
-
     const firstColor=basis[0].tintColor||DEFAULT_TINT_COLOR;
     const mixedColor=basis.some(r=>(r.tintColor||DEFAULT_TINT_COLOR)!==firstColor);
-    tintColor.disabled=!editable;
-    tintColor.value=firstColor;
-    tintColor.title=mixedColor?'Selection has mixed tint colours':'';
+    tintSwatch.disabled=!editable;
+    tintSwatch.style.background=firstColor;
+    tintSwatch.title=mixedColor?'Selection has mixed tint colours':'Tint colour';
   }
 
   // ── Focus tracking ───────────────────────────────────────────────
@@ -587,18 +580,26 @@
         setSelectedOpacity(Number(e.target.value));
       });
     }
-    const tintToggle=document.getElementById('lt-tint-toggle');
-    if(tintToggle){
-      tintToggle.addEventListener('change',e=>{
+    // Tint swatch: reuses the app's existing themed mini colour picker
+    // (window.openMiniPicker) rather than a browser-native color input.
+    // The picker is handed a target so it reads/writes the Light Table
+    // selection's tint colour instead of the foreground draw colour.
+    const tintSwatch=document.getElementById('lt-tint-swatch');
+    if(tintSwatch){
+      tintSwatch.addEventListener('pointerdown',e=>{
         _ltFocused=true;
-        setSelectedTintEnabled(e.target.checked);
-      });
-    }
-    const tintColorInput=document.getElementById('lt-tint-color');
-    if(tintColorInput){
-      tintColorInput.addEventListener('input',e=>{
-        _ltFocused=true;
-        setSelectedTintColor(e.target.value);
+        if(tintSwatch.disabled) return;
+        if(typeof window.openMiniPicker!=='function') return;
+        e.stopPropagation();
+        window.openMiniPicker(tintSwatch.getBoundingClientRect(),e,{
+          anchorEl:tintSwatch,
+          swatchEl:tintSwatch,
+          getColor:()=>{
+            const selected=references.filter(r=>selectedIds.has(r.id)&&!r.locked);
+            return (selected[0]&&selected[0].tintColor)||DEFAULT_TINT_COLOR;
+          },
+          setColor:hex=>{ setSelectedTintColor(hex); },
+        });
       });
     }
 
@@ -623,7 +624,6 @@
     toggleVisibility,
     toggleLock,
     setSelectedOpacity,
-    setSelectedTintEnabled,
     setSelectedTintColor,
     selectReference,
     selectAll,

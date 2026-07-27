@@ -2105,9 +2105,7 @@ body.lt-dragging,body.lt-dragging *{cursor:grabbing !important;}
 
 #light-table-panel .lt-props{display:flex;flex-direction:column;gap:5px;padding:6px 7px 2px;border-top:1px solid var(--border);flex-shrink:0;}
 .lt-props-row{display:flex;align-items:center;gap:6px;}
-.lt-props-row label{font-size:10px;color:var(--text2);white-space:nowrap;flex-shrink:0;}
-.lt-props-row input[type="range"]{flex:1;}
-#lt-opacity-val{font-size:10px;color:var(--text2);width:32px;text-align:right;flex-shrink:0;}
-.lt-tint-check-label{display:flex;align-items:center;gap:4px;cursor:pointer;user-select:none;font-size:10px;color:var(--text2);}
+.lt-tint-swatch{width:20px;height:20px;border-radius:5px;border:1.5px solid var(--border2);cursor:pointer;flex-shrink:0;padding:0;background:#000;}
+.lt-tint-swatch:hover:not(:disabled){border-color:var(--accent);}
+.lt-tint-swatch:disabled{opacity:.45;cursor:not-allowed;}
 .lt-props input:disabled{opacity:.45;cursor:not-allowed;}
-#lt-tint-color:disabled{cursor:not-allowed;filter:grayscale(.6);}
