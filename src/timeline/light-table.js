@@ -420,6 +420,7 @@
       startState:Object.assign({},t),
       startCenter:boxCenter,
       startDist:typeof _tfDist==='function'?_tfDist(p.x,p.y,boxCenter.x,boxCenter.y):1,
+      startAngle:Math.atan2(p.y-pivotWorld.y, p.x-pivotWorld.x),
       startPivotWorld:pivotWorld
     };
     if(c) c.style.cursor=(typeof _tfHitCursor==='function')?_tfHitCursor(hit):'default';
@@ -445,6 +446,20 @@
       const targetState={tx:t.positionX, ty:t.positionY, rotation:t.rotation, scale:t.scaleX};
       if(typeof _tfSetStateForPivot==='function'){
         _tfSetStateForPivot(_ltMove.startPivotWorld, _ltMove.startState.rotation, newScale, targetState, pivot, box);
+        t.positionX=targetState.tx;
+        t.positionY=targetState.ty;
+        t.rotation=targetState.rotation;
+        t.scaleX=targetState.scale;
+        t.scaleY=targetState.scale;
+      }
+    } else if(_ltMove.mode==='rotate'){
+      const ang=Math.atan2(p.y-_ltMove.startPivotWorld.y, p.x-_ltMove.startPivotWorld.x);
+      const deltaDeg=(ang-_ltMove.startAngle)*180/Math.PI;
+      let newRot=_ltMove.startState.rotation+deltaDeg;
+      if(e.shiftKey) newRot=Math.round(newRot/15)*15;
+      const targetState={tx:t.positionX, ty:t.positionY, rotation:t.rotation, scale:t.scaleX};
+      if(typeof _tfSetStateForPivot==='function'){
+        _tfSetStateForPivot(_ltMove.startPivotWorld, newRot, _ltMove.startState.scaleX, targetState, pivot, box);
         t.positionX=targetState.tx;
         t.positionY=targetState.ty;
         t.rotation=targetState.rotation;
