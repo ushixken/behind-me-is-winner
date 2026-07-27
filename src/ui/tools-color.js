@@ -5,38 +5,45 @@ const ONION_SKIN_PREF_KEY='animator_onion_skin_enabled';
 const ONION_SKIN_SETTINGS_KEY='animator_onion_skin_settings_v1';
 const ONION_EXPOSURE_COUNT=10;
 const onionSkinSettings={
-  type:'frame',
+  type:'drawings',
   previousColor:'#e24b4a',
   nextColor:'#1d9e75',
   previousEnabled:Array(ONION_EXPOSURE_COUNT).fill(true),
-  nextEnabled:Array(ONION_EXPOSURE_COUNT).fill(true)
+  nextEnabled:Array(ONION_EXPOSURE_COUNT).fill(true),
+  previousOpacity:Array.from({length:ONION_EXPOSURE_COUNT},(_,i)=>(ONION_EXPOSURE_COUNT-i)/ONION_EXPOSURE_COUNT),
+  nextOpacity:Array.from({length:ONION_EXPOSURE_COUNT},(_,i)=>(ONION_EXPOSURE_COUNT-i)/ONION_EXPOSURE_COUNT),
+  currentOpacity:1
 };
 let onionTintCanvas=null,onionTintContext=null;
 
 function _normalizeOnionSettings(saved){
   if(!saved||typeof saved!=='object')return;
-  if(['frame','keyframe','inbetween','breakdown'].includes(saved.type))onionSkinSettings.type=saved.type;
+  const savedType=saved.type==='frame'?'drawings':saved.type;if(['drawings','keyframe','inbetween','breakdown'].includes(savedType))onionSkinSettings.type=savedType;
   if(/^#[0-9a-f]{6}$/i.test(saved.previousColor||''))onionSkinSettings.previousColor=saved.previousColor;
   if(/^#[0-9a-f]{6}$/i.test(saved.nextColor||''))onionSkinSettings.nextColor=saved.nextColor;
   for(const side of ['previousEnabled','nextEnabled']){
     if(Array.isArray(saved[side]))onionSkinSettings[side]=Array.from({length:ONION_EXPOSURE_COUNT},(_,i)=>saved[side][i]!==false);
   }
+  for(const side of ['previousOpacity','nextOpacity']){
+    if(Array.isArray(saved[side]))onionSkinSettings[side]=Array.from({length:ONION_EXPOSURE_COUNT},(_,i)=>Math.max(0,Math.min(1,Number(saved[side][i])||0)));
+  }
+  if(Number.isFinite(saved.currentOpacity))onionSkinSettings.currentOpacity=Math.max(0,Math.min(1,saved.currentOpacity));
+  else if(Number.isFinite(saved.currentUpper)||Number.isFinite(saved.currentLower))onionSkinSettings.currentOpacity=Math.max(0,Math.min(1,((Number(saved.currentUpper)||0)+(Number(saved.currentLower)||0))/2));
 }
 function _saveOnionSettings(){
   try{localStorage.setItem(ONION_SKIN_SETTINGS_KEY,JSON.stringify(onionSkinSettings));}catch(_){}
 }
 function _onionDrawingMatches(li,fi){
-  return onionSkinSettings.type==='frame'||(typeof getDrawingMark==='function'&&getDrawingMark(li,fi)===onionSkinSettings.type);
+  return onionSkinSettings.type==='drawings'||(typeof getDrawingMark==='function'&&getDrawingMark(li,fi)===onionSkinSettings.type);
 }
 function _collectOnionDrawings(li,startFrame,direction){
-  const layer=layers[li],found=[];
-  if(!layer||!layer.frames)return found;
-  for(let frame=startFrame;frame>=1&&frame<=totalFrames&&found.length<ONION_EXPOSURE_COUNT;frame+=direction){
-    if(!layer.frames[frame])continue;
-    if(typeof isDrawingFrameHidden==='function'&&isDrawingFrameHidden(li,frame))continue;
-    if(!_onionDrawingMatches(li,frame))continue;
-    found.push({frameIndex:frame,canvas:layer.frames[frame]});
+  const layer=layers[li],found=[];if(!layer||!layer.frames)return found;
+  if(onionSkinSettings.type==='drawings'&&typeof getHeldKey==='function'){
+    const currentDrawing=getHeldKey(li,curFrame),seen=new Set(currentDrawing?[currentDrawing]:[]);
+    for(let frame=startFrame;frame>=0&&frame<TOTAL&&found.length<ONION_EXPOSURE_COUNT;frame+=direction){const canvas=getHeldKey(li,frame);if(!canvas||seen.has(canvas))continue;seen.add(canvas);found.push({frameIndex:frame,canvas});}
+    return found;
   }
+  for(let frame=startFrame;frame>=0&&frame<TOTAL&&found.length<ONION_EXPOSURE_COUNT;frame+=direction){if(!layer.frames[frame])continue;if(typeof isDrawingFrameHidden==='function'&&isDrawingFrameHidden(li,frame))continue;if(!_onionDrawingMatches(li,frame))continue;found.push({frameIndex:frame,canvas:layer.frames[frame]});}
   return found;
 }
 function _drawTintedOnion(canvas,color,alpha){
@@ -52,50 +59,81 @@ function _drawTintedOnion(canvas,color,alpha){
   octx.globalAlpha=alpha;octx.drawImage(onionTintCanvas,0,0);octx.globalAlpha=1;
 }
 function updateOnion(){
-  octx.clearRect(0,0,CW,CH);
-  const enabledCheckbox=document.getElementById('onion-chk');
-  if(!enabledCheckbox||!enabledCheckbox.checked)return;
-  const activeLayer=layers[curLayer];
-  if(activeLayer&&activeLayer.onionSkin!==true)return;
-  let groupId=activeLayer&&activeLayer.groupId,seenGroups=new Set();
-  while(groupId&&!seenGroups.has(groupId)){seenGroups.add(groupId);const group=groups.find(item=>item.id===groupId);if(!group)break;if(group.onionSkin!==true)return;groupId=group.parentId||null;}
-  const previous=_collectOnionDrawings(curLayer,curFrame-1,-1);
-  const next=_collectOnionDrawings(curLayer,curFrame+1,1);
-  for(let i=Math.min(previous.length,ONION_EXPOSURE_COUNT)-1;i>=0;i--){
-    if(onionSkinSettings.previousEnabled[i])_drawTintedOnion(previous[i].canvas,onionSkinSettings.previousColor,.32*((ONION_EXPOSURE_COUNT-i)/ONION_EXPOSURE_COUNT));
+  const trace=window.DEBUG_TIMELINE_ONION===true,masterEnabled=!!document.getElementById('onion-chk')?.checked;if(trace)console.debug('[TimelineOnion] renderer-start',{masterEnabled,layerCount:layers.length,currentFrame:curFrame});
+  octx.clearRect(0,0,CW,CH);if(trace)console.debug('[TimelineOnion] canvas-cleared',{width:CW,height:CH});if(!masterEnabled){if(trace)console.debug('[TimelineOnion] renderer-stop',{reason:'master-disabled'});return;}
+  let renderedLayers=0,drawCalls=0;
+  for(let layerIndex=0;layerIndex<layers.length;layerIndex++){
+    const layer=layers[layerIndex],groupVisible=!!layer&&(typeof _layerGroupChainVisible!=='function'||_layerGroupChainVisible(layer));if(trace)console.debug('[TimelineOnion] layer-read',{layerIndex,name:layer&&layer.name,onionSkin:layer&&layer.onionSkin,visible:layer&&layer.visible,groupVisible});
+    if(!layer||layer.onionSkin!==true||layer.visible===false||!groupVisible)continue;renderedLayers++;
+    const previous=_collectOnionDrawings(layerIndex,curFrame-1,-1),next=_collectOnionDrawings(layerIndex,curFrame+1,1);
+    for(let i=Math.min(previous.length,ONION_EXPOSURE_COUNT)-1;i>=0;i--){if(previous[i]&&onionSkinSettings.previousEnabled[i]){_drawTintedOnion(previous[i].canvas,onionSkinSettings.previousColor,.32*onionSkinSettings.previousOpacity[i]*onionSkinSettings.currentOpacity);drawCalls++;}}
+    for(let i=Math.min(next.length,ONION_EXPOSURE_COUNT)-1;i>=0;i--){if(next[i]&&onionSkinSettings.nextEnabled[i]){_drawTintedOnion(next[i].canvas,onionSkinSettings.nextColor,.24*onionSkinSettings.nextOpacity[i]*onionSkinSettings.currentOpacity);drawCalls++;}}
   }
-  for(let i=Math.min(next.length,ONION_EXPOSURE_COUNT)-1;i>=0;i--){
-    if(onionSkinSettings.nextEnabled[i])_drawTintedOnion(next[i].canvas,onionSkinSettings.nextColor,.24*((ONION_EXPOSURE_COUNT-i)/ONION_EXPOSURE_COUNT));
-  }
+  if(trace)console.debug('[TimelineOnion] renderer-complete',{renderedLayers,drawCalls});
 }
 function setOnionSkinEnabled(enabled,{persist=true}={}){
   const checkbox=document.getElementById('onion-chk');
   checkbox.checked=!!enabled;
   if(persist){try{localStorage.setItem(ONION_SKIN_PREF_KEY,checkbox.checked?'true':'false');}catch(_){}}
   updateOnion();
+  if(typeof _syncOnionMasterState==='function')_syncOnionMasterState();
+  if(typeof _renderOnionExposureGraph==='function')_renderOnionExposureGraph();
 }
 function toggleOnionSkin(){setOnionSkinEnabled(!document.getElementById('onion-chk').checked);}
+let onionExposurePaint=null;
+function _defaultOnionExposure(distance){return (ONION_EXPOSURE_COUNT-distance+1)/ONION_EXPOSURE_COUNT;}
+function _setOnionExposureEnabled(side,distance,enabled){const key=side==='previous'?'previousEnabled':'nextEnabled';onionSkinSettings[key][distance-1]=!!enabled;_saveOnionSettings();_renderOnionExposureGraph();updateOnion();}
+function _syncOnionMasterState(){
+  const enabled=!!document.getElementById('onion-chk')?.checked,panel=document.getElementById('onion-skin-panel'),graph=document.getElementById('onion-exposure-graph'),previous=document.getElementById('onion-previous-color'),next=document.getElementById('onion-next-color');
+  panel&&panel.classList.toggle('onion-master-off',!enabled);graph&&graph.classList.toggle('is-master-off',!enabled);if(previous)previous.disabled=!enabled;if(next)next.disabled=!enabled;
+}
 function _renderOnionExposureGraph(){
-  const graph=document.getElementById('onion-exposure-graph');if(!graph)return;graph.replaceChildren();
+  const graph=document.getElementById('onion-exposure-graph');if(!graph)return;graph.replaceChildren();const masterEnabled=!!document.getElementById('onion-chk')?.checked;graph.classList.toggle('is-master-off',!masterEnabled);
   const addExposure=(side,distance,label)=>{
-    const button=document.createElement('button');button.type='button';button.className='onion-exposure';
-    const key=side==='previous'?'previousEnabled':'nextEnabled';
-    button.classList.toggle('is-off',!onionSkinSettings[key][distance-1]);
-    button.style.setProperty('--onion-color',side==='previous'?onionSkinSettings.previousColor:onionSkinSettings.nextColor);
-    button.style.setProperty('--onion-level',(8+(ONION_EXPOSURE_COUNT-distance)*4)+'px');
-    button.style.setProperty('--onion-opacity',String(.3+(ONION_EXPOSURE_COUNT-distance)*.065));
-    button.title=(side==='previous'?'Previous ':'Next ')+distance;button.setAttribute('aria-pressed',String(onionSkinSettings[key][distance-1]));
-    const text=document.createElement('span');text.textContent=label;button.appendChild(text);
-    button.addEventListener('click',()=>{onionSkinSettings[key][distance-1]=!onionSkinSettings[key][distance-1];_saveOnionSettings();_renderOnionExposureGraph();updateOnion();});
-    graph.appendChild(button);
+    const current=side==='current',enabledKey=current?null:(side==='previous'?'previousEnabled':'nextEnabled'),opacityKey=current?'currentOpacity':(side==='previous'?'previousOpacity':'nextOpacity'),enabled=current?!!document.getElementById('onion-chk')?.checked:onionSkinSettings[enabledKey][distance-1],opacity=current?onionSkinSettings.currentOpacity:onionSkinSettings[opacityKey][distance-1],color=current?'var(--accent)':(side==='previous'?onionSkinSettings.previousColor:onionSkinSettings.nextColor);
+    const item=document.createElement('div');item.className='onion-exposure-item'+(current?' onion-exposure-current':'');item.dataset.side=side;item.dataset.distance=String(distance);item.style.setProperty('--onion-color',color);item.style.setProperty('--onion-opacity',String(opacity));item.classList.toggle('is-off',!enabled);item.classList.toggle('is-master-disabled',!current&&!masterEnabled);
+    const track=document.createElement('div');track.className='onion-exposure-track';track.tabIndex=0;track.setAttribute('role','slider');track.setAttribute('aria-label',(current?'Frame 0':side+' '+distance)+' opacity');track.setAttribute('aria-valuemin','0');track.setAttribute('aria-valuemax','100');track.setAttribute('aria-valuenow',String(Math.round(opacity*100)));const bar=document.createElement('div');bar.className='onion-exposure-bar';
+    const updateValue=value=>{value=Math.max(0,Math.min(1,value));if(current)onionSkinSettings.currentOpacity=value;else onionSkinSettings[opacityKey][distance-1]=value;item.style.setProperty('--onion-opacity',String(value));track.setAttribute('aria-valuenow',String(Math.round(value*100)));updateOnion();};
+    const updateFromPointer=event=>{const rect=track.getBoundingClientRect();updateValue((rect.bottom-event.clientY)/Math.max(1,rect.height));};
+    track.addEventListener('pointerdown',event=>{if(!current&&!masterEnabled)return;event.preventDefault();event.stopPropagation();track.setPointerCapture(event.pointerId);updateFromPointer(event);});track.addEventListener('pointermove',event=>{if(track.hasPointerCapture(event.pointerId))updateFromPointer(event);});const finish=event=>{if(track.hasPointerCapture(event.pointerId))track.releasePointerCapture(event.pointerId);_saveOnionSettings();};track.addEventListener('pointerup',finish);track.addEventListener('pointercancel',finish);track.addEventListener('keydown',event=>{let value=current?onionSkinSettings.currentOpacity:onionSkinSettings[opacityKey][distance-1];if(event.key==='ArrowUp'||event.key==='ArrowRight')value+=.05;else if(event.key==='ArrowDown'||event.key==='ArrowLeft')value-=.05;else if(event.key==='Home')value=0;else if(event.key==='End')value=1;else return;event.preventDefault();updateValue(value);_saveOnionSettings();});
+    if(!current&&!masterEnabled){track.tabIndex=-1;track.setAttribute('aria-disabled','true');}track.addEventListener('dblclick',event=>{if(!current&&!masterEnabled)return;event.preventDefault();const value=current?1:_defaultOnionExposure(distance);if(current)onionSkinSettings.currentOpacity=value;else onionSkinSettings[opacityKey][distance-1]=value;_saveOnionSettings();_renderOnionExposureGraph();updateOnion();});track.appendChild(bar);item.appendChild(track);
+    const toggle=document.createElement('button');toggle.type='button';toggle.className='onion-exposure-toggle';toggle.textContent=label;toggle.setAttribute('aria-pressed',String(enabled));if(!current&&!masterEnabled)toggle.disabled=true;toggle.title=(enabled?'Disable ':'Enable ')+(current?'onion skin':side+' '+distance);toggle.addEventListener('pointerdown',event=>{event.preventDefault();if(current){setOnionSkinEnabled(!document.getElementById('onion-chk').checked);return;}onionExposurePaint={pointerId:event.pointerId,enabled:!onionSkinSettings[enabledKey][distance-1]};_setOnionExposureEnabled(side,distance,onionExposurePaint.enabled);});if(!current)toggle.addEventListener('pointerenter',event=>{if(onionExposurePaint&&event.buttons&&event.pointerId===onionExposurePaint.pointerId)_setOnionExposureEnabled(side,distance,onionExposurePaint.enabled);});toggle.addEventListener('click',event=>event.preventDefault());item.appendChild(toggle);graph.appendChild(item);
   };
-  for(let distance=10;distance>=1;distance--)addExposure('previous',distance,String(distance));
-  const current=document.createElement('div');current.className='onion-current';current.title='Current drawing';const text=document.createElement('span');text.textContent='Current';current.appendChild(text);graph.appendChild(current);
-  for(let distance=1;distance<=10;distance++)addExposure('next',distance,String(distance));
+  for(let distance=10;distance>=1;distance--)addExposure('previous',distance,String(distance));addExposure('current',0,'0');for(let distance=1;distance<=10;distance++)addExposure('next',distance,String(distance));
+}
+document.addEventListener('pointerup',event=>{if(onionExposurePaint&&event.pointerId===onionExposurePaint.pointerId)onionExposurePaint=null;});document.addEventListener('pointercancel',event=>{if(onionExposurePaint&&event.pointerId===onionExposurePaint.pointerId)onionExposurePaint=null;});
+const ONION_TYPE_LABELS={drawings:'Drawings',keyframe:'Keyframe',inbetween:'Inbetween',breakdown:'Breakdown'};
+let onionTypeMenu=null,onionTypeMenuOpen=false;
+function _setOnionType(value){
+  if(!ONION_TYPE_LABELS[value])return;onionSkinSettings.type=value;_saveOnionSettings();_syncOnionPanel();updateOnion();
+}
+function _buildOnionTypeMenu(){
+  const trigger=document.getElementById('onion-type-select');if(onionTypeMenu||!trigger)return;
+  onionTypeMenu=document.createElement('div');onionTypeMenu.id='onion-type-menu';onionTypeMenu.className='ts-brush-blend-mode-menu onion-type-menu';onionTypeMenu.role='listbox';onionTypeMenu.setAttribute('aria-label','Onion skin drawing type');onionTypeMenu.hidden=true;
+  Object.entries(ONION_TYPE_LABELS).forEach(([value,label])=>{
+    const option=document.createElement('button');option.type='button';option.role='option';option.className='ts-brush-blend-mode-option';option.dataset.mode=value;option.innerHTML='<span></span><span class="ts-brush-blend-mode-check" aria-hidden="true">&#10003;</span>';option.firstElementChild.textContent=label;
+    option.addEventListener('click',()=>{_setOnionType(value);_closeOnionTypeMenu(true);});
+    option.addEventListener('keydown',event=>{const options=[...onionTypeMenu.querySelectorAll('button')],index=options.indexOf(option);if(event.key==='ArrowDown'||event.key==='ArrowUp'){event.preventDefault();options[(index+(event.key==='ArrowDown'?1:-1)+options.length)%options.length].focus();}else if(event.key==='Home'||event.key==='End'){event.preventDefault();options[event.key==='Home'?0:options.length-1].focus();}else if(event.key==='Escape'){event.preventDefault();_closeOnionTypeMenu(true);}else if(event.key==='Tab')_closeOnionTypeMenu(false);});
+    onionTypeMenu.appendChild(option);
+  });
+  document.body.appendChild(onionTypeMenu);trigger.setAttribute('aria-controls',onionTypeMenu.id);
+}
+function _positionOnionTypeMenu(){
+  const trigger=document.getElementById('onion-type-select');if(!onionTypeMenuOpen||!onionTypeMenu||!trigger)return;const rect=trigger.getBoundingClientRect(),gap=6,spaceBelow=innerHeight-rect.bottom-gap,openUp=spaceBelow<onionTypeMenu.offsetHeight&&rect.top>spaceBelow;
+  onionTypeMenu.style.width=Math.max(110,rect.width)+'px';onionTypeMenu.style.left=Math.max(gap,Math.min(rect.left,innerWidth-onionTypeMenu.offsetWidth-gap))+'px';onionTypeMenu.style.top=(openUp?Math.max(gap,rect.top-onionTypeMenu.offsetHeight-4):rect.bottom+4)+'px';
+}
+function _openOnionTypeMenu(){
+  const trigger=document.getElementById('onion-type-select');_buildOnionTypeMenu();if(!onionTypeMenu||!trigger)return;onionTypeMenuOpen=true;onionTypeMenu.hidden=false;trigger.setAttribute('aria-expanded','true');_syncOnionTypeMenu();_positionOnionTypeMenu();const selected=onionTypeMenu.querySelector('.is-selected')||onionTypeMenu.querySelector('button');selected&&selected.focus({preventScroll:true});
+}
+function _closeOnionTypeMenu(focus){
+  const trigger=document.getElementById('onion-type-select');if(!onionTypeMenu)return;onionTypeMenuOpen=false;onionTypeMenu.hidden=true;trigger&&trigger.setAttribute('aria-expanded','false');if(focus&&trigger)trigger.focus({preventScroll:true});
+}
+function _syncOnionTypeMenu(){
+  const value=document.getElementById('onion-type-value');if(value)value.textContent=ONION_TYPE_LABELS[onionSkinSettings.type]||'Drawings';if(onionTypeMenu)onionTypeMenu.querySelectorAll('.ts-brush-blend-mode-option').forEach(option=>{const selected=option.dataset.mode===onionSkinSettings.type;option.classList.toggle('is-selected',selected);option.setAttribute('aria-selected',String(selected));});
 }
 function _syncOnionPanel(){
   const type=document.getElementById('onion-type-select'),previous=document.getElementById('onion-previous-color'),next=document.getElementById('onion-next-color');
-  if(type)type.value=onionSkinSettings.type;if(previous)previous.value=onionSkinSettings.previousColor;if(next)next.value=onionSkinSettings.nextColor;_renderOnionExposureGraph();
+  _syncOnionTypeMenu();if(previous)previous.value=onionSkinSettings.previousColor;if(next)next.value=onionSkinSettings.nextColor;_syncOnionMasterState();_renderOnionExposureGraph();
 }
 window.setOnionSkinEnabled=setOnionSkinEnabled;window.toggleOnionSkin=toggleOnionSkin;window.updateOnionSkinPanel=_syncOnionPanel;
 (function initOnionSkinPreference(){
@@ -104,7 +142,9 @@ window.setOnionSkinEnabled=setOnionSkinEnabled;window.toggleOnionSkin=toggleOnio
   _syncOnionPanel();setOnionSkinEnabled(enabled,{persist:false});
   document.getElementById('onion-chk').addEventListener('change',event=>setOnionSkinEnabled(event.currentTarget.checked));
   const type=document.getElementById('onion-type-select'),previous=document.getElementById('onion-previous-color'),next=document.getElementById('onion-next-color');
-  type&&type.addEventListener('change',event=>{onionSkinSettings.type=event.currentTarget.value;_saveOnionSettings();updateOnion();});
+  if(type){type.addEventListener('click',()=>onionTypeMenuOpen?_closeOnionTypeMenu(false):_openOnionTypeMenu());type.addEventListener('keydown',event=>{if(['ArrowDown','ArrowUp','Enter',' '].includes(event.key)){event.preventDefault();_openOnionTypeMenu();}else if(event.key==='Escape')_closeOnionTypeMenu(false);});}
+  document.addEventListener('pointerdown',event=>{if(onionTypeMenuOpen&&!onionTypeMenu.contains(event.target)&&!type.contains(event.target))_closeOnionTypeMenu(false);},true);
+  document.addEventListener('scroll',()=>{if(onionTypeMenuOpen)_positionOnionTypeMenu();},true);window.addEventListener('resize',()=>{if(onionTypeMenuOpen)_positionOnionTypeMenu();});
   previous&&previous.addEventListener('input',event=>{onionSkinSettings.previousColor=event.currentTarget.value;_saveOnionSettings();_renderOnionExposureGraph();updateOnion();});
   next&&next.addEventListener('input',event=>{onionSkinSettings.nextColor=event.currentTarget.value;_saveOnionSettings();_renderOnionExposureGraph();updateOnion();});
   window.addEventListener('local-storage-preference-removed',event=>{if(event.detail&&event.detail.key===ONION_SKIN_PREF_KEY)setOnionSkinEnabled(false,{persist:false});});

@@ -280,6 +280,7 @@ function clearKeyframeSelection(){
 }
 
 document.addEventListener('pointerdown',event=>{
+  if(event.target.closest('button,input,select,textarea,[data-timeline-control]'))return;
   if(!event.target.closest('.kf-block'))clearKeyframeSelection();
 });
 
@@ -468,7 +469,7 @@ function onKFDragMove(e){
   // Trim any now-empty leading blank frames (user dragged back rightward).
   // Scroll stays locked; trim only adjusts lockedScroll to match canvas shrink.
   if(frameLabelOffset>0) _trimLeadingBlanks();
-  renderTimeline();
+  updateOnion();renderTimeline();
 }
 // After a drag that prepended blank frames (anyShift=true), check whether
 // all keyframes have ended up at or after frameLabelOffset (label ≥ 1).
@@ -934,6 +935,7 @@ function tlZoomToSpan(newSpan, anchorFrame, anchorScreenX){
   }
 
   timelineArea.addEventListener('pointerdown', e => {
+    if(e.target.closest('button,input,select,textarea,[data-timeline-control]'))return;
     if(!spaceHeld || !ctrlHeld) return;
     if(e.pointerType !== 'pen' && e.pointerType !== 'mouse') return;   // no synthetic/touch events for this gesture
     if(e.pointerType === 'mouse' && e.button !== 0) return;
@@ -1128,16 +1130,23 @@ function _beginTimelineSolo(type,target){
 }
 function _toggleTimelineLayerSolo(layer){_beginTimelineSolo('layer',layer);}
 function _toggleTimelineGroupSolo(group){_beginTimelineSolo('group',group);}
+function _timelineOnionTrace(stage,detail){if(window.DEBUG_TIMELINE_ONION===true)console.debug('[TimelineOnion]',stage,detail||{});}
 function _applyTimelineLayerQuickAction(layer,action){
-  const index=layers.indexOf(layer);if(index<0)return;
+  const index=layers.indexOf(layer);_timelineOnionTrace('handler',{action,layerIndex:index,layerName:layer&&layer.name,before:layer&&layer.onionSkin});if(index<0){_timelineOnionTrace('invalid-layer',{action});return;}
   if(action==='lock'){
     if(typeof setLayerLocked==='function')setLayerLocked(index,!layer.locked);else layer.locked=!layer.locked;
     renderLabelCol();renderLayerPanel();
   }else if(action==='onion'){
-    layer.onionSkin=layer.onionSkin!==true;
-    if(layer.onionSkin&&document.getElementById('onion-chk')&&!document.getElementById('onion-chk').checked&&typeof setOnionSkinEnabled==='function')setOnionSkinEnabled(true);
-    else updateOnion();
-    renderLabelCol();
+    const before=layer.onionSkin===true;_timelineOnionTrace('4-handler-start',{layerIndex:index});_timelineOnionTrace('5-layer-lookup-succeeded',{layerIndex:index,layerName:layer.name});_timelineOnionTrace('6-state-read',{layerIndex:index,onionSkin:before});
+    layer.onionSkin=!before;_timelineOnionTrace('7-state-toggled',{layerIndex:index,before,after:layer.onionSkin});
+    try{
+      updateOnion();_timelineOnionTrace('8-renderer-invalidated',{layerIndex:index});
+      renderLabelCol();renderLayerPanel();_timelineOnionTrace('9-timeline-row-refreshed',{layerIndex:index,onionSkin:layer.onionSkin});
+      _timelineOnionTrace('10-viewport-redrawn',{layerIndex:index});
+    }catch(error){
+      console.error('[TimelineOnion] toggle failed',{message:error&&error.message,error,stack:error&&error.stack,layerIndex:index,layerName:layer.name,onionSkin:layer.onionSkin});
+      throw error;
+    }
   }else if(action==='solo'){
     _toggleTimelineLayerSolo(layer);recomposite(curLayer,curFrame);updateOnion();renderLayerPanel();renderTimeline();
   }
@@ -1147,7 +1156,6 @@ function _applyTimelineGroupQuickAction(group,action){
   if(action==='solo')_toggleTimelineGroupSolo(group);
   else if(action==='lock')group.locked=!group.locked;
   else if(action==='onion')group.onionSkin=group.onionSkin===false;
-  if(action==='onion'&&group.onionSkin&&document.getElementById('onion-chk')&&!document.getElementById('onion-chk').checked&&typeof setOnionSkinEnabled==='function')setOnionSkinEnabled(true);
   recomposite(curLayer,curFrame);updateOnion();renderLayerPanel();renderTimeline();
 }
 function _makeTimelineGroupLabel(item){
@@ -1185,10 +1193,11 @@ function renderLabelCol(){
     lbl.style.height=CellH+'px';
     lbl.dataset.idx=i;
     lbl.title='Click to select. Shift+click range, Ctrl+click individual. Drag name to Hide zone to remove from timeline. Drag empty space to rubber-band select.';
-lbl.innerHTML='<span class="tl-lbl-draghandle" draggable="true"><span class="tl-lbl-name">'+l.name+'</span></span><span class="tl-layer-inline-actions"><button type="button" class="tl-layer-quick-btn'+(_timelineSoloState&&_timelineSoloState.type==='layer'&&_timelineSoloState.target===l?' active':'')+'" data-action="solo" title="Solo Mode" aria-label="Solo Mode" aria-pressed="'+String(!!(_timelineSoloState&&_timelineSoloState.type==='layer'&&_timelineSoloState.target===l))+'"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8s2.3-4 6.5-4 6.5 4 6.5 4-2.3 4-6.5 4-6.5-4-6.5-4Z"></path><circle cx="8" cy="8" r="2"></circle></svg></button><button type="button" class="tl-layer-quick-btn'+(l.locked?' active':'')+'" data-action="lock" title="Lock Layer" aria-label="Lock Layer" aria-pressed="'+String(!!l.locked)+'"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="7" width="9" height="6.5" rx="1.5"></rect><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"></path></svg></button><button type="button" class="tl-layer-quick-btn'+(l.onionSkin===true?' active':'')+'" data-action="onion" title="Onion Skin" aria-label="Onion Skin" aria-pressed="'+String(l.onionSkin===true)+'"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.2 10.3A4.2 4.2 0 1 1 10.8 10.3c-.7.5-1 1-1.1 1.7H6.3c-.1-.7-.4-1.2-1.1-1.7Z"></path><path d="M6.4 14h3.2M8 0v1.2M1.7 2.6l.9.8M14.3 2.6l-.9.8"></path></svg></button></span><span class="tl-lbl-rbzone" title="Drag to select multiple layers" aria-label="Rubber-band layer selection area"></span>';
+lbl.innerHTML='<span class="tl-lbl-draghandle" draggable="true"><span class="tl-lbl-name">'+l.name+'</span></span><span class="tl-layer-inline-actions"><button type="button" class="tl-layer-quick-btn'+(_timelineSoloState&&_timelineSoloState.type==='layer'&&_timelineSoloState.target===l?' active':'')+'" data-action="solo" title="Solo Mode" aria-label="Solo Mode" aria-pressed="'+String(!!(_timelineSoloState&&_timelineSoloState.type==='layer'&&_timelineSoloState.target===l))+'"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8s2.3-4 6.5-4 6.5 4 6.5 4-2.3 4-6.5 4-6.5-4-6.5-4Z"></path><circle cx="8" cy="8" r="2"></circle></svg></button><button type="button" class="tl-layer-quick-btn'+(l.locked?' active':'')+'" data-action="lock" title="Lock Layer" aria-label="Lock Layer" aria-pressed="'+String(!!l.locked)+'"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="7" width="9" height="6.5" rx="1.5"></rect><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"></path></svg></button><button type="button" class="tl-layer-quick-btn timeline-onion-toggle'+(l.onionSkin===true?' active':'')+'" data-action="onion" data-timeline-control="onion-skin" title="Onion Skin" aria-label="Onion Skin" aria-pressed="'+String(l.onionSkin===true)+'"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.2 10.3A4.2 4.2 0 1 1 10.8 10.3c-.7.5-1 1-1.1 1.7H6.3c-.1-.7-.4-1.2-1.1-1.7Z"></path><path d="M6.4 14h3.2M8 0v1.2M1.7 2.6l.9.8M14.3 2.6l-.9.8"></path></svg></button></span><span class="tl-lbl-rbzone" title="Drag to select multiple layers" aria-label="Rubber-band layer selection area"></span>';
     const handle=lbl.querySelector('.tl-lbl-draghandle');
 
     lbl.addEventListener('click',ev=>{
+      if(ev.target.closest('button,input,select,textarea,[data-timeline-control]'))return;
       const vi=visibleIndices.indexOf(i); // visual index for shift-range
       if(ev.shiftKey&&tlLabelLastClicked!=null){
         // REPLACE selection with range from anchor to here
@@ -1225,8 +1234,28 @@ lbl.innerHTML='<span class="tl-lbl-draghandle" draggable="true"><span class="tl-
     lbl.querySelector('.tl-lbl-rbzone').addEventListener('pointerdown',event=>{if(event.button!==0)return;event.stopPropagation();startTlLabelRubberBand(event);});
 
     lbl.querySelectorAll('.tl-layer-quick-btn').forEach(actionButton=>{
-      actionButton.addEventListener('pointerdown',event=>{if(event.pointerType==='mouse'&&event.button!==0)return;event.preventDefault();event.stopPropagation();});
-      actionButton.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();_applyTimelineLayerQuickAction(l,actionButton.dataset.action);});
+      if(actionButton.dataset.action==='onion'){
+        const TAP_SLOP=6;let pressed=null;
+        const clearPressed=()=>{actionButton.classList.remove('pressed');pressed=null;};
+        actionButton.addEventListener('pointerdown',event=>{
+          if(event.isPrimary===false||((event.pointerType==='mouse'||event.pointerType==='pen')&&event.button!==0))return;
+          event.preventDefault();event.stopPropagation();pressed={pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,moved:false,node:actionButton};actionButton.classList.add('pressed');actionButton.setPointerCapture(event.pointerId);_timelineOnionTrace('pointerdown',{layerIndex:i,pointerId:event.pointerId,pointerType:event.pointerType,target:event.target.tagName,currentTarget:event.currentTarget.tagName,defaultPrevented:event.defaultPrevented,capture:actionButton.hasPointerCapture(event.pointerId)});
+        });
+        actionButton.addEventListener('pointermove',event=>{if(!pressed||event.pointerId!==pressed.pointerId)return;if(Math.hypot(event.clientX-pressed.startX,event.clientY-pressed.startY)>TAP_SLOP)pressed.moved=true;});
+        actionButton.addEventListener('pointerup',event=>{
+          if(!pressed||event.pointerId!==pressed.pointerId)return;event.preventDefault();event.stopPropagation();const rect=actionButton.getBoundingClientRect(),inside=event.clientX>=rect.left-TAP_SLOP&&event.clientX<=rect.right+TAP_SLOP&&event.clientY>=rect.top-TAP_SLOP&&event.clientY<=rect.bottom+TAP_SLOP&&!pressed.moved,nodeStillConnected=pressed.node===actionButton&&actionButton.isConnected;_timelineOnionTrace('pointerup',{layerIndex:i,pointerId:event.pointerId,inside,moved:pressed.moved,nodeStillConnected,capture:actionButton.hasPointerCapture(event.pointerId)});if(actionButton.hasPointerCapture(event.pointerId))actionButton.releasePointerCapture(event.pointerId);clearPressed();if(inside&&nodeStillConnected)_applyTimelineLayerQuickAction(l,'onion');
+        });
+        actionButton.addEventListener('pointercancel',event=>{event.stopPropagation();_timelineOnionTrace('pointercancel',{layerIndex:i,pointerId:event.pointerId});clearPressed();});
+        actionButton.addEventListener('lostpointercapture',()=>{if(pressed)_timelineOnionTrace('lostpointercapture',{layerIndex:i,pointerId:pressed.pointerId});});
+        actionButton.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();_timelineOnionTrace('click',{layerIndex:i,detail:event.detail});if(event.detail===0)_applyTimelineLayerQuickAction(l,'onion');});
+        return;
+      }
+      let actionPointerId=null;
+      actionButton.addEventListener('pointerdown',event=>{if(event.pointerType==='mouse'&&event.button!==0)return;event.preventDefault();event.stopPropagation();actionPointerId=event.pointerId;actionButton.setPointerCapture(event.pointerId);});
+      actionButton.addEventListener('pointerup',event=>{if(event.pointerId!==actionPointerId)return;event.preventDefault();event.stopPropagation();actionPointerId=null;if(actionButton.hasPointerCapture(event.pointerId))actionButton.releasePointerCapture(event.pointerId);_applyTimelineLayerQuickAction(l,actionButton.dataset.action);});
+      actionButton.addEventListener('pointercancel',event=>{if(event.pointerId===actionPointerId)actionPointerId=null;});
+      actionButton.addEventListener('lostpointercapture',()=>{actionPointerId=null;});
+      actionButton.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();if(event.detail===0)_applyTimelineLayerQuickAction(l,actionButton.dataset.action);});
     });
 
     el.appendChild(lbl);

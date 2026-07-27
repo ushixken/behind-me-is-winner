@@ -818,7 +818,7 @@ const FloatPanels=(function(){
     color:        {minSize:120, maxSize:500, floatResizable:false},
     'keyframe-switcher':{minSize:106,maxSize:500,floatResizable:true,get minHeight(){const p=document.getElementById('keyframe-switcher-panel');return p&&parseFloat(p.style.minHeight)||120;}},
     'keyframe-exposure':{minSize:106,maxSize:500,floatResizable:true,get minHeight(){const p=document.getElementById('keyframe-exposure-panel');return p&&parseFloat(p.style.minHeight)||160;}},
-    'onion-skin':{minSize:250,maxSize:500,floatResizable:true},
+    'onion-skin':{minSize:250,maxSize:500,minHeight:128,floatResizable:true},
     'drawing-marks':{get minSize(){return 40;},maxSize:500,floatResizable:true,get minHeight(){const p=document.getElementById('drawing-marks-panel');if(!p)return 40;const tb=p.querySelector('.fp-titlebar');const body=p.querySelector('.fp-body');const tbH=tb?tb.offsetHeight:0;const cs=body?getComputedStyle(body):null;const pt=cs?(parseFloat(cs.paddingTop)||0):0;const pb=cs?(parseFloat(cs.paddingBottom)||0):0;const kids=body?Array.from(body.children).filter(c=>getComputedStyle(c).display!=='none'):[];const kH=kids.reduce((s,c)=>s+c.offsetHeight,0);return tbH+pt+kH+pb;}},
   };
   function cfgOf(key){ return PANEL_CFG[key]||{minSize:120,maxSize:500}; }
