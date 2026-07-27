@@ -2104,8 +2104,16 @@ body.lt-dragging,body.lt-dragging *{cursor:grabbing !important;}
 .lt-row.lt-locked{border-color:var(--border2);}
 
 #light-table-panel .lt-props{display:flex;flex-direction:column;gap:5px;padding:6px 7px 2px;border-top:1px solid var(--border);flex-shrink:0;}
-.lt-props-row{display:flex;align-items:center;gap:6px;}
-.lt-tint-swatch{width:20px;height:20px;border-radius:5px;border:1.5px solid var(--border2);cursor:pointer;flex-shrink:0;padding:0;background:#000;}
+.lt-props-row{display:flex;align-items:center;gap:6px;width:100%;min-width:0;}
+/* The property row is a fixed-content / flexible-slider layout, matching
+   the rest of the app's responsive control rows: the swatch, label, and
+   numeric field keep their natural width; the slider is the sole flexible
+   element and grows/shrinks to fill whatever horizontal space the docker
+   currently has, instead of staying centered at a fixed width. */
+.lt-props-row .ts-label{width:auto;flex:0 0 auto;}
+.lt-props-row .ts-range{flex:1 1 0%;min-width:0;}
+.lt-props-row .ts-val{flex:0 0 auto;}
+.lt-tint-swatch{width:20px;height:20px;border-radius:5px;border:1.5px solid var(--border2);cursor:pointer;flex:0 0 auto;padding:0;background:#000;}
 .lt-tint-swatch:hover:not(:disabled){border-color:var(--accent);}
 .lt-tint-swatch:disabled{opacity:.45;cursor:not-allowed;}
 .lt-props input:disabled{opacity:.45;cursor:not-allowed;}
