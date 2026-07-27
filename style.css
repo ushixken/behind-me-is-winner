@@ -178,6 +178,7 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;fon
 #composite-canvas,#onion-canvas,#active-canvas,#display-canvas,#transform-canvas{position:absolute;top:0;left:0;display:block;}
 #active-canvas{cursor:default;touch-action:none;-ms-touch-action:none;}
 #composite-canvas,#onion-canvas,#display-canvas{pointer-events:none;}
+#onion-canvas{visibility:hidden;}
 #transform-canvas{pointer-events:none;touch-action:none;-ms-touch-action:none;}
 #transform-canvas.tf-active{pointer-events:auto;cursor:move;}
 /* Sized to the canvas-area VIEWPORT (JS keeps its width/height attrs in

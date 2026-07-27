@@ -346,10 +346,14 @@ function recomposite(li,fi,dirtyRect){
     compCtx.beginPath();
     compCtx.rect(clip.x,clip.y,clip.w,clip.h);
     compCtx.clip();
+    artworkCompositeCtx.save();
+    artworkCompositeCtx.beginPath();
+    artworkCompositeCtx.rect(clip.x,clip.y,clip.w,clip.h);
+    artworkCompositeCtx.clip();
   }
   if(presentationStart)latencyProfiler.measure('recomposite-preparation',preparationStart,{clip,layerCount:layers.length,canvas:{width:CW,height:CH},liveStroke:typeof _inStroke!=='undefined'&&_inStroke});
   const clearStart=presentationStart?performance.now():0;
-  drawBg();
+  artworkCompositeCtx.clearRect(clip?clip.x:0,clip?clip.y:0,clip?clip.w:CW,clip?clip.h:CH);
   if(presentationStart)latencyProfiler.measure('composite-clear-and-background',clearStart,latencyProfiler.canvasDetail(compC,compCtx,{clip}));
   const scratchStart=presentationStart?performance.now():0;
   const scratchAllocated=!_scratchMask||!_scratchTmp||_scratchMask.width!==CW||_scratchMask.height!==CH||_scratchTmp.width!==CW||_scratchTmp.height!==CH;
@@ -410,9 +414,9 @@ function recomposite(li,fi,dirtyRect){
       tc.globalCompositeOperation=eff.stencil==='group-inside'?'destination-in':'destination-out';
       tc.drawImage(maskCanvas,0,0);
       tc.globalCompositeOperation='source-over';
-      compCtx.globalAlpha=layerAlpha;
-      compCtx.drawImage(tmp,0,0);
-      compCtx.globalAlpha=1;
+      artworkCompositeCtx.globalAlpha=layerAlpha;
+      artworkCompositeCtx.drawImage(tmp,0,0);
+      artworkCompositeCtx.globalAlpha=1;
       continue;
     }
     if(eff.stencil!=='none'&&eff.stencil!=='group-inside'&&eff.stencil!=='group-outside'&&eff.clipTo!=null&&layers[eff.clipTo]){
@@ -426,9 +430,9 @@ function recomposite(li,fi,dirtyRect){
         tc.globalCompositeOperation=eff.stencil==='inside'?'destination-in':'destination-out';
         tc.drawImage(maskCanvas,0,0);
         tc.globalCompositeOperation='source-over';
-        compCtx.globalAlpha=layerAlpha;
-        compCtx.drawImage(tmp,0,0);
-        compCtx.globalAlpha=1;
+        artworkCompositeCtx.globalAlpha=layerAlpha;
+        artworkCompositeCtx.drawImage(tmp,0,0);
+        artworkCompositeCtx.globalAlpha=1;
         continue;
       }
     }
@@ -438,18 +442,21 @@ function recomposite(li,fi,dirtyRect){
     // activeC itself stays hidden (opacity 0) the whole time now — its pixels are only
     // ever shown via this draw into compC, never as a separate DOM-topmost overlay.
     if(idx!==li||curIsMaskForCheck||curIsGrpMask){
-      compCtx.globalAlpha=layerAlpha;
-      compCtx.drawImage(srcCanvas,0,0);
-      compCtx.globalAlpha=1;
+      artworkCompositeCtx.globalAlpha=layerAlpha;
+      artworkCompositeCtx.drawImage(srcCanvas,0,0);
+      artworkCompositeCtx.globalAlpha=1;
     } else {
       // Active layer, not a mask — draw into composite at its proper z-position
-      compCtx.globalAlpha=layerAlpha;
-      compCtx.drawImage(srcCanvas,0,0);
-      compCtx.globalAlpha=1;
+      artworkCompositeCtx.globalAlpha=layerAlpha;
+      artworkCompositeCtx.drawImage(srcCanvas,0,0);
+      artworkCompositeCtx.globalAlpha=1;
     }
   }
   if(presentationStart)latencyProfiler.measure('persistent-layers-masks-and-clipping',layersStart,{persistentLayerDraws,livePreviewDraws,maskPasses,layerCount:layers.length,clip});
+  artworkCompositeCtx.globalAlpha=1;
+  drawBg();
   compCtx.globalAlpha=1;
+  compCtx.drawImage(artworkCompositeC,0,0);
   // activeC's content is already baked into compC at the correct stack position
   // by the loop above, so keep it hidden — showing it again here (it's always the
   // topmost DOM canvas) made mask-source layers render in front of whatever was
@@ -457,7 +464,10 @@ function recomposite(li,fi,dirtyRect){
   activeC.style.opacity=0;
 
   const stateRestoreStart=presentationStart?performance.now():0;
-  if(clip) compCtx.restore();
+  if(clip){
+    artworkCompositeCtx.restore();
+    compCtx.restore();
+  }
   if(presentationStart)latencyProfiler.measure('composite-state-restore',stateRestoreStart,{restoredClip:!!clip});
 
   // Final blit to the visible canvas is always full-canvas, unchanged from
@@ -475,6 +485,8 @@ function recomposite(li,fi,dirtyRect){
   displayCtx.filter = _displayBlurPx>0.05 ? `blur(${_displayBlurPx}px)` : 'none';
   const firstDabDisplayBlitStart=firstDabDiagnosticStart?performance.now():0;
   displayCtx.drawImage(compC,0,0);
+  displayCtx.drawImage(onionC,0,0);
+  displayCtx.drawImage(artworkCompositeC,0,0);
   const firstDabDisplayBlitDuration=firstDabDisplayBlitStart?performance.now()-firstDabDisplayBlitStart:0;
   displayCtx.filter='none';
   if(presentationStart)latencyProfiler.point('display-upload-finishes');

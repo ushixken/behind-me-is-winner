@@ -60,7 +60,7 @@ function _drawTintedOnion(canvas,color,alpha){
 }
 function updateOnion(){
   const trace=window.DEBUG_TIMELINE_ONION===true,masterEnabled=!!document.getElementById('onion-chk')?.checked;if(trace)console.debug('[TimelineOnion] renderer-start',{masterEnabled,layerCount:layers.length,currentFrame:curFrame});
-  octx.clearRect(0,0,CW,CH);if(trace)console.debug('[TimelineOnion] canvas-cleared',{width:CW,height:CH});if(!masterEnabled){if(trace)console.debug('[TimelineOnion] renderer-stop',{reason:'master-disabled'});return;}
+  octx.clearRect(0,0,CW,CH);if(trace)console.debug('[TimelineOnion] canvas-cleared',{width:CW,height:CH});if(!masterEnabled){if(trace)console.debug('[TimelineOnion] renderer-stop',{reason:'master-disabled'});if(typeof refreshDisplayComposite==='function')refreshDisplayComposite();return;}
   let renderedLayers=0,drawCalls=0;
   for(let layerIndex=0;layerIndex<layers.length;layerIndex++){
     const layer=layers[layerIndex],groupVisible=!!layer&&(typeof _layerGroupChainVisible!=='function'||_layerGroupChainVisible(layer));if(trace)console.debug('[TimelineOnion] layer-read',{layerIndex,name:layer&&layer.name,onionSkin:layer&&layer.onionSkin,visible:layer&&layer.visible,groupVisible});
@@ -70,6 +70,7 @@ function updateOnion(){
     for(let i=Math.min(next.length,ONION_EXPOSURE_COUNT)-1;i>=0;i--){if(next[i]&&onionSkinSettings.nextEnabled[i]){_drawTintedOnion(next[i].canvas,onionSkinSettings.nextColor,.24*onionSkinSettings.nextOpacity[i]*onionSkinSettings.currentOpacity);drawCalls++;}}
   }
   if(trace)console.debug('[TimelineOnion] renderer-complete',{renderedLayers,drawCalls});
+  if(typeof refreshDisplayComposite==='function')refreshDisplayComposite();
 }
 function setOnionSkinEnabled(enabled,{persist=true}={}){
   const checkbox=document.getElementById('onion-chk');

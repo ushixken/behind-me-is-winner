@@ -237,9 +237,23 @@ const compC=document.getElementById('composite-canvas');
 const displayC=document.getElementById('display-canvas');
 const onionC=document.getElementById('onion-canvas');
 const activeC=document.getElementById('active-canvas');
+// Transparent current-frame composite used only for display ordering. compC
+// remains the exact background + artwork composite used by export and sampling.
+const artworkCompositeC=document.createElement('canvas');
 const compCtx=compC.getContext('2d');
 const displayCtx=displayC.getContext('2d');
 const octx=onionC.getContext('2d');
+const artworkCompositeCtx=artworkCompositeC.getContext('2d');
+function refreshDisplayComposite(){
+  displayCtx.clearRect(0,0,CW,CH);
+  displayCtx.imageSmoothingEnabled=true;
+  displayCtx.imageSmoothingQuality='high';
+  displayCtx.filter=_displayBlurPx>0.05?('blur('+_displayBlurPx+'px)'):'none';
+  displayCtx.drawImage(compC,0,0);
+  displayCtx.drawImage(onionC,0,0);
+  displayCtx.drawImage(artworkCompositeC,0,0);
+  displayCtx.filter='none';
+}
 // NOTE: deliberately NOT using {desynchronized:true} here. activeC is read
 // back synchronously via drawImage in saveActiveToKey() every time you
 // switch layers/frames (panels.js), right around when recomposite() also
@@ -269,7 +283,7 @@ const fpsVal=document.getElementById('fps-val');
 // ════════════════════════════════════════════════════════════════
 function initCanvas(){
   const transformC=document.getElementById('transform-canvas');
-  [compC,displayC,onionC,activeC,transformC].forEach(c=>{c.width=CW;c.height=CH;});
+  [compC,displayC,onionC,activeC,transformC,artworkCompositeC].forEach(c=>{c.width=CW;c.height=CH;});
   wrap.style.width=CW+'px';wrap.style.height=CH+'px';
   drawBg();
   document.getElementById('stat-canvas').textContent=CW+'×'+CH;

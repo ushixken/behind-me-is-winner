@@ -38,18 +38,15 @@ function togglePlay(){
         if(loopRange){next=rangeStart;}
         else{clearInterval(playTimer);playing=false;btn.textContent='▶ Play';btn.classList.remove('playing');loadFrame(curLayer,curFrame);renderTimeline();return;}
       }
-      curFrame=next;drawBg();
+      curFrame=next;artworkCompositeCtx.clearRect(0,0,CW,CH);
       for(let i=0;i<layers.length;i++){
         if(!layers[i].visible)continue;
         if(!_layerGroupChainVisible(layers[i]))continue;
         const k=getHeldKey(i,curFrame);
-        if(k){const a=(layers[i].opacity??1)*_layerGroupChainOpacity(layers[i]);compCtx.globalAlpha=a;compCtx.drawImage(k,0,0);}
+        if(k){const a=(layers[i].opacity??1)*_layerGroupChainOpacity(layers[i]);artworkCompositeCtx.globalAlpha=a;artworkCompositeCtx.drawImage(k,0,0);}
       }
-      compCtx.globalAlpha=1;ctx.clearRect(0,0,CW,CH);
-      displayCtx.clearRect(0,0,CW,CH);
-      displayCtx.filter = _displayBlurPx>0.05 ? `blur(${_displayBlurPx}px)` : 'none';
-      displayCtx.drawImage(compC,0,0);
-      displayCtx.filter='none';
+      artworkCompositeCtx.globalAlpha=1;drawBg();compCtx.globalAlpha=1;compCtx.drawImage(artworkCompositeC,0,0);ctx.clearRect(0,0,CW,CH);
+      updateOnion();
       updatePlayhead();
       document.getElementById('frame-info').textContent=frameLabel(curFrame)+' / '+frameLabel(TOTAL-1);
       renderRulerHighlight();
