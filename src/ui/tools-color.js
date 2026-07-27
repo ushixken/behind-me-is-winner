@@ -363,6 +363,9 @@ function setTool(t,lbl){
     if(window.RepeatableTransformController&&RepeatableTransformController.active)RepeatableTransformController.cancelForToolExit();
     else cancelTransformTool();
   }
+  if(t!=='transform'&&window.LightTable&&typeof window.LightTable.exitTransformMode==='function'){
+    window.LightTable.exitTransformMode();
+  }
   if(tool==='lasso'&&t!=='lasso'&&window.LassoSelection) LassoSelection.cancel();
   if(tool==='lasso-fill'&&t!=='lasso-fill'&&window.LassoFill) LassoFill.cancel();
   tool=t;

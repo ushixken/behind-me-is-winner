@@ -653,10 +653,8 @@
     document.addEventListener('keydown',e=>{
       if(_isTypingTarget(e.target)) return;
       if(e.key==='Escape'){
-        if(_ltMove){
-          e.preventDefault(); e.stopImmediatePropagation(); _ltCancelMove();
-        } else if(ltTransformMode){
-          e.preventDefault(); e.stopImmediatePropagation(); toggleTransformMode();
+        if(ltTransformMode){
+          e.preventDefault(); e.stopImmediatePropagation(); exitTransformMode();
         }
       } else if(e.key==='Enter'){
         if(_ltMove){
@@ -675,6 +673,7 @@
     syncTransformToolbarState();
     _ltSyncOverlayInteractive();
     _ltClearOverlay();
+    requestRepaint();
   }
   function toggleTransformMode(){
     if(!ltTransformMode&&!_ltValidTransformTarget()) return; // native `disabled` already blocks this; belt-and-suspenders
