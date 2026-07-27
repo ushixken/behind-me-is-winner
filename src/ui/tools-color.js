@@ -356,10 +356,13 @@ function setTool(t,lbl){
     console.log({functionName:'setTool',caller:(stack.split('\\n')[2]||'').trim(),previousTool,newTool:t,label:lbl,stack});
     console.groupEnd();
   }
-  // Leaving the Transform tool for anything else commits the current
-  // move/scale/rotate into the layer (baking it into the active canvas)
-  // before the new tool takes over.
-  if(tool==='transform'&&t!=='transform'&&typeof commitTransformTool==='function'){if(window.RepeatableTransformController&&RepeatableTransformController.active)RepeatableTransformController.cancelForToolExit();else commitTransformTool();}
+  // Leaving Transform is equivalent to Escape: discard the unconfirmed
+  // preview and tear down every transform overlay before activating the
+  // next tool. Only Enter / the confirm button may commit a transform.
+  if(tool==='transform'&&t!=='transform'&&typeof cancelTransformTool==='function'){
+    if(window.RepeatableTransformController&&RepeatableTransformController.active)RepeatableTransformController.cancelForToolExit();
+    else cancelTransformTool();
+  }
   if(tool==='lasso'&&t!=='lasso'&&window.LassoSelection) LassoSelection.cancel();
   if(tool==='lasso-fill'&&t!=='lasso-fill'&&window.LassoFill) LassoFill.cancel();
   tool=t;
