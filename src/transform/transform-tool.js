@@ -276,17 +276,29 @@ function _tfPivotWorld(state){ return _tfLocalToWorld(tfPivot,state); }
 // the change) stays exactly where it was — i.e. rotation/scaling orbits the
 // pivot instead of the box center. This is the one bit of math any
 // transform mode needs to make its rotate/scale interactions pivot-aware.
-function _tfSetStateForPivot(pivotWorld,rotation,scale,targetState,pivot,box){
+function _tfSetStateForPivot(pivotWorld,rotation,scale,targetState,pivot,box,scaleY){
   targetState=targetState||tfState;
   pivot=pivot||tfPivot;
   box=box||tfBox;
+  const sy = scaleY!==undefined ? scaleY : (targetState.scaleY!==undefined ? targetState.scaleY : scale);
+  const sx = scale;
   const rad=rotation*Math.PI/180, cosR=Math.cos(rad), sinR=Math.sin(rad);
   const bx=box.x+box.w/2, by=box.y+box.h/2;
-  const dx=(pivot.x-bx)*scale, dy=(pivot.y-by)*scale;
-  targetState.tx=(pivotWorld.x-(dx*cosR-dy*sinR))-bx;
-  targetState.ty=(pivotWorld.y-(dx*sinR+dy*cosR))-by;
-  targetState.rotation=rotation;
-  targetState.scale=scale;
+  const dx=(pivot.x-bx)*sx, dy=(pivot.y-by)*sy;
+  const newTx=(pivotWorld.x-(dx*cosR-dy*sinR))-bx;
+  const newTy=(pivotWorld.y-(dx*sinR+dy*cosR))-by;
+  if(targetState.positionX!==undefined){
+    targetState.positionX=newTx;
+    targetState.positionY=newTy;
+    targetState.rotation=rotation;
+    targetState.scaleX=sx;
+    targetState.scaleY=sy;
+  } else {
+    targetState.tx=newTx;
+    targetState.ty=newTy;
+    targetState.rotation=rotation;
+    targetState.scale=sx;
+  }
 }
 
 // ── Perspective warp math ───────────────────────────────────────

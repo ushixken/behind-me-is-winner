@@ -857,6 +857,11 @@
         _ltSyncOverlayInteractive();
       }
     }
+    const flipHBtn=document.getElementById('lt-btn-flip-h');
+    const flipVBtn=document.getElementById('lt-btn-flip-v');
+    const validTarget=!!_ltValidTransformTarget();
+    if(flipHBtn){ flipHBtn.disabled=!validTarget; flipHBtn.setAttribute('aria-disabled',String(!validTarget)); }
+    if(flipVBtn){ flipVBtn.disabled=!validTarget; flipVBtn.setAttribute('aria-disabled',String(!validTarget)); }
     syncTransformToolbarState();
   }
 
@@ -956,6 +961,43 @@
     });
   }
 
+  // ── Phase 5A: Flip Horizontal / Vertical ───────────────────────────
+  function flipHorizontal(){
+    const ref=_ltValidTransformTarget();
+    if(!ref) return;
+    const t=ref.transform||(ref.transform=_ltDefaultTransform());
+    const pivotWorld=_ltPivotWorld(ref);
+    const pivotLocal=_ltPivotLocal(ref);
+    const w=ref.drawing.width, h=ref.drawing.height;
+    const box={x:0, y:0, w, h};
+    const newScaleX = -t.scaleX;
+    if(typeof _tfSetStateForPivot==='function'){
+      _tfSetStateForPivot(pivotWorld, t.rotation, newScaleX, t, pivotLocal, box, t.scaleY);
+    } else {
+      t.scaleX = newScaleX;
+    }
+    if(ltTransformMode) _ltDrawOverlay();
+    requestRepaint();
+  }
+
+  function flipVertical(){
+    const ref=_ltValidTransformTarget();
+    if(!ref) return;
+    const t=ref.transform||(ref.transform=_ltDefaultTransform());
+    const pivotWorld=_ltPivotWorld(ref);
+    const pivotLocal=_ltPivotLocal(ref);
+    const w=ref.drawing.width, h=ref.drawing.height;
+    const box={x:0, y:0, w, h};
+    const newScaleY = -t.scaleY;
+    if(typeof _tfSetStateForPivot==='function'){
+      _tfSetStateForPivot(pivotWorld, t.rotation, t.scaleX, t, pivotLocal, box, newScaleY);
+    } else {
+      t.scaleY = newScaleY;
+    }
+    if(ltTransformMode) _ltDrawOverlay();
+    requestRepaint();
+  }
+
   function init(){
     const insBtn=document.getElementById('lt-btn-insert');
     const delBtn=document.getElementById('lt-btn-delete');
@@ -964,6 +1006,10 @@
     if(delBtn) delBtn.addEventListener('click',deleteSelected);
     const transBtn=document.getElementById('lt-btn-transform');
     if(transBtn) transBtn.addEventListener('click',toggleTransformMode);
+    const flipHBtn=document.getElementById('lt-btn-flip-h');
+    const flipVBtn=document.getElementById('lt-btn-flip-v');
+    if(flipHBtn) flipHBtn.addEventListener('click',flipHorizontal);
+    if(flipVBtn) flipVBtn.addEventListener('click',flipVertical);
     if(listEl){
       // Clicking empty space inside the list (not a row) clears selection.
       listEl.addEventListener('click',e=>{
@@ -1033,6 +1079,8 @@
     render,
     renderList,
     toggleTransformMode,
+    flipHorizontal,
+    flipVertical,
     get references(){return references.slice();},
     get selectedIds(){return new Set(selectedIds);},
     get transformMode(){return ltTransformMode;},
