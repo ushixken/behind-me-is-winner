@@ -689,6 +689,9 @@ window.addEventListener('active-artwork-changed',event=>{
   tfContextRefreshPending=false;enterTransformTool();if(restorePerspective&&tfActive)_tfSetPerspective(true);
 });
 function enterTransformTool(){
+  if(window.LightTable&&typeof window.LightTable.exitTransformMode==='function'){
+    window.LightTable.exitTransformMode();
+  }
   if(tfActive) return;
   tfContext={layerIndex:curLayer,frameIndex:curFrame,drawingFrameIndex:_tfResolveDrawingFrameIndex(curLayer,curFrame)};
   tfAwaitingRepeat=false;

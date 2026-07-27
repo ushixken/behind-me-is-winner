@@ -668,11 +668,23 @@
     },{capture:true});
   }
 
+  function exitTransformMode(){
+    if(!ltTransformMode) return;
+    _ltCancelMove();
+    ltTransformMode=false;
+    syncTransformToolbarState();
+    _ltSyncOverlayInteractive();
+    _ltClearOverlay();
+  }
   function toggleTransformMode(){
     if(!ltTransformMode&&!_ltValidTransformTarget()) return; // native `disabled` already blocks this; belt-and-suspenders
     ltTransformMode=!ltTransformMode;
     syncTransformToolbarState();
     if(ltTransformMode){
+      if(typeof cancelTransformTool==='function'){
+        if(window.RepeatableTransformController&&RepeatableTransformController.active)RepeatableTransformController.cancelForToolExit();
+        else cancelTransformTool();
+      }
       _ltSyncOverlayInteractive();
       _ltDrawOverlay();
     } else {
@@ -1212,6 +1224,7 @@
     render,
     renderList,
     toggleTransformMode,
+    exitTransformMode,
     flipHorizontal,
     flipVertical,
     resetTransform,
