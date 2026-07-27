@@ -266,14 +266,17 @@ function _tfPivotWorld(state){ return _tfLocalToWorld(tfPivot,state); }
 // the change) stays exactly where it was — i.e. rotation/scaling orbits the
 // pivot instead of the box center. This is the one bit of math any
 // transform mode needs to make its rotate/scale interactions pivot-aware.
-function _tfSetStateForPivot(pivotWorld,rotation,scale){
+function _tfSetStateForPivot(pivotWorld,rotation,scale,targetState,pivot,box){
+  targetState=targetState||tfState;
+  pivot=pivot||tfPivot;
+  box=box||tfBox;
   const rad=rotation*Math.PI/180, cosR=Math.cos(rad), sinR=Math.sin(rad);
-  const bx=tfBox.x+tfBox.w/2, by=tfBox.y+tfBox.h/2;
-  const dx=(tfPivot.x-bx)*scale, dy=(tfPivot.y-by)*scale;
-  tfState.tx=(pivotWorld.x-(dx*cosR-dy*sinR))-bx;
-  tfState.ty=(pivotWorld.y-(dx*sinR+dy*cosR))-by;
-  tfState.rotation=rotation;
-  tfState.scale=scale;
+  const bx=box.x+box.w/2, by=box.y+box.h/2;
+  const dx=(pivot.x-bx)*scale, dy=(pivot.y-by)*scale;
+  targetState.tx=(pivotWorld.x-(dx*cosR-dy*sinR))-bx;
+  targetState.ty=(pivotWorld.y-(dx*sinR+dy*cosR))-by;
+  targetState.rotation=rotation;
+  targetState.scale=scale;
 }
 
 // ── Perspective warp math ───────────────────────────────────────
@@ -985,13 +988,17 @@ const TF_ROTATE_CURSOR='url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.or
 function _tfResizeCursor(angle){const normalized=((angle%180)+180)%180;if(normalized<22.5||normalized>=157.5)return 'ew-resize';if(normalized<67.5)return 'nwse-resize';if(normalized<112.5)return 'ns-resize';return 'nesw-resize';}
 function _tfHitCursor(hit){if(!hit)return 'default';if(hit.mode==='pivot')return 'crosshair';if(hit.mode==='move'||hit.mode==='pmove')return 'move';if(hit.mode==='rotate'||hit.mode==='protate')return TF_ROTATE_CURSOR;if(hit.cursorAngle!=null)return _tfResizeCursor(hit.cursorAngle);return hit.mode==='vp'?'crosshair':hit.mode==='horizon'?'ns-resize':'move';}
 
-function _tfHitTest(p){
-  const hitR=TF_HANDLE_R/zoom+4/zoom,corners=_tfCorners(),rotation=tfState.rotation;
+function _tfHitTestGeneric(p, corners, rotation, scale, boxCenter, boxW, boxH, pivotWorld){
+  const hitR=TF_HANDLE_R/zoom+4/zoom;
   for(let i=0;i<corners.length;i++)if(_tfDist(p.x,p.y,corners[i].x,corners[i].y)<=hitR)return {mode:'scale',cornerIndex:i,cursorAngle:rotation+(i===0||i===2?45:135)};
   const mids=_tfPolyEdgeMidpoints(corners);for(let i=0;i<mids.length;i++)if(_tfDist(p.x,p.y,mids[i].x,mids[i].y)<=hitR)return {mode:'scale',edgeIndex:i,cursorAngle:rotation+(i%2===0?90:0)};
-  if(tfPivot){const pivot=_tfPivotWorld();if(_tfDist(p.x,p.y,pivot.x,pivot.y)<=hitR)return {mode:'pivot'};}
-  const c=_tfCenter(),rad=-rotation*Math.PI/180,cosR=Math.cos(rad),sinR=Math.sin(rad),dx=p.x-c.x,dy=p.y-c.y,lx=dx*cosR-dy*sinR,ly=dx*sinR+dy*cosR,hw=tfBox.w/2*tfState.scale,hh=tfBox.h/2*tfState.scale;
+  if(pivotWorld){if(_tfDist(p.x,p.y,pivotWorld.x,pivotWorld.y)<=hitR)return {mode:'pivot'};}
+  const rad=-rotation*Math.PI/180,cosR=Math.cos(rad),sinR=Math.sin(rad),dx=p.x-boxCenter.x,dy=p.y-boxCenter.y,lx=dx*cosR-dy*sinR,ly=dx*sinR+dy*cosR,hw=boxW/2*scale,hh=boxH/2*scale;
   if(Math.abs(lx)<=hw&&Math.abs(ly)<=hh)return {mode:'move'};return {mode:'rotate'};
+}
+
+function _tfHitTest(p){
+  return _tfHitTestGeneric(p, _tfCorners(), tfState.rotation, tfState.scale, _tfCenter(), tfBox.w, tfBox.h, tfPivot ? _tfPivotWorld() : null);
 }
 
 // Point-in-polygon (ray casting) — used to hit-test the perspective quad's

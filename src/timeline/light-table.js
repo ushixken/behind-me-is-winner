@@ -1,74 +1,3 @@
-// ════════════════════════════════════════════════════════════════
-// LIGHT TABLE — Phase 1 + Phase 2 + Phase 3
-//
-// A manual animation-reference system, deliberately kept separate from
-// Onion Skin, normal layers, normal Transform, and Timeline editing.
-//
-// A "reference" never stores a destructive copy of a drawing. Instead it
-// stores stable pointers back to the source: the actual layer object and
-// the actual keyframe canvas object. Object-identity references are used
-// (via WeakMaps below) so a reference stays correct even if the source
-// drawing's frame index changes — it does NOT depend on the current
-// frame index the way a raw (layerIndex, frameIndex) pair would.
-//
-// Phase 1 implemented insertion, single selection, visibility toggling
-// and rendering. Phase 1 explicitly did NOT implement: transform, tint,
-// opacity, locking, drag-and-drop, multi-selection, alignment, flipping,
-// or project persistence.
-//
-// Phase 2 added, on top of the list (never touching source drawings,
-// Timeline frames, keyframes, layers or exposure lengths):
-//   - multi-selection (Click / Ctrl+Click)
-//   - range selection (Shift+Click)
-//   - batch deletion (Delete button / Delete key)
-//   - keyboard selection controls (Ctrl+A, Escape)
-//   - list reordering by dragging a row directly, matching the Layers panel
-//
-// Phase 3 adds independent per-reference DISPLAY properties, still only
-// ever affecting the Light Table preview — never the source drawing:
-//   - locked (blocks opacity/tint edits for that reference; selection,
-//     visibility, delete and reorder remain unaffected)
-//   - opacity (0–100%, default 50%)
-//   - tint colour, preserving the reference's own alpha shape. Tint is
-//     always active — there is no enable/disable toggle for it.
-// Changing opacity/tint applies to every currently selected UNLOCKED
-// reference at once. Transform, flip, align, persistence and undo/redo
-// remain out of scope. References still live only in memory for this
-// session, and Insert remains the only way to add references (no
-// Timeline drag-and-drop).
-//
-// Phase 3A refines the property UI on top of the above: newly inserted
-// references now default to 50% opacity / black tint, the old Tint
-// enable checkbox is gone (tint is unconditionally on), the tint swatch
-// reuses the app's themed colour swatch + mini colour picker (never a
-// browser-native <input type="color">), and the Opacity control reuses
-// the exact same slider + click-to-edit numeric field used by Brush
-// Size/Flow/Hardness (.ts-range/.ts-value-edit), laid out in one row as
-// [Tint Swatch] Opacity [Slider] [Editable Number].
-//
-// Phase 4B adds MOVE on top of Phase 4A's visual-only overlay: dragging
-// inside the transform bounds updates that reference's own positionX/
-// positionY (Light-Table-only preview data — the source drawing, layer,
-// and timeline are never touched). This runs its own tiny move session,
-// entirely separate from the application's normal Transform tool session
-// (no shared tfActive/tfState/undo).
-//
-// ref.transform is the single source of truth: render() and the overlay
-// (_ltCorners/_ltDrawOverlay) both read positionX/positionY straight off
-// it, and pointermove writes straight into it, so the rendered image and
-// the transform box can never disagree about where the reference is.
-//
-// Session lifecycle: pointerdown begins a session; pointermove updates
-// ref.transform live (moving the image and the overlay together);
-// pointerup ENDS the session and simply leaves the new position in
-// place (nothing further to "confirm" — it's already the live value).
-// pointercancel, lostpointercapture, Escape (while dragging), and
-// turning Transform Mode off mid-drag all CANCEL the session instead:
-// they restore ref.transform to its pre-drag value before clearing the
-// session. Every exit path clears the temporary drag state and releases
-// pointer capture, so a finished session never blocks the next drag.
-// Scale/rotation/flip/reset/align/persistence/undo remain out of scope.
-// ════════════════════════════════════════════════════════════════
 (function(){
 
   // ── Stable identity ──────────────────────────────────────────────
@@ -418,31 +347,61 @@
   // fires first — there is no separate "pending" state after the
   // pointer is released, so the very next pointerdown can always start
   // a fresh session.
-  let _ltMove=null; // {ref, pointerId, startPointer:{x,y}, startX, startY}
+  let _ltMove=null; // {ref, pointerId, mode, startPointer:{x,y}, startState:{positionX,positionY,rotation,scaleX,scaleY}, startCenter:{x,y}, startDist, startPivotWorld}
 
   function _ltSyncOverlayInteractive(){
     const c=_ltOverlayCanvas();
     if(!c) return;
-    c.classList.toggle('lt-transform-active',ltTransformMode&&!!_ltValidTransformRef());
+    const active=ltTransformMode&&!!_ltValidTransformRef();
+    c.classList.toggle('lt-transform-active',active);
+    if(!active) c.style.cursor='default';
+  }
+
+  function _ltBoxCenter(ref){
+    const w=ref.drawing.width,h=ref.drawing.height;
+    const t=ref.transform||_ltDefaultTransform();
+    return {x:w/2+t.positionX, y:h/2+t.positionY};
+  }
+
+  function _ltPivotWorld(ref){
+    const w=ref.drawing.width,h=ref.drawing.height;
+    const t=ref.transform||_ltDefaultTransform();
+    return {x:w/2+t.positionX, y:h/2+t.positionY};
+  }
+
+  function _ltHitTest(ref, p){
+    if(typeof _tfHitTestGeneric!=='function') return null;
+    const w=ref.drawing.width,h=ref.drawing.height;
+    const t=ref.transform||_ltDefaultTransform();
+    const corners=_ltCorners(ref);
+    const boxCenter={x:w/2+t.positionX, y:h/2+t.positionY};
+    // Light Table scaleX and scaleY are isotropic for now, scaleX === scaleY === scale
+    return _tfHitTestGeneric(p, corners, t.rotation, t.scaleX, boxCenter, w, h, null);
   }
 
   function _ltPointerDown(e){
     if(!ltTransformMode||_ltMove) return;
     const ref=_ltValidTransformRef();
     if(!ref) return;
-    if(typeof getPos!=='function'||typeof _tfPointInPoly!=='function') return;
+    if(typeof getPos!=='function'||typeof _tfHitTestGeneric!=='function') return;
     const p=getPos(e);
-    if(!_tfPointInPoly(p,_ltCorners(ref))) return;
+    const hit=_ltHitTest(ref, p);
+    if(!hit) return;
     e.preventDefault();
     const c=_ltOverlayCanvas();
     if(c&&c.setPointerCapture) c.setPointerCapture(e.pointerId);
     const t=ref.transform||(ref.transform=_ltDefaultTransform());
+    const boxCenter=_ltBoxCenter(ref);
+    const pivotWorld=_ltPivotWorld(ref);
     _ltMove={
       ref,
       pointerId:e.pointerId,
+      mode:hit.mode,
       startPointer:p,
-      startX:t.positionX,
-      startY:t.positionY,
+      startState:Object.assign({},t),
+      startCenter:boxCenter,
+      startDist:typeof _tfDist==='function'?_tfDist(p.x,p.y,boxCenter.x,boxCenter.y):1,
+      startPivotWorld:pivotWorld
     };
   }
 
@@ -450,11 +409,43 @@
     if(!_ltMove||e.pointerId!==_ltMove.pointerId) return;
     e.preventDefault();
     const p=getPos(e);
-    const t=_ltMove.ref.transform;
-    t.positionX=_ltMove.startX+(p.x-_ltMove.startPointer.x);
-    t.positionY=_ltMove.startY+(p.y-_ltMove.startPointer.y);
+    const ref=_ltMove.ref;
+    const t=ref.transform;
+    const w=ref.drawing.width, h=ref.drawing.height;
+    const box={x:0, y:0, w, h};
+    const pivot={x:w/2, y:h/2};
+
+    if(_ltMove.mode==='move'){
+      t.positionX=_ltMove.startState.positionX+(p.x-_ltMove.startPointer.x);
+      t.positionY=_ltMove.startState.positionY+(p.y-_ltMove.startPointer.y);
+    } else if(_ltMove.mode==='scale'){
+      const d=typeof _tfDist==='function'?_tfDist(p.x,p.y,_ltMove.startCenter.x,_ltMove.startCenter.y):1;
+      const ratio=_ltMove.startDist>1?d/_ltMove.startDist:1;
+      const newScale=Math.max(0.02,Math.min(50,_ltMove.startState.scaleX*ratio));
+      const targetState={tx:t.positionX, ty:t.positionY, rotation:t.rotation, scale:t.scaleX};
+      if(typeof _tfSetStateForPivot==='function'){
+        _tfSetStateForPivot(_ltMove.startPivotWorld, _ltMove.startState.rotation, newScale, targetState, pivot, box);
+        t.positionX=targetState.tx;
+        t.positionY=targetState.ty;
+        t.rotation=targetState.rotation;
+        t.scaleX=targetState.scale;
+        t.scaleY=targetState.scale;
+      }
+    }
     _ltDrawOverlay();
     requestRepaint();
+  }
+
+  function _ltPointerHover(e){
+    if(!ltTransformMode||_ltMove) return;
+    const c=_ltOverlayCanvas();
+    if(!c) return;
+    const ref=_ltValidTransformRef();
+    if(!ref){ c.style.cursor='default'; return; }
+    const p=getPos(e);
+    const hit=_ltHitTest(ref, p);
+    const cursor=(typeof _tfHitCursor==='function')?_tfHitCursor(hit):'default';
+    c.style.cursor=cursor;
   }
 
   // Releases pointer capture (if still held) and clears the session. Used
@@ -463,6 +454,7 @@
   function _ltReleaseSession(pointerId){
     const c=_ltOverlayCanvas();
     if(c&&c.hasPointerCapture&&c.hasPointerCapture(pointerId)) c.releasePointerCapture(pointerId);
+    if(c) _ltPointerHover({preventDefault:()=>{}});
     _ltMove=null;
   }
 
@@ -482,8 +474,11 @@
     if(!_ltMove) return;
     if(e&&e.pointerId!==undefined&&e.pointerId!==_ltMove.pointerId) return;
     const t=_ltMove.ref.transform;
-    t.positionX=_ltMove.startX;
-    t.positionY=_ltMove.startY;
+    t.positionX=_ltMove.startState.positionX;
+    t.positionY=_ltMove.startState.positionY;
+    t.rotation=_ltMove.startState.rotation;
+    t.scaleX=_ltMove.startState.scaleX;
+    t.scaleY=_ltMove.startState.scaleY;
     _ltReleaseSession(_ltMove.pointerId);
     _ltDrawOverlay();
     requestRepaint();
@@ -494,15 +489,28 @@
     if(!c) return;
     c.addEventListener('pointerdown',_ltPointerDown);
     c.addEventListener('pointermove',_ltPointerMove);
+    c.addEventListener('pointermove',_ltPointerHover);
     c.addEventListener('pointerup',_ltEndMove);
     c.addEventListener('pointercancel',_ltCancelMove);
     c.addEventListener('lostpointercapture',_ltCancelMove);
     // Captured at the document level (mirrors transform-tool.js's own
     // Escape handling) so it fires no matter what currently has focus,
-    // but only ever acts while a Light Table move is actually in progress.
+    // but only ever acts while Light Table Transform Mode is active.
     document.addEventListener('keydown',e=>{
-      if(!_ltMove||_isTypingTarget(e.target)) return;
-      if(e.key==='Escape'){ e.preventDefault(); e.stopImmediatePropagation(); _ltCancelMove(); }
+      if(_isTypingTarget(e.target)) return;
+      if(e.key==='Escape'){
+        if(_ltMove){
+          e.preventDefault(); e.stopImmediatePropagation(); _ltCancelMove();
+        } else if(ltTransformMode){
+          e.preventDefault(); e.stopImmediatePropagation(); toggleTransformMode();
+        }
+      } else if(e.key==='Enter'){
+        if(_ltMove){
+          e.preventDefault(); e.stopImmediatePropagation(); _ltEndMove({pointerId:_ltMove.pointerId});
+        } else if(ltTransformMode){
+          e.preventDefault(); e.stopImmediatePropagation(); toggleTransformMode();
+        }
+      }
     },{capture:true});
   }
 
