@@ -17,6 +17,21 @@ button:focus,.tbtn:focus,input:focus,select:focus,textarea:focus,[tabindex]:focu
 button:focus-visible,.tbtn:focus-visible,input:focus-visible,select:focus-visible,
 textarea:focus-visible,[tabindex]:focus-visible{outline:none;}
 
+/* ── DOCKER KEYBOARD-FOCUS CONTAINERS ────────────────────────
+   Some dockers (e.g. Palette, Light Table) put tabindex="0" on an inner
+   container purely so it can receive keyboard focus and route shortcuts
+   (Ctrl+A, Delete, Escape, etc.) while the user is working inside that
+   docker — not because the container itself is an interactive control.
+   That container shouldn't grow a container-sized focus ring/border,
+   but it still needs to be focusable so the shortcuts keep working.
+   Apply .docker-kbd-focus to any such container (alongside its existing
+   tabindex="0") instead of writing a bespoke per-docker focus override —
+   this is the single shared place to suppress that ring. It intentionally
+   does NOT touch buttons, inputs, dropdowns, or other real controls,
+   which keep their normal focus-visible indicators. */
+.docker-kbd-focus:focus,
+.docker-kbd-focus:focus-visible{outline:none;box-shadow:none;}
+
 /* ── SCROLLBARS ───────────────────────────────────────────────
    Replace the default OS/Chrome scrollbar everywhere with the same
    slim themed scrollbar already used in the timeline panel (#tl-scroll). */
@@ -1521,7 +1536,10 @@ input.size-val-input{
   cursor:pointer;position:relative;transition:background-color .1s,border-color .1s;outline:none;
 }
 .bp-item:hover{background:var(--bg3);}
-.bp-item:focus-visible{outline:1px solid rgba(255,255,255,.72);outline-offset:-3px;}
+/* Individually keyboard-navigable preset item (tabindex+role=button). Its
+   selected state is conveyed entirely by .bp-item.active — keyboard focus
+   must not add any extra outline/box-shadow/border on top of that. */
+.bp-item:focus,.bp-item:focus-visible{outline:none;box-shadow:none;}
 .bp-item.active{background:rgba(127,119,221,.28);border-color:#9189ff;}
 .bp-item.active::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:#9189ff;pointer-events:none;}
 .bp-item.active:hover{background:rgba(127,119,221,.28);}
@@ -1666,7 +1684,6 @@ input.size-val-input{
 #palette-panel .fp-body-wrap{min-height:0;overflow:hidden;}
 #palette-panel .fp-body{padding:0;overflow:hidden;min-height:0;}
 #palette-body{position:relative;--normal-palette-swatch-size:30px;--advanced-palette-swatch-size:30px;display:flex;flex-direction:column;gap:8px;box-sizing:border-box;width:100%;height:100%;min-height:0;padding:var(--dock-scroll-inset);outline:none;}
-#palette-body:focus,#palette-grid:focus{outline:none;}
 .palette-label{font-size:9px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;line-height:1.2;flex-shrink:0;}
 
 .palette-manager{display:flex;align-items:center;gap:5px;flex-shrink:0;}
@@ -2063,9 +2080,6 @@ body.app-scrollbar-dragging{user-select:none!important;-webkit-user-select:none!
 .lt-toolbar .lt-btn:disabled{opacity:.4;cursor:not-allowed;pointer-events:none;}
 .lt-toolbar .lt-btn svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0;}
 #lt-list{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:2px;scrollbar-width:none;-ms-overflow-style:none;outline:none;}
-#lt-list:focus,
-#lt-list:focus-visible,
-#lt-list:focus-within{outline:none;box-shadow:none;border-color:transparent;}
 #lt-list::-webkit-scrollbar{display:none;}
 .lt-row{position:relative;display:flex;align-items:center;gap:6px;padding:5px 7px;border-radius:5px;cursor:default;border:1px solid transparent;transition:background .1s;}
 .lt-row:hover{background:var(--bg3);}
