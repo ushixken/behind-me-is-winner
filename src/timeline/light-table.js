@@ -45,6 +45,29 @@
 // the exact same slider + click-to-edit numeric field used by Brush
 // Size/Flow/Hardness (.ts-range/.ts-value-edit), laid out in one row as
 // [Tint Swatch] Opacity [Slider] [Editable Number].
+//
+// Phase 4B adds MOVE on top of Phase 4A's visual-only overlay: dragging
+// inside the transform bounds updates that reference's own positionX/
+// positionY (Light-Table-only preview data — the source drawing, layer,
+// and timeline are never touched). This runs its own tiny move session,
+// entirely separate from the application's normal Transform tool session
+// (no shared tfActive/tfState/undo).
+//
+// ref.transform is the single source of truth: render() and the overlay
+// (_ltCorners/_ltDrawOverlay) both read positionX/positionY straight off
+// it, and pointermove writes straight into it, so the rendered image and
+// the transform box can never disagree about where the reference is.
+//
+// Session lifecycle: pointerdown begins a session; pointermove updates
+// ref.transform live (moving the image and the overlay together);
+// pointerup ENDS the session and simply leaves the new position in
+// place (nothing further to "confirm" — it's already the live value).
+// pointercancel, lostpointercapture, Escape (while dragging), and
+// turning Transform Mode off mid-drag all CANCEL the session instead:
+// they restore ref.transform to its pre-drag value before clearing the
+// session. Every exit path clears the temporary drag state and releases
+// pointer capture, so a finished session never blocks the next drag.
+// Scale/rotation/flip/reset/align/persistence/undo remain out of scope.
 // ════════════════════════════════════════════════════════════════
 (function(){
 
@@ -385,12 +408,116 @@
     ctx.restore();
   }
 
+  // ── Phase 4B: Move ────────────────────────────────────────────────
+  // A tiny, Light-Table-only "pending move" session — deliberately NOT
+  // the application's normal Transform session (no tfActive/tfState/
+  // undo stack involvement). Only positionX/positionY are ever touched;
+  // rotation/scaleX/scaleY are left exactly as Phase 4A/4C-onward leave
+  // them. A session is active from pointerdown until whichever of
+  // pointerup/pointercancel/lostpointercapture/Escape/Transform-OFF
+  // fires first — there is no separate "pending" state after the
+  // pointer is released, so the very next pointerdown can always start
+  // a fresh session.
+  let _ltMove=null; // {ref, pointerId, startPointer:{x,y}, startX, startY}
+
+  function _ltSyncOverlayInteractive(){
+    const c=_ltOverlayCanvas();
+    if(!c) return;
+    c.classList.toggle('lt-transform-active',ltTransformMode&&!!_ltValidTransformRef());
+  }
+
+  function _ltPointerDown(e){
+    if(!ltTransformMode||_ltMove) return;
+    const ref=_ltValidTransformRef();
+    if(!ref) return;
+    if(typeof getPos!=='function'||typeof _tfPointInPoly!=='function') return;
+    const p=getPos(e);
+    if(!_tfPointInPoly(p,_ltCorners(ref))) return;
+    e.preventDefault();
+    const c=_ltOverlayCanvas();
+    if(c&&c.setPointerCapture) c.setPointerCapture(e.pointerId);
+    const t=ref.transform||(ref.transform=_ltDefaultTransform());
+    _ltMove={
+      ref,
+      pointerId:e.pointerId,
+      startPointer:p,
+      startX:t.positionX,
+      startY:t.positionY,
+    };
+  }
+
+  function _ltPointerMove(e){
+    if(!_ltMove||e.pointerId!==_ltMove.pointerId) return;
+    e.preventDefault();
+    const p=getPos(e);
+    const t=_ltMove.ref.transform;
+    t.positionX=_ltMove.startX+(p.x-_ltMove.startPointer.x);
+    t.positionY=_ltMove.startY+(p.y-_ltMove.startPointer.y);
+    _ltDrawOverlay();
+    requestRepaint();
+  }
+
+  // Releases pointer capture (if still held) and clears the session. Used
+  // by both the commit and cancel paths below so a finished session never
+  // lingers and blocks the next pointerdown.
+  function _ltReleaseSession(pointerId){
+    const c=_ltOverlayCanvas();
+    if(c&&c.hasPointerCapture&&c.hasPointerCapture(pointerId)) c.releasePointerCapture(pointerId);
+    _ltMove=null;
+  }
+
+  // Normal end of a drag (pointerup): the position already written to
+  // ref.transform on every pointermove IS the final value — nothing left
+  // to commit, just close out the session so the next drag can start.
+  function _ltEndMove(e){
+    if(!_ltMove||e.pointerId!==_ltMove.pointerId) return;
+    _ltReleaseSession(e.pointerId);
+    _ltDrawOverlay();
+  }
+
+  // Abnormal/explicit cancellation (pointercancel, lostpointercapture,
+  // Escape while dragging, or Transform Mode turned off mid-drag):
+  // restores the pre-drag position before closing out the session.
+  function _ltCancelMove(e){
+    if(!_ltMove) return;
+    if(e&&e.pointerId!==undefined&&e.pointerId!==_ltMove.pointerId) return;
+    const t=_ltMove.ref.transform;
+    t.positionX=_ltMove.startX;
+    t.positionY=_ltMove.startY;
+    _ltReleaseSession(_ltMove.pointerId);
+    _ltDrawOverlay();
+    requestRepaint();
+  }
+
+  function initMoveInteraction(){
+    const c=_ltOverlayCanvas();
+    if(!c) return;
+    c.addEventListener('pointerdown',_ltPointerDown);
+    c.addEventListener('pointermove',_ltPointerMove);
+    c.addEventListener('pointerup',_ltEndMove);
+    c.addEventListener('pointercancel',_ltCancelMove);
+    c.addEventListener('lostpointercapture',_ltCancelMove);
+    // Captured at the document level (mirrors transform-tool.js's own
+    // Escape handling) so it fires no matter what currently has focus,
+    // but only ever acts while a Light Table move is actually in progress.
+    document.addEventListener('keydown',e=>{
+      if(!_ltMove||_isTypingTarget(e.target)) return;
+      if(e.key==='Escape'){ e.preventDefault(); e.stopImmediatePropagation(); _ltCancelMove(); }
+    },{capture:true});
+  }
+
   function toggleTransformMode(){
     if(!ltTransformMode&&!_ltValidTransformTarget()) return; // native `disabled` already blocks this; belt-and-suspenders
     ltTransformMode=!ltTransformMode;
     syncTransformToolbarState();
-    if(ltTransformMode) _ltDrawOverlay();
-    else _ltClearOverlay(); // hide overlay, clear temp state; stored transform values are untouched
+    if(ltTransformMode){
+      _ltSyncOverlayInteractive();
+      _ltDrawOverlay();
+    } else {
+      _ltCancelMove(); // toggling off mid-drag restores the pre-drag position
+      _ltSyncOverlayInteractive();
+      _ltClearOverlay(); // hide overlay, clear temp state; stored transform values are untouched
+    }
   }
   function syncTransformToolbarState(){
     const btn=document.getElementById('lt-btn-transform');
@@ -482,8 +609,24 @@
       const opacity=(ref.opacity==null?100:ref.opacity)/100;
       if(opacity<=0) continue;
       targetCtx.globalAlpha=opacity;
+      // Phase 4B: draw at the reference's own transform instead of a fixed
+      // (0,0) origin. This MUST use the exact same center/rotate/scale
+      // model as _ltCorners() below — that function is what the transform
+      // overlay and hit-testing are built from, and the whole point of a
+      // single source of truth is that the rendered pixels and the overlay
+      // box always agree on where the reference is. Rotation/scale are
+      // applied here too (not just position) so this stays correct once
+      // 4C wires those in — right now t.rotation/scaleX/scaleY are just
+      // their Phase-4A defaults (0 / 1 / 1) so this is a no-op for them.
+      const w=ref.drawing.width,h=ref.drawing.height;
+      const t=ref.transform||_ltDefaultTransform();
+      targetCtx.save();
+      targetCtx.translate(w/2+t.positionX,h/2+t.positionY);
+      targetCtx.rotate(t.rotation*Math.PI/180);
+      targetCtx.scale(t.scaleX,t.scaleY);
       // Tint is always applied (Phase 3A removed the enable/disable toggle).
-      targetCtx.drawImage(_tintedCanvasOf(ref),0,0);
+      targetCtx.drawImage(_tintedCanvasOf(ref),-w/2,-h/2);
+      targetCtx.restore();
     }
     targetCtx.globalAlpha=1;
   }
@@ -620,7 +763,11 @@
       // same as a manual toggle-off. Stored transform values are untouched.
       if(ltTransformMode&&!valid){
         ltTransformMode=false;
+        _ltCancelMove();
+        _ltSyncOverlayInteractive();
         _ltClearOverlay();
+      } else {
+        _ltSyncOverlayInteractive();
       }
     }
     syncTransformToolbarState();
@@ -774,6 +921,7 @@
     window.addEventListener('active-artwork-changed',()=>{renderList();});
     initFocusTracking();
     initKeyboard();
+    initMoveInteraction();
     renderList();
   }
 
