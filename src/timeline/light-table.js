@@ -379,6 +379,23 @@
     return _tfHitTestGeneric(p, corners, t.rotation, t.scaleX, boxCenter, w, h, null);
   }
 
+  function _ltPointerHover(e){
+    const c=_ltOverlayCanvas();
+    if(!c) return;
+    if(!ltTransformMode){ c.style.cursor='default'; return; }
+    if(_ltMove){
+      const cursor=(typeof _tfHitCursor==='function')?_tfHitCursor({mode:_ltMove.mode, cursorAngle:_ltMove.cursorAngle}):'move';
+      c.style.cursor=cursor;
+      return;
+    }
+    const ref=_ltValidTransformRef();
+    if(!ref){ c.style.cursor='default'; return; }
+    const p=getPos(e);
+    const hit=_ltHitTest(ref, p);
+    const cursor=(typeof _tfHitCursor==='function')?_tfHitCursor(hit):'default';
+    c.style.cursor=cursor;
+  }
+
   function _ltPointerDown(e){
     if(!ltTransformMode||_ltMove) return;
     const ref=_ltValidTransformRef();
@@ -397,12 +414,14 @@
       ref,
       pointerId:e.pointerId,
       mode:hit.mode,
+      cursorAngle:hit.cursorAngle,
       startPointer:p,
       startState:Object.assign({},t),
       startCenter:boxCenter,
       startDist:typeof _tfDist==='function'?_tfDist(p.x,p.y,boxCenter.x,boxCenter.y):1,
       startPivotWorld:pivotWorld
     };
+    if(c) c.style.cursor=(typeof _tfHitCursor==='function')?_tfHitCursor(hit):'default';
   }
 
   function _ltPointerMove(e){
@@ -436,26 +455,14 @@
     requestRepaint();
   }
 
-  function _ltPointerHover(e){
-    if(!ltTransformMode||_ltMove) return;
-    const c=_ltOverlayCanvas();
-    if(!c) return;
-    const ref=_ltValidTransformRef();
-    if(!ref){ c.style.cursor='default'; return; }
-    const p=getPos(e);
-    const hit=_ltHitTest(ref, p);
-    const cursor=(typeof _tfHitCursor==='function')?_tfHitCursor(hit):'default';
-    c.style.cursor=cursor;
-  }
-
   // Releases pointer capture (if still held) and clears the session. Used
   // by both the commit and cancel paths below so a finished session never
   // lingers and blocks the next pointerdown.
   function _ltReleaseSession(pointerId){
     const c=_ltOverlayCanvas();
     if(c&&c.hasPointerCapture&&c.hasPointerCapture(pointerId)) c.releasePointerCapture(pointerId);
-    if(c) _ltPointerHover({preventDefault:()=>{}});
     _ltMove=null;
+    if(c) _ltPointerHover({preventDefault:()=>{}});
   }
 
   // Normal end of a drag (pointerup): the position already written to
@@ -490,6 +497,7 @@
     c.addEventListener('pointerdown',_ltPointerDown);
     c.addEventListener('pointermove',_ltPointerMove);
     c.addEventListener('pointermove',_ltPointerHover);
+    c.addEventListener('pointerleave',e=>{ if(!_ltMove) c.style.cursor='default'; });
     c.addEventListener('pointerup',_ltEndMove);
     c.addEventListener('pointercancel',_ltCancelMove);
     c.addEventListener('lostpointercapture',_ltCancelMove);
