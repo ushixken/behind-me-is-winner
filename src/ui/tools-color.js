@@ -282,6 +282,7 @@ function undo(){
   if(window.RepeatableTransformController&&RepeatableTransformController.active)RepeatableTransformController.cancelForToolExit();
   if(!undoStack.length)return;
   const action=undoStack.pop();
+  if(action.type==='camera-state'&&window.CameraSystem){CameraSystem.restore(action.before);redoStack.push(action);return;}
   if(action.type==='canvas-resize'&&window.CanvasResizeTool){if(CanvasResizeTool.restoreHistory(action.before))redoStack.push(action);return;}
   if(action.type==='layer-hierarchy'){if(_restoreLayerHierarchy(action.before))redoStack.push(action);return;}
   if(action.type==='drawing-frame-hidden'){if(_restoreDrawingFrameHidden(action,action.before))redoStack.push(action);return;}
@@ -310,6 +311,7 @@ function redo(){
   if(window.RepeatableTransformController&&RepeatableTransformController.active)RepeatableTransformController.cancelForToolExit();
   if(!redoStack.length)return;
   const action=redoStack.pop();
+  if(action.type==='camera-state'&&window.CameraSystem){CameraSystem.restore(action.after);undoStack.push(action);return;}
   if(action.type==='canvas-resize'&&window.CanvasResizeTool){if(CanvasResizeTool.restoreHistory(action.after))undoStack.push(action);return;}
   if(action.type==='layer-hierarchy'){if(_restoreLayerHierarchy(action.after))undoStack.push(action);return;}
   if(action.type==='drawing-frame-hidden'){if(_restoreDrawingFrameHidden(action,action.after))undoStack.push(action);return;}
@@ -362,6 +364,7 @@ function setTool(t,lbl){
   // preview and tear down every transform overlay before activating the
   // next tool. Only Enter / the confirm button may commit a transform.
   if(tool==='resize-canvas'&&t!=='resize-canvas'&&window.CanvasResizeTool&&CanvasResizeTool.active)CanvasResizeTool.cancel();
+  if(tool==='camera'&&t!=='camera'&&window.CameraSystem)CameraSystem.exit();
   if(tool==='transform'&&t!=='transform'&&typeof cancelTransformTool==='function'){
     if(window.RepeatableTransformController&&RepeatableTransformController.active)RepeatableTransformController.cancelForToolExit();
     else cancelTransformTool();
@@ -382,6 +385,7 @@ function setTool(t,lbl){
   if(typeof refreshSizeUI==='function') refreshSizeUI(); else szValEl.textContent=s;
   if(typeof refreshColorSwatches==='function') refreshColorSwatches();
   if(t==='resize-canvas'&&window.CanvasResizeTool)CanvasResizeTool.enter();
+  if(t==='camera'&&window.CameraSystem)CameraSystem.enter();
   if(t==='transform'&&typeof enterTransformTool==='function'){
     enterTransformTool();
     if(window.RepeatableTransformController&&RepeatableTransformController.enabled&&!RepeatableTransformController.active)RepeatableTransformController.start();
@@ -411,6 +415,7 @@ document.getElementById('tp-btn-eyedropper').onclick=()=>setTool('eyedropper','E
 document.getElementById('tp-btn-selection').onclick=()=>setTool('lasso','Lasso Select');
 document.getElementById('tp-btn-transform').onclick=()=>setTool('transform','Transform');
 document.getElementById('tp-btn-canvas-resize').onclick=()=>setTool('resize-canvas','Resize Canvas');
+document.getElementById('tp-btn-camera').onclick=()=>setTool('camera','Camera');
 
 // ════════════════════════════════════════════════════════════════
 // FOREGROUND COLOR SWATCH (Tools panel)

@@ -556,6 +556,7 @@ document.getElementById('modal-new-project-ok').onclick=()=>{
   fpsVal.textContent=PROJECT_DEFAULTS.fps;
   updateFpsSliderColor();
   groups=[];
+  if(window.CameraSystem)CameraSystem.reset();
   layers=[];
   layers.push(makeBlankLayer('bitmap'));
   curLayer=0;curFrame=0;
