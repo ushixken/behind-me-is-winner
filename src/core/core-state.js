@@ -400,7 +400,10 @@ function fitCanvasToView(){
   // made the default zoom smaller than the real available space and left a
   // visible gap beside the limiting edge.
   const fitZoom=Math.min(clearW/CW,clearH/CH);
-  zoom=Math.max(zoomMin,Math.min(zoomMax,fitZoom>0?fitZoom:1));
+  // Keep breathing room around standard-size canvases so boundary handles
+  // remain visible and reachable. Small workspaces may still fit below 50%.
+  const defaultFitZoom=Math.min(0.5,fitZoom>0?fitZoom:1);
+  zoom=Math.max(zoomMin,Math.min(zoomMax,defaultFitZoom));
   centerCanvas();showZoom();
 }
 
