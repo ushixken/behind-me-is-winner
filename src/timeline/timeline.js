@@ -39,7 +39,7 @@ function togglePlay(){
         else{clearInterval(playTimer);playing=false;btn.textContent='▶ Play';btn.classList.remove('playing');loadFrame(curLayer,curFrame);renderTimeline();return;}
       }
       if(typeof window.prepareTransformForArtworkChange==='function')window.prepareTransformForArtworkChange(curLayer,next);
-      curFrame=next;artworkCompositeCtx.clearRect(0,0,CW,CH);
+      curFrame=next;if(window.CameraSystem&&typeof CameraSystem.evaluateAt==='function')CameraSystem.evaluateAt(curFrame);artworkCompositeCtx.clearRect(0,0,CW,CH);
       for(let i=0;i<layers.length;i++){
         if(!layers[i].visible)continue;
         if(!_layerGroupChainVisible(layers[i]))continue;
@@ -254,7 +254,7 @@ function refreshTimelineSelection(){
     if(block)block.classList.add('selected');
   });
   document.querySelectorAll('.tl-layer-lbl.active').forEach(label=>label.classList.remove('active'));
-  const activeLabel=activeGroupId?document.querySelector('.tl-group-lbl[data-gid="'+CSS.escape(activeGroupId)+'"]'):document.querySelector('.tl-layer-lbl[data-idx="'+curLayer+'"]');
+  const activeLabel=cameraTrackSelected?document.querySelector('.tl-camera-lbl'):activeGroupId?document.querySelector('.tl-group-lbl[data-gid="'+CSS.escape(activeGroupId)+'"]'):document.querySelector('.tl-layer-lbl[data-idx="'+curLayer+'"]');
   if(activeLabel)activeLabel.classList.add('active');
   updatePlayhead();renderRulerHighlight();updateStatus();
   document.getElementById('frame-info').textContent=frameLabel(curFrame)+' / '+frameLabel(TOTAL-1);
@@ -271,6 +271,7 @@ function _rowSpanLayers(anchorLayerIndex,targetLayerIndex){
 }
 
 function clearKeyframeSelection(){
+  selectedCameraKeys.clear();cameraKeySelectionAnchor=null;cameraTrackSelected=false;
   if(!selectedKFs.size&&!kfSelectionAnchor)return;
   selectedKFs.clear();
   kfSelectionAnchor=null;
@@ -280,7 +281,7 @@ function clearKeyframeSelection(){
 
 document.addEventListener('pointerdown',event=>{
   if(event.target.closest('button,input,select,textarea,[data-timeline-control]'))return;
-  if(!event.target.closest('.kf-block'))clearKeyframeSelection();
+  if(!event.target.closest('.kf-block,.camera-kf'))clearKeyframeSelection();
 });
 
 function selectKeyframeRange(anchor,target){
@@ -1150,7 +1151,7 @@ function _applyTimelineLayerQuickAction(layer,action){
     _toggleTimelineLayerSolo(layer);recomposite(curLayer,curFrame);updateOnion();renderLayerPanel();renderTimeline();
   }
 }
-window.addEventListener('project-loaded',()=>{_timelineSoloState=null;timelineCollapsedGroupIds.clear();});
+window.addEventListener('project-loaded',()=>{_timelineSoloState=null;timelineCollapsedGroupIds.clear();selectedCameraKeys.clear();cameraKeySelectionAnchor=null;cameraTrackSelected=false;});
 function _applyTimelineGroupQuickAction(group,action){
   if(action==='solo')_toggleTimelineGroupSolo(group);
   else if(action==='lock')group.locked=!group.locked;
@@ -1161,7 +1162,7 @@ function _makeTimelineGroupLabel(item){
   const group=_groupById(item.id);if(!group)return null;
   if(group.visible==null)group.visible=true;if(group.locked==null)group.locked=false;if(group.onionSkin==null)group.onionSkin=false;if(group.onTimeline==null)group.onTimeline=true;
   const row=document.createElement('div');
-  row.className='tl-layer-lbl tl-group-lbl'+(activeGroupId===group.id?' active':'');
+  row.className='tl-layer-lbl tl-group-lbl'+(!cameraTrackSelected&&activeGroupId===group.id?' active':'');
   if(group.color&&group.color!=='transparent'){const hex=group.color,r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);row.style.background=`rgba(${r},${g},${b},0.22)`;row.style.boxShadow=`inset 3px 0 0 ${group.color}`;}
   row.style.height=CellH+'px';row.style.setProperty('--tl-tree-depth',item.depth||0);row.dataset.gid=group.id;
   const hasChildren=layers.some(layer=>layer.groupId===group.id)||groups.some(child=>child.parentId===group.id);
@@ -1179,8 +1180,36 @@ function _makeTimelineGroupLabel(item){
   row.onclick=()=>{selectedTlLabelIndices.clear();selectedLayerIndices.clear();selectedGroupIds.clear();selectedGroupIds.add(group.id);activeGroupId=group.id;renderLayerPanel();renderTimeline();};
   return row;
 }
+let selectedCameraKeys=new Set();
+let cameraKeySelectionAnchor=null;
+let cameraTrackSelected=false;
+let cameraKeyClipboard=null;
+let cameraKeyDrag=null;
+function _cameraTrackKeys(){return window.CameraSystem&&CameraSystem.value.track?CameraSystem.value.track.keys:[];}
+function _cameraKeyAt(frame){return _cameraTrackKeys().find(key=>key.frame===frame)||null;}
+function _selectCameraKey(frame,event){
+  const keys=_cameraTrackKeys().map(key=>key.frame).sort((a,b)=>a-b);frame=Number(frame);cameraTrackSelected=true;selectedKFs.clear();kfSelectionAnchor=null;selectedRowLayers.clear();
+  if(event&&event.shiftKey&&cameraKeySelectionAnchor!=null){const lo=Math.min(cameraKeySelectionAnchor,frame),hi=Math.max(cameraKeySelectionAnchor,frame);selectedCameraKeys=new Set(keys.filter(value=>value>=lo&&value<=hi));}
+  else if(event&&(event.ctrlKey||event.metaKey)){if(selectedCameraKeys.has(frame))selectedCameraKeys.delete(frame);else selectedCameraKeys.add(frame);cameraKeySelectionAnchor=frame;}
+  else{selectedCameraKeys=new Set([frame]);cameraKeySelectionAnchor=frame;}
+}
+function _addOrUpdateCameraKey(){if(!window.CameraSystem)return;CameraSystem.addOrUpdateKey(curFrame);selectedCameraKeys=new Set([curFrame]);cameraKeySelectionAnchor=curFrame;cameraTrackSelected=true;renderTimeline();}
+function _deleteSelectedCameraKeys(){if(!window.CameraSystem||!selectedCameraKeys.size)return false;CameraSystem.deleteKeys(Array.from(selectedCameraKeys));selectedCameraKeys.clear();cameraKeySelectionAnchor=null;renderTimeline();return true;}
+function _copySelectedCameraKeys(){const keys=_cameraTrackKeys().filter(key=>selectedCameraKeys.has(key.frame));if(!keys.length)return false;const first=Math.min(...keys.map(key=>key.frame));cameraKeyClipboard=keys.map(key=>({offset:key.frame-first,x:key.x,y:key.y,zoom:key.zoom,rotation:key.rotation}));return true;}
+function _pasteCameraKeys(frame){if(!window.CameraSystem||!cameraKeyClipboard||!cameraKeyClipboard.length)return false;const before=CameraSystem.trackSnapshot(),targets=new Set(cameraKeyClipboard.map(key=>Math.min(TOTAL-1,Math.max(0,frame+key.offset)))),kept=_cameraTrackKeys().filter(key=>!targets.has(key.frame)),added=cameraKeyClipboard.map(key=>({frame:Math.min(TOTAL-1,Math.max(0,frame+key.offset)),x:key.x,y:key.y,zoom:key.zoom,rotation:key.rotation}));CameraSystem.replaceTrackKeys(kept.concat(added),'paste',before);selectedCameraKeys=new Set(added.map(key=>key.frame));cameraTrackSelected=true;return true;}
+function _duplicateCameraKeys(){if(!_copySelectedCameraKeys())return false;const frames=Array.from(selectedCameraKeys),target=Math.min(TOTAL-1,Math.min(...frames)+1),targets=cameraKeyClipboard.map(key=>target+key.offset);if(targets.some(frame=>frame>=TOTAL||_cameraKeyAt(frame)))return false;return _pasteCameraKeys(target);}
+function _cameraShortcut(action){if(!cameraTrackSelected&&!selectedCameraKeys.size)return false;if(action==='copy')return _copySelectedCameraKeys();if(action==='cut'){if(!_copySelectedCameraKeys())return false;return _deleteSelectedCameraKeys();}if(action==='paste')return _pasteCameraKeys(curFrame);if(action==='duplicate')return _duplicateCameraKeys();if(action==='delete')return _deleteSelectedCameraKeys();return false;}
+function _startCameraKeyDrag(frame,event){
+  event.preventDefault();event.stopPropagation();const moving=selectedCameraKeys.has(frame)?Array.from(selectedCameraKeys):[frame],before=CameraSystem.trackSnapshot(),selected=new Set(moving),items=_cameraTrackKeys().filter(key=>selected.has(key.frame)).map(key=>Object.assign({},key)),occupied=new Set(_cameraTrackKeys().filter(key=>!selected.has(key.frame)).map(key=>key.frame));cameraKeyDrag={origin:frame,items,occupied,before,delta:0};
+  const move=ev=>{if(!cameraKeyDrag)return;const raw=rawFrameFromX(ev.clientX),min=Math.min(...cameraKeyDrag.items.map(key=>key.frame)),max=Math.max(...cameraKeyDrag.items.map(key=>key.frame)),delta=Math.max(-min,Math.min(TOTAL-1-max,raw-cameraKeyDrag.origin));if(delta===cameraKeyDrag.delta||cameraKeyDrag.items.some(key=>cameraKeyDrag.occupied.has(key.frame+delta)))return;cameraKeyDrag.delta=delta;const moved=cameraKeyDrag.items.map(key=>Object.assign({},key,{frame:key.frame+delta})),others=cameraKeyDrag.before.keys.filter(key=>!cameraKeyDrag.items.some(item=>item.frame===key.frame));CameraSystem.replaceTrackKeys(others.concat(moved));selectedCameraKeys=new Set(moved.map(key=>key.frame));curFrame=Math.max(0,Math.min(TOTAL-1,frame+delta));CameraSystem.evaluateAt(curFrame);renderTimeline();};
+  const up=()=>{document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);document.removeEventListener('pointercancel',cancel);if(cameraKeyDrag&&cameraKeyDrag.delta!==0)CameraSystem.commitTrack(cameraKeyDrag.before,'move');cameraKeyDrag=null;renderTimeline();};
+  const cancel=()=>{document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);document.removeEventListener('pointercancel',cancel);if(cameraKeyDrag)CameraSystem.restoreTrack(cameraKeyDrag.before,curFrame);cameraKeyDrag=null;renderTimeline();};
+  document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);document.addEventListener('pointercancel',cancel);
+}
+function _makeCameraTrackLabel(){const row=document.createElement('div');row.className='tl-layer-lbl tl-camera-lbl'+(cameraTrackSelected?' active':'');row.style.height=CellH+'px';const icon=document.createElement('span');icon.className='tl-camera-icon';icon.textContent='◆';const name=document.createElement('span');name.className='tl-lbl-name';name.textContent='Camera';const actions=document.createElement('span');actions.className='tl-layer-inline-actions';const add=document.createElement('button');add.type='button';add.className='tl-layer-quick-btn';add.textContent='+';add.title='Add or Update Camera Key';add.setAttribute('aria-label',add.title);add.dataset.timelineControl='camera-key';add.onpointerdown=event=>{event.preventDefault();event.stopPropagation();};add.onclick=event=>{event.preventDefault();event.stopPropagation();_addOrUpdateCameraKey();};actions.appendChild(add);row.append(icon,name,actions);row.onclick=()=>{cameraTrackSelected=true;selectedCameraKeys.clear();selectedKFs.clear();kfSelectionAnchor=null;renderTimeline();};return row;}
+window.CameraTimeline={handleShortcut:_cameraShortcut,addOrUpdateKey:_addOrUpdateCameraKey,deleteSelected:_deleteSelectedCameraKeys,get selected(){return cameraTrackSelected||selectedCameraKeys.size>0;}};
 function renderLabelCol(){
-  const el=document.getElementById('tl-labels-rows');el.innerHTML='';
+  const el=document.getElementById('tl-labels-rows');el.innerHTML='';el.appendChild(_makeCameraTrackLabel());
   const visibleItems=timelineTreeItems();
   const visibleIndices=visibleItems.filter(item=>item.type==='layer').map(item=>item.idx);
   visibleItems.forEach(item=>{
@@ -1188,7 +1217,7 @@ function renderLabelCol(){
     const i=item.idx,l=layers[i];const lbl=document.createElement('div');
     lbl.style.setProperty('--tl-tree-depth',item.depth||0);
     const isMultiSel=selectedTlLabelIndices.has(i);
-    lbl.className='tl-layer-lbl'+(!activeGroupId&&i===curLayer?' active':isMultiSel?' multi-sel':'');
+    lbl.className='tl-layer-lbl'+(!cameraTrackSelected&&!activeGroupId&&i===curLayer?' active':isMultiSel?' multi-sel':'');
     lbl.style.height=CellH+'px';
     lbl.dataset.idx=i;
     lbl.title='Click to select. Shift+click range, Ctrl+click individual. Drag name to Hide zone to remove from timeline. Drag empty space to rubber-band select.';
@@ -1366,6 +1395,11 @@ function renderRows(){
   const totalW=TOTAL*CellW,timelineFps=Math.max(1,getFPS());rowWrap.style.width=totalW+'px';
   document.getElementById('tl-inner').style.setProperty('--timeline-second-span',(timelineFps*CellW)+'px');
 
+  const cameraRow=document.createElement('div');cameraRow.className='tl-row tl-camera-track-row'+(cameraTrackSelected?' selected':'');cameraRow.style.width=totalW+'px';cameraRow.style.height=CellH+'px';cameraRow.style.position='relative';
+  for(let frame=0;frame<TOTAL;frame++){const cell=document.createElement('div');cell.className='tl-cell camera-track-cell'+(frame===curFrame?' cur-col':'');cell.style.cssText='left:'+(frame*CellW)+'px;position:absolute;width:'+CellW+'px;height:'+CellH+'px;';cell.dataset.cameraFrame=frame;cell.addEventListener('pointerdown',event=>{event.stopPropagation();cameraTrackSelected=true;selectedCameraKeys.clear();cameraKeySelectionAnchor=null;selectedKFs.clear();kfSelectionAnchor=null;selectedRowLayers.clear();goToFrame(frame,false,false,true);renderTimeline();});cameraRow.appendChild(cell);}
+  _cameraTrackKeys().filter(key=>key.frame<TOTAL).forEach(key=>{const marker=document.createElement('div');marker.className='camera-kf'+(selectedCameraKeys.has(key.frame)?' selected':'');marker.style.left=(key.frame*CellW+CellW/2)+'px';marker.style.top=(CellH/2)+'px';marker.dataset.cameraFrame=key.frame;marker.title='Camera Key F'+frameLabel(key.frame);marker.addEventListener('pointerdown',event=>{event.stopPropagation();_selectCameraKey(key.frame,event);goToFrame(key.frame,false,false,true);_startCameraKeyDrag(key.frame,event);renderTimeline();});cameraRow.appendChild(marker);});
+  rowWrap.appendChild(cameraRow);
+
   timelineTreeItems().forEach(item=>{
     if(item.type==='group'){const groupRow=document.createElement('div'),group=_groupById(item.id);groupRow.className='tl-row tl-group-track-row';groupRow.style.width=totalW+'px';groupRow.style.height=CellH+'px';groupRow.dataset.groupId=item.id;if(group&&group.color&&group.color!=='transparent'){const hex=group.color,r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);groupRow.style.background=`rgba(${r},${g},${b},0.22)`;}rowWrap.appendChild(groupRow);return;}
     const i=item.idx,l=layers[i];const row=document.createElement('div');
@@ -1510,7 +1544,7 @@ function updateRangeOverlay(){
 function updatePlayhead(){
   const ph=document.getElementById('playhead');if(!ph) return;
   const left=curFrame*CellW+CellW/2-1;
-  ph.style.left=left+'px';ph.style.height=(timelineTreeItems().length*CellH)+'px';ph.style.top='0';
+  ph.style.left=left+'px';ph.style.height=((timelineTreeItems().length+1)*CellH)+'px';ph.style.top='0';
   const oldFrameLabel=ph.querySelector('.ph-frame-label');
   if(oldFrameLabel)oldFrameLabel.remove();
   // Auto-scroll to keep the playhead in view — but NOT while the scrollbar

@@ -313,6 +313,7 @@ function saveActiveToKey(){
 function loadFrame(li,fi){
   if(typeof window.prepareTransformForArtworkChange==='function')window.prepareTransformForArtworkChange(li,fi);
   if(typeof window.finishActiveDrawingBeforeArtworkChange==='function')window.finishActiveDrawingBeforeArtworkChange(li,fi);
+  if(window.CameraSystem&&typeof CameraSystem.evaluateAt==='function')CameraSystem.evaluateAt(fi);
   ctx.clearRect(0,0,CW,CH);
   const k=getHeldKey(li,fi);if(k){const keyFrame=Object.keys(layers[li].frames).find(frame=>layers[li].frames[frame]===k),extended=keyFrame==null?null:getExtendedLayerFrame(li,keyFrame);if(extended)ctx.drawImage(extended.canvas,extended.x,extended.y);else ctx.drawImage(k,0,0);}
   recomposite(li,fi);updateOnion();updatePlayhead();

@@ -283,6 +283,7 @@ function undo(){
   if(!undoStack.length)return;
   const action=undoStack.pop();
   if(action.type==='camera-state'&&window.CameraSystem){CameraSystem.restore(action.before);redoStack.push(action);return;}
+  if(action.type==='camera-track'&&window.CameraSystem){CameraSystem.restoreTrack(action.before);redoStack.push(action);if(typeof renderTimeline==='function')renderTimeline();return;}
   if(action.type==='canvas-resize'&&window.CanvasResizeTool){if(CanvasResizeTool.restoreHistory(action.before))redoStack.push(action);return;}
   if(action.type==='layer-hierarchy'){if(_restoreLayerHierarchy(action.before))redoStack.push(action);return;}
   if(action.type==='drawing-frame-hidden'){if(_restoreDrawingFrameHidden(action,action.before))redoStack.push(action);return;}
@@ -312,6 +313,7 @@ function redo(){
   if(!redoStack.length)return;
   const action=redoStack.pop();
   if(action.type==='camera-state'&&window.CameraSystem){CameraSystem.restore(action.after);undoStack.push(action);return;}
+  if(action.type==='camera-track'&&window.CameraSystem){CameraSystem.restoreTrack(action.after);undoStack.push(action);if(typeof renderTimeline==='function')renderTimeline();return;}
   if(action.type==='canvas-resize'&&window.CanvasResizeTool){if(CanvasResizeTool.restoreHistory(action.after))undoStack.push(action);return;}
   if(action.type==='layer-hierarchy'){if(_restoreLayerHierarchy(action.after))undoStack.push(action);return;}
   if(action.type==='drawing-frame-hidden'){if(_restoreDrawingFrameHidden(action,action.after))undoStack.push(action);return;}

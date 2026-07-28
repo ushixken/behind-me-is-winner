@@ -484,6 +484,11 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 .tl-group-folder{width:15px;flex:0 0 15px;font-size:12px;line-height:1;filter:saturate(.45);}
 .tl-group-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .tl-group-track-row{background:color-mix(in srgb,var(--bg3) 55%,var(--bg2));border-bottom-color:var(--border);}
+.tl-camera-lbl{background:color-mix(in srgb,var(--bg3) 82%,var(--bg2));font-weight:600;}
+.tl-camera-icon{color:var(--accent);font-size:9px;flex:0 0 13px;text-align:center;}
+.tl-camera-lbl .tl-lbl-name{flex:1;}
+.tl-camera-track-row{background:color-mix(in srgb,var(--bg3) 45%,var(--bg2));}
+.tl-camera-track-row.selected{outline:1px solid color-mix(in srgb,var(--accent) 55%,transparent);outline-offset:-1px;}
 
 #tl-labels-resize{
   width:4px;background:var(--border);cursor:col-resize;flex-shrink:0;z-index:20;
@@ -531,6 +536,10 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 .kf-block{position:absolute;top:4px;bottom:4px;border-radius:3px;background:var(--kf-mark-color,var(--accent));cursor:grab;z-index:5;touch-action:none;}
 .kf-block:hover{filter:brightness(1.15);}
 .kf-block.selected{filter:brightness(1.4);outline:2px solid rgba(255,255,255,0.25);}
+.camera-kf{position:absolute;width:10px;height:10px;border:1px solid color-mix(in srgb,var(--accent) 80%,white);background:var(--accent);transform:translate(-50%,-50%) rotate(45deg);border-radius:2px;z-index:7;cursor:grab;touch-action:none;box-sizing:border-box;}
+.camera-kf:hover{filter:brightness(1.18);}
+.camera-kf.selected{outline:2px solid rgba(255,255,255,.4);outline-offset:2px;filter:brightness(1.25);}
+.camera-track-cell.cur-col{background:color-mix(in srgb,var(--accent) 12%,var(--bg2));}
 .kf-block.drawing-hidden{background:color-mix(in srgb,var(--kf-mark-color,var(--accent)) 28%,var(--bg2));}
 .kf-hidden-x{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:800;line-height:1;text-shadow:0 1px 2px #000;pointer-events:none;}
 .kf-extend{position:absolute;top:50%;height:2px;background:#4a4780;transform:translateY(-50%);z-index:2;pointer-events:none;}
