@@ -359,7 +359,8 @@
   function renderCameraOptions(body){
     if(cameraSettingsController)cameraSettingsController.abort();
     cameraSettingsController=new AbortController();
-    const signal=cameraSettingsController.signal,panel=ToolSettingsUI.panel(),camera=window.CameraSystem&&CameraSystem.value;panel.classList.add('tool-settings-panel--flush');
+    const signal=cameraSettingsController.signal,panel=document.createElement('div'),camera=window.CameraSystem&&CameraSystem.value;
+    panel.className='tool-settings-panel camera-options-panel';
     if(!camera){body.appendChild(panel);return;}
     let sectionRoot=null;const section=title=>{sectionRoot=document.createElement('section');sectionRoot.className='tool-settings-section';const header=document.createElement('div');header.className='tool-group-section-header';header.textContent=title;sectionRoot.appendChild(header);panel.appendChild(sectionRoot);return sectionRoot;};
     const numeric=(label,key,options={})=>{
@@ -381,10 +382,17 @@
     section('TRANSFORM');
     const x=numeric('Position X','positionX'),y=numeric('Position Y','positionY'),zoomControl=numeric('Zoom','zoom',{min:10,max:1600,toDisplay:value=>value*100,toInternal:value=>value/100}),rotation=numeric('Rotation','rotation');
     const guidesSection=section('GUIDES');
+    guidesSection.classList.add('camera-guides-section');
     const guideInputs={};
-    [['showFrame','Show Camera Frame'],['showCenter','Centre Cross'],['showThirds','Rule of Thirds'],['showSafeArea','Safe Area']].forEach(([key,label])=>{guideInputs[key]=ToolSettingsUI.checkbox(guidesSection,{label,checked:camera.guides[key],onChange:value=>{const before=CameraSystem.snapshot();CameraSystem.update({guides:{[key]:value}},true);CameraSystem.commit(before);}}).input;});
-    const actionRow=document.createElement('div');actionRow.className='tool-setting-action-row';
-    const reset=document.createElement('button');reset.type='button';reset.className='modal-btn';reset.textContent='Reset Camera';reset.onclick=()=>CameraSystem.resetWithHistory();actionRow.appendChild(reset);panel.appendChild(actionRow);body.appendChild(panel);
+    [['showFrame','Show Camera Frame'],['showCenter','Centre Cross'],['showThirds','Rule of Thirds'],['showSafeArea','Safe Area']].forEach(([key,label])=>{
+      const row=document.createElement('label');row.className='magic-wand-checkbox-row camera-guide-row';
+      const input=document.createElement('input');input.type='checkbox';input.className='ts-check';input.checked=!!camera.guides[key];
+      input.onchange=()=>{const before=CameraSystem.snapshot();CameraSystem.update({guides:{[key]:input.checked}},true);CameraSystem.commit(before);};
+      const text=document.createElement('span');text.textContent=label;
+      row.append(input,text);guidesSection.appendChild(row);guideInputs[key]=input;
+    });
+    const actionRow=document.createElement('div');actionRow.className='tool-setting-action-row camera-reset-row';
+    const reset=document.createElement('button');reset.type='button';reset.className='modal-btn camera-reset-btn';reset.textContent='Reset Camera';reset.onclick=()=>CameraSystem.resetWithHistory();actionRow.appendChild(reset);panel.appendChild(actionRow);body.appendChild(panel);
     window.addEventListener('camera-changed',event=>{const value=event.detail.camera;x.sync(value.positionX);y.sync(value.positionY);zoomControl.sync(value.zoom);rotation.sync(value.rotation);Object.entries(guideInputs).forEach(([key,input])=>input.checked=!!value.guides[key]);},{signal});
     window.addEventListener('tool-changed',event=>{if(event.detail&&event.detail.tool!=='camera'&&cameraSettingsController){cameraSettingsController.abort();cameraSettingsController=null;}},{signal});
   }
