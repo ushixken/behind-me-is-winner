@@ -2010,12 +2010,15 @@ body.tool-options-resizing{cursor:ns-resize!important;user-select:none!important
 .magic-wand-dependent-control{max-height:48px;opacity:1;overflow:hidden;transition:max-height .16s ease,opacity .12s ease,margin-top .16s ease;}
 .magic-wand-dependent-control.collapsed{max-height:0;margin-top:-6px;opacity:0;pointer-events:none;}
 .camera-options-panel{width:100%;min-width:0;box-sizing:border-box;padding:2px 3px;gap:0;}
-.camera-options-panel .tool-settings-section{gap:7px;}
-.camera-options-panel .tool-settings-section+.tool-settings-section{margin-top:14px;}
-.camera-options-panel .tf-state-row{min-height:26px;}
-.camera-guides-section{gap:2px;}
+.camera-tool-tabs{display:flex;gap:3px;margin:0 0 6px;padding:0 0 7px;border-bottom:1px solid var(--border2);}
+.camera-tool-tabs .bp-tool-tab{flex:1 1 0;min-width:0;height:23px;padding:2px 8px;}
+.camera-tab-panel{display:flex;flex-direction:column;min-width:0;}
+.camera-tab-panel[hidden]{display:none!important;}
+.camera-options-panel .tool-settings-section{gap:4px;}
+.camera-options-panel .tool-settings-section+.tool-settings-section{margin-top:8px;}
+.camera-options-panel .tf-state-row{min-height:24px;}
 .camera-guide-row{padding:5px 1px;height:auto;min-height:24px;}
-.camera-reset-row{margin-top:16px;padding-top:12px;border-top:1px solid var(--border2);}
+.camera-reset-row{margin-top:9px;padding-top:8px;border-top:1px solid var(--border2);}
 .camera-reset-btn{min-width:140px;padding:7px 16px;font-weight:600;border-color:var(--accent);color:var(--accent);}
 .camera-reset-btn:hover{background:var(--accent-bg,rgba(127,119,221,.16));color:var(--text);}
 .tool-group-option-row{display:grid;grid-template-columns:70px minmax(0,1fr) 34px;align-items:center;gap:6px;min-width:0;font-size:10px;color:var(--text2);}

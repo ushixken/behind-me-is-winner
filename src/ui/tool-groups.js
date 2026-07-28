@@ -362,38 +362,33 @@
     const signal=cameraSettingsController.signal,panel=document.createElement('div'),camera=window.CameraSystem&&CameraSystem.value;
     panel.className='tool-settings-panel camera-options-panel';
     if(!camera){body.appendChild(panel);return;}
-    let sectionRoot=null;const section=title=>{sectionRoot=document.createElement('section');sectionRoot.className='tool-settings-section';const header=document.createElement('div');header.className='tool-group-section-header';header.textContent=title;sectionRoot.appendChild(header);panel.appendChild(sectionRoot);return sectionRoot;};
-    const numeric=(label,key,options={})=>{
-      const row=document.createElement('label');row.className='tf-option-row tf-state-row';
-      const text=document.createElement('span');text.textContent=label;
-      const input=document.createElement('input');input.type='number';input.className='tf-state-input';input.step=options.step||.1;
-      if(options.min!=null)input.min=options.min;if(options.max!=null)input.max=options.max;
-      let before=null,committed=false;
-      const display=value=>options.toDisplay?options.toDisplay(value):value,internal=value=>options.toInternal?options.toInternal(value):value;
-      const sync=value=>{if(document.activeElement!==input)input.value=Number(display(value)).toFixed(options.decimals==null?1:options.decimals);};
-      sync(camera[key]);
-      input.addEventListener('focus',()=>{before=CameraSystem.snapshot();committed=false;},{signal});
-      input.addEventListener('input',()=>{if(input.value===''||input.value==='-'||input.value==='.')return;const value=Number(input.value);if(Number.isFinite(value))CameraSystem.update({[key]:internal(value)},true);},{signal});
-      const commit=()=>{if(committed)return;committed=true;const raw=input.value.trim(),value=Number(raw);if(!raw||!Number.isFinite(value)){sync(CameraSystem.value[key]);return;}CameraSystem.update({[key]:internal(value)},true);CameraSystem.commit(before||CameraSystem.snapshot());sync(CameraSystem.value[key]);};
-      input.addEventListener('blur',commit,{signal});
-      input.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();commit();input.blur();}else if(event.key==='Escape'){event.preventDefault();if(before)CameraSystem.restore(before);committed=true;input.blur();}},{signal});
-      row.append(text,input);sectionRoot.appendChild(row);return{input,sync};
+    const tabs=document.createElement('div');tabs.className='camera-tool-tabs';tabs.setAttribute('role','tablist');
+    const basicTab=document.createElement('button'),advancedTab=document.createElement('button');
+    basicTab.type=advancedTab.type='button';basicTab.className=advancedTab.className='bp-tool-tab';basicTab.textContent='Basic';advancedTab.textContent='Advanced';basicTab.setAttribute('role','tab');advancedTab.setAttribute('role','tab');tabs.append(basicTab,advancedTab);panel.appendChild(tabs);
+    const basic=document.createElement('div'),advanced=document.createElement('div');basic.className=advanced.className='camera-tab-panel';panel.append(basic,advanced);
+    const section=(parent,title)=>{const root=document.createElement('section');root.className='tool-settings-section';const header=document.createElement('div');header.className='tool-group-section-header';header.textContent=title;root.appendChild(header);parent.appendChild(root);return root;};
+    const controls=[];
+    const numeric=(parent,label,read,patch,options={})=>{
+      const row=document.createElement('label');row.className='tf-option-row tf-state-row';const text=document.createElement('span');text.textContent=label;const input=document.createElement('input');input.type='number';input.className='tf-state-input';input.step=options.step||.1;if(options.min!=null)input.min=options.min;if(options.max!=null)input.max=options.max;let before=null,committed=false;
+      const display=value=>options.toDisplay?options.toDisplay(value):value,internal=value=>options.toInternal?options.toInternal(value):value,sync=value=>{if(document.activeElement!==input)input.value=Number(display(read(value))).toFixed(options.decimals==null?1:options.decimals);};sync(camera);
+      input.addEventListener('focus',()=>{before=CameraSystem.snapshot();committed=false;},{signal});input.addEventListener('input',()=>{if(input.value===''||input.value==='-'||input.value==='.')return;const value=Number(input.value);if(Number.isFinite(value))CameraSystem.update(patch(internal(value),CameraSystem.value),true);},{signal});
+      const commit=()=>{if(committed)return;committed=true;const raw=input.value.trim(),value=Number(raw);if(!raw||!Number.isFinite(value)){sync(CameraSystem.value);return;}CameraSystem.update(patch(internal(value),CameraSystem.value),true);if(options.history!==false)CameraSystem.commit(before||CameraSystem.snapshot());sync(CameraSystem.value);};input.addEventListener('blur',commit,{signal});input.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();commit();input.blur();}else if(event.key==='Escape'){event.preventDefault();if(before)CameraSystem.restore(before);committed=true;input.blur();}},{signal});row.append(text,input);parent.appendChild(row);const control={input,sync};controls.push(control);return control;
     };
-    section('TRANSFORM');
-    const x=numeric('Position X','positionX'),y=numeric('Position Y','positionY'),zoomControl=numeric('Zoom','zoom',{min:10,max:1600,toDisplay:value=>value*100,toInternal:value=>value/100}),rotation=numeric('Rotation','rotation');
-    const guidesSection=section('GUIDES');
-    guidesSection.classList.add('camera-guides-section');
-    const guideInputs={};
-    [['showFrame','Show Camera Frame'],['showCenter','Centre Cross'],['showThirds','Rule of Thirds'],['showSafeArea','Safe Area']].forEach(([key,label])=>{
-      const row=document.createElement('label');row.className='magic-wand-checkbox-row camera-guide-row';
-      const input=document.createElement('input');input.type='checkbox';input.className='ts-check';input.checked=!!camera.guides[key];
-      input.onchange=()=>{const before=CameraSystem.snapshot();CameraSystem.update({guides:{[key]:input.checked}},true);CameraSystem.commit(before);};
-      const text=document.createElement('span');text.textContent=label;
-      row.append(input,text);guidesSection.appendChild(row);guideInputs[key]=input;
-    });
-    const actionRow=document.createElement('div');actionRow.className='tool-setting-action-row camera-reset-row';
-    const reset=document.createElement('button');reset.type='button';reset.className='modal-btn camera-reset-btn';reset.textContent='Reset Camera';reset.onclick=()=>CameraSystem.resetWithHistory();actionRow.appendChild(reset);panel.appendChild(actionRow);body.appendChild(panel);
-    window.addEventListener('camera-changed',event=>{const value=event.detail.camera;x.sync(value.positionX);y.sync(value.positionY);zoomControl.sync(value.zoom);rotation.sync(value.rotation);Object.entries(guideInputs).forEach(([key,input])=>input.checked=!!value.guides[key]);},{signal});
+    const transform=section(basic,'Transform');
+    numeric(transform,'Position X',value=>value.positionX,value=>({positionX:value}));numeric(transform,'Position Y',value=>value.positionY,value=>({positionY:value}));numeric(transform,'Zoom',value=>value.zoom,value=>({zoom:value}),{min:10,max:1600,toDisplay:value=>value*100,toInternal:value=>value/100});numeric(transform,'Rotation',value=>value.rotation,value=>({rotation:value}));
+    const guideVisibility=section(basic,'Guides'),guideInputs={};
+    [['showFrame','Frame'],['showCenter','Center'],['showThirds','Thirds'],['showSafeArea','Safe']].forEach(([key,label])=>{const row=document.createElement('label');row.className='magic-wand-checkbox-row camera-guide-row';const input=document.createElement('input');input.type='checkbox';input.className='ts-check';input.checked=!!camera.guides[key];input.onchange=()=>{const before=CameraSystem.snapshot();CameraSystem.update({guides:{[key]:input.checked}},true);CameraSystem.commit(before);};const text=document.createElement('span');text.textContent=label;row.append(input,text);guideVisibility.appendChild(row);guideInputs[key]=input;});
+    const actionRow=document.createElement('div');actionRow.className='tool-setting-action-row camera-reset-row';const reset=document.createElement('button');reset.type='button';reset.className='modal-btn camera-reset-btn';reset.textContent='Reset Camera';reset.onclick=()=>CameraSystem.resetWithHistory();actionRow.appendChild(reset);basic.appendChild(actionRow);
+    const output=section(advanced,'Output'),presets=CameraSystem.outputPresets;
+    const presetControl=ToolSettingsUI.select(output,{label:'Preset',value:camera.output.preset,items:[['custom','Custom'],['hd720','HD 720'],['hd1080','HD 1080'],['2k','2K'],['4k','4K'],['square','Square'],['vertical','Vertical']],onChange:id=>{const size=presets[id];CameraSystem.update({output:size?{preset:id,width:size[0],height:size[1]}:{preset:'custom'}},true);}});
+    const matchingPreset=(width,height)=>Object.entries(presets).find(([,size])=>size[0]===Math.round(width)&&size[1]===Math.round(height))?.[0]||'custom';
+    numeric(output,'Width',value=>value.output.width,(value,current)=>({output:{width:value,preset:matchingPreset(value,current.output.height)}}),{min:1,max:16384,step:1,decimals:0,history:false});numeric(output,'Height',value=>value.output.height,(value,current)=>({output:{height:value,preset:matchingPreset(current.output.width,value)}}),{min:1,max:16384,step:1,decimals:0,history:false});
+    const view=section(advanced,'View');const shade=ToolSettingsUI.slider(view,{label:'Shade',min:0,max:100,step:1,value:camera.view.shade,format:value=>Math.round(value)+'%',onInput:value=>CameraSystem.update({view:{shade:value}},true)}),frameOpacity=ToolSettingsUI.slider(view,{label:'Frame Opacity',min:0,max:100,step:1,value:camera.view.frameOpacity,format:value=>Math.round(value)+'%',onInput:value=>CameraSystem.update({view:{frameOpacity:value}},true)});
+    const safeGuides=section(advanced,'Guides');const outer=ToolSettingsUI.slider(safeGuides,{label:'Outer',min:0,max:50,step:1,value:camera.guides.outer,format:value=>Math.round(value)+'%',onInput:value=>CameraSystem.update({guides:{outer:value}},true)}),inner=ToolSettingsUI.slider(safeGuides,{label:'Inner',min:0,max:50,step:1,value:camera.guides.inner,format:value=>Math.round(value)+'%',onInput:value=>CameraSystem.update({guides:{inner:value}},true)});
+    const setTab=(id,persist)=>{const isAdvanced=id==='advanced';basic.hidden=isAdvanced;advanced.hidden=!isAdvanced;basicTab.classList.toggle('active',!isAdvanced);advancedTab.classList.toggle('active',isAdvanced);basicTab.setAttribute('aria-selected',String(!isAdvanced));advancedTab.setAttribute('aria-selected',String(isAdvanced));if(persist&&CameraSystem.value.settingsTab!==id)CameraSystem.update({settingsTab:id},true);};basicTab.onclick=()=>setTab('basic',true);advancedTab.onclick=()=>setTab('advanced',true);setTab(camera.settingsTab,false);
+    body.appendChild(panel);
+    const syncSlider=(control,value)=>{control.input.value=value;control.output.textContent=Math.round(value)+'%';};
+    window.addEventListener('camera-changed',event=>{const value=event.detail.camera;controls.forEach(control=>control.sync(value));Object.entries(guideInputs).forEach(([key,input])=>input.checked=!!value.guides[key]);presetControl.select.value=value.output.preset;syncSlider(shade,value.view.shade);syncSlider(frameOpacity,value.view.frameOpacity);syncSlider(outer,value.guides.outer);syncSlider(inner,value.guides.inner);setTab(value.settingsTab,false);},{signal});
     window.addEventListener('tool-changed',event=>{if(event.detail&&event.detail.tool!=='camera'&&cameraSettingsController){cameraSettingsController.abort();cameraSettingsController=null;}},{signal});
   }
   registerGroup({id:'brush',name:'Brush',shortcutActionId:'toolBrush',icon:'B',defaultSubToolId:'brush:hard-round',subTools:presetSubTools('brush')});
