@@ -255,8 +255,9 @@ function refreshTimelineSelection(){
     if(block)block.classList.add('selected');
   });
   document.querySelectorAll('.tl-layer-lbl.active').forEach(label=>label.classList.remove('active'));
-  const activeLabel=cameraTrackSelected?document.querySelector('.tl-camera-lbl'):activeGroupId?document.querySelector('.tl-group-lbl[data-gid="'+CSS.escape(activeGroupId)+'"]'):document.querySelector('.tl-layer-lbl[data-idx="'+curLayer+'"]');
+  const activeLabel=activeGroupId?document.querySelector('.tl-group-lbl[data-gid="'+CSS.escape(activeGroupId)+'"]'):document.querySelector('.tl-layer-lbl[data-idx="'+curLayer+'"]');
   if(activeLabel)activeLabel.classList.add('active');
+  if(cameraTrackSelected){const cameraLabel=document.querySelector('.tl-camera-lbl');if(cameraLabel)cameraLabel.classList.add('active');}
   updatePlayhead();renderRulerHighlight();updateStatus();
   document.getElementById('frame-info').textContent=frameLabel(curFrame)+' / '+frameLabel(TOTAL-1);
 }
@@ -1234,7 +1235,7 @@ function renderLabelCol(){
     const i=item.idx,l=layers[i];const lbl=document.createElement('div');
     lbl.style.setProperty('--tl-tree-depth',item.depth||0);
     const isMultiSel=selectedTlLabelIndices.has(i);
-    lbl.className='tl-layer-lbl'+(!cameraTrackSelected&&!activeGroupId&&i===curLayer?' active':isMultiSel?' multi-sel':'');
+    lbl.className='tl-layer-lbl'+(!activeGroupId&&i===curLayer?' active':isMultiSel?' multi-sel':'');
     lbl.style.height=CellH+'px';
     lbl.dataset.idx=i;
     lbl.title='Click to select. Shift+click range, Ctrl+click individual. Drag name to Hide zone to remove from timeline. Drag empty space to rubber-band select.';
