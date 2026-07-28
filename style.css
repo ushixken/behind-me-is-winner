@@ -409,7 +409,8 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 #graph-interpolation-controls{display:flex;align-items:center;gap:4px;margin-left:auto;}
 #graph-interpolation-controls[hidden]{display:none;}
 #graph-editor-viewport{position:relative;flex:1;min-height:0;overflow:hidden;background:var(--bg1);}
-#graph-editor-canvas{display:block;width:100%;height:100%;}
+#graph-editor-canvas{display:block;width:100%;height:100%;touch-action:none;user-select:none;}
+#graph-editor-canvas.graph-dragging{cursor:grabbing;}
 #graph-editor-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--text2);font-size:10px;pointer-events:none;}
 #graph-editor-empty[hidden]{display:none;}
 #tl-controls-left{display:flex;align-items:center;justify-content:flex-start;gap:4px;flex:1;overflow:hidden;min-width:0;}
