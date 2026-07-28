@@ -90,7 +90,7 @@
   }
   function configureOptionsDrawer(body,group){
     const drawer=body.querySelector('.tool-options-drawer'),header=drawer&&drawer.querySelector('.tool-options-drawer-header');if(!drawer||!header)return;
-    const label=drawer.querySelector('.tool-options-drawer-label'),activeSubTool=getSubTool(group,group.activeSubToolId),usesToolSettings=drawer.classList.contains('tool-settings-drawer')||group.id==='fill'||group.id==='line',usesSelectionOptions=group.id==='selection'||group.id==='smart-selection',baseTitle=usesToolSettings?'TOOL SETTINGS':(group.name+' Options').toUpperCase(),fullTitle=(usesToolSettings||usesSelectionOptions)&&activeSubTool?baseTitle+' — '+(usesToolSettings?group.name:activeSubTool.name):baseTitle,visibleTitle=usesToolSettings?baseTitle+' · '+group.name.toUpperCase():(usesSelectionOptions&&activeSubTool?baseTitle+' · '+activeSubTool.name.toUpperCase():baseTitle);if(label){label.textContent=visibleTitle;label.title=fullTitle;}header.setAttribute('aria-label',fullTitle);
+    const label=drawer.querySelector('.tool-options-drawer-label'),activeSubTool=getSubTool(group,group.activeSubToolId),usesToolSettings=drawer.classList.contains('tool-settings-drawer')||group.id==='fill'||group.id==='line'||group.id==='camera',usesSelectionOptions=group.id==='selection'||group.id==='smart-selection',baseTitle=usesToolSettings?'TOOL SETTINGS':(group.name+' Options').toUpperCase(),fullTitle=(usesToolSettings||usesSelectionOptions)&&activeSubTool?baseTitle+' \u2014 '+(usesToolSettings?group.name:activeSubTool.name):baseTitle,visibleTitle=usesToolSettings?baseTitle+' \u00b7 '+group.name.toUpperCase():(usesSelectionOptions&&activeSubTool?baseTitle+' \u00b7 '+activeSubTool.name.toUpperCase():baseTitle);if(label){label.textContent=visibleTitle;label.title=fullTitle;}header.setAttribute('aria-label',fullTitle);
     applyDrawerState(body,group);
     if(header.dataset.drawerBound)return;header.dataset.drawerBound='true';
     let drag=null;
@@ -355,6 +355,39 @@
     group.subTools.push(subTool);return subTool;
   }
 
+  let cameraSettingsController=null;
+  function renderCameraOptions(body){
+    if(cameraSettingsController)cameraSettingsController.abort();
+    cameraSettingsController=new AbortController();
+    const signal=cameraSettingsController.signal,panel=ToolSettingsUI.panel(),camera=window.CameraSystem&&CameraSystem.value;panel.classList.add('tool-settings-panel--flush');
+    if(!camera){body.appendChild(panel);return;}
+    let sectionRoot=null;const section=title=>{sectionRoot=document.createElement('section');sectionRoot.className='tool-settings-section';const header=document.createElement('div');header.className='tool-group-section-header';header.textContent=title;sectionRoot.appendChild(header);panel.appendChild(sectionRoot);return sectionRoot;};
+    const numeric=(label,key,options={})=>{
+      const row=document.createElement('label');row.className='tf-option-row tf-state-row';
+      const text=document.createElement('span');text.textContent=label;
+      const input=document.createElement('input');input.type='number';input.className='tf-state-input';input.step=options.step||.1;
+      if(options.min!=null)input.min=options.min;if(options.max!=null)input.max=options.max;
+      let before=null,committed=false;
+      const display=value=>options.toDisplay?options.toDisplay(value):value,internal=value=>options.toInternal?options.toInternal(value):value;
+      const sync=value=>{if(document.activeElement!==input)input.value=Number(display(value)).toFixed(options.decimals==null?1:options.decimals);};
+      sync(camera[key]);
+      input.addEventListener('focus',()=>{before=CameraSystem.snapshot();committed=false;},{signal});
+      input.addEventListener('input',()=>{if(input.value===''||input.value==='-'||input.value==='.')return;const value=Number(input.value);if(Number.isFinite(value))CameraSystem.update({[key]:internal(value)},true);},{signal});
+      const commit=()=>{if(committed)return;committed=true;const raw=input.value.trim(),value=Number(raw);if(!raw||!Number.isFinite(value)){sync(CameraSystem.value[key]);return;}CameraSystem.update({[key]:internal(value)},true);CameraSystem.commit(before||CameraSystem.snapshot());sync(CameraSystem.value[key]);};
+      input.addEventListener('blur',commit,{signal});
+      input.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();commit();input.blur();}else if(event.key==='Escape'){event.preventDefault();if(before)CameraSystem.restore(before);committed=true;input.blur();}},{signal});
+      row.append(text,input);sectionRoot.appendChild(row);return{input,sync};
+    };
+    section('TRANSFORM');
+    const x=numeric('Position X','positionX'),y=numeric('Position Y','positionY'),zoomControl=numeric('Zoom','zoom',{min:10,max:1600,toDisplay:value=>value*100,toInternal:value=>value/100}),rotation=numeric('Rotation','rotation');
+    const guidesSection=section('GUIDES');
+    const guideInputs={};
+    [['showFrame','Show Camera Frame'],['showCenter','Centre Cross'],['showThirds','Rule of Thirds'],['showSafeArea','Safe Area']].forEach(([key,label])=>{guideInputs[key]=ToolSettingsUI.checkbox(guidesSection,{label,checked:camera.guides[key],onChange:value=>{const before=CameraSystem.snapshot();CameraSystem.update({guides:{[key]:value}},true);CameraSystem.commit(before);}}).input;});
+    const actionRow=document.createElement('div');actionRow.className='tool-setting-action-row';
+    const reset=document.createElement('button');reset.type='button';reset.className='modal-btn';reset.textContent='Reset Camera';reset.onclick=()=>CameraSystem.resetWithHistory();actionRow.appendChild(reset);panel.appendChild(actionRow);body.appendChild(panel);
+    window.addEventListener('camera-changed',event=>{const value=event.detail.camera;x.sync(value.positionX);y.sync(value.positionY);zoomControl.sync(value.zoom);rotation.sync(value.rotation);Object.entries(guideInputs).forEach(([key,input])=>input.checked=!!value.guides[key]);},{signal});
+    window.addEventListener('tool-changed',event=>{if(event.detail&&event.detail.tool!=='camera'&&cameraSettingsController){cameraSettingsController.abort();cameraSettingsController=null;}},{signal});
+  }
   registerGroup({id:'brush',name:'Brush',shortcutActionId:'toolBrush',icon:'B',defaultSubToolId:'brush:hard-round',subTools:presetSubTools('brush')});
   registerGroup({id:'eraser',name:'Eraser',shortcutActionId:'toolEraser',icon:'E',defaultSubToolId:'eraser:hard-round',subTools:presetSubTools('eraser')});
   const selectionGroup=registerGroup({id:'selection',name:'Selection',panelTitle:'Selection Sub Tools',shortcutActionId:'toolSelection',icon:'S',panelRenderer:renderSelectionOptions,defaultSubToolId:'rectangle-select',subTools:[
@@ -383,21 +416,22 @@
     {id:'free-transform',name:'Free Transform',icon:'F',activate:toolActivation('transform','Transform',()=>{if(typeof _tfSetPerspective==='function')_tfSetPerspective(false);})},
     {id:'perspective-transform',name:'Perspective Transform',icon:'P',activate:toolActivation('transform','Transform',()=>{if(typeof _tfSetPerspective==='function')_tfSetPerspective(true);})}
   ]});
+  registerGroup({id:'camera',name:'Camera',panelTitle:'Camera',icon:'C',panelRenderer:renderCameraOptions,defaultSubToolId:'camera-main',subTools:[{id:'camera-main',name:'Camera',icon:'C',activate:toolActivation('camera','Camera')} ]});
   registerGroup({id:'canvas-resize',name:'Resize Canvas',panelTitle:'Canvas Tools',shortcutActionId:'toolCanvasResize',icon:'C',defaultSubToolId:'resize-canvas',subTools:[
     {id:'resize-canvas',name:'Resize Canvas',icon:'C',activate:toolActivation('resize-canvas','Resize Canvas'),settingsDescription:'Resize document boundaries without scaling artwork.'},
     placeholder('perspective-crop','Perspective Crop','P'),
     placeholder('slice-tool','Slice Tool','S')
   ]});
 
-  bindMainButton('tp-btn-brush','brush');bindMainButton('tp-btn-eraser','eraser');bindMainButton('tp-btn-selection','selection');bindMainButton('tp-btn-smart-selection','smart-selection');bindMainButton('tp-btn-fill','fill');bindMainButton('tp-btn-line','line');bindMainButton('tp-btn-eyedropper','eyedropper');bindMainButton('tp-btn-transform','transform');bindMainButton('tp-btn-canvas-resize','canvas-resize');
+  bindMainButton('tp-btn-brush','brush');bindMainButton('tp-btn-eraser','eraser');bindMainButton('tp-btn-selection','selection');bindMainButton('tp-btn-smart-selection','smart-selection');bindMainButton('tp-btn-fill','fill');bindMainButton('tp-btn-line','line');bindMainButton('tp-btn-eyedropper','eyedropper');bindMainButton('tp-btn-transform','transform');bindMainButton('tp-btn-canvas-resize','canvas-resize');bindMainButton('tp-btn-camera','camera');
   const free=document.getElementById('transform-mode-free'),perspective=document.getElementById('transform-mode-perspective');
   if(free)free.onclick=()=>activateSubTool('transform','free-transform');if(perspective)perspective.onclick=()=>activateSubTool('transform','perspective-transform');
   const grid=document.getElementById('brush-preset-grid');if(grid)grid.addEventListener('click',event=>{const item=event.target.closest('.bp-item');if(!item)return;const group=getGroup(tool==='eraser'?'eraser':'brush');if(group){const subTool=ensurePresetSubTool(group,item.dataset.presetId);group.activeSubToolId=subTool.id;persist();renderSettings();}});
-  window.addEventListener('tool-changed',event=>{if(activating)return;const map={brush:'brush',eraser:'eraser',fill:'fill','lasso-fill':'fill',line:'line',curve:'line',eyedropper:'eyedropper',lasso:'selection','rectangle-select':'selection','ellipse-select':'selection','magic-wand':'smart-selection',selection:'smart-selection',transform:'transform','resize-canvas':'canvas-resize'},id=map[event.detail&&event.detail.tool];if(id){activeGroupId=id;syncPanel(getGroup(id));syncActiveButtons();renderSettings();}});
+  window.addEventListener('tool-changed',event=>{if(activating)return;const map={brush:'brush',eraser:'eraser',fill:'fill','lasso-fill':'fill',line:'line',curve:'line',eyedropper:'eyedropper',lasso:'selection','rectangle-select':'selection','ellipse-select':'selection','magic-wand':'smart-selection',selection:'smart-selection',transform:'transform','resize-canvas':'canvas-resize',camera:'camera'},id=map[event.detail&&event.detail.tool];if(id){activeGroupId=id;syncPanel(getGroup(id));syncActiveButtons();renderSettings();}});
   window.addEventListener('active-artwork-changed',refreshSelectionAvailability);
   window.addEventListener('project-loaded',refreshSelectionAvailability);
   window.addEventListener('layer-type-changed',refreshSelectionAvailability);
-  const initial=({brush:'brush',eraser:'eraser',fill:'fill','lasso-fill':'fill',line:'line',curve:'line',eyedropper:'eyedropper',lasso:'selection','rectangle-select':'selection','ellipse-select':'selection','magic-wand':'smart-selection',selection:'smart-selection',transform:'transform','resize-canvas':'canvas-resize'})[typeof tool!=='undefined'?tool:'brush']||'brush';activeGroupId=initial;if(initial==='selection')restoreSelectionToolContext(getSubTool(selectionGroup,selectionGroup.activeSubToolId));syncPanel(getGroup(initial));syncActiveButtons();refreshSelectionAvailability();
+  const initial=({brush:'brush',eraser:'eraser',fill:'fill','lasso-fill':'fill',line:'line',curve:'line',eyedropper:'eyedropper',lasso:'selection','rectangle-select':'selection','ellipse-select':'selection','magic-wand':'smart-selection',selection:'smart-selection',transform:'transform','resize-canvas':'canvas-resize',camera:'camera'})[typeof tool!=='undefined'?tool:'brush']||'brush';activeGroupId=initial;if(initial==='selection')restoreSelectionToolContext(getSubTool(selectionGroup,selectionGroup.activeSubToolId));syncPanel(getGroup(initial));syncActiveButtons();refreshSelectionAvailability();
   window.SelectionToolSettings={
     get(toolId){return selectionSettingsFor(getSubTool(selectionGroup,toolId)||getSubTool(smartSelectionGroup,toolId));},
     set(toolId,key,value){const subTool=getSubTool(selectionGroup,toolId)||getSubTool(smartSelectionGroup,toolId);if(subTool)updateSelectionSetting(subTool,key,value);},

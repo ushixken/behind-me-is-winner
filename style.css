@@ -1934,6 +1934,14 @@ body.tool-options-resizing{cursor:ns-resize!important;user-select:none!important
 .tool-group-inline-options{display:flex;flex-direction:column;gap:7px;flex:0 0 auto;}
 .tool-settings-panel{display:flex;flex-direction:column;width:100%;min-width:0;box-sizing:border-box;color:var(--text);}
 .tool-settings-group{display:flex;flex-direction:column;width:100%;min-width:0;}
+.tool-settings-panel--flush{padding:0;}
+.tool-settings-section{display:flex;flex-direction:column;width:100%;min-width:0;gap:3px;}
+.tool-settings-section+.tool-settings-section{margin-top:6px;}
+.tool-settings-section>.tool-group-section-header{margin:0;padding:4px 0 3px;}
+.tool-settings-section .tf-state-row{min-height:23px;}
+.tool-settings-section>.tool-setting{padding:0;}
+.tool-setting-action-row{display:flex;align-items:center;justify-content:center;width:100%;min-width:0;margin-top:9px;}
+.tool-setting-action-row>.modal-btn{width:auto;min-width:104px;padding:5px 12px;}
 .tool-setting{width:100%;min-width:0;box-sizing:border-box;}
 .tool-setting__control-row{width:100%;min-width:0;}
 .tool-setting__label{color:var(--text);}

@@ -415,7 +415,6 @@ document.getElementById('tp-btn-eyedropper').onclick=()=>setTool('eyedropper','E
 document.getElementById('tp-btn-selection').onclick=()=>setTool('lasso','Lasso Select');
 document.getElementById('tp-btn-transform').onclick=()=>setTool('transform','Transform');
 document.getElementById('tp-btn-canvas-resize').onclick=()=>setTool('resize-canvas','Resize Canvas');
-document.getElementById('tp-btn-camera').onclick=()=>setTool('camera','Camera');
 
 // ════════════════════════════════════════════════════════════════
 // FOREGROUND COLOR SWATCH (Tools panel)
