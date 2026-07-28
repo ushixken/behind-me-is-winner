@@ -626,9 +626,11 @@
   <div id="timeline-area">
     <div id="tl-controls">
       <div id="tl-controls-left">
-        <button class="tl-btn" id="btn-loop">↺ Loop</button>
+        <button class="tl-btn tl-icon-btn" id="btn-graph-editor" type="button" aria-pressed="false" title="Toggle Graph Editor">〽</button>
+        <button class="tl-btn tl-icon-btn" id="btn-camera-auto-key" type="button" aria-pressed="false" title="Toggle Camera Auto-Key">⏺</button>
       </div>
       <div id="tl-controls-center">
+        <button class="tl-btn" id="btn-loop">↺ Loop</button>
         <button class="tl-btn" id="btn-prev" title="First">⏮</button>
         <button class="tl-btn" id="btn-stepb" title="Step back">◀</button>
         <button class="tl-btn" id="btn-play">▶ Play</button>
@@ -667,6 +669,14 @@
         <div id="tl-hscroll-thumb"></div>
       </div>
     </div>
+    <section id="graph-editor" hidden>
+      <div id="graph-editor-toolbar">
+        <div class="graph-mode-switch" role="group" aria-label="Graph type"><button type="button" class="graph-mode-btn active" data-graph-mode="value">Value</button><button type="button" class="graph-mode-btn" data-graph-mode="speed">Speed</button></div>
+        <select id="graph-channel" class="ts-select" aria-label="Graph channel"><option value="x">Position X</option><option value="y">Position Y</option><option value="zoom">Zoom</option><option value="rotation">Rotation</option></select>
+        <div id="graph-interpolation-controls" hidden><select id="graph-interpolation" class="ts-select" aria-label="Keyframe interpolation"><option value="linear">Linear</option><option value="hold">Hold</option><option value="ease">Ease</option><option value="ease-in">Ease In</option><option value="ease-out">Ease Out</option></select><button type="button" class="tl-btn" id="graph-apply-interpolation">Apply</button></div>
+      </div>
+      <div id="graph-editor-viewport"><canvas id="graph-editor-canvas"></canvas><div id="graph-editor-empty">Select Camera keyframes to edit interpolation</div></div>
+    </section>
   </div>
 </div>
 
@@ -1638,6 +1648,7 @@
 <script src="src/selection/selection-move.js"></script>
 <script src="src/ui/tool-groups.js"></script>
 <script src="src/camera/camera-system.js"></script>
+<script src="src/timeline/graph-editor.js"></script>
 <script src="src/ui/local-storage-panel.js"></script>
 
 

@@ -281,7 +281,7 @@ function clearKeyframeSelection(){
 }
 
 document.addEventListener('pointerdown',event=>{
-  if(event.target.closest('button,input,select,textarea,[data-timeline-control]'))return;
+  if(event.target.closest('#timeline-area,button,input,select,textarea,[data-timeline-control]'))return;
   if(!event.target.closest('.kf-block,.camera-kf'))clearKeyframeSelection();
 });
 
@@ -591,6 +591,7 @@ function renderTimeline(){
   stage=probe?performance.now():0;updateRangeOverlay();if(probe)probe.renderTimelineStage('renderTimelineSelectionsHighlights',stage);
   stage=probe?performance.now():0;updateTlHScroll();if(probe)probe.renderTimelineStage('renderTimelineScrollbarRendering',stage);
   if(probe)probe.finishRenderTimeline(probeTotal);if(profiler)profiler.measure('timeline-refresh-total',total);
+  window.dispatchEvent(new CustomEvent('timeline-rendered'));
 }
 
 // ── Shared Timeline zoom state helpers ──────────────────────────────────────
@@ -1216,14 +1217,14 @@ function selectTimelineKey(trackId,frame,event){
 }
 function _addOrUpdateCameraKey(){if(!window.CameraSystem)return;CameraSystem.addOrUpdateKey(curFrame);selectedKFs.clear();selectedKFs.add(`camera:${curFrame}`);kfSelectionAnchor={trackId:'camera',frameIndex:curFrame};cameraTrackSelected=true;renderTimeline();}
 function _deleteSelectedCameraKeys(){const frames=_selectedCameraFrames();if(!window.CameraSystem||!frames.length)return false;CameraSystem.deleteKeys(frames);selectedKFs.clear();kfSelectionAnchor=null;renderTimeline();return true;}
-function _copySelectedCameraKeys(){const selected=new Set(_selectedCameraFrames()),keys=_cameraTrackKeys().filter(key=>selected.has(key.frame));if(!keys.length)return false;const first=Math.min(...keys.map(key=>key.frame));cameraKeyClipboard=keys.map(key=>({offset:key.frame-first,x:key.x,y:key.y,zoom:key.zoom,rotation:key.rotation}));return true;}
-function _pasteCameraKeys(frame){if(!window.CameraSystem||!cameraKeyClipboard||!cameraKeyClipboard.length)return false;const before=CameraSystem.trackSnapshot(),targets=new Set(cameraKeyClipboard.map(key=>Math.min(TOTAL-1,Math.max(0,frame+key.offset)))),kept=_cameraTrackKeys().filter(key=>!targets.has(key.frame)),added=cameraKeyClipboard.map(key=>({frame:Math.min(TOTAL-1,Math.max(0,frame+key.offset)),x:key.x,y:key.y,zoom:key.zoom,rotation:key.rotation}));CameraSystem.replaceTrackKeys(kept.concat(added),'paste',before);selectedKFs.clear();added.forEach(key=>selectedKFs.add(`camera:${key.frame}`));cameraTrackSelected=true;return true;}
+function _copySelectedCameraKeys(){const selected=new Set(_selectedCameraFrames()),keys=_cameraTrackKeys().filter(key=>selected.has(key.frame));if(!keys.length)return false;const first=Math.min(...keys.map(key=>key.frame));cameraKeyClipboard=keys.map(key=>({offset:key.frame-first,x:key.x,y:key.y,zoom:key.zoom,rotation:key.rotation,interpolation:key.interpolation||'linear'}));return true;}
+function _pasteCameraKeys(frame){if(!window.CameraSystem||!cameraKeyClipboard||!cameraKeyClipboard.length)return false;const before=CameraSystem.trackSnapshot(),targets=new Set(cameraKeyClipboard.map(key=>Math.min(TOTAL-1,Math.max(0,frame+key.offset)))),kept=_cameraTrackKeys().filter(key=>!targets.has(key.frame)),added=cameraKeyClipboard.map(key=>({frame:Math.min(TOTAL-1,Math.max(0,frame+key.offset)),x:key.x,y:key.y,zoom:key.zoom,rotation:key.rotation,interpolation:key.interpolation||'linear'}));CameraSystem.replaceTrackKeys(kept.concat(added),'paste',before);selectedKFs.clear();added.forEach(key=>selectedKFs.add(`camera:${key.frame}`));cameraTrackSelected=true;return true;}
 function _duplicateCameraKeys(){if(!_copySelectedCameraKeys())return false;const frames=_selectedCameraFrames(),target=Math.min(TOTAL-1,Math.min(...frames)+1),targets=cameraKeyClipboard.map(key=>target+key.offset);if(targets.some(frame=>frame>=TOTAL||_cameraKeyAt(frame)))return false;return _pasteCameraKeys(target);}
 function _cameraShortcut(action){if(!cameraTrackSelected&&!_selectedCameraFrames().length)return false;if(action==='copy')return _copySelectedCameraKeys();if(action==='cut'){if(!_copySelectedCameraKeys())return false;return _deleteSelectedCameraKeys();}if(action==='paste')return _pasteCameraKeys(curFrame);if(action==='duplicate')return _duplicateCameraKeys();if(action==='delete')return _deleteSelectedCameraKeys();return false;}
 function _selectCameraTrack(selectCurrentKey){cameraTrackSelected=true;selectedKFs.clear();selectedRowLayers.clear();kfSelectionAnchor=null;if(selectCurrentKey&&_cameraKeyAt(curFrame)){selectedKFs.add(`camera:${curFrame}`);kfSelectionAnchor={trackId:'camera',frameIndex:curFrame};}renderTimeline();}
 function _activateCameraFromTimeline(){if(tool!=='camera')setTool('camera','Camera');else _selectCameraTrack(true);}
 function _makeCameraTrackLabel(){const row=document.createElement('div');row.className='tl-layer-lbl tl-camera-lbl'+(cameraTrackSelected?' active':'');row.style.height=CellH+'px';const icon=document.createElement('span');icon.className='tl-camera-icon';icon.textContent='◆';const name=document.createElement('span');name.className='tl-lbl-name';name.textContent='Camera';const actions=document.createElement('span');actions.className='tl-layer-inline-actions';const add=document.createElement('button');add.type='button';add.className='tl-layer-quick-btn';add.textContent='+';add.title='Add or Update Camera Key';add.setAttribute('aria-label',add.title);add.dataset.timelineControl='camera-key';add.onpointerdown=event=>{event.preventDefault();event.stopPropagation();};add.onclick=event=>{event.preventDefault();event.stopPropagation();_addOrUpdateCameraKey();};actions.appendChild(add);row.append(icon,name,actions);row.onclick=_activateCameraFromTimeline;return row;}
-window.CameraTimeline={handleShortcut:_cameraShortcut,addOrUpdateKey:_addOrUpdateCameraKey,deleteSelected:_deleteSelectedCameraKeys,selectTrack:_selectCameraTrack,get selected(){return cameraTrackSelected||_selectedCameraFrames().length>0;}};
+window.CameraTimeline={handleShortcut:_cameraShortcut,addOrUpdateKey:_addOrUpdateCameraKey,deleteSelected:_deleteSelectedCameraKeys,selectTrack:_selectCameraTrack,getSelectedFrames(){return _selectedCameraFrames();},get selected(){return cameraTrackSelected||_selectedCameraFrames().length>0;}};
 function renderLabelCol(){
   const el=document.getElementById('tl-labels-rows');el.innerHTML='';el.appendChild(_makeCameraTrackLabel());
   const visibleItems=timelineTreeItems();

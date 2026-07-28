@@ -378,17 +378,37 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 /* ── TIMELINE ─────────────────────────────────────────────── */
 #timeline-area{
   height:210px;min-height:80px;max-height:500px;background:var(--bg2);
-  display:flex;flex-direction:column;overflow:hidden;
+  display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:44px minmax(0,1fr) 12px;overflow:hidden;
 }
+#timeline-area.graph-editor-open{grid-template-columns:minmax(280px,1fr) minmax(280px,1fr);}
 #tl-controls{
   height:44px;background:var(--bg3);border-bottom:1px solid var(--border);
-  display:flex;align-items:center;gap:4px;padding:0 8px;flex-shrink:0;overflow:hidden;
+  display:flex;align-items:center;gap:4px;padding:0 8px;flex-shrink:0;overflow:hidden;grid-column:1 / -1;grid-row:1;
 }
 .tl-btn{height:24px;padding:0 8px;border-radius:4px;border:1px solid var(--border2);background:transparent;cursor:pointer;color:var(--text);font-size:11px;display:flex;align-items:center;gap:4px;white-space:nowrap;flex-shrink:0;}
 .tl-btn:hover{background:var(--bg4);}
 .tl-btn.playing{border-color:var(--accent);color:var(--accent);background:var(--accent-bg);}
 .tl-btn.loop-on{border-color:var(--green);color:var(--green);background:#0d2218;}
-#tl-controls-left{display:flex;align-items:center;justify-content:flex-end;gap:4px;flex:1;overflow:hidden;min-width:0;}
+.tl-btn.auto-key-on{border-color:var(--red);color:var(--red);background:rgba(239,83,91,.12);}
+.tl-icon-btn{width:24px;padding:0;justify-content:center;font-size:14px;}
+
+.tl-icon-btn.active{border-color:var(--accent);color:var(--accent);background:var(--accent-bg);}
+#graph-editor{min-width:0;min-height:0;border-left:1px solid var(--border);background:var(--bg2);display:flex;flex-direction:column;overflow:hidden;grid-column:2;grid-row:2 / 4;}
+#graph-editor[hidden]{display:none;}
+#graph-editor-toolbar{height:31px;flex-shrink:0;display:flex;align-items:center;gap:6px;padding:3px 8px;background:var(--bg3);border-bottom:1px solid var(--border);}
+.graph-mode-switch{display:flex;align-items:center;border:1px solid var(--border2);border-radius:4px;overflow:hidden;}
+.graph-mode-btn{height:22px;padding:0 8px;border:0;border-right:1px solid var(--border2);background:transparent;color:var(--text2);font:inherit;font-size:10px;cursor:pointer;}
+.graph-mode-btn:last-child{border-right:0;}
+.graph-mode-btn:hover{background:var(--bg4);color:var(--text);}
+.graph-mode-btn.active{background:var(--accent-bg);color:var(--accent);}
+#graph-editor #graph-channel,#graph-editor #graph-interpolation{height:23px;width:112px;min-width:112px;max-width:112px;font-size:10px;}
+#graph-interpolation-controls{display:flex;align-items:center;gap:4px;margin-left:auto;}
+#graph-interpolation-controls[hidden]{display:none;}
+#graph-editor-viewport{position:relative;flex:1;min-height:0;overflow:hidden;background:var(--bg1);}
+#graph-editor-canvas{display:block;width:100%;height:100%;}
+#graph-editor-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--text2);font-size:10px;pointer-events:none;}
+#graph-editor-empty[hidden]{display:none;}
+#tl-controls-left{display:flex;align-items:center;justify-content:flex-start;gap:4px;flex:1;overflow:hidden;min-width:0;}
 #tl-controls-center{display:flex;align-items:center;gap:4px;flex-shrink:0;}
 #tl-controls-right{display:flex;align-items:center;justify-content:flex-start;gap:4px;flex:1;min-width:0;overflow:hidden;}
 #frame-info{font-size:11px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;margin-left:auto;cursor:pointer;border-radius:4px;padding:3px 7px;transition:background .15s;}
@@ -398,7 +418,7 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 #fps-tl{width:50px;min-width:28px;flex:0 1 50px;accent-color:var(--accent);}
 #fps-tl.below-max{accent-color:var(--red);}
 
-#tl-body{display:flex;flex:1 1 0;min-height:0;overflow:hidden;}
+#tl-body{display:flex;min-height:0;overflow:hidden;grid-column:1;grid-row:2;}
 
 /* ── FL-style horizontal scrollbar row ───────────────────────────────── */
 /* Sits as a flex sibling of #tl-body inside #timeline-area (flex column).
@@ -406,6 +426,7 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
    #timeline-area because it's a proper flex child, not an overflow child.  */
 #tl-hscroll-row{
   display:flex;
+  grid-column:1;grid-row:3;
   flex-direction:row;
   flex-shrink:0;
   height:12px;
