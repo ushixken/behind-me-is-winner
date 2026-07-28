@@ -282,7 +282,7 @@ function undo(){
   if(window.RepeatableTransformController&&RepeatableTransformController.active)RepeatableTransformController.cancelForToolExit();
   if(!undoStack.length)return;
   const action=undoStack.pop();
-  if(action.type==='camera-state'&&window.CameraSystem){CameraSystem.restore(action.before);redoStack.push(action);return;}
+  if(action.type==='camera-state'&&window.CameraSystem){CameraSystem.restore(action.before);redoStack.push(action);if(typeof renderTimeline==='function')renderTimeline();return;}
   if(action.type==='camera-track'&&window.CameraSystem){CameraSystem.restoreTrack(action.before);redoStack.push(action);if(typeof renderTimeline==='function')renderTimeline();return;}
   if(action.type==='canvas-resize'&&window.CanvasResizeTool){if(CanvasResizeTool.restoreHistory(action.before))redoStack.push(action);return;}
   if(action.type==='layer-hierarchy'){if(_restoreLayerHierarchy(action.before))redoStack.push(action);return;}
@@ -312,7 +312,7 @@ function redo(){
   if(window.RepeatableTransformController&&RepeatableTransformController.active)RepeatableTransformController.cancelForToolExit();
   if(!redoStack.length)return;
   const action=redoStack.pop();
-  if(action.type==='camera-state'&&window.CameraSystem){CameraSystem.restore(action.after);undoStack.push(action);return;}
+  if(action.type==='camera-state'&&window.CameraSystem){CameraSystem.restore(action.after);undoStack.push(action);if(typeof renderTimeline==='function')renderTimeline();return;}
   if(action.type==='camera-track'&&window.CameraSystem){CameraSystem.restoreTrack(action.after);undoStack.push(action);if(typeof renderTimeline==='function')renderTimeline();return;}
   if(action.type==='canvas-resize'&&window.CanvasResizeTool){if(CanvasResizeTool.restoreHistory(action.after))undoStack.push(action);return;}
   if(action.type==='layer-hierarchy'){if(_restoreLayerHierarchy(action.after))undoStack.push(action);return;}
@@ -387,7 +387,7 @@ function setTool(t,lbl){
   if(typeof refreshSizeUI==='function') refreshSizeUI(); else szValEl.textContent=s;
   if(typeof refreshColorSwatches==='function') refreshColorSwatches();
   if(t==='resize-canvas'&&window.CanvasResizeTool)CanvasResizeTool.enter();
-  if(t==='camera'&&window.CameraSystem)CameraSystem.enter();
+  if(t==='camera'&&window.CameraSystem){CameraSystem.enter();if(window.CameraTimeline&&typeof CameraTimeline.selectTrack==='function')CameraTimeline.selectTrack(true);}
   if(t==='transform'&&typeof enterTransformTool==='function'){
     enterTransformTool();
     if(window.RepeatableTransformController&&RepeatableTransformController.enabled&&!RepeatableTransformController.active)RepeatableTransformController.start();

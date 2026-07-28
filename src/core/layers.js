@@ -171,6 +171,7 @@ tlBodyEl.addEventListener('drop',e=>{
 // COPY / CUT / PASTE / DUPLICATE
 // ════════════════════════════════════════════════════════════════
 function copyFrame(){
+  if(window.CameraTimeline&&CameraTimeline.selected)return CameraTimeline.handleShortcut('copy');
   const layer=layers[curLayer],k=layer.frames[curFrame];
   if(!k){clipboard=null;styleClipboard=null;return;}
   clipboard=mkLayerCanvas();
@@ -179,6 +180,7 @@ function copyFrame(){
     ?getStyleFrameBundle(curLayer,curFrame):null;
 }
 function cutFrame(){
+  if(window.CameraTimeline&&CameraTimeline.selected)return CameraTimeline.handleShortcut('cut');
   copyFrame();
   const layer=layers[curLayer];
   if(layer.type==='smart-raster')pushUndo();
@@ -220,6 +222,7 @@ function _pasteSmartRasterClipboardOwnership(li,fi,rgbaCanvas,payload,dx,dy){
   }
 }
 function pasteFrame(){
+  if(window.CameraTimeline&&CameraTimeline.selected)return CameraTimeline.handleShortcut('paste');
   if(!clipboard)return;
   const layer=layers[curLayer],isSmartRaster=layer.type==='smart-raster';
   if(isSmartRaster)pushUndo();
@@ -254,6 +257,7 @@ function _restoreSmartRasterFrameSlot(li,fi,slot){
   else delete l.frameMeta[fi];
 }
 function duplicateFrame(){
+  if(window.CameraTimeline&&CameraTimeline.selected)return CameraTimeline.handleShortcut('duplicate');
   const l=layers[curLayer];const k=l.frames[curFrame];const n=curFrame+1;
   if(n>=TOTAL) return;
   const isSmartRaster=l.type==='smart-raster';
@@ -329,7 +333,7 @@ document.getElementById('ctx-cut').onclick=()=>{cutFrame();hideAllMenus();};
 document.getElementById('ctx-copy').onclick=()=>{copyFrame();hideAllMenus();};
 document.getElementById('ctx-paste').onclick=()=>{pasteFrame();hideAllMenus();};
 document.getElementById('ctx-duplicate').onclick=()=>{duplicateFrame();hideAllMenus();};
-document.getElementById('ctx-delete').onclick=()=>{delete layers[curLayer].frames[curFrame];if(typeof clearExtendedLayerFrame==='function')clearExtendedLayerFrame(curLayer,curFrame);if(typeof deleteStyleFrame==='function') deleteStyleFrame(curLayer,curFrame);ctx.clearRect(0,0,CW,CH);loadFrame(curLayer,curFrame);renderTimeline();hideAllMenus();};
+document.getElementById('ctx-delete').onclick=()=>{deleteKeyframe();hideAllMenus();};
 // Layer panel context menu actions
 function _startLayerRename(idx,gid){
   if(gid!=null){
@@ -607,7 +611,7 @@ document.getElementById('dd-cut').onclick=()=>{cutLayer(curLayer);closeAllDropdo
 document.getElementById('dd-copy').onclick=()=>{copyLayer(curLayer);closeAllDropdowns();};
 document.getElementById('dd-paste').onclick=()=>{pasteLayer(curLayer);closeAllDropdowns();};
 document.getElementById('dd-duplicate').onclick=()=>{duplicateLayer(curLayer);closeAllDropdowns();};
-function clearCurrentFrame(){pushUndo();ensureKey();ctx.clearRect(0,0,CW,CH);if(typeof clearExtendedLayerFrame==='function')clearExtendedLayerFrame(curLayer,curFrame);if(typeof deleteStyleFrame==='function') deleteStyleFrame(curLayer,curFrame);saveActiveToKey();recomposite(curLayer,curFrame);}
+function clearCurrentFrame(){if(window.CameraTimeline&&CameraTimeline.selected){CameraTimeline.handleShortcut('delete');return;}pushUndo();ensureKey();ctx.clearRect(0,0,CW,CH);if(typeof clearExtendedLayerFrame==='function')clearExtendedLayerFrame(curLayer,curFrame);if(typeof deleteStyleFrame==='function') deleteStyleFrame(curLayer,curFrame);saveActiveToKey();recomposite(curLayer,curFrame);}
 document.getElementById('dd-clear').onclick=()=>{clearCurrentFrame();closeAllDropdowns();};
 
 // Window menu

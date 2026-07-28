@@ -330,13 +330,6 @@ document.addEventListener('keydown',e=>{
     (shortcutTarget&&(shortcutTarget.isContentEditable||shortcutTarget.closest('input,textarea,[contenteditable="true"]')))||
     document.querySelector('.modal-overlay.visible')
   );
-  if(!clipboardShortcutBlocked&&window.CameraTimeline&&CameraTimeline.selected){
-    if(matchBind(e,'copyFrame')){e.preventDefault();CameraTimeline.handleShortcut('copy');return;}
-    if(matchBind(e,'cutFrame')){e.preventDefault();CameraTimeline.handleShortcut('cut');return;}
-    if(matchBind(e,'pasteFrame')){e.preventDefault();CameraTimeline.handleShortcut('paste');return;}
-    if(matchBind(e,'duplicateFrame')){e.preventDefault();CameraTimeline.handleShortcut('duplicate');return;}
-    if(matchBind(e,'clearFrame')){e.preventDefault();CameraTimeline.handleShortcut('delete');return;}
-  }
   if(!clipboardShortcutBlocked){
     if(matchBind(e,'copyFrame')){e.preventDefault();copyFrame();return;}
     if(matchBind(e,'cutFrame')){e.preventDefault();cutFrame();return;}
@@ -359,7 +352,7 @@ document.addEventListener('keydown',e=>{
     for(const action in toolMap){if(matchBind(e,action)){e.preventDefault();setTool(...toolMap[action]);return;}}
   }
   if(matchBind(e,'newFrame')){if(window.CameraTimeline&&CameraTimeline.selected)CameraTimeline.addOrUpdateKey();else{createBlankKey();loadFrame(curLayer,curFrame);}}
-  if(matchBind(e,'delKeyframe')){e.preventDefault();if(window.CameraTimeline&&CameraTimeline.selected)CameraTimeline.handleShortcut('delete');else deleteKeyframe();}
+  if(matchBind(e,'delKeyframe')){e.preventDefault();deleteKeyframe();}
   if(matchBind(e,'nextFrame')){e.preventDefault();kfswNavigate(+1);}
   if(matchBind(e,'prevFrame')){e.preventDefault();kfswNavigate(-1);}
   // Space is reserved for canvas pan — Tab toggles play (handled in timeline.js)

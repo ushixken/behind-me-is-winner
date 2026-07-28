@@ -88,6 +88,7 @@ function updateFpsSliderColor(){
 
 
 function deleteKeyframe(){
+  if(window.CameraTimeline&&CameraTimeline.selected){CameraTimeline.handleShortcut('delete');return;}
   delete layers[curLayer].frames[curFrame];
   if(typeof deleteStyleFrame==='function') deleteStyleFrame(curLayer,curFrame);
   ctx.clearRect(0,0,CW,CH);const h=getHeldKey(curLayer,curFrame);if(h)ctx.drawImage(h,0,0);
@@ -250,7 +251,7 @@ function refreshTimelineSelection(){
   if(current)current.classList.add('cur-col');
   rows.querySelectorAll('.kf-block.selected').forEach(block=>block.classList.remove('selected'));
   selectedKFs.forEach(key=>{
-    const block=rows.querySelector('.kf-block[data-kk="'+key+'"]');
+    const block=key.startsWith('camera:')?rows.querySelector('.camera-kf[data-kk="'+key+'"]'):rows.querySelector('.kf-block[data-kk="'+key+'"]');
     if(block)block.classList.add('selected');
   });
   document.querySelectorAll('.tl-layer-lbl.active').forEach(label=>label.classList.remove('active'));
@@ -271,7 +272,7 @@ function _rowSpanLayers(anchorLayerIndex,targetLayerIndex){
 }
 
 function clearKeyframeSelection(){
-  selectedCameraKeys.clear();cameraKeySelectionAnchor=null;cameraTrackSelected=false;
+  cameraTrackSelected=false;
   if(!selectedKFs.size&&!kfSelectionAnchor)return;
   selectedKFs.clear();
   kfSelectionAnchor=null;
@@ -370,6 +371,12 @@ function _deepCopySmartStyleFrames(frames){
 }
 function startKFDrag(li,fi,e){
   e.preventDefault();e.stopPropagation();
+  if(li==='camera'){
+    const draggedKey=`camera:${fi}`,frames=(selectedKFs.has(draggedKey)?Array.from(selectedKFs):[draggedKey]).filter(key=>key.startsWith('camera:')).map(key=>Number(key.slice(7)));
+    const selected=new Set(frames),before=CameraSystem.trackSnapshot(),items=_cameraTrackKeys().filter(key=>selected.has(key.frame)).map(key=>Object.assign({},key)),occupied=new Set(_cameraTrackKeys().filter(key=>!selected.has(key.frame)).map(key=>key.frame));
+    dragKF={kind:'camera',li,originFi:fi,lockedScroll:tlScroll.scrollLeft,items,occupied,before,appliedDelta:0,anyShift:false};
+    document.addEventListener('pointermove',onKFDragMove);document.addEventListener('pointerup',onKFDragUp);return;
+  }
   const draggedKey=`${li}:${fi}`;
   const keys=selectedKFs.has(draggedKey)?Array.from(selectedKFs):[draggedKey];
   const items=keys.map(key=>{
@@ -406,6 +413,12 @@ function onKFDragMove(e){
 
   // Where does the pointer map to on the (locked) timeline?
   const rawTarget=rawFrameFromX(e.clientX);
+  if(dragKF.kind==='camera'){
+    const min=Math.min(...dragKF.items.map(item=>item.frame)),max=Math.max(...dragKF.items.map(item=>item.frame)),delta=Math.max(-min,Math.min(TOTAL-1-max,rawTarget-dragKF.originFi));
+    if(delta===dragKF.appliedDelta||dragKF.items.some(item=>dragKF.occupied.has(item.frame+delta)))return;
+    dragKF.appliedDelta=delta;const moved=dragKF.items.map(item=>Object.assign({},item,{frame:item.frame+delta})),origins=new Set(dragKF.items.map(item=>item.frame));
+    CameraSystem.replaceTrackKeys(dragKF.before.keys.filter(key=>!origins.has(key.frame)).concat(moved));selectedKFs.clear();moved.forEach(key=>selectedKFs.add(`camera:${key.frame}`));curFrame=Math.max(0,Math.min(TOTAL-1,dragKF.originFi+delta));CameraSystem.evaluateAt(curFrame);renderTimeline();return;
+  }
 
   // Work out how many frames the dragged item(s) need to move.
   // minimumFrame / maximumFrame are the current internal positions of the
@@ -552,7 +565,9 @@ function _trimLeadingBlanks(){
 function onKFDragUp(){
   document.removeEventListener('pointermove',onKFDragMove);
   document.removeEventListener('pointerup',onKFDragUp);
-  if(dragKF&&(dragKF.appliedDelta!==0||dragKF.anyShift)){
+  if(dragKF&&dragKF.kind==='camera'){
+    if(dragKF.appliedDelta!==0)CameraSystem.commitTrack(dragKF.before,'move');
+  }else if(dragKF&&(dragKF.appliedDelta!==0||dragKF.anyShift)){
     // If frames were prepended during this drag, try to reclaim any
     // leading blank space now that the final position is known.
     if(frameLabelOffset>0) _trimLeadingBlanks();
@@ -1151,7 +1166,7 @@ function _applyTimelineLayerQuickAction(layer,action){
     _toggleTimelineLayerSolo(layer);recomposite(curLayer,curFrame);updateOnion();renderLayerPanel();renderTimeline();
   }
 }
-window.addEventListener('project-loaded',()=>{_timelineSoloState=null;timelineCollapsedGroupIds.clear();selectedCameraKeys.clear();cameraKeySelectionAnchor=null;cameraTrackSelected=false;});
+window.addEventListener('project-loaded',()=>{_timelineSoloState=null;timelineCollapsedGroupIds.clear();selectedKFs.forEach(key=>{if(key.startsWith('camera:'))selectedKFs.delete(key);});cameraTrackSelected=false;});
 function _applyTimelineGroupQuickAction(group,action){
   if(action==='solo')_toggleTimelineGroupSolo(group);
   else if(action==='lock')group.locked=!group.locked;
@@ -1180,34 +1195,35 @@ function _makeTimelineGroupLabel(item){
   row.onclick=()=>{selectedTlLabelIndices.clear();selectedLayerIndices.clear();selectedGroupIds.clear();selectedGroupIds.add(group.id);activeGroupId=group.id;renderLayerPanel();renderTimeline();};
   return row;
 }
-let selectedCameraKeys=new Set();
-let cameraKeySelectionAnchor=null;
 let cameraTrackSelected=false;
 let cameraKeyClipboard=null;
-let cameraKeyDrag=null;
 function _cameraTrackKeys(){return window.CameraSystem&&CameraSystem.value.track?CameraSystem.value.track.keys:[];}
 function _cameraKeyAt(frame){return _cameraTrackKeys().find(key=>key.frame===frame)||null;}
-function _selectCameraKey(frame,event){
-  const keys=_cameraTrackKeys().map(key=>key.frame).sort((a,b)=>a-b);frame=Number(frame);cameraTrackSelected=true;selectedKFs.clear();kfSelectionAnchor=null;selectedRowLayers.clear();
-  if(event&&event.shiftKey&&cameraKeySelectionAnchor!=null){const lo=Math.min(cameraKeySelectionAnchor,frame),hi=Math.max(cameraKeySelectionAnchor,frame);selectedCameraKeys=new Set(keys.filter(value=>value>=lo&&value<=hi));}
-  else if(event&&(event.ctrlKey||event.metaKey)){if(selectedCameraKeys.has(frame))selectedCameraKeys.delete(frame);else selectedCameraKeys.add(frame);cameraKeySelectionAnchor=frame;}
-  else{selectedCameraKeys=new Set([frame]);cameraKeySelectionAnchor=frame;}
+function _selectedCameraFrames(){return Array.from(selectedKFs).filter(key=>key.startsWith('camera:')).map(key=>Number(key.slice(7)));}
+function selectTimelineKey(trackId,frame,event){
+  if(trackId!=='camera'){
+    const layerIndex=Number(trackId),id=`${layerIndex}:${frame}`;cameraTrackSelected=false;
+    if(_selectedCameraFrames().length){selectedKFs.clear();kfSelectionAnchor=null;}
+    if(event&&event.shiftKey&&kfSelectionAnchor&&kfSelectionAnchor.layerIndex!=null){selectKeyframeRange(kfSelectionAnchor,{layerIndex,frameIndex:frame});selectedRowLayers=new Set(_rowSpanLayers(kfSelectionAnchor.layerIndex,layerIndex));}
+    else if(event&&(event.ctrlKey||event.metaKey)){if(selectedKFs.has(id))selectedKFs.delete(id);else selectedKFs.add(id);selectedRowLayers.add(layerIndex);kfSelectionAnchor={layerIndex,frameIndex:frame};}
+    else{if(!selectedKFs.has(id)){selectedKFs.clear();selectedKFs.add(id);}selectedRowLayers=new Set([layerIndex]);kfSelectionAnchor={layerIndex,frameIndex:frame};}
+    return;
+  }
+  const frames=_cameraTrackKeys().map(key=>key.frame).sort((a,b)=>a-b),id=`camera:${frame}`;frame=Number(frame);cameraTrackSelected=true;selectedRowLayers.clear();
+  if(event&&event.shiftKey&&kfSelectionAnchor&&kfSelectionAnchor.trackId==='camera'){const lo=Math.min(kfSelectionAnchor.frameIndex,frame),hi=Math.max(kfSelectionAnchor.frameIndex,frame);selectedKFs.clear();frames.filter(value=>value>=lo&&value<=hi).forEach(value=>selectedKFs.add(`camera:${value}`));}
+  else if(event&&(event.ctrlKey||event.metaKey)){if(selectedKFs.has(id))selectedKFs.delete(id);else selectedKFs.add(id);kfSelectionAnchor={trackId:'camera',frameIndex:frame};}
+  else{selectedKFs.clear();selectedKFs.add(id);kfSelectionAnchor={trackId:'camera',frameIndex:frame};}
 }
-function _addOrUpdateCameraKey(){if(!window.CameraSystem)return;CameraSystem.addOrUpdateKey(curFrame);selectedCameraKeys=new Set([curFrame]);cameraKeySelectionAnchor=curFrame;cameraTrackSelected=true;renderTimeline();}
-function _deleteSelectedCameraKeys(){if(!window.CameraSystem||!selectedCameraKeys.size)return false;CameraSystem.deleteKeys(Array.from(selectedCameraKeys));selectedCameraKeys.clear();cameraKeySelectionAnchor=null;renderTimeline();return true;}
-function _copySelectedCameraKeys(){const keys=_cameraTrackKeys().filter(key=>selectedCameraKeys.has(key.frame));if(!keys.length)return false;const first=Math.min(...keys.map(key=>key.frame));cameraKeyClipboard=keys.map(key=>({offset:key.frame-first,x:key.x,y:key.y,zoom:key.zoom,rotation:key.rotation}));return true;}
-function _pasteCameraKeys(frame){if(!window.CameraSystem||!cameraKeyClipboard||!cameraKeyClipboard.length)return false;const before=CameraSystem.trackSnapshot(),targets=new Set(cameraKeyClipboard.map(key=>Math.min(TOTAL-1,Math.max(0,frame+key.offset)))),kept=_cameraTrackKeys().filter(key=>!targets.has(key.frame)),added=cameraKeyClipboard.map(key=>({frame:Math.min(TOTAL-1,Math.max(0,frame+key.offset)),x:key.x,y:key.y,zoom:key.zoom,rotation:key.rotation}));CameraSystem.replaceTrackKeys(kept.concat(added),'paste',before);selectedCameraKeys=new Set(added.map(key=>key.frame));cameraTrackSelected=true;return true;}
-function _duplicateCameraKeys(){if(!_copySelectedCameraKeys())return false;const frames=Array.from(selectedCameraKeys),target=Math.min(TOTAL-1,Math.min(...frames)+1),targets=cameraKeyClipboard.map(key=>target+key.offset);if(targets.some(frame=>frame>=TOTAL||_cameraKeyAt(frame)))return false;return _pasteCameraKeys(target);}
-function _cameraShortcut(action){if(!cameraTrackSelected&&!selectedCameraKeys.size)return false;if(action==='copy')return _copySelectedCameraKeys();if(action==='cut'){if(!_copySelectedCameraKeys())return false;return _deleteSelectedCameraKeys();}if(action==='paste')return _pasteCameraKeys(curFrame);if(action==='duplicate')return _duplicateCameraKeys();if(action==='delete')return _deleteSelectedCameraKeys();return false;}
-function _startCameraKeyDrag(frame,event){
-  event.preventDefault();event.stopPropagation();const moving=selectedCameraKeys.has(frame)?Array.from(selectedCameraKeys):[frame],before=CameraSystem.trackSnapshot(),selected=new Set(moving),items=_cameraTrackKeys().filter(key=>selected.has(key.frame)).map(key=>Object.assign({},key)),occupied=new Set(_cameraTrackKeys().filter(key=>!selected.has(key.frame)).map(key=>key.frame));cameraKeyDrag={origin:frame,items,occupied,before,delta:0};
-  const move=ev=>{if(!cameraKeyDrag)return;const raw=rawFrameFromX(ev.clientX),min=Math.min(...cameraKeyDrag.items.map(key=>key.frame)),max=Math.max(...cameraKeyDrag.items.map(key=>key.frame)),delta=Math.max(-min,Math.min(TOTAL-1-max,raw-cameraKeyDrag.origin));if(delta===cameraKeyDrag.delta||cameraKeyDrag.items.some(key=>cameraKeyDrag.occupied.has(key.frame+delta)))return;cameraKeyDrag.delta=delta;const moved=cameraKeyDrag.items.map(key=>Object.assign({},key,{frame:key.frame+delta})),others=cameraKeyDrag.before.keys.filter(key=>!cameraKeyDrag.items.some(item=>item.frame===key.frame));CameraSystem.replaceTrackKeys(others.concat(moved));selectedCameraKeys=new Set(moved.map(key=>key.frame));curFrame=Math.max(0,Math.min(TOTAL-1,frame+delta));CameraSystem.evaluateAt(curFrame);renderTimeline();};
-  const up=()=>{document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);document.removeEventListener('pointercancel',cancel);if(cameraKeyDrag&&cameraKeyDrag.delta!==0)CameraSystem.commitTrack(cameraKeyDrag.before,'move');cameraKeyDrag=null;renderTimeline();};
-  const cancel=()=>{document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);document.removeEventListener('pointercancel',cancel);if(cameraKeyDrag)CameraSystem.restoreTrack(cameraKeyDrag.before,curFrame);cameraKeyDrag=null;renderTimeline();};
-  document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);document.addEventListener('pointercancel',cancel);
-}
-function _makeCameraTrackLabel(){const row=document.createElement('div');row.className='tl-layer-lbl tl-camera-lbl'+(cameraTrackSelected?' active':'');row.style.height=CellH+'px';const icon=document.createElement('span');icon.className='tl-camera-icon';icon.textContent='◆';const name=document.createElement('span');name.className='tl-lbl-name';name.textContent='Camera';const actions=document.createElement('span');actions.className='tl-layer-inline-actions';const add=document.createElement('button');add.type='button';add.className='tl-layer-quick-btn';add.textContent='+';add.title='Add or Update Camera Key';add.setAttribute('aria-label',add.title);add.dataset.timelineControl='camera-key';add.onpointerdown=event=>{event.preventDefault();event.stopPropagation();};add.onclick=event=>{event.preventDefault();event.stopPropagation();_addOrUpdateCameraKey();};actions.appendChild(add);row.append(icon,name,actions);row.onclick=()=>{cameraTrackSelected=true;selectedCameraKeys.clear();selectedKFs.clear();kfSelectionAnchor=null;renderTimeline();};return row;}
-window.CameraTimeline={handleShortcut:_cameraShortcut,addOrUpdateKey:_addOrUpdateCameraKey,deleteSelected:_deleteSelectedCameraKeys,get selected(){return cameraTrackSelected||selectedCameraKeys.size>0;}};
+function _addOrUpdateCameraKey(){if(!window.CameraSystem)return;CameraSystem.addOrUpdateKey(curFrame);selectedKFs.clear();selectedKFs.add(`camera:${curFrame}`);kfSelectionAnchor={trackId:'camera',frameIndex:curFrame};cameraTrackSelected=true;renderTimeline();}
+function _deleteSelectedCameraKeys(){const frames=_selectedCameraFrames();if(!window.CameraSystem||!frames.length)return false;CameraSystem.deleteKeys(frames);selectedKFs.clear();kfSelectionAnchor=null;renderTimeline();return true;}
+function _copySelectedCameraKeys(){const selected=new Set(_selectedCameraFrames()),keys=_cameraTrackKeys().filter(key=>selected.has(key.frame));if(!keys.length)return false;const first=Math.min(...keys.map(key=>key.frame));cameraKeyClipboard=keys.map(key=>({offset:key.frame-first,x:key.x,y:key.y,zoom:key.zoom,rotation:key.rotation}));return true;}
+function _pasteCameraKeys(frame){if(!window.CameraSystem||!cameraKeyClipboard||!cameraKeyClipboard.length)return false;const before=CameraSystem.trackSnapshot(),targets=new Set(cameraKeyClipboard.map(key=>Math.min(TOTAL-1,Math.max(0,frame+key.offset)))),kept=_cameraTrackKeys().filter(key=>!targets.has(key.frame)),added=cameraKeyClipboard.map(key=>({frame:Math.min(TOTAL-1,Math.max(0,frame+key.offset)),x:key.x,y:key.y,zoom:key.zoom,rotation:key.rotation}));CameraSystem.replaceTrackKeys(kept.concat(added),'paste',before);selectedKFs.clear();added.forEach(key=>selectedKFs.add(`camera:${key.frame}`));cameraTrackSelected=true;return true;}
+function _duplicateCameraKeys(){if(!_copySelectedCameraKeys())return false;const frames=_selectedCameraFrames(),target=Math.min(TOTAL-1,Math.min(...frames)+1),targets=cameraKeyClipboard.map(key=>target+key.offset);if(targets.some(frame=>frame>=TOTAL||_cameraKeyAt(frame)))return false;return _pasteCameraKeys(target);}
+function _cameraShortcut(action){if(!cameraTrackSelected&&!_selectedCameraFrames().length)return false;if(action==='copy')return _copySelectedCameraKeys();if(action==='cut'){if(!_copySelectedCameraKeys())return false;return _deleteSelectedCameraKeys();}if(action==='paste')return _pasteCameraKeys(curFrame);if(action==='duplicate')return _duplicateCameraKeys();if(action==='delete')return _deleteSelectedCameraKeys();return false;}
+function _selectCameraTrack(selectCurrentKey){cameraTrackSelected=true;selectedKFs.clear();selectedRowLayers.clear();kfSelectionAnchor=null;if(selectCurrentKey&&_cameraKeyAt(curFrame)){selectedKFs.add(`camera:${curFrame}`);kfSelectionAnchor={trackId:'camera',frameIndex:curFrame};}renderTimeline();}
+function _activateCameraFromTimeline(){if(tool!=='camera')setTool('camera','Camera');else _selectCameraTrack(true);}
+function _makeCameraTrackLabel(){const row=document.createElement('div');row.className='tl-layer-lbl tl-camera-lbl'+(cameraTrackSelected?' active':'');row.style.height=CellH+'px';const icon=document.createElement('span');icon.className='tl-camera-icon';icon.textContent='◆';const name=document.createElement('span');name.className='tl-lbl-name';name.textContent='Camera';const actions=document.createElement('span');actions.className='tl-layer-inline-actions';const add=document.createElement('button');add.type='button';add.className='tl-layer-quick-btn';add.textContent='+';add.title='Add or Update Camera Key';add.setAttribute('aria-label',add.title);add.dataset.timelineControl='camera-key';add.onpointerdown=event=>{event.preventDefault();event.stopPropagation();};add.onclick=event=>{event.preventDefault();event.stopPropagation();_addOrUpdateCameraKey();};actions.appendChild(add);row.append(icon,name,actions);row.onclick=_activateCameraFromTimeline;return row;}
+window.CameraTimeline={handleShortcut:_cameraShortcut,addOrUpdateKey:_addOrUpdateCameraKey,deleteSelected:_deleteSelectedCameraKeys,selectTrack:_selectCameraTrack,get selected(){return cameraTrackSelected||_selectedCameraFrames().length>0;}};
 function renderLabelCol(){
   const el=document.getElementById('tl-labels-rows');el.innerHTML='';el.appendChild(_makeCameraTrackLabel());
   const visibleItems=timelineTreeItems();
@@ -1396,8 +1412,8 @@ function renderRows(){
   document.getElementById('tl-inner').style.setProperty('--timeline-second-span',(timelineFps*CellW)+'px');
 
   const cameraRow=document.createElement('div');cameraRow.className='tl-row tl-camera-track-row'+(cameraTrackSelected?' selected':'');cameraRow.style.width=totalW+'px';cameraRow.style.height=CellH+'px';cameraRow.style.position='relative';
-  for(let frame=0;frame<TOTAL;frame++){const cell=document.createElement('div');cell.className='tl-cell camera-track-cell'+(frame===curFrame?' cur-col':'');cell.style.cssText='left:'+(frame*CellW)+'px;position:absolute;width:'+CellW+'px;height:'+CellH+'px;';cell.dataset.cameraFrame=frame;cell.addEventListener('pointerdown',event=>{event.stopPropagation();cameraTrackSelected=true;selectedCameraKeys.clear();cameraKeySelectionAnchor=null;selectedKFs.clear();kfSelectionAnchor=null;selectedRowLayers.clear();goToFrame(frame,false,false,true);renderTimeline();});cameraRow.appendChild(cell);}
-  _cameraTrackKeys().filter(key=>key.frame<TOTAL).forEach(key=>{const marker=document.createElement('div');marker.className='camera-kf'+(selectedCameraKeys.has(key.frame)?' selected':'');marker.style.left=(key.frame*CellW+CellW/2)+'px';marker.style.top=(CellH/2)+'px';marker.dataset.cameraFrame=key.frame;marker.title='Camera Key F'+frameLabel(key.frame);marker.addEventListener('pointerdown',event=>{event.stopPropagation();_selectCameraKey(key.frame,event);goToFrame(key.frame,false,false,true);_startCameraKeyDrag(key.frame,event);renderTimeline();});cameraRow.appendChild(marker);});
+  for(let frame=0;frame<TOTAL;frame++){const cell=document.createElement('div');cell.className='tl-cell camera-track-cell'+(frame===curFrame?' cur-col':'');cell.style.cssText='left:'+(frame*CellW)+'px;position:absolute;width:'+CellW+'px;height:'+CellH+'px;';cell.dataset.cameraFrame=frame;cell.addEventListener('pointerdown',event=>{event.stopPropagation();if(tool!=='camera')setTool('camera','Camera');cameraTrackSelected=true;selectedKFs.clear();kfSelectionAnchor=null;selectedRowLayers.clear();goToFrame(frame,false,false,true);renderTimeline();});cameraRow.appendChild(cell);}
+  _cameraTrackKeys().filter(key=>key.frame<TOTAL).forEach(key=>{const id=`camera:${key.frame}`,marker=document.createElement('div');marker.className='camera-kf'+(selectedKFs.has(id)?' selected':'');marker.style.left=(key.frame*CellW+CellW/2)+'px';marker.style.top=(CellH/2)+'px';marker.dataset.cameraFrame=key.frame;marker.dataset.kk=id;marker.title='Camera Key F'+frameLabel(key.frame);marker.addEventListener('pointerdown',event=>{event.stopPropagation();if(tool!=='camera')setTool('camera','Camera');selectTimelineKey('camera',key.frame,event);goToFrame(key.frame,false,false,true);startKFDrag('camera',key.frame,event);renderTimeline();});cameraRow.appendChild(marker);});
   rowWrap.appendChild(cameraRow);
 
   timelineTreeItems().forEach(item=>{
@@ -1446,16 +1462,8 @@ function renderRows(){
       block.dataset.layerIdx=i;block.dataset.kk=kk;
       block.addEventListener('pointerdown',ev=>{
         ev.stopPropagation();
-        if(ev.shiftKey&&kfSelectionAnchor){
-          selectKeyframeRange(kfSelectionAnchor,{layerIndex:i,frameIndex:f});
-          selectedRowLayers=new Set(_rowSpanLayers(kfSelectionAnchor.layerIndex,i));
-          const lo=Math.min(kfSelectionAnchor.frameIndex,f),hi=Math.max(kfSelectionAnchor.frameIndex,f);
-          selectedFrames.clear();for(let ff=lo;ff<=hi;ff++)selectedFrames.add(ff);
-        }else if(ev.ctrlKey||ev.metaKey){
-          if(selectedKFs.has(kk))selectedKFs.delete(kk);else selectedKFs.add(kk);
-          selectedRowLayers.add(i);
-          kfSelectionAnchor={layerIndex:i,frameIndex:f};
-        }else{
+        selectTimelineKey(i,f,ev);
+        if(ev.shiftKey&&kfSelectionAnchor&&kfSelectionAnchor.layerIndex!=null){const lo=Math.min(kfSelectionAnchor.frameIndex,f),hi=Math.max(kfSelectionAnchor.frameIndex,f);selectedFrames.clear();for(let ff=lo;ff<=hi;ff++)selectedFrames.add(ff);}else{
           if(!selectedKFs.has(kk)){selectedKFs.clear();selectedKFs.add(kk);}
           selectedRowLayers=new Set([i]);
           kfSelectionAnchor={layerIndex:i,frameIndex:f};
