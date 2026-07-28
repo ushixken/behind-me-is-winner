@@ -2201,3 +2201,20 @@ body.lt-dragging,body.lt-dragging *{cursor:grabbing !important;}
 .lt-tint-swatch:hover:not(:disabled){border-color:var(--accent);}
 .lt-tint-swatch:disabled{opacity:.45;cursor:not-allowed;}
 .lt-props input:disabled{opacity:.45;cursor:not-allowed;}
+/* Resize Canvas document mode */
+#resize-canvas-overlay{cursor:default;}
+#resize-canvas-settings{position:absolute;z-index:20;top:12px;right:12px;width:194px;display:none;padding:10px;border:1px solid var(--border2);border-radius:7px;background:var(--bg2);box-shadow:0 5px 18px rgba(0,0,0,.38);color:var(--text);pointer-events:auto;}
+#resize-canvas-settings.visible{display:block;}
+.rc-title{margin:-2px 0 9px;color:var(--text);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;}
+.rc-field{display:grid;grid-template-columns:minmax(0,1fr) 104px;align-items:center;gap:8px;margin:6px 0;color:var(--text);font-size:11px;}
+.rc-input-wrap{display:flex;align-items:center;gap:5px;min-width:0;}
+.rc-input-wrap input{width:72px;min-width:0;box-sizing:border-box;padding:4px 6px;border:1px solid var(--border2);border-radius:4px;background:var(--bg3);color:var(--text);font:inherit;outline:none;}
+.rc-input-wrap input:focus{border-color:var(--accent);box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 30%,transparent);}
+.rc-input-wrap em{color:var(--muted);font-style:normal;}
+.rc-anchor-label{margin:9px 0 5px;color:var(--text);font-size:11px;}
+#rc-anchor-grid{display:grid;grid-template-columns:repeat(3,25px);grid-template-rows:repeat(3,25px);gap:3px;justify-content:center;}
+.rc-anchor{display:flex;align-items:center;justify-content:center;width:25px;height:25px;padding:0;border:1px solid var(--border2);border-radius:3px;background:var(--bg3);cursor:pointer;}
+.rc-anchor span{width:5px;height:5px;border-radius:50%;background:var(--muted);}
+.rc-anchor:hover{border-color:var(--accent);}.rc-anchor.active{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 22%,var(--bg3));}.rc-anchor.active span{background:var(--accent);}
+#resize-canvas-actions{z-index:20;display:none;transform:translateX(-50%);}#resize-canvas-actions.visible{display:flex;}
+body.resize-canvas-active #canvas-area{cursor:default;}

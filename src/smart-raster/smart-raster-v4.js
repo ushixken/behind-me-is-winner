@@ -334,11 +334,11 @@
     return true;
   }
 
-  function resizeFrame(frame,width,height){
+  function resizeFrame(frame,width,height,offsetX,offsetY){
     requireFrame(frame);width=positiveInteger(width,'Smart Raster v4 resized width');height=positiveInteger(height,'Smart Raster v4 resized height');
     var resized=createFrame(width,height);resized.lifecycle=cloneLifecycle(frame.lifecycle);resized.nextStyleIndex=frame.nextStyleIndex;
     frame.styleIdToIndex.forEach(function(index,id){resized.styleIdToIndex.set(id,index);});frame.indexToStyleId.forEach(function(id,index){resized.indexToStyleId.set(index,id);});
-    var dx=Math.round((width-frame.width)/2),dy=Math.round((height-frame.height)/2);
+    var dx=Number.isFinite(offsetX)?Math.round(offsetX):Math.round((width-frame.width)/2),dy=Number.isFinite(offsetY)?Math.round(offsetY):Math.round((height-frame.height)/2);
     frame.tiles.forEach(function(tile,key){var point=parseTileKey(key),baseX=point.x*TILE_SIZE,baseY=point.y*TILE_SIZE;tile.styleChannels.forEach(function(channel,index){for(var offset=0;offset<channel.length;offset++){var coverage=channel[offset];if(!coverage)continue;var x=baseX+(offset%TILE_SIZE),y=baseY+Math.floor(offset/TILE_SIZE),nx=x+dx,ny=y+dy;if(x<frame.width&&y<frame.height&&nx>=0&&ny>=0&&nx<width&&ny<height)setCoverage(resized,index,nx,ny,coverage);}});});
     resized.tiles.forEach(function(tile,key){resized.dirtyTiles.add(key);});validateFrame(resized);return resized;
   }  var SERIALIZATION_VERSION=4;

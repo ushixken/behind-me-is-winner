@@ -25,7 +25,8 @@ const KEYBIND_DEFAULTS={
   toolSelection:{label:'Selection Tool',     key:'g',          ctrl:false, shift:false, alt:false},
   toolFill:    {label:'Fill Tool',          key:'f',          ctrl:false, shift:false, alt:false},
   toolLine:    {label:'Line Tool',          key:'l',          ctrl:false, shift:false, alt:false},
-  toolCurve:   {label:'Curve Tool',         key:'c',          ctrl:false, shift:false, alt:false},
+  toolCurve:   {label:'Curve Tool',         key:'',           ctrl:false, shift:false, alt:false},
+  toolCanvasResize:{label:'Resize Canvas Tool',key:'r',         ctrl:false, shift:false, alt:false},
   toolEyedropper:{label:'Eyedropper Tool',  key:'i',          ctrl:false, shift:false, alt:false},
   toolTransform: {label:'Transform Tool',   key:'t',          ctrl:false, shift:false, alt:false},
   newFrame:    {label:'New Blank Keyframe', key:'n',          ctrl:false, shift:false, alt:false},
@@ -92,6 +93,8 @@ function loadKeybinds(){
       let migrated=false;
       for(const action in saved){
         if(!keybinds[action])continue;
+        if(action==='toolCurve'&&_matchesStoredBind(saved[action],{key:'c',ctrl:false,shift:false,alt:false})){migrated=true;continue;}
+        if(action==='toolCanvasResize'&&_matchesStoredBind(saved[action],{key:'c',ctrl:false,shift:false,alt:false})){migrated=true;continue;}
         const legacy=LEGACY_CLIPBOARD_DEFAULTS[action];
         if(legacy&&_matchesStoredBind(saved[action],legacy)){migrated=true;continue;}
         Object.assign(keybinds[action],saved[action]);

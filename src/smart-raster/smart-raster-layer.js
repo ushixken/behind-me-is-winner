@@ -361,15 +361,15 @@
   // resizeAllFrames(nw, nh)
   // Resizes every index canvas to nw x nh, centring existing content.
   // Call after CW/CH change, before initCanvas().
-  function resizeAllFrames(nw,nh){
+  function resizeAllFrames(nw,nh,offsetX,offsetY){
     layers.forEach(function(layer){
       if(!layer.indexFrames) return;
       Object.keys(layer.indexFrames).forEach(function(fi){
         var src=layer.indexFrames[fi];if(!src) return;
         var nc=document.createElement('canvas');nc.width=nw;nc.height=nh;
         var nctx=nc.getContext('2d',{willReadFrequently:true,colorSpace:'srgb'});
-        var dx=Math.round((nw-src.width)/2);
-        var dy=Math.round((nh-src.height)/2);
+        var dx=Number.isFinite(offsetX)?Math.round(offsetX):Math.round((nw-src.width)/2);
+        var dy=Number.isFinite(offsetY)?Math.round(offsetY):Math.round((nh-src.height)/2);
         var srcCtx=src.getContext('2d',{willReadFrequently:true,colorSpace:'srgb'});
         nctx.putImageData(srcCtx.getImageData(0,0,src.width,src.height),dx,dy);
         layer.indexFrames[fi]=nc;

@@ -185,6 +185,17 @@
          any other normal-Transform session state — see light-table.js. Visual
          only in this phase (pointer-events stay off). -->
     <canvas id="lt-transform-ui-canvas" aria-hidden="true"></canvas>
+    <div id="resize-canvas-settings" aria-hidden="true">
+      <div class="rc-title">Resize Canvas</div>
+      <label class="rc-field"><span>Width</span><span class="rc-input-wrap"><input id="rc-width" type="number" min="1" max="32768" step="1"><em>px</em></span></label>
+      <label class="rc-field"><span>Height</span><span class="rc-input-wrap"><input id="rc-height" type="number" min="1" max="32768" step="1"><em>px</em></span></label>
+      <div class="rc-anchor-label">Anchor</div>
+      <div id="rc-anchor-grid" role="radiogroup" aria-label="Canvas resize anchor"></div>
+    </div>
+    <div id="resize-canvas-actions" class="tf-floating-actions" aria-hidden="true">
+      <button id="rc-confirm" class="tf-floating-action confirm" type="button" title="Apply Resize Canvas" aria-label="Apply Resize Canvas">✓</button>
+      <button id="rc-cancel" class="tf-floating-action cancel" type="button" title="Cancel Resize Canvas" aria-label="Cancel Resize Canvas">×</button>
+    </div>
     <div id="zoom-indicator">100%</div>
     <div id="rotation-indicator">0°</div>
     <div id="rotation-pivot"></div>
@@ -214,6 +225,9 @@
             <button class="tbtn" id="tp-btn-selection" title="Selection">&#x25CC;</button>
             <button class="tbtn" id="tp-btn-smart-selection" title="Smart Selection" aria-label="Smart Selection">&#10022;</button>
             <button class="tbtn" id="tp-btn-transform" title="Transform (T)">⛶</button>
+            <button class="tbtn" id="tp-btn-canvas-resize" title="Resize Canvas" aria-label="Resize Canvas">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3v14a2 2 0 0 0 2 2h12M3 7h14a2 2 0 0 1 2 2v12M4 4l3 3M20 20l-3-3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
             <div id="color-swatch-stack" title="Click to pick color · drag to detach Color panel">
               <div id="color-swatch" title="Pick color"></div>
               <input type="color" id="color-input" value="#000000"/>
@@ -1619,6 +1633,7 @@
 <script src="src/transform/perspective-controller.js"></script>
 <script src="src/transform/transform-tool.js"></script>
 <script src="src/transform/repeatable-transform.js"></script>
+<script src="src/transform/resize-canvas-tool.js"></script>
 <script src="src/selection/selection-move.js"></script>
 <script src="src/ui/tool-groups.js"></script>
 <script src="src/ui/local-storage-panel.js"></script>

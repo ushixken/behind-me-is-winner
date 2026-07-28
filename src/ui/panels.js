@@ -162,8 +162,8 @@ function deserializeLayerStyleFrames(layer,data){
   return window.SmartRasterLayer.deserializeLayer(layer,data);
 }
 
-function resizeAllStyleFrames(nw,nh){
-  window.SmartRasterLayer.resizeAllFrames(nw,nh);
+function resizeAllStyleFrames(nw,nh,dx,dy){
+  window.SmartRasterLayer.resizeAllFrames(nw,nh,dx,dy);
 }
 
 function markStyleDeleted(styleId){
