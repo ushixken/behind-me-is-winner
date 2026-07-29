@@ -291,6 +291,10 @@ document.addEventListener('contextmenu',e=>{
   if(rulerEl.contains(e.target)) return; // ruler has its own contextmenu listener
   const inLayerPanel=document.getElementById('right-panel').contains(e.target);
   if(inLayerPanel) return; // handled by the layer panel's own contextmenu listener
+  const inTimelineGrid=!!(e.target.closest&&e.target.closest('#tl-scroll'));
+  const canvasWrap=document.getElementById('canvas-wrap'),canvasRect=canvasWrap&&canvasWrap.getBoundingClientRect();
+  const inDocumentCanvas=!!(canvasRect&&e.clientX>=canvasRect.left&&e.clientX<=canvasRect.right&&e.clientY>=canvasRect.top&&e.clientY<=canvasRect.bottom);
+  if(!inTimelineGrid&&!inDocumentCanvas){e.preventDefault();hideAllMenus();return;}
   // Everything else: any element with a more specific context menu (brush preset
   // items, timeline rows, palette cards, etc.) calls stopPropagation() in its own
   // listener, so this only runs when nothing more specific handled it. Rather than
