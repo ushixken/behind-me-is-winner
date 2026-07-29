@@ -1643,6 +1643,7 @@ function updatePlayhead(){
   const ph=document.getElementById('playhead');if(!ph) return;
   const left=curFrame*CellW+CellW/2-1;
   ph.style.left=left+'px';ph.style.height=((timelineTreeItems().length+_cameraTimelineRowCount())*CellH)+'px';ph.style.top='0';
+  window.dispatchEvent(new CustomEvent('timeline-playhead-updated',{detail:{frame:curFrame,left}}));
   const oldFrameLabel=ph.querySelector('.ph-frame-label');
   if(oldFrameLabel)oldFrameLabel.remove();
   // Auto-scroll to keep the playhead in view — but NOT while the scrollbar

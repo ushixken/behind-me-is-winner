@@ -648,22 +648,38 @@
       </div>
     </div>
     <div id="tl-body">
-      <div id="tl-labels-col">
-        <div id="tl-labels-ruler-spacer">
-          <div id="tl-hide-zone" title="Drag a layer here to hide it from the timeline">⌫ Hide</div>
+      <div id="tl-animation-pane">
+        <div id="tl-labels-col">
+          <div id="tl-labels-ruler-spacer">
+            <div id="tl-hide-zone" title="Drag a layer here to hide it from the timeline">⌫ Hide</div>
+          </div>
+          <div id="tl-labels-rows"></div>
         </div>
-        <div id="tl-labels-rows"></div>
-      </div>
-      <div id="tl-labels-resize"></div>
-      <div id="tl-scroll" data-space-pan>
-        <div id="tl-inner">
-          <div id="tl-ruler"></div>
-          <div id="tl-rows-wrap">
-            <div id="playhead"></div>
-            <div id="range-overlay"></div>
+        <div id="tl-labels-resize"></div>
+        <div id="tl-scroll" data-space-pan>
+          <div id="tl-inner">
+            <div id="tl-ruler"></div>
+            <div id="tl-rows-wrap">
+              <div id="playhead"></div>
+              <div id="range-overlay"></div>
+            </div>
           </div>
         </div>
       </div>
+      <div id="audio-timeline-resize" role="separator" aria-orientation="horizontal" aria-label="Resize Audio Tracks"></div>
+      <section id="audio-timeline" aria-label="Audio Tracks">
+        <div id="audio-timeline-header">
+          <button id="audio-timeline-collapse" type="button" aria-expanded="true">
+            <span class="audio-timeline-disclosure" aria-hidden="true">▼</span>
+            <span>Audio Tracks</span>
+          </button>
+          <button id="audio-track-add" type="button" title="Add Track" aria-label="Add Audio Track">+</button>
+        </div>
+        <div id="audio-timeline-body">
+          <div id="audio-timeline-labels" aria-label="Audio track list"></div>
+          <div id="audio-timeline-grid-viewport"><div id="audio-timeline-grid"></div></div>
+        </div>
+      </section>
     </div>
     <!-- FL-style scrollbar — flex sibling of tl-body so it always has space -->
     <div id="tl-hscroll-row">
@@ -1627,6 +1643,7 @@
 <script src="src/core/palette.js"></script>
 <script src="src/brush/brush-presets.js"></script>
 <script src="src/timeline/timeline.js"></script>
+<script src="src/timeline/audio-timeline.js"></script>
 <script src="src/core/layers.js"></script>
 <script src="src/core/project-io.js"></script>
 <script src="src/timeline/keyframe-switcher.js"></script>

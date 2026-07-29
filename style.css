@@ -485,7 +485,54 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 #fps-tl{width:50px;min-width:28px;flex:0 1 50px;accent-color:var(--accent);}
 #fps-tl.below-max{accent-color:var(--red);}
 
-#tl-body{display:flex;min-height:0;overflow:hidden;grid-column:1;grid-row:2;}
+#tl-body{display:flex;flex-direction:column;min-height:0;overflow:hidden;grid-column:1;grid-row:2;}
+#tl-animation-pane{display:flex;flex:1;min-height:0;overflow:hidden;}
+
+/* Audio timeline UI shares the animation timeline frame scale and horizontal position. */
+#audio-timeline-resize{height:5px;flex:0 0 5px;position:relative;z-index:22;background:var(--border);cursor:row-resize;touch-action:none;user-select:none;}
+#audio-timeline-resize::after{content:"";position:absolute;left:0;right:0;top:1px;height:3px;background:transparent;transition:background-color .12s;}
+#audio-timeline-resize:hover::after,#audio-timeline-resize.dragging::after{background:var(--accent);}
+#audio-timeline-resize[hidden]{display:none;}
+body.audio-timeline-resizing{cursor:row-resize;user-select:none;}
+#audio-timeline{height:104px;min-height:25px;flex:0 0 auto;display:flex;flex-direction:column;min-width:0;overflow:hidden;background:var(--bg2);border-bottom:1px solid var(--timeline-row-divider);}
+#audio-timeline-header{height:25px;min-height:25px;width:100%;padding:0 8px;border:0;border-bottom:1px solid var(--timeline-row-divider);display:flex;align-items:center;gap:6px;background:var(--bg3);color:var(--text2);font:inherit;font-size:10px;font-weight:600;text-align:left;cursor:pointer;}
+#audio-timeline-header:hover{background:var(--bg4);color:var(--text);}
+.audio-timeline-disclosure{width:10px;display:inline-flex;align-items:center;justify-content:center;font-size:8px;color:var(--text2);}
+#audio-timeline.collapsed #audio-timeline-header{border-bottom:0;}
+#audio-timeline.collapsed #audio-timeline-body{display:none;}
+#audio-timeline-body{display:grid;grid-template-columns:220px minmax(0,1fr);flex:1;min-height:0;overflow:hidden;}
+#audio-timeline-labels{min-height:0;overflow-x:hidden;overflow-y:auto;scrollbar-width:none;background:var(--bg2);border-right:1px solid var(--border);}
+#audio-timeline-labels::-webkit-scrollbar{display:none;}
+.audio-timeline-track-label{height:var(--cell-h);padding:0 10px;display:flex;align-items:center;box-sizing:border-box;color:var(--text2);font-size:10px;background:var(--timeline-row);border-bottom:1px solid var(--timeline-row-divider);}
+.audio-timeline-track-label::before{content:"♪";width:14px;margin-right:5px;color:var(--accent);opacity:.75;}
+#audio-timeline-grid-viewport{min-width:0;min-height:0;overflow-x:hidden;overflow-y:auto;position:relative;scrollbar-width:thin;scrollbar-color:var(--border2) var(--bg2);background:var(--bg2);touch-action:pan-y;}
+#audio-timeline-grid-viewport::-webkit-scrollbar{width:8px;height:0;}
+#audio-timeline-grid-viewport::-webkit-scrollbar-track{background:var(--bg2);}
+#audio-timeline-grid-viewport::-webkit-scrollbar-thumb{background:var(--border2);border-radius:4px;}
+#audio-timeline-grid{position:relative;min-height:100%;isolation:isolate;}
+.audio-timeline-track-grid{height:var(--cell-h);box-sizing:border-box;position:relative;border-bottom:1px solid var(--timeline-row-divider);background-color:var(--timeline-row);background-image:linear-gradient(to right,transparent calc(100% - 1px),var(--timeline-grid-line));background-size:var(--audio-cell-width) 100%;}
+.audio-timeline-playhead{position:absolute;top:0;bottom:0;width:2px;background:var(--red);z-index:8;pointer-events:none;}
+#audio-timeline-grid-viewport.audio-scrubbing{cursor:col-resize;user-select:none;}
+.audio-timeline-empty-label,.audio-timeline-empty-grid{height:var(--cell-h);box-sizing:border-box;border-bottom:1px solid var(--timeline-row-divider);}
+.audio-timeline-empty-label{display:flex;align-items:center;padding:0 10px;color:var(--text2);font-size:10px;font-style:italic;}
+.audio-timeline-empty-grid{background-color:var(--timeline-row);background-image:linear-gradient(to right,transparent calc(100% - 1px),var(--timeline-grid-line));background-size:var(--audio-cell-width) 100%;}
+#audio-timeline-header{padding:0 5px;justify-content:space-between;cursor:default;}
+#audio-timeline-collapse{height:100%;min-width:0;flex:1;padding:0 3px;border:0;background:transparent;color:inherit;font:inherit;font-weight:600;text-transform:uppercase;display:flex;align-items:center;gap:6px;text-align:left;cursor:pointer;}
+#audio-track-add,.audio-track-delete,.audio-track-drag-handle,.audio-empty-add{border:1px solid var(--border2);background:var(--bg2);color:var(--text2);font:inherit;cursor:pointer;}
+#audio-track-add{width:20px;height:20px;padding:0;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:14px;}
+#audio-track-add:hover,.audio-track-delete:hover,.audio-track-drag-handle:hover,.audio-empty-add:hover{background:var(--bg4);color:var(--text);border-color:var(--accent);}
+.audio-timeline-track-label{padding:0 5px;gap:4px;}
+.audio-timeline-track-label::before{content:none;}
+.audio-track-drag-handle{width:18px;height:20px;flex:0 0 18px;padding:0;border-color:transparent;background:transparent;font-size:9px;line-height:1;touch-action:none;user-select:none;cursor:grab;}
+.audio-track-drag-handle:active{cursor:grabbing;}
+.audio-track-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:text;}
+.audio-track-name-input{width:100%;height:20px;min-width:0;padding:0 4px;border:1px solid var(--accent);border-radius:3px;background:var(--bg1);color:var(--text);font:inherit;font-size:10px;outline:none;}
+.audio-track-future-controls{flex:1;min-width:30px;height:18px;border-left:1px solid var(--timeline-row-divider);opacity:.55;}
+.audio-track-delete{width:20px;height:20px;flex:0 0 20px;padding:0;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:13px;}
+.audio-timeline-track-label.reordering{opacity:.55;}
+.audio-timeline-track-label.reorder-target{box-shadow:inset 0 -2px 0 var(--accent);}
+.audio-timeline-empty-label{height:auto;min-height:var(--cell-h);flex-direction:column;align-items:flex-start;justify-content:center;gap:5px;padding:6px 8px;}
+.audio-empty-add{height:21px;padding:0 8px;border-radius:4px;font-size:9px;}
 
 /* ── FL-style horizontal scrollbar row ───────────────────────────────── */
 /* Sits as a flex sibling of #tl-body inside #timeline-area (flex column).
