@@ -579,34 +579,7 @@ document.getElementById('modal-new-project-ok').onclick=()=>{
   // Re-center the canvas for the new project
   fitCanvasToView();
 };
-document.getElementById('dd-export').onclick=async()=>{
-  closeAllDropdowns();
-  if(typeof JSZip==='undefined'){showInfo('JSZip not loaded. Check your internet connection.','Export Error');return;}
-  const zip=new JSZip();
-  const folder=zip.folder('frames');
-  const exp=document.createElement('canvas');exp.width=CW;exp.height=CH;
-  const ec=exp.getContext('2d');
-  let count=0;
-  for(let f=0;f<TOTAL;f++){
-    ec.clearRect(0,0,CW,CH);
-    if(bgColor==='transparent'){const pat=document.createElement('canvas');pat.width=14;pat.height=14;const pc=pat.getContext('2d');pc.fillStyle='#aaa';pc.fillRect(0,0,14,14);pc.fillStyle='#ddd';pc.fillRect(0,0,7,7);pc.fillRect(7,7,7,7);ec.fillStyle=ec.createPattern(pat,'repeat');ec.fillRect(0,0,CW,CH);}
-    else{ec.fillStyle=bgColor;ec.fillRect(0,0,CW,CH);}
-    for(let i=0;i<layers.length;i++){
-      const l=layers[i];if(!l.visible)continue;
-      if(!_layerGroupChainVisible(l))continue;
-      const k=getHeldKey(i,f);if(!k)continue;
-      ec.globalAlpha=(l.opacity??1)*_layerGroupChainOpacity(l);
-      ec.drawImage(k,0,0);ec.globalAlpha=1;
-    }
-    const name='frame_'+(f+1).toString().padStart(4,'0')+'.png';
-    const blob=await new Promise(r=>exp.toBlob(r,'image/png'));
-    folder.file(name,blob);count++;
-  }
-  const zipBlob=await zip.generateAsync({type:'blob'});
-  const a=document.createElement('a');a.href=URL.createObjectURL(zipBlob);
-  a.download='animation_frames.zip';a.click();
-  showInfo(`Exported ${count} frames as PNG in animation_frames.zip`,'Export Complete');
-};
+document.getElementById('dd-export').onclick=()=>{closeAllDropdowns();if(window.ExportSystem)ExportSystem.open();};
 
 // Edit menu
 document.getElementById('dd-undo').onclick=()=>{undo();closeAllDropdowns();};

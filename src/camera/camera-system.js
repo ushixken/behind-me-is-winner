@@ -35,6 +35,7 @@
     if(!camera.enabled)return snapshot();frame=Math.max(0,Math.round(finite(frame,0)));
     camera.positionX=interpolateField('x',frame,camera.positionX);camera.positionY=interpolateField('y',frame,camera.positionY);camera.zoom=interpolateField('zoom',frame,camera.zoom);camera.rotation=angle(interpolateField('rotation',frame,camera.rotation));notify(true);return snapshot();
   }
+  function evaluateSnapshotAt(frame){const current=camera,working=normalize(snapshot());camera=working;frame=Math.max(0,Math.round(finite(frame,0)));working.positionX=interpolateField('x',frame,working.positionX);working.positionY=interpolateField('y',frame,working.positionY);working.zoom=interpolateField('zoom',frame,working.zoom);working.rotation=angle(interpolateField('rotation',frame,working.rotation));const result=snapshot();camera=current;return result;}
   function trackSnapshot(){return JSON.parse(JSON.stringify(camera.track));}
   function restoreTrack(value,frame){camera.track=normalize(Object.assign({},camera,{track:value})).track;if(camera.track.keys.length)evaluateTrack(frame==null?(typeof curFrame==='number'?curFrame:0):frame);else notify(false);return trackSnapshot();}
   function commitTrack(before,type){const after=trackSnapshot();if(before&&JSON.stringify(before)!==JSON.stringify(after)){undoStack.push({type:'camera-track',operation:type||'edit',before:JSON.parse(JSON.stringify(before)),after});if(undoStack.length>40)undoStack.shift();redoStack.length=0;}notify(false);if(typeof renderTimeline==='function')renderTimeline();return after;}
@@ -92,8 +93,8 @@
     context.clearRect(0,0,width,height);
     context.imageSmoothingEnabled=true;
     context.imageSmoothingQuality='high';
+    if(options.background&&options.background!=='transparent'){context.fillStyle=options.background;context.fillRect(0,0,width,height);}
     context.setTransform(matrix.a,matrix.b,matrix.c,matrix.d,matrix.e,matrix.f);
-    if(options.background&&options.background!=='transparent'){context.fillStyle=options.background;context.fillRect(0,0,CW,CH);}
     context.drawImage(source,0,0);
     context.restore();
     return target;
@@ -110,6 +111,6 @@
   function activate(){if(camera.enabled)return false;const before=snapshot();camera.enabled=true;commitActivation(before);return true;}
   function remove(){if(!camera.enabled)return false;const before=snapshot();camera=defaultCamera(false);commitActivation(before);return true;}
   function init(){camera=defaultCamera(false);overlay=EditorOverlayRenderer.create('camera-overlay',{zIndex:7,pointerEvents:'auto',draw:drawOverlay});overlay.canvas.addEventListener('pointerdown',begin);overlay.canvas.addEventListener('pointermove',update);overlay.canvas.addEventListener('pointerup',event=>finish(event,false));overlay.canvas.addEventListener('pointercancel',event=>finish(event,true));overlay.canvas.addEventListener('lostpointercapture',event=>{if(gesture&&event.pointerId===gesture.pointerId)finish(event,true);});window.addEventListener('canvas-view-transform-changed',()=>overlay.invalidate());}
-  window.CameraSystem={init,enter,exit,activate,remove,reset,restore,load,serialize:snapshot,snapshot,getCameraMatrix,getCameraOutputMatrix,worldToCamera,cameraToWorld,getCameraWorldBounds,renderScene,renderCameraOutput,update:updateCamera,commit,perform,evaluateAt:evaluateTrack,trackSnapshot,restoreTrack,commitTrack,replaceTrackKeys,addOrUpdateKey,addOrUpdatePropertyKey,deleteKeys,deletePropertyKeys,propertyKeys,replacePropertyKeys,setPositionLinked,setKeyInterpolation,setSeparateKey(value){separateKeyEnabled=!!value;return separateKeyEnabled;},get separateKey(){return separateKeyEnabled;},resetWithHistory(){reset(true);},get outputPresets(){return JSON.parse(JSON.stringify(OUTPUT_PRESETS));},get value(){return snapshot();},get active(){return active;}};
+  window.CameraSystem={init,enter,exit,activate,remove,reset,restore,load,serialize:snapshot,snapshot,getCameraMatrix,getCameraOutputMatrix,worldToCamera,cameraToWorld,getCameraWorldBounds,renderScene,renderCameraOutput,update:updateCamera,commit,perform,evaluateAt:evaluateTrack,evaluateSnapshotAt,trackSnapshot,restoreTrack,commitTrack,replaceTrackKeys,addOrUpdateKey,addOrUpdatePropertyKey,deleteKeys,deletePropertyKeys,propertyKeys,replacePropertyKeys,setPositionLinked,setKeyInterpolation,setSeparateKey(value){separateKeyEnabled=!!value;return separateKeyEnabled;},get separateKey(){return separateKeyEnabled;},resetWithHistory(){reset(true);},get outputPresets(){return JSON.parse(JSON.stringify(OUTPUT_PRESETS));},get value(){return snapshot();},get active(){return active;}};
   document.addEventListener('DOMContentLoaded',init);
 })();
