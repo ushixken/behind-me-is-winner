@@ -1207,6 +1207,8 @@ let cameraKeyClipboard=null;
 function _cameraTrackKeys(){return window.CameraSystem&&CameraSystem.value.track?CameraSystem.value.track.keys:[];}
 function _cameraKeyAt(frame){return _cameraTrackKeys().find(key=>key.frame===frame)||null;}
 function _selectedCameraFrames(){return Array.from(selectedKFs).filter(key=>key.startsWith('camera:')).map(key=>Number(key.slice(7)));}
+function clearCameraTimelineSelection(){const hadSelection=cameraTrackSelected||_selectedCameraFrames().length>0;cameraTrackSelected=false;selectedKFs.forEach(key=>{if(key.startsWith('camera:'))selectedKFs.delete(key);});if(kfSelectionAnchor&&kfSelectionAnchor.trackId==='camera')kfSelectionAnchor=null;return hadSelection;}
+window.clearCameraTimelineSelection=clearCameraTimelineSelection;
 function selectTimelineKey(trackId,frame,event){
   if(trackId!=='camera'){
     const layerIndex=Number(trackId),id=`${layerIndex}:${frame}`;cameraTrackSelected=false;
@@ -1419,11 +1421,11 @@ function renderRows(){
   document.getElementById('tl-inner').style.setProperty('--timeline-second-span',(timelineFps*CellW)+'px');
 
   const cameraRow=document.createElement('div');
-  cameraRow.className='tl-row tl-camera-track-row'+(cameraTrackSelected?' selected':'');
+  cameraRow.className='tl-row tl-camera-track-row tl-layer-track-row'+(cameraTrackSelected?' selected':'');
   cameraRow.style.width=totalW+'px';cameraRow.style.height=CellH+'px';cameraRow.style.position='relative';
   for(let frame=0;frame<TOTAL;frame++){
     const cell=document.createElement('div');
-    cell.className='tl-cell camera-track-cell'+(frame===curFrame?' cur-col':'')+(cameraTrackSelected&&selectedFrames.has(frame)?' selected':'');
+    cell.className='tl-cell camera-track-cell'+(Math.floor(frame/timelineFps)%2===1?' second-band':'')+(frame===curFrame?' cur-col':'')+(cameraTrackSelected&&selectedFrames.has(frame)?' selected':'');
     cell.style.cssText='left:'+(frame*CellW)+'px;position:absolute;width:'+CellW+'px;height:'+CellH+'px;';
     cell.dataset.cameraFrame=frame;
     cell.addEventListener('pointerdown',event=>{
@@ -1484,7 +1486,7 @@ function renderRows(){
   timelineTreeItems().forEach(item=>{
     if(item.type==='group'){const groupRow=document.createElement('div'),group=_groupById(item.id);groupRow.className='tl-row tl-group-track-row';groupRow.style.width=totalW+'px';groupRow.style.height=CellH+'px';groupRow.dataset.groupId=item.id;if(group&&group.color&&group.color!=='transparent'){const hex=group.color,r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);groupRow.style.background=`rgba(${r},${g},${b},0.22)`;}rowWrap.appendChild(groupRow);return;}
     const i=item.idx,l=layers[i];const row=document.createElement('div');
-    row.className='tl-row'+(l.color&&l.color!=='transparent'?' has-layer-color':'');row.style.width=totalW+'px';row.style.position='relative';
+    row.className='tl-row tl-layer-track-row'+(l.color&&l.color!=='transparent'?' has-layer-color':'');row.style.width=totalW+'px';row.style.position='relative';
     if(l.color&&l.color!=='transparent'){const hex=l.color;const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);row.style.background=`rgba(${r},${g},${b},0.22)`;}
 
     for(let f=0;f<TOTAL;f++){

@@ -727,6 +727,7 @@ function switchLayer(li,options){
   options=options||{};
   if(typeof window.prepareTransformForArtworkChange==='function')window.prepareTransformForArtworkChange(li,curFrame);
   saveActiveToKey();curLayer=li;activeGroupId=null;selectedGroupIds.clear();layerShiftAnchor=li;groupShiftAnchor=null;
+  if(typeof window.clearCameraTimelineSelection==='function')window.clearCameraTimelineSelection();
   if(!options.preserveTimelineSelection&&typeof syncTimelineSelectionToActiveLayer==='function')syncTimelineSelectionToActiveLayer();
   if(!options.skipLoadFrame)loadFrame(curLayer,curFrame);
   syncOpacityControls();renderLayerPanel();
