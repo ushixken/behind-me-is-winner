@@ -181,6 +181,13 @@
          any other normal-Transform session state — see light-table.js. Visual
          only in this phase (pointer-events stay off). -->
     <canvas id="lt-transform-ui-canvas" aria-hidden="true"></canvas>
+    <div id="camera-view-preview" aria-hidden="true" hidden>
+      <canvas id="camera-view-canvas" aria-label="Camera output preview"></canvas>
+      <div id="camera-view-empty" hidden>
+        <span>No active camera</span>
+        <button id="camera-view-activate" type="button">Activate Camera</button>
+      </div>
+    </div>
     <div id="resize-canvas-settings" aria-hidden="true">
       <div class="rc-title">Resize Canvas</div>
       <label class="rc-field"><span>Width</span><span class="rc-input-wrap"><input id="rc-width" type="number" min="1" max="32768" step="1"><em>px</em></span></label>
@@ -624,6 +631,7 @@
       <div id="tl-controls-left">
         <button class="tl-btn tl-icon-btn" id="btn-graph-editor" type="button" aria-pressed="false" title="Toggle Graph Editor">〽</button>
         <button class="tl-btn tl-icon-btn" id="btn-onion-skin" type="button" aria-pressed="false" title="Toggle Onion Skin" aria-label="Toggle Onion Skin"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.2 10.3A4.2 4.2 0 1 1 10.8 10.3c-.7.5-1 1-1.1 1.7H6.3c-.1-.7-.4-1.2-1.1-1.7Z"></path><path d="M6.4 14h3.2M8 0v1.2M1.7 2.6l.9.8M14.3 2.6l-.9.8"></path></svg></button>
+        <button class="tl-btn tl-icon-btn" id="btn-camera-view" type="button" aria-pressed="false" title="Camera View" aria-label="Toggle Camera View"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.25 4.25h11.5v7.5H2.25z"></path><path d="M5.25 2.25h5.5M5.25 13.75h5.5"></path></svg></button>
       </div>
       <div id="tl-controls-center">
         <button class="tl-btn" id="btn-loop">↺ Loop</button>
@@ -1649,6 +1657,7 @@
 <script src="src/selection/selection-move.js"></script>
 <script src="src/ui/tool-groups.js"></script>
 <script src="src/camera/camera-system.js"></script>
+<script src="src/camera/camera-view.js"></script>
 <script src="src/timeline/graph-editor.js"></script>
 <script src="src/ui/local-storage-panel.js"></script>
 

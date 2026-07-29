@@ -49,6 +49,7 @@
   function same(a,b){return JSON.stringify(a)===JSON.stringify(b);}
   function cameraCenter(value){value=value||camera;return{x:CW/2+value.positionX,y:CH/2+value.positionY};}
   function getCameraMatrix(value){value=value||camera;const center=cameraCenter(value),matrix=new DOMMatrix();matrix.translateSelf(CW/2,CH/2);matrix.rotateSelf(-value.rotation);matrix.scaleSelf(value.zoom,value.zoom);matrix.translateSelf(-center.x,-center.y);return matrix;}
+  function getCameraOutputMatrix(value,width,height){value=value||camera;const center=cameraCenter(value),matrix=new DOMMatrix();matrix.translateSelf(width/2,height/2);matrix.rotateSelf(-value.rotation);matrix.scaleSelf(value.zoom,value.zoom);matrix.translateSelf(-center.x,-center.y);return matrix;}
   function worldToCamera(point,value){const p=new DOMPoint(point.x,point.y).matrixTransform(getCameraMatrix(value));return{x:p.x,y:p.y};}
   function cameraToWorld(point,value){const p=new DOMPoint(point.x,point.y).matrixTransform(getCameraMatrix(value).inverse());return{x:p.x,y:p.y};}
   function getCameraWorldBounds(value){value=value||camera;const center=cameraCenter(value),halfW=value.output.width/(2*value.zoom),halfH=value.output.height/(2*value.zoom),r=value.rotation*Math.PI/180,cos=Math.cos(r),sin=Math.sin(r);return[[-halfW,-halfH],[halfW,-halfH],[halfW,halfH],[-halfW,halfH]].map(([x,y])=>({x:center.x+x*cos-y*sin,y:center.y+x*sin+y*cos}));}
@@ -77,6 +78,26 @@
   function enter(){active=true;notify(false);}
   function exit(){if(gesture){camera=gesture.initial;gesture=null;document.body.classList.remove('camera-interacting');}active=false;notify(false);}
   function renderScene(source,target){const context=target.getContext('2d'),matrix=camera.enabled?getCameraMatrix(camera):new DOMMatrix();context.save();context.setTransform(1,0,0,1,0,0);context.clearRect(0,0,target.width,target.height);context.setTransform(matrix.a,matrix.b,matrix.c,matrix.d,matrix.e,matrix.f);context.drawImage(source,0,0);context.restore();return target;}
+  function renderCameraOutput(options){
+    options=options||{};
+    const value=normalize(options.camera||camera),source=options.source,target=options.target;
+    if(!value.enabled||!source||!target)return null;
+    const width=Math.max(1,Math.round(value.output.width));
+    const height=Math.max(1,Math.round(value.output.height));
+    if(target.width!==width)target.width=width;
+    if(target.height!==height)target.height=height;
+    const context=target.getContext('2d'),matrix=getCameraOutputMatrix(value,width,height);
+    context.save();
+    context.setTransform(1,0,0,1,0,0);
+    context.clearRect(0,0,width,height);
+    context.imageSmoothingEnabled=true;
+    context.imageSmoothingQuality='high';
+    context.setTransform(matrix.a,matrix.b,matrix.c,matrix.d,matrix.e,matrix.f);
+    if(options.background&&options.background!=='transparent'){context.fillStyle=options.background;context.fillRect(0,0,CW,CH);}
+    context.drawImage(source,0,0);
+    context.restore();
+    return target;
+  }
   function cloneGuides(guides){return Object.assign({},guides);}
   function updateCamera(patch,live){const next=Object.assign({},camera,patch||{});for(const key of ['output','view','guides'])if(patch&&patch[key])next[key]=Object.assign({},camera[key],patch[key]);camera=normalize(next);notify(live);return snapshot();}
   function commit(before){commitCameraEdit(before);}
@@ -89,6 +110,6 @@
   function activate(){if(camera.enabled)return false;const before=snapshot();camera.enabled=true;commitActivation(before);return true;}
   function remove(){if(!camera.enabled)return false;const before=snapshot();camera=defaultCamera(false);commitActivation(before);return true;}
   function init(){camera=defaultCamera(false);overlay=EditorOverlayRenderer.create('camera-overlay',{zIndex:7,pointerEvents:'auto',draw:drawOverlay});overlay.canvas.addEventListener('pointerdown',begin);overlay.canvas.addEventListener('pointermove',update);overlay.canvas.addEventListener('pointerup',event=>finish(event,false));overlay.canvas.addEventListener('pointercancel',event=>finish(event,true));overlay.canvas.addEventListener('lostpointercapture',event=>{if(gesture&&event.pointerId===gesture.pointerId)finish(event,true);});window.addEventListener('canvas-view-transform-changed',()=>overlay.invalidate());}
-  window.CameraSystem={init,enter,exit,activate,remove,reset,restore,load,serialize:snapshot,snapshot,getCameraMatrix,worldToCamera,cameraToWorld,getCameraWorldBounds,renderScene,update:updateCamera,commit,perform,evaluateAt:evaluateTrack,trackSnapshot,restoreTrack,commitTrack,replaceTrackKeys,addOrUpdateKey,addOrUpdatePropertyKey,deleteKeys,deletePropertyKeys,propertyKeys,replacePropertyKeys,setPositionLinked,setKeyInterpolation,setSeparateKey(value){separateKeyEnabled=!!value;return separateKeyEnabled;},get separateKey(){return separateKeyEnabled;},resetWithHistory(){reset(true);},get outputPresets(){return JSON.parse(JSON.stringify(OUTPUT_PRESETS));},get value(){return snapshot();},get active(){return active;}};
+  window.CameraSystem={init,enter,exit,activate,remove,reset,restore,load,serialize:snapshot,snapshot,getCameraMatrix,getCameraOutputMatrix,worldToCamera,cameraToWorld,getCameraWorldBounds,renderScene,renderCameraOutput,update:updateCamera,commit,perform,evaluateAt:evaluateTrack,trackSnapshot,restoreTrack,commitTrack,replaceTrackKeys,addOrUpdateKey,addOrUpdatePropertyKey,deleteKeys,deletePropertyKeys,propertyKeys,replacePropertyKeys,setPositionLinked,setKeyInterpolation,setSeparateKey(value){separateKeyEnabled=!!value;return separateKeyEnabled;},get separateKey(){return separateKeyEnabled;},resetWithHistory(){reset(true);},get outputPresets(){return JSON.parse(JSON.stringify(OUTPUT_PRESETS));},get value(){return snapshot();},get active(){return active;}};
   document.addEventListener('DOMContentLoaded',init);
 })();

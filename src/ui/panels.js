@@ -496,6 +496,7 @@ function recomposite(li,fi,dirtyRect){
   if(presentationStart){latencyProfiler.measure('canvas-display-upload',displayUploadStart,{width:CW,height:CH,blur:typeof _displayBlurPx==='number'?_displayBlurPx:null});latencyProfiler.presentationEnd(presentationStart,{dirty:!!clip});}
   if(firstDabDiagnosticStart&&window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.displayComplete(firstDabDiagnosticStart,firstDabDisplayBlitDuration);
   if(window.CompositionPrewarm)window.CompositionPrewarm.noteComposite();
+  if(window.CameraView)window.CameraView.invalidate();
 }
 
 const CompositionPrewarm=(function(){

@@ -357,9 +357,9 @@ document.addEventListener('keydown',e=>{
   if(matchBind(e,'prevFrame')){e.preventDefault();kfswNavigate(-1);}
   // Space is reserved for canvas pan — Tab toggles play (handled in timeline.js)
   // Zoom keyboard shortcuts — center of canvas-area
-  if(matchBind(e,'zoomIn')){e.preventDefault();const r=canvasArea.getBoundingClientRect();doZoom(1,r.width/2,r.height/2);}
-  if(matchBind(e,'zoomOut')){e.preventDefault();const r=canvasArea.getBoundingClientRect();doZoom(-1,r.width/2,r.height/2);}
-  if(matchBind(e,'zoomReset')){e.preventDefault();zoom=1;centerCanvas();showZoom();}
+  if(matchBind(e,'zoomIn')){e.preventDefault();if(window.CameraView&&CameraView.active){CameraView.zoomBy(1);return;}const r=canvasArea.getBoundingClientRect();doZoom(1,r.width/2,r.height/2);}
+  if(matchBind(e,'zoomOut')){e.preventDefault();if(window.CameraView&&CameraView.active){CameraView.zoomBy(-1);return;}const r=canvasArea.getBoundingClientRect();doZoom(-1,r.width/2,r.height/2);}
+  if(matchBind(e,'zoomReset')){e.preventDefault();if(window.CameraView&&CameraView.active){CameraView.resetView();return;}zoom=1;centerCanvas();showZoom();}
   if(matchBind(e,'rotateReset')){e.preventDefault();resetRotation();}
   if(matchBind(e,'flipHorizontal')){e.preventDefault();toggleFlipH();}
   if(matchBind(e,'flipVertical')){e.preventDefault();toggleFlipV();}

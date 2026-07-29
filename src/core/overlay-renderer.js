@@ -43,6 +43,7 @@
     options=options||{};
     const canvas=document.createElement('canvas');
     canvas.id=id;canvas.setAttribute('aria-hidden','true');
+    canvas.classList.add('editor-overlay-canvas');
     canvas.style.cssText='position:absolute;inset:0;width:100%;height:100%;display:none;pointer-events:'+(options.pointerEvents||'none')+';z-index:'+(options.zIndex==null?4:options.zIndex)+';';
     canvasArea.appendChild(canvas);
     const layer={canvas:canvas,context:canvas.getContext('2d'),draw:options.draw||null,visible:false,raf:0,api:null};

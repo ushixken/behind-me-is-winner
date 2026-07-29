@@ -253,6 +253,7 @@ function refreshDisplayComposite(){
   displayCtx.drawImage(onionC,0,0);
   displayCtx.drawImage(artworkCompositeC,0,0);
   displayCtx.filter='none';
+  if(window.CameraView)window.CameraView.invalidate();
 }
 // NOTE: deliberately NOT using {desynchronized:true} here. activeC is read
 // back synchronously via drawImage in saveActiveToKey() every time you
@@ -537,6 +538,7 @@ function resetRotation(){
  * cx,cy are relative to canvasArea element top-left.
  */
 function doZoom(delta,cx,cy){
+  if(window.CameraView&&CameraView.active)return;
   ({x:cx,y:cy}=_toUnflippedNavPoint(cx,cy));
   const oldZoom=zoom;
   zoom=Math.max(zoomMin,Math.min(zoomMax,zoom*(1+delta*zoomSpeed)));
@@ -550,6 +552,7 @@ function doZoom(delta,cx,cy){
 // Scroll to zoom toward cursor
 canvasArea.addEventListener('wheel',e=>{
   e.preventDefault();
+  if(window.CameraView&&CameraView.active){CameraView.zoomBy(e.deltaY<0?1:-1,e.clientX,e.clientY);return;}
   const r=canvasArea.getBoundingClientRect();
   const cx=e.clientX-r.left;
   const cy=e.clientY-r.top;
@@ -610,7 +613,7 @@ function _isTextEntryTarget(t){
 // status bar, modals, and any interactive control. Everywhere else
 // (including outside canvas-area itself, e.g. over empty space, the
 // timeline, or status bar) is fair game for navigating the canvas.
-const _NAV_BLOCKED_SELECTOR='.float-panel,#toolbar,#menubar,.dropdown,#bottom-area,#status,.modal-overlay,.modal,[data-space-pan],button,input,select,textarea,a';
+const _NAV_BLOCKED_SELECTOR='.float-panel,#toolbar,#menubar,.dropdown,#bottom-area,#status,.modal-overlay,.modal,#camera-view-preview,[data-space-pan],button,input,select,textarea,a';
 function _isNavBlocked(t){
   return !!(t&&typeof t.closest==='function'&&t.closest(_NAV_BLOCKED_SELECTOR));
 }
@@ -764,6 +767,10 @@ window.addEventListener('pointerdown',e=>{
   const middleMouse=isMouse&&e.button===1;
   const primaryWithSpace=(isMouse||isPen)&&spaceHeld&&e.button===0;
   if(!middleMouse&&!primaryWithSpace) return;
+  if(window.CameraView&&CameraView.active&&CameraView.beginPointerNavigation(e,e.ctrlKey||ctrlHeld)){
+    e.preventDefault();e.stopImmediatePropagation();
+    return;
+  }
   if(_isNavBlocked(e.target)) return;
   e.preventDefault();e.stopImmediatePropagation();
   _navPointerId=e.pointerId;

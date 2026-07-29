@@ -218,6 +218,42 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;fon
    dragging inside the box can begin. */
 #lt-transform-ui-canvas{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none;z-index:3;}
 #lt-transform-ui-canvas.lt-transform-active{pointer-events:auto;cursor:move;}
+#camera-view-preview{
+  position:absolute;inset:0;z-index:4;overflow:hidden;
+  background:transparent;pointer-events:none;cursor:default;
+  touch-action:none;-ms-touch-action:none;
+}
+#camera-view-preview[hidden],#camera-view-canvas[hidden]{display:none;}
+#camera-view-canvas{
+  position:absolute;display:block;max-width:none;max-height:none;
+  background:transparent;pointer-events:none;
+  box-shadow:0 0 0 1px rgba(255,255,255,.08);
+}
+#camera-view-empty{
+  position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  display:flex;align-items:center;gap:9px;padding:8px 10px;
+  border:1px solid var(--border2);border-radius:6px;background:var(--bg2);
+  color:var(--text2);font-size:11px;box-shadow:0 3px 12px rgba(0,0,0,.35);
+  pointer-events:auto;
+}
+#camera-view-empty[hidden]{display:none;}
+#camera-view-activate{
+  height:24px;padding:0 9px;border:1px solid var(--accent);border-radius:4px;
+  background:var(--accent-bg);color:var(--accent);font:inherit;cursor:pointer;
+}
+#camera-view-activate:hover{filter:brightness(1.12);}
+body.camera-view-active #camera-view-preview{background:#0e0e12;pointer-events:auto;}
+body.camera-view-active #canvas-wrap,
+body.camera-view-active #perspective-guide-canvas,
+body.camera-view-active #transform-ui-canvas,
+body.camera-view-active #lt-transform-ui-canvas,
+body.camera-view-active .editor-overlay-canvas,
+body.camera-view-active .tf-floating-actions,
+body.camera-view-active #resize-canvas-settings,
+body.camera-view-active #rotation-pivot,
+body.camera-view-active #zoom-indicator,
+body.camera-view-active #rotation-indicator{visibility:hidden!important;}
+#btn-camera-view[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);background:var(--accent-bg);}
 .tf-floating-actions{position:absolute;z-index:4;display:flex;gap:4px;padding:3px;border:1px solid var(--border2);border-radius:6px;background:var(--bg2);box-shadow:0 3px 12px rgba(0,0,0,.35);pointer-events:auto;}
 .tf-floating-actions[hidden]{display:none;}
 .tf-floating-action{width:28px;height:24px;display:flex;align-items:center;justify-content:center;padding:0;margin:0;text-align:center;text-indent:0;line-height:1;vertical-align:middle;appearance:none;border:1px solid var(--border2);border-radius:4px;background:var(--bg3);color:var(--text);font-family:Arial,sans-serif;font-size:15px;font-weight:600;cursor:pointer;}
