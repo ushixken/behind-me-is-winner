@@ -2,11 +2,11 @@
   'use strict';
 
   const FORMATS={
-    png:{label:'PNG',single:true,animation:true,alpha:true},
-    jpg:{label:'JPG',single:true,animation:true,alpha:false},
-    gif:{label:'GIF',single:false,animation:true,alpha:false},
-    webm:{label:'WebM',single:false,animation:true,alpha:true},
-    mp4:{label:'MP4',single:false,animation:true,alpha:false}
+    png:{label:'PNG',single:true,animation:true,alpha:true,builtIn:true},
+    jpg:{label:'JPG',single:true,animation:true,alpha:false,builtIn:true},
+    gif:{label:'GIF',single:false,animation:true,alpha:false,builtIn:false},
+    webm:{label:'WebM',single:false,animation:true,alpha:true,builtIn:true},
+    mp4:{label:'MP4',single:false,animation:true,alpha:false,builtIn:true}
   };
   let root=null,previewFrame=0,previewPlaying=false,previewTimer=0,cancelRequested=false,renderRequest=0;
 
@@ -98,13 +98,33 @@
     context.imageSmoothingEnabled=true;context.imageSmoothingQuality='high';context.drawImage(native,0,0,target.width,target.height);
     return target;
   }
-  function encoderStatus(value){
-    if(value.format==='gif')return'GIF encoder is not installed in this build.';
-    if(!value.single&&(value.format==='png'||value.format==='jpg')&&typeof JSZip==='undefined')return'ZIP support is unavailable in this build.';
-    if(value.format==='webm'&&!mediaMime('webm'))return'This browser does not provide a WebM encoder.';
-    if(value.format==='mp4'&&!mediaMime('mp4'))return'A real MP4 encoder is not available in this browser.';
-    return'';
+  function encoderAvailability(format,value){
+    if(format==='png'||format==='jpg'){
+      const sequence=!!value&&!value.single;
+      return sequence&&typeof JSZip==='undefined'
+        ?{available:false,builtIn:true,reason:'ZIP support is unavailable in this build.'}
+        :{available:true,builtIn:true,reason:''};
+    }
+    if(format==='gif'){
+      const encoder=window.ExportEncoders&&window.ExportEncoders.gif;
+      return typeof encoder?.encode==='function'
+        ?{available:true,builtIn:false,reason:''}
+        :{available:false,builtIn:false,reason:'GIF encoder is not installed.'};
+    }
+    if(format==='webm'){
+      const mime=mediaMime('webm');
+      return mime?{available:true,builtIn:true,mime,reason:''}:{available:false,builtIn:true,mime:'',reason:'This browser does not provide a WebM encoder.'};
+    }
+    if(format==='mp4'){
+      const mime=mediaMime('mp4');
+      return mime?{available:true,builtIn:true,mime,reason:''}:{available:false,builtIn:true,mime:'',reason:'A real MP4 encoder is not available in this browser.'};
+    }
+    return{available:false,builtIn:false,reason:'No encoder is available for this format.'};
   }
+  function encoderStatuses(value){
+    return Object.fromEntries(Object.keys(FORMATS).map(format=>[format,encoderAvailability(format,value&&Object.assign({},value,{format}))]));
+  }
+  function encoderStatus(value){return encoderAvailability(value.format,value).reason;}
   function validate(value){
     return !!value.filename&&value.width>0&&value.height>0&&value.width<=16384&&value.height<=16384&&value.start<=value.end&&!encoderStatus(value);
   }
@@ -118,7 +138,8 @@
     root.querySelector('#export-preview-frame').textContent='Frame '+(previewFrame+1);
     root.querySelector('#export-preview-info').textContent=value.width+' × '+value.height+' · '+FORMATS[value.format].label+' · '+(value.single?'Frame '+(value.start+1):'Frames '+(value.start+1)+'–'+(value.end+1));
     const slider=root.querySelector('#export-preview-slider');slider.min=value.start;slider.max=value.end;slider.value=previewFrame;
-    const status=encoderStatus(value);root.querySelector('#export-encoder-status').textContent=status;
+    const availability=encoderAvailability(value.format,value),statusNode=root.querySelector('#export-encoder-status');
+    statusNode.textContent=availability.reason;statusNode.dataset.state=availability.available?'available':'unavailable';
     root.querySelector('#export-submit').disabled=!validate(value);
   }
   function syncResolution(reset){
@@ -147,6 +168,7 @@
     root.querySelector('#export-sequence-options').hidden=!animation||(format!=='png'&&format!=='jpg');
     root.querySelector('#export-gif-options').hidden=format!=='gif';
     root.querySelector('#export-video-options').hidden=format!=='webm'&&format!=='mp4';
+    root.querySelector('.export-install-encoder').hidden=encoderAvailability('gif').available;
     root.querySelector('#export-source option[value="camera"]').disabled=!cameraActive();
     if(!cameraActive()&&root.querySelector('#export-source').value==='camera')root.querySelector('#export-source').value='canvas';
     root.querySelector('#export-width').disabled=!customResolution;root.querySelector('#export-height').disabled=!customResolution;root.querySelector('#export-lock-aspect').disabled=!customResolution;
@@ -192,7 +214,7 @@
     const png=el('div','export-format-options');png.id='export-png-options';png.append(el('p','export-help','Lossless image encoding.'));
     const sequence=el('div','export-format-options');sequence.id='export-sequence-options';sequence.append(makeField('Filename Numbering',select('export-numbering',[['filename_0001','animation_0001'],['0001','0001']])),el('p','export-help','Sequence is downloaded as a ZIP when folder access is unavailable.'));
     const jpg=el('div','export-format-options');jpg.id='export-jpg-options';jpg.append(makeField('Quality',Object.assign(input('export-quality','range',90),{min:1,max:100})));
-    const gif=el('div','export-format-options');gif.id='export-gif-options';gif.append(makeField('Quality',select('export-gif-quality',[['medium','Medium'],['high','High']])),makeField('Colour Count',select('export-gif-colors',[['64','64'],['128','128'],['256','256']])),makeField('Dithering',input('export-gif-dither','checkbox','')),makeField('Loop Animation',input('export-loop','checkbox','')),el('p','export-help','GIF encoding requires an installed GIF encoder.'));
+    const gif=el('div','export-format-options');gif.id='export-gif-options';const installGif=el('button','modal-btn export-install-encoder','Install GIF Encoder');installGif.type='button';installGif.disabled=true;gif.append(makeField('Quality',select('export-gif-quality',[['medium','Medium'],['high','High']])),makeField('Colour Count',select('export-gif-colors',[['64','64'],['128','128'],['256','256']])),makeField('Dithering',input('export-gif-dither','checkbox','')),makeField('Loop Animation',input('export-loop','checkbox','')),installGif);
     const video=el('div','export-format-options');video.id='export-video-options';video.append(makeField('Quality',select('export-video-quality',[['low','Low'],['medium','Medium'],['high','High'],['custom','Custom bitrate']])));
     options.append(png,sequence,jpg,gif,video,el('div','export-encoder-status'));options.lastChild.id='export-encoder-status';left.appendChild(options);
     const previewWrap=el('div','export-preview-wrap'),canvas=el('canvas','');canvas.id='export-preview-canvas';previewWrap.appendChild(canvas);
@@ -262,6 +284,20 @@ root.addEventListener('click',event=>{if(event.target===root)close();});
     for(let frame=value.start,index=0;frame<=value.end;frame++,index++){if(cancelRequested)throw new DOMException('Cancelled','AbortError');renderFrame(frame,value,canvas);const blob=await canvasBlob(canvas,mime,value.quality);const serial=(frame+1).toString().padStart(4,'0'),name=value.numbering==='0001'?serial+'.'+extension:value.filename+'_'+serial+'.'+extension;folder.file(name,blob);progress(index+1,total,startTime);await new Promise(resolve=>setTimeout(resolve,0));}
     if(cancelRequested)throw new DOMException('Cancelled','AbortError');download(await zip.generateAsync({type:'blob'}),value.filename+'.zip');
   }
+  async function exportGif(value){
+    const encoder=window.ExportEncoders&&window.ExportEncoders.gif;
+    if(typeof encoder?.encode!=='function')throw new Error('GIF encoder is not installed.');
+    const frames=[],canvas=document.createElement('canvas'),total=value.end-value.start+1,startTime=performance.now();
+    for(let frame=value.start,index=0;frame<=value.end;frame++,index++){
+      if(cancelRequested)throw new DOMException('Cancelled','AbortError');
+      renderFrame(frame,value,canvas);
+      const copy=document.createElement('canvas');copy.width=canvas.width;copy.height=canvas.height;copy.getContext('2d').drawImage(canvas,0,0);
+      frames.push(copy);progress(index+1,total,startTime);await new Promise(resolve=>setTimeout(resolve,0));
+    }
+    const blob=await encoder.encode({frames,width:value.width,height:value.height,fps:value.fps,loop:value.loop,quality:value.quality});
+    if(!(blob instanceof Blob))throw new Error('The GIF encoder returned no data.');
+    download(blob,value.filename+'.gif');
+  }
   async function exportVideo(value){
     const mime=mediaMime(value.format);if(!mime)throw new Error('The '+value.format.toUpperCase()+' encoder is unavailable.');
     const canvas=document.createElement('canvas');canvas.width=value.width;canvas.height=value.height;
@@ -275,11 +311,12 @@ root.addEventListener('click',event=>{if(event.target===root)close();});
     const value=settings();if(!validate(value))return;cancelRequested=false;showProgress();
     try{
       if(!value.single&&(value.format==='png'||value.format==='jpg'))await exportSequence(value);
+      else if(value.format==='gif')await exportGif(value);
       else if(value.format==='webm'||value.format==='mp4')await exportVideo(value);
       else{const canvas=document.createElement('canvas');renderFrame(value.start,value,canvas);const type=value.format==='jpg'?'image/jpeg':'image/png',blob=await canvasBlob(canvas,type,value.quality);download(blob,value.filename+'.'+value.format);}
       close();if(typeof showInfo==='function')showInfo('Export completed successfully.','Export Complete');
     }catch(error){root.classList.remove('export-progress-active');if(error&&error.name!=='AbortError'&&typeof showInfo==='function')showInfo(error.message||String(error),'Export Failed');}
   }
 
-  window.ExportSystem={open,close,renderFrame};
+  window.ExportSystem={open,close,renderFrame,encoderAvailability,encoderStatuses};
 })();
