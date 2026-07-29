@@ -11,7 +11,6 @@
   let previewSpaceHeld=false;
   let previewCtrlHeld=false;
 
-  const button=document.getElementById('btn-camera-view');
   const host=document.getElementById('camera-view-preview');
   const preview=document.getElementById('camera-view-canvas');
   const empty=document.getElementById('camera-view-empty');
@@ -83,7 +82,11 @@
     const available=hasCamera();
     presenting=requested&&available;
     document.body.classList.toggle('camera-view-active',presenting);
-    button.setAttribute('aria-pressed',requested?'true':'false');
+    document.querySelectorAll('#btn-camera-view').forEach(button=>{
+      button.setAttribute('aria-pressed',requested?'true':'false');
+      button.setAttribute('aria-checked',requested?'true':'false');
+      button.classList.toggle('active',requested);
+    });
     host.hidden=!requested;
     host.setAttribute('aria-hidden',requested?'false':'true');
     preview.hidden=!presenting;
@@ -100,7 +103,9 @@
     if(presenting)layout(CameraSystem.value);
   }
 
-  button.addEventListener('click',event=>{
+  document.addEventListener('click',event=>{
+    const button=event.target.closest&&event.target.closest('#btn-camera-view');
+    if(!button)return;
     event.preventDefault();
     event.stopPropagation();
     requested=!requested;
