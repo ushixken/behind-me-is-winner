@@ -390,9 +390,9 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 .tl-btn:hover{background:var(--bg4);}
 .tl-btn.playing{border-color:var(--accent);color:var(--accent);background:var(--accent-bg);}
 .tl-btn.loop-on{border-color:var(--green);color:var(--green);background:#0d2218;}
-.tl-btn.auto-key-on,.tl-camera-auto-key.auto-key-on{border-color:var(--red);color:var(--red);background:rgba(239,83,91,.12);}
-.tl-camera-auto-key{line-height:0;}
-.tl-camera-auto-key::before{content:'';display:block;width:9px;height:9px;border-radius:50%;background:currentColor;pointer-events:none;}
+.tl-camera-separate-key{line-height:0;}
+.tl-camera-separate-key svg{width:13px;height:13px;fill:currentColor;pointer-events:none;}
+.tl-camera-separate-key.separate-key-on{border-color:var(--accent);color:var(--accent);background:rgba(132,122,255,.14);}
 .tl-icon-btn{width:24px;padding:0;justify-content:center;font-size:14px;}
 
 .tl-icon-btn.active{border-color:var(--accent);color:var(--accent);background:var(--accent-bg);}
