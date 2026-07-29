@@ -239,37 +239,14 @@ function syncTimelineSelectionToActiveLayer(){
 }
 
 function refreshTimelineSelection(){
-  const rows=document.getElementById('tl-rows-wrap');
-  if(!rows)return;
-  rows.querySelectorAll('.tl-cell.selected').forEach(cell=>cell.classList.remove('selected'));
-  if(cameraTrackSelected)selectedFrames.forEach(frameIndex=>{
-    const cell=rows.querySelector('.camera-track-cell[data-camera-frame="'+frameIndex+'"]');
-    if(cell)cell.classList.add('selected');
-  });
-  selectedRowLayers.forEach(layerIndex=>selectedFrames.forEach(frameIndex=>{
-    const cell=rows.querySelector('.tl-cell[data-layer-idx="'+layerIndex+'"][data-frame-idx="'+frameIndex+'"]');
-    if(cell)cell.classList.add('selected');
-  }));
-  rows.querySelectorAll('.tl-cell.cur-col').forEach(cell=>cell.classList.remove('cur-col'));
-  const current=cameraTrackSelected
-    ?rows.querySelector('.camera-track-cell[data-camera-frame="'+curFrame+'"]')
-    :rows.querySelector('.tl-cell[data-layer-idx="'+curLayer+'"][data-frame-idx="'+curFrame+'"]');
-  if(current)current.classList.add('cur-col');
-  rows.querySelectorAll('.timeline-row-active').forEach(row=>row.classList.remove('timeline-row-active'));
-  const activeRow=cameraTrackSelected?rows.querySelector('.tl-camera-track-row'):rows.querySelector('.tl-layer-track-row[data-layer-idx="'+curLayer+'"]');
-  if(activeRow)activeRow.classList.add('timeline-row-active');
-  rows.querySelectorAll('.kf-block.selected,.camera-kf.selected').forEach(block=>block.classList.remove('selected'));
-  selectedKFs.forEach(key=>{
-    const block=key.startsWith('camera:')?rows.querySelector('.camera-kf[data-kk="'+key+'"]'):rows.querySelector('.kf-block[data-kk="'+key+'"]');
-    if(block)block.classList.add('selected');
-  });
-  document.querySelectorAll('.tl-layer-lbl.active').forEach(label=>label.classList.remove('active'));
-  const activeLabel=cameraTrackSelected
-    ?document.querySelector('.tl-camera-lbl')
-    :(activeGroupId?document.querySelector('.tl-group-lbl[data-gid="'+CSS.escape(activeGroupId)+'"]'):document.querySelector('.tl-layer-lbl[data-idx="'+curLayer+'"]'));
-  if(activeLabel)activeLabel.classList.add('active');
-  updatePlayhead();renderRulerHighlight();updateStatus();
-  document.getElementById('frame-info').textContent=frameLabel(curFrame)+' / '+frameLabel(TOTAL-1);
+  const rows=document.getElementById('tl-rows-wrap');if(!rows)return;rows.querySelectorAll('.tl-cell.selected').forEach(cell=>cell.classList.remove('selected'));
+  if(cameraTrackSelected)selectedFrames.forEach(frameIndex=>{const cell=cameraSelectedProperty?rows.querySelector('.camera-property-cell[data-camera-property="'+cameraSelectedProperty+'"][data-camera-frame="'+frameIndex+'"]'):rows.querySelector('.camera-track-cell[data-camera-frame="'+frameIndex+'"]');if(cell)cell.classList.add('selected');});
+  selectedRowLayers.forEach(layerIndex=>selectedFrames.forEach(frameIndex=>{const cell=rows.querySelector('.tl-cell[data-layer-idx="'+layerIndex+'"][data-frame-idx="'+frameIndex+'"]');if(cell)cell.classList.add('selected');}));
+  rows.querySelectorAll('.tl-cell.cur-col').forEach(cell=>cell.classList.remove('cur-col'));const current=cameraTrackSelected?(cameraSelectedProperty?rows.querySelector('.camera-property-cell[data-camera-property="'+cameraSelectedProperty+'"][data-camera-frame="'+curFrame+'"]'):rows.querySelector('.camera-track-cell[data-camera-frame="'+curFrame+'"]')):rows.querySelector('.tl-cell[data-layer-idx="'+curLayer+'"][data-frame-idx="'+curFrame+'"]');if(current)current.classList.add('cur-col');
+  rows.querySelectorAll('.timeline-row-active').forEach(row=>row.classList.remove('timeline-row-active'));const activeRow=cameraTrackSelected?(cameraSelectedProperty?rows.querySelector('.tl-camera-property-row[data-camera-property="'+cameraSelectedProperty+'"]'):rows.querySelector('.tl-camera-track-row')):rows.querySelector('.tl-layer-track-row[data-layer-idx="'+curLayer+'"]');if(activeRow)activeRow.classList.add('timeline-row-active');
+  rows.querySelectorAll('.kf-block.selected,.camera-kf.selected').forEach(block=>block.classList.remove('selected'));selectedKFs.forEach(key=>{const block=key.startsWith('camera')?rows.querySelector('.camera-kf[data-kk="'+key+'"]'):rows.querySelector('.kf-block[data-kk="'+key+'"]');if(block)block.classList.add('selected');});
+  document.querySelectorAll('.tl-layer-lbl.active').forEach(label=>label.classList.remove('active'));const activeLabel=cameraTrackSelected?(cameraSelectedProperty?document.querySelector('.tl-camera-property-lbl[data-camera-property="'+cameraSelectedProperty+'"]'):document.querySelector('.tl-camera-lbl')):(activeGroupId?document.querySelector('.tl-group-lbl[data-gid="'+CSS.escape(activeGroupId)+'"]'):document.querySelector('.tl-layer-lbl[data-idx="'+curLayer+'"]'));if(activeLabel)activeLabel.classList.add('active');
+  updatePlayhead();renderRulerHighlight();updateStatus();document.getElementById('frame-info').textContent=frameLabel(curFrame)+' / '+frameLabel(TOTAL-1);
 }
 
 // Returns the actual layer indices (not display-order indices) spanning between
@@ -283,7 +260,7 @@ function _rowSpanLayers(anchorLayerIndex,targetLayerIndex){
 }
 
 function clearKeyframeSelection(){
-  cameraTrackSelected=false;
+  cameraTrackSelected=false;cameraSelectedProperty=null;
   if(!selectedKFs.size&&!kfSelectionAnchor)return;
   selectedKFs.clear();
   kfSelectionAnchor=null;
@@ -382,6 +359,9 @@ function _deepCopySmartStyleFrames(frames){
 }
 function startKFDrag(li,fi,e){
   e.preventDefault();e.stopPropagation();
+  if(typeof li==='string'&&li.startsWith('camera-')){
+    const property=li.slice(7),prefix='camera-'+property+':',draggedKey=prefix+fi,frames=(selectedKFs.has(draggedKey)?Array.from(selectedKFs):[draggedKey]).filter(key=>key.startsWith(prefix)).map(key=>Number(key.slice(prefix.length))),selected=new Set(frames),before=CameraSystem.trackSnapshot(),items=_cameraPropertyKeys(property).filter(key=>selected.has(key.frame)),occupied=new Set(_cameraPropertyKeys(property).filter(key=>!selected.has(key.frame)).map(key=>key.frame));dragKF={kind:'camera-property',property,li,originFi:fi,lockedScroll:tlScroll.scrollLeft,items,occupied,before,appliedDelta:0,anyShift:false};document.addEventListener('pointermove',onKFDragMove);document.addEventListener('pointerup',onKFDragUp);return;
+  }
   if(li==='camera'){
     const draggedKey=`camera:${fi}`,frames=(selectedKFs.has(draggedKey)?Array.from(selectedKFs):[draggedKey]).filter(key=>key.startsWith('camera:')).map(key=>Number(key.slice(7)));
     const selected=new Set(frames),before=CameraSystem.trackSnapshot(),items=_cameraTrackKeys().filter(key=>selected.has(key.frame)).map(key=>Object.assign({},key)),occupied=new Set(_cameraTrackKeys().filter(key=>!selected.has(key.frame)).map(key=>key.frame));
@@ -424,6 +404,9 @@ function onKFDragMove(e){
 
   // Where does the pointer map to on the (locked) timeline?
   const rawTarget=rawFrameFromX(e.clientX);
+  if(dragKF.kind==='camera-property'){
+    const min=Math.min(...dragKF.items.map(item=>item.frame)),max=Math.max(...dragKF.items.map(item=>item.frame)),delta=Math.max(-min,Math.min(TOTAL-1-max,rawTarget-dragKF.originFi));if(delta===dragKF.appliedDelta||dragKF.items.some(item=>dragKF.occupied.has(item.frame+delta)))return;dragKF.appliedDelta=delta;const fields=_cameraPropertyFields(dragKF.property),origins=new Set(dragKF.items.map(item=>item.frame)),keys=dragKF.before.keys.map(key=>JSON.parse(JSON.stringify(key)));keys.forEach(key=>{if(origins.has(key.frame))fields.forEach(field=>delete key[field]);});dragKF.items.forEach(item=>{const targetFrame=item.frame+delta;let target=keys.find(key=>key.frame===targetFrame);if(!target){target={frame:targetFrame,interpolation:item.interpolation||'ease',bezier:item.bezier?JSON.parse(JSON.stringify(item.bezier)):null};keys.push(target);}fields.forEach(field=>{if(Object.prototype.hasOwnProperty.call(item,field))target[field]=item[field];});});CameraSystem.replaceTrackKeys(keys.filter(key=>'x'in key||'y'in key||'zoom'in key||'rotation'in key));selectedKFs.clear();selectedFrames.clear();dragKF.items.forEach(item=>{const frame=item.frame+delta;selectedKFs.add(_cameraPropertyId(dragKF.property,frame));selectedFrames.add(frame);});curFrame=Math.max(0,Math.min(TOTAL-1,dragKF.originFi+delta));CameraSystem.evaluateAt(curFrame);renderTimeline();return;
+  }
   if(dragKF.kind==='camera'){
     const min=Math.min(...dragKF.items.map(item=>item.frame)),max=Math.max(...dragKF.items.map(item=>item.frame)),delta=Math.max(-min,Math.min(TOTAL-1-max,rawTarget-dragKF.originFi));
     if(delta===dragKF.appliedDelta||dragKF.items.some(item=>dragKF.occupied.has(item.frame+delta)))return;
@@ -576,7 +559,7 @@ function _trimLeadingBlanks(){
 function onKFDragUp(){
   document.removeEventListener('pointermove',onKFDragMove);
   document.removeEventListener('pointerup',onKFDragUp);
-  if(dragKF&&dragKF.kind==='camera'){
+  if(dragKF&&(dragKF.kind==='camera'||dragKF.kind==='camera-property')){
     if(dragKF.appliedDelta!==0)CameraSystem.commitTrack(dragKF.before,'move');
   }else if(dragKF&&(dragKF.appliedDelta!==0||dragKF.anyShift)){
     // If frames were prepended during this drag, try to reclaim any
@@ -1178,7 +1161,7 @@ function _applyTimelineLayerQuickAction(layer,action){
     _toggleTimelineLayerSolo(layer);recomposite(curLayer,curFrame);updateOnion();renderLayerPanel();renderTimeline();
   }
 }
-window.addEventListener('project-loaded',()=>{_timelineSoloState=null;timelineCollapsedGroupIds.clear();selectedKFs.forEach(key=>{if(key.startsWith('camera:'))selectedKFs.delete(key);});cameraTrackSelected=false;});
+window.addEventListener('project-loaded',()=>{_timelineSoloState=null;timelineCollapsedGroupIds.clear();selectedKFs.forEach(key=>{if(key.startsWith('camera'))selectedKFs.delete(key);});cameraTrackSelected=false;});
 function _applyTimelineGroupQuickAction(group,action){
   if(action==='solo')_toggleTimelineGroupSolo(group);
   else if(action==='lock')group.locked=!group.locked;
@@ -1208,40 +1191,52 @@ function _makeTimelineGroupLabel(item){
   return row;
 }
 let cameraTrackSelected=false;
+let cameraTrackExpanded=false;
+let cameraSelectedProperty=null;
 let cameraKeyClipboard=null;
 function _cameraTrackExists(){return !!(window.CameraSystem&&CameraSystem.value&&CameraSystem.value.enabled);}
 function _cameraTrackKeys(){return _cameraTrackExists()&&CameraSystem.value.track?CameraSystem.value.track.keys:[];}
+function _cameraProperties(){return CameraSystem.value.track.positionLinked!==false?['position','zoom','rotation']:['x','y','zoom','rotation'];}
+function _cameraPropertyLabel(property){return property==='position'?'Position':property==='x'?'Position X':property==='y'?'Position Y':property[0].toUpperCase()+property.slice(1);}
+function _cameraPropertyKeys(property){return _cameraTrackExists()?CameraSystem.propertyKeys(property):[];}
+function _cameraPropertyFields(property){return property==='position'?['x','y']:[property];}
+function _cameraPropertyId(property,frame){return 'camera-'+property+':'+frame;}
+function _cameraTimelineRowCount(){return _cameraTrackExists()?1+(cameraTrackExpanded?_cameraProperties().length:0):0;}
 function _cameraKeyAt(frame){return _cameraTrackKeys().find(key=>key.frame===frame)||null;}
-function _selectedCameraFrames(){return Array.from(selectedKFs).filter(key=>key.startsWith('camera:')).map(key=>Number(key.slice(7)));}
-function clearCameraTimelineSelection(){const hadSelection=cameraTrackSelected||_selectedCameraFrames().length>0;cameraTrackSelected=false;selectedKFs.forEach(key=>{if(key.startsWith('camera:'))selectedKFs.delete(key);});if(kfSelectionAnchor&&kfSelectionAnchor.trackId==='camera')kfSelectionAnchor=null;return hadSelection;}
+function _selectedCameraFrames(){return Array.from(new Set(Array.from(selectedKFs).filter(key=>key.startsWith('camera')).map(key=>Number(key.slice(key.lastIndexOf(':')+1))).filter(Number.isFinite)));}
+function _selectedCameraProperty(){const key=Array.from(selectedKFs).find(value=>/^camera-[^:]+:/.test(value));return key?key.slice(7,key.indexOf(':')):cameraSelectedProperty;}
+function clearCameraTimelineSelection(){const hadSelection=cameraTrackSelected||_selectedCameraFrames().length>0;cameraTrackSelected=false;cameraSelectedProperty=null;selectedKFs.forEach(key=>{if(key.startsWith('camera'))selectedKFs.delete(key);});if(kfSelectionAnchor&&String(kfSelectionAnchor.trackId||'').startsWith('camera'))kfSelectionAnchor=null;return hadSelection;}
 window.clearCameraTimelineSelection=clearCameraTimelineSelection;
 function selectTimelineKey(trackId,frame,event){
   if(trackId!=='camera'){
-    const layerIndex=Number(trackId),id=`${layerIndex}:${frame}`;cameraTrackSelected=false;
+    const layerIndex=Number(trackId),id=`${layerIndex}:${frame}`;cameraTrackSelected=false;cameraSelectedProperty=null;
     if(_selectedCameraFrames().length){selectedKFs.clear();kfSelectionAnchor=null;}
     if(event&&event.shiftKey&&kfSelectionAnchor&&kfSelectionAnchor.layerIndex!=null){selectKeyframeRange(kfSelectionAnchor,{layerIndex,frameIndex:frame});selectedRowLayers=new Set(_rowSpanLayers(kfSelectionAnchor.layerIndex,layerIndex));}
     else if(event&&(event.ctrlKey||event.metaKey)){if(selectedKFs.has(id))selectedKFs.delete(id);else selectedKFs.add(id);selectedRowLayers.add(layerIndex);kfSelectionAnchor={layerIndex,frameIndex:frame};}
     else{if(!selectedKFs.has(id)){selectedKFs.clear();selectedKFs.add(id);}selectedRowLayers=new Set([layerIndex]);kfSelectionAnchor={layerIndex,frameIndex:frame};}
     return;
   }
-  const frames=_cameraTrackKeys().map(key=>key.frame).sort((a,b)=>a-b),id=`camera:${frame}`;frame=Number(frame);cameraTrackSelected=true;selectedRowLayers.clear();
+  const frames=_cameraTrackKeys().map(key=>key.frame).sort((a,b)=>a-b),id=`camera:${frame}`;frame=Number(frame);cameraTrackSelected=true;cameraSelectedProperty=null;selectedRowLayers.clear();
   if(event&&event.shiftKey&&kfSelectionAnchor&&kfSelectionAnchor.trackId==='camera'){const lo=Math.min(kfSelectionAnchor.frameIndex,frame),hi=Math.max(kfSelectionAnchor.frameIndex,frame);selectedKFs.clear();frames.filter(value=>value>=lo&&value<=hi).forEach(value=>selectedKFs.add(`camera:${value}`));}
   else if(event&&(event.ctrlKey||event.metaKey)){if(selectedKFs.has(id))selectedKFs.delete(id);else selectedKFs.add(id);kfSelectionAnchor={trackId:'camera',frameIndex:frame};}
   else{if(!selectedKFs.has(id)){selectedKFs.clear();selectedKFs.add(id);}kfSelectionAnchor={trackId:'camera',frameIndex:frame};}
 }
 function _addOrUpdateCameraKey(){if(!_cameraTrackExists())return;CameraSystem.addOrUpdateKey(curFrame);selectedKFs.clear();selectedKFs.add(`camera:${curFrame}`);selectedFrames.clear();selectedFrames.add(curFrame);kfSelectionAnchor={trackId:'camera',frameIndex:curFrame};cameraTrackSelected=true;renderTimeline();}
-function _deleteSelectedCameraKeys(){const frames=_selectedCameraFrames();if(!window.CameraSystem||!frames.length)return false;CameraSystem.deleteKeys(frames);selectedKFs.clear();selectedFrames.clear();selectedFrames.add(curFrame);kfSelectionAnchor=null;renderTimeline();return true;}
-function _copySelectedCameraKeys(){const selected=new Set(_selectedCameraFrames()),keys=_cameraTrackKeys().filter(key=>selected.has(key.frame));if(!keys.length)return false;const first=Math.min(...keys.map(key=>key.frame));cameraKeyClipboard=keys.map(key=>({offset:key.frame-first,x:key.x,y:key.y,zoom:key.zoom,rotation:key.rotation,interpolation:key.interpolation||'linear',bezier:key.bezier?JSON.parse(JSON.stringify(key.bezier)):null}));return true;}
-function _pasteCameraKeys(frame){if(!window.CameraSystem||!cameraKeyClipboard||!cameraKeyClipboard.length)return false;const before=CameraSystem.trackSnapshot(),targets=new Set(cameraKeyClipboard.map(key=>Math.min(TOTAL-1,Math.max(0,frame+key.offset)))),kept=_cameraTrackKeys().filter(key=>!targets.has(key.frame)),added=cameraKeyClipboard.map(key=>({frame:Math.min(TOTAL-1,Math.max(0,frame+key.offset)),x:key.x,y:key.y,zoom:key.zoom,rotation:key.rotation,interpolation:key.interpolation||'linear',bezier:key.bezier?JSON.parse(JSON.stringify(key.bezier)):null}));CameraSystem.replaceTrackKeys(kept.concat(added),'paste',before);selectedKFs.clear();added.forEach(key=>selectedKFs.add(`camera:${key.frame}`));selectedFrames.clear();added.forEach(key=>selectedFrames.add(key.frame));cameraTrackSelected=true;return true;}
-function _duplicateCameraKeys(){if(!_copySelectedCameraKeys())return false;const frames=_selectedCameraFrames(),target=Math.min(TOTAL-1,Math.min(...frames)+1),targets=cameraKeyClipboard.map(key=>target+key.offset);if(targets.some(frame=>frame>=TOTAL||_cameraKeyAt(frame)))return false;return _pasteCameraKeys(target);}
+function _deleteSelectedCameraKeys(){const frames=_selectedCameraFrames();if(!window.CameraSystem||!frames.length)return false;const property=_selectedCameraProperty();if(property)CameraSystem.deletePropertyKeys(property,frames);else CameraSystem.deleteKeys(frames);selectedKFs.clear();selectedFrames.clear();selectedFrames.add(curFrame);kfSelectionAnchor=null;renderTimeline();return true;}
+function _copySelectedCameraKeys(){const selected=new Set(_selectedCameraFrames()),property=_selectedCameraProperty(),keys=(property?_cameraPropertyKeys(property):_cameraTrackKeys()).filter(key=>selected.has(key.frame));if(!keys.length)return false;const first=Math.min(...keys.map(key=>key.frame)),fields=property?_cameraPropertyFields(property):['x','y','zoom','rotation'];cameraKeyClipboard=keys.map(key=>{const copy={offset:key.frame-first,property,interpolation:key.interpolation||'linear',bezier:key.bezier?JSON.parse(JSON.stringify(key.bezier)):null};fields.forEach(field=>{if(Object.prototype.hasOwnProperty.call(key,field))copy[field]=key[field];});return copy;});return true;}
+function _pasteCameraKeys(frame){if(!window.CameraSystem||!cameraKeyClipboard||!cameraKeyClipboard.length)return false;const before=CameraSystem.trackSnapshot(),property=cameraKeyClipboard[0].property||null,fields=property?_cameraPropertyFields(property):['x','y','zoom','rotation'],keys=before.keys.map(key=>JSON.parse(JSON.stringify(key))),added=[];cameraKeyClipboard.forEach(source=>{const targetFrame=Math.min(TOTAL-1,Math.max(0,frame+source.offset));let target=keys.find(key=>key.frame===targetFrame);if(!target){target={frame:targetFrame,interpolation:source.interpolation||'linear',bezier:source.bezier?JSON.parse(JSON.stringify(source.bezier)):null};keys.push(target);}fields.forEach(field=>{if(Object.prototype.hasOwnProperty.call(source,field))target[field]=source[field];});added.push({frame:targetFrame});});CameraSystem.replaceTrackKeys(keys,'paste',before);selectedKFs.clear();added.forEach(key=>selectedKFs.add(property?_cameraPropertyId(property,key.frame):`camera:${key.frame}`));selectedFrames.clear();added.forEach(key=>selectedFrames.add(key.frame));cameraTrackSelected=true;cameraSelectedProperty=property;return true;}
+function _duplicateCameraKeys(){if(!_copySelectedCameraKeys())return false;const frames=_selectedCameraFrames(),property=cameraKeyClipboard[0].property||null,target=Math.min(TOTAL-1,Math.min(...frames)+1),targets=cameraKeyClipboard.map(key=>target+key.offset),occupied=new Set((property?_cameraPropertyKeys(property):_cameraTrackKeys()).map(key=>key.frame));if(targets.some(frame=>frame>=TOTAL||occupied.has(frame)))return false;return _pasteCameraKeys(target);}
 function _cameraShortcut(action){if(!cameraTrackSelected&&!_selectedCameraFrames().length)return false;if(action==='copy')return _copySelectedCameraKeys();if(action==='cut'){if(!_copySelectedCameraKeys())return false;return _deleteSelectedCameraKeys();}if(action==='paste')return _pasteCameraKeys(curFrame);if(action==='duplicate')return _duplicateCameraKeys();if(action==='delete')return _deleteSelectedCameraKeys();return false;}
-function _selectCameraTrack(selectCurrentKey){if(!_cameraTrackExists())return;cameraTrackSelected=true;selectedKFs.clear();selectedFrames.clear();selectedFrames.add(curFrame);selectedRowLayers.clear();kfSelectionAnchor=null;if(selectCurrentKey&&_cameraKeyAt(curFrame)){selectedKFs.add(`camera:${curFrame}`);kfSelectionAnchor={trackId:'camera',frameIndex:curFrame};}renderTimeline();}
+function _selectCameraTrack(selectCurrentKey){if(!_cameraTrackExists())return;cameraTrackSelected=true;cameraSelectedProperty=null;selectedKFs.clear();selectedFrames.clear();selectedFrames.add(curFrame);selectedRowLayers.clear();kfSelectionAnchor=null;if(selectCurrentKey&&_cameraKeyAt(curFrame)){selectedKFs.add(`camera:${curFrame}`);kfSelectionAnchor={trackId:'camera',frameIndex:curFrame};}renderTimeline();}
 function _activateCameraFromTimeline(){if(tool!=='camera')setTool('camera','Camera');_selectCameraTrack(true);}
 async function _removeCameraTrack(){if(!_cameraTrackExists())return;const keyCount=_cameraTrackKeys().length,confirmed=await siteConfirm(keyCount?'Remove Camera and delete all '+keyCount+' Camera keyframe'+(keyCount===1?'':'s')+'?':'Remove Camera from this document?',{title:'Remove Camera',okText:'Remove Camera',danger:true});if(!confirmed)return;CameraSystem.remove();clearCameraTimelineSelection();selectedFrames.clear();selectedFrames.add(curFrame);renderTimeline();}
-function _makeCameraTrackLabel(){const row=document.createElement('div');row.className='tl-layer-lbl tl-camera-lbl'+(cameraTrackSelected?' active':'');row.style.height=CellH+'px';const icon=document.createElement('span');icon.className='tl-camera-icon';icon.textContent='◆';const name=document.createElement('span');name.className='tl-lbl-name';name.textContent='Camera';const actions=document.createElement('span');actions.className='tl-layer-inline-actions';const add=document.createElement('button');add.type='button';add.className='tl-layer-quick-btn';add.textContent='+';add.title='Add or Update Camera Key';add.setAttribute('aria-label',add.title);add.dataset.timelineControl='camera-key';add.onpointerdown=event=>{event.preventDefault();event.stopPropagation();};add.onclick=event=>{event.preventDefault();event.stopPropagation();_addOrUpdateCameraKey();};const autoKey=document.createElement('button');autoKey.type='button';autoKey.className='tl-layer-quick-btn tl-camera-auto-key'+(CameraSystem.autoKey?' auto-key-on':'');autoKey.title='Toggle Camera Auto-Key';autoKey.setAttribute('aria-label',autoKey.title);autoKey.setAttribute('aria-pressed',String(CameraSystem.autoKey));autoKey.dataset.timelineControl='camera-auto-key';autoKey.onpointerdown=event=>{event.preventDefault();event.stopPropagation();};autoKey.onclick=event=>{event.preventDefault();event.stopPropagation();const enabled=CameraSystem.setAutoKey(!CameraSystem.autoKey);autoKey.classList.toggle('auto-key-on',enabled);autoKey.setAttribute('aria-pressed',String(enabled));};const remove=document.createElement('button');remove.type='button';remove.className='tl-layer-quick-btn tl-camera-remove-btn';remove.innerHTML='<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 4.5h9M6 4.5V3h4v1.5M5 6.5v6M8 6.5v6M11 6.5v6M4.5 4.5l.5 9h6l.5-9"></path></svg>';remove.title='Remove Camera';remove.setAttribute('aria-label',remove.title);remove.dataset.timelineControl='remove-camera';remove.onpointerdown=event=>{event.preventDefault();event.stopPropagation();};remove.onclick=event=>{event.preventDefault();event.stopPropagation();_removeCameraTrack();};actions.append(add,autoKey,remove);row.append(icon,name,actions);row.onclick=_activateCameraFromTimeline;return row;}
-window.CameraTimeline={exists:_cameraTrackExists,remove:_removeCameraTrack,handleShortcut:_cameraShortcut,addOrUpdateKey:_addOrUpdateCameraKey,deleteSelected:_deleteSelectedCameraKeys,selectTrack:_selectCameraTrack,getSelectedFrames(){return _selectedCameraFrames();},get selected(){return cameraTrackSelected||_selectedCameraFrames().length>0;}};
+function _makeCameraTrackLabel(){const row=document.createElement('div');row.className='tl-layer-lbl tl-camera-lbl'+(cameraTrackSelected?' active':'');row.style.height=CellH+'px';const disclosure=document.createElement('button');disclosure.type='button';disclosure.className='tl-camera-disclosure';disclosure.textContent=cameraTrackExpanded?'▾':'▸';disclosure.title=cameraTrackExpanded?'Collapse Camera properties':'Expand Camera properties';disclosure.setAttribute('aria-expanded',String(cameraTrackExpanded));disclosure.onpointerdown=event=>{event.preventDefault();event.stopPropagation();};disclosure.onclick=event=>{event.preventDefault();event.stopPropagation();cameraTrackExpanded=!cameraTrackExpanded;if(!cameraTrackExpanded){cameraSelectedProperty=null;selectedKFs.forEach(key=>{if(/^camera-[^:]+:/.test(key))selectedKFs.delete(key);});}renderTimeline();};const icon=document.createElement('span');icon.className='tl-camera-icon';icon.textContent='◆';const name=document.createElement('span');name.className='tl-lbl-name';name.textContent='Camera';const actions=document.createElement('span');actions.className='tl-layer-inline-actions';const add=document.createElement('button');add.type='button';add.className='tl-layer-quick-btn';add.textContent='+';add.title='Add or Update Camera Key';add.setAttribute('aria-label',add.title);add.dataset.timelineControl='camera-key';add.onpointerdown=event=>{event.preventDefault();event.stopPropagation();};add.onclick=event=>{event.preventDefault();event.stopPropagation();_addOrUpdateCameraKey();};const autoKey=document.createElement('button');autoKey.type='button';autoKey.className='tl-layer-quick-btn tl-camera-auto-key'+(CameraSystem.autoKey?' auto-key-on':'');autoKey.title='Toggle Camera Auto-Key';autoKey.setAttribute('aria-label',autoKey.title);autoKey.setAttribute('aria-pressed',String(CameraSystem.autoKey));autoKey.dataset.timelineControl='camera-auto-key';autoKey.onpointerdown=event=>{event.preventDefault();event.stopPropagation();};autoKey.onclick=event=>{event.preventDefault();event.stopPropagation();const enabled=CameraSystem.setAutoKey(!CameraSystem.autoKey);autoKey.classList.toggle('auto-key-on',enabled);autoKey.setAttribute('aria-pressed',String(enabled));};const remove=document.createElement('button');remove.type='button';remove.className='tl-layer-quick-btn tl-camera-remove-btn';remove.innerHTML='<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 4.5h9M6 4.5V3h4v1.5M5 6.5v6M8 6.5v6M11 6.5v6M4.5 4.5l.5 9h6l.5-9"></path></svg>';remove.title='Remove Camera';remove.setAttribute('aria-label',remove.title);remove.dataset.timelineControl='remove-camera';remove.onpointerdown=event=>{event.preventDefault();event.stopPropagation();};remove.onclick=event=>{event.preventDefault();event.stopPropagation();_removeCameraTrack();};actions.append(add,autoKey,remove);row.append(disclosure,icon,name,actions);row.onclick=_activateCameraFromTimeline;return row;}
+function _addOrUpdateCameraPropertyKey(property){if(!_cameraTrackExists())return;CameraSystem.addOrUpdatePropertyKey(property,curFrame);cameraTrackSelected=true;cameraSelectedProperty=property;selectedKFs.clear();selectedKFs.add(_cameraPropertyId(property,curFrame));selectedFrames.clear();selectedFrames.add(curFrame);kfSelectionAnchor={trackId:'camera-'+property,frameIndex:curFrame};renderTimeline();}
+
+function _makeCameraPropertyLabel(property){const row=document.createElement('div');row.className='tl-layer-lbl tl-camera-property-lbl'+(cameraSelectedProperty===property?' active':'');row.style.height=CellH+'px';row.dataset.cameraProperty=property;const spacer=document.createElement('span');spacer.className='tl-camera-property-indent';const name=document.createElement('span');name.className='tl-lbl-name';name.textContent=_cameraPropertyLabel(property);const actions=document.createElement('span');actions.className='tl-layer-inline-actions';const key=document.createElement('button');key.type='button';key.className='tl-layer-quick-btn tl-camera-property-key-btn'+(_cameraPropertyKeys(property).some(item=>item.frame===curFrame)?' active':'');key.textContent='◆';key.title='Add or Update '+_cameraPropertyLabel(property)+' Key';key.setAttribute('aria-label',key.title);key.dataset.timelineControl='camera-property-key';key.onpointerdown=event=>{event.preventDefault();event.stopPropagation();};key.onclick=event=>{event.preventDefault();event.stopPropagation();_addOrUpdateCameraPropertyKey(property);};actions.appendChild(key);row.append(spacer,name,actions);row.onclick=()=>{if(tool!=='camera')setTool('camera','Camera');cameraTrackSelected=true;cameraSelectedProperty=property;selectedRowLayers.clear();renderTimeline();};return row;}
+window.CameraTimeline={exists:_cameraTrackExists,remove:_removeCameraTrack,handleShortcut:_cameraShortcut,addOrUpdateKey:_addOrUpdateCameraKey,deleteSelected:_deleteSelectedCameraKeys,selectTrack:_selectCameraTrack,getSelectedFrames(){return _selectedCameraFrames();},get selectedProperty(){return cameraSelectedProperty;},get selected(){return cameraTrackSelected||_selectedCameraFrames().length>0;}};
 function renderLabelCol(){
-  const el=document.getElementById('tl-labels-rows');el.innerHTML='';if(_cameraTrackExists())el.appendChild(_makeCameraTrackLabel());else clearCameraTimelineSelection();
+  const el=document.getElementById('tl-labels-rows');el.innerHTML='';if(_cameraTrackExists()){const properties=_cameraProperties();if(cameraSelectedProperty&&!properties.includes(cameraSelectedProperty)){cameraSelectedProperty=null;selectedKFs.forEach(key=>{if(/^camera-[^:]+:/.test(key))selectedKFs.delete(key);});}el.appendChild(_makeCameraTrackLabel());if(cameraTrackExpanded)properties.forEach(property=>el.appendChild(_makeCameraPropertyLabel(property)));}else clearCameraTimelineSelection();
   const visibleItems=timelineTreeItems();
   const visibleIndices=visibleItems.filter(item=>item.type==='layer').map(item=>item.idx);
   visibleItems.forEach(item=>{
@@ -1420,6 +1415,17 @@ function onTlLbUp(){
   renderLabelCol();
 }
 
+function _makeCameraPropertyRow(property,totalW,timelineFps){
+  const row=document.createElement('div');row.className='tl-row tl-camera-property-row'+(cameraSelectedProperty===property?' timeline-row-active':'');row.style.width=totalW+'px';row.style.height=CellH+'px';row.style.position='relative';row.dataset.cameraProperty=property;
+  const keys=_cameraPropertyKeys(property);
+  for(let frame=0;frame<TOTAL;frame++){
+    const cell=document.createElement('div'),id=_cameraPropertyId(property,frame),key=keys.find(item=>item.frame===frame);cell.className='tl-cell camera-property-cell'+(Math.floor(frame/timelineFps)%2===1?' second-band':'')+(cameraSelectedProperty===property&&frame===curFrame?' cur-col':'')+(cameraSelectedProperty===property&&selectedFrames.has(frame)?' selected':'');cell.style.cssText='left:'+(frame*CellW)+'px;position:absolute;width:'+CellW+'px;height:'+CellH+'px;';cell.dataset.cameraProperty=property;cell.dataset.cameraFrame=frame;
+    cell.addEventListener('pointerdown',event=>{event.stopPropagation();if(tool!=='camera')setTool('camera','Camera');cameraTrackSelected=true;cameraSelectedProperty=property;selectedRowLayers.clear();if(event.shiftKey&&kfSelectionAnchor&&kfSelectionAnchor.trackId==='camera-'+property){const lo=Math.min(kfSelectionAnchor.frameIndex,frame),hi=Math.max(kfSelectionAnchor.frameIndex,frame);selectedFrames.clear();for(let value=lo;value<=hi;value++)selectedFrames.add(value);selectedKFs.clear();keys.filter(item=>item.frame>=lo&&item.frame<=hi).forEach(item=>selectedKFs.add(_cameraPropertyId(property,item.frame)));}else if(event.ctrlKey||event.metaKey){if(selectedFrames.has(frame))selectedFrames.delete(frame);else selectedFrames.add(frame);if(key){if(selectedKFs.has(id))selectedKFs.delete(id);else selectedKFs.add(id);}kfSelectionAnchor={trackId:'camera-'+property,frameIndex:frame};}else{const dragSelected=event.button===0&&key&&selectedKFs.has(id);if(!dragSelected){selectedKFs.clear();if(key)selectedKFs.add(id);}selectedFrames.clear();selectedFrames.add(frame);kfSelectionAnchor={trackId:'camera-'+property,frameIndex:frame};if(event.button===0){if(dragSelected)startKFDrag('camera-'+property,frame,event);else tlSelDrag={startF:frame,trackId:'camera-'+property};}}if(event.button!==2)goToFrame(frame,false,false,true);renderTimeline();});
+    row.appendChild(cell);
+  }
+  keys.filter(key=>key.frame<TOTAL).forEach(key=>{const id=_cameraPropertyId(property,key.frame),marker=document.createElement('div');marker.className='camera-kf camera-property-kf'+(selectedKFs.has(id)?' selected':'');marker.style.left=(key.frame*CellW+CellW/2)+'px';marker.style.top=(CellH/2)+'px';marker.dataset.cameraFrame=key.frame;marker.dataset.cameraProperty=property;marker.dataset.kk=id;marker.title=_cameraPropertyLabel(property)+' Key F'+frameLabel(key.frame);marker.addEventListener('pointerdown',event=>{event.stopPropagation();if(tool!=='camera')setTool('camera','Camera');cameraTrackSelected=true;cameraSelectedProperty=property;selectedRowLayers.clear();if(event.shiftKey&&kfSelectionAnchor&&kfSelectionAnchor.trackId==='camera-'+property){const lo=Math.min(kfSelectionAnchor.frameIndex,key.frame),hi=Math.max(kfSelectionAnchor.frameIndex,key.frame);selectedKFs.clear();keys.filter(item=>item.frame>=lo&&item.frame<=hi).forEach(item=>selectedKFs.add(_cameraPropertyId(property,item.frame)));}else if(event.ctrlKey||event.metaKey){if(selectedKFs.has(id))selectedKFs.delete(id);else selectedKFs.add(id);kfSelectionAnchor={trackId:'camera-'+property,frameIndex:key.frame};}else{if(!selectedKFs.has(id)){selectedKFs.clear();selectedKFs.add(id);}kfSelectionAnchor={trackId:'camera-'+property,frameIndex:key.frame};}selectedFrames.clear();selectedKFs.forEach(selected=>{if(selected.startsWith('camera-'+property+':'))selectedFrames.add(Number(selected.split(':')[1]));});if(event.button!==2){goToFrame(key.frame,false,false,true);if(event.button===0)startKFDrag('camera-'+property,key.frame,event);}renderTimeline();});row.appendChild(marker);});
+  return row;
+}
 function renderRows(){
   const rowWrap=document.getElementById('tl-rows-wrap');rowWrap.innerHTML='';
   const ph=document.createElement('div');ph.id='playhead';rowWrap.appendChild(ph);
@@ -1438,7 +1444,7 @@ function renderRows(){
     cell.addEventListener('pointerdown',event=>{
       event.stopPropagation();
       if(tool!=='camera')setTool('camera','Camera');
-      cameraTrackSelected=true;selectedRowLayers.clear();
+      cameraTrackSelected=true;cameraSelectedProperty=null;selectedRowLayers.clear();
       if(event.shiftKey&&kfSelectionAnchor&&kfSelectionAnchor.trackId==='camera'){
         const lo=Math.min(kfSelectionAnchor.frameIndex,frame),hi=Math.max(kfSelectionAnchor.frameIndex,frame);
         selectedFrames.clear();for(let value=lo;value<=hi;value++)selectedFrames.add(value);
@@ -1460,7 +1466,7 @@ function renderRows(){
       goToFrame(frame,false,false,true);renderTimeline();
     });
     cell.addEventListener('contextmenu',()=>{
-      cameraTrackSelected=true;selectedRowLayers.clear();selectedFrames.clear();selectedFrames.add(frame);
+      cameraTrackSelected=true;cameraSelectedProperty=null;selectedRowLayers.clear();selectedFrames.clear();selectedFrames.add(frame);
       const key=_cameraKeyAt(frame);selectedKFs.clear();if(key)selectedKFs.add('camera:'+frame);
       kfSelectionAnchor={trackId:'camera',frameIndex:frame};refreshTimelineSelection();
     });
@@ -1483,12 +1489,13 @@ function renderRows(){
       renderTimeline();
     });
     marker.addEventListener('contextmenu',()=>{
-      cameraTrackSelected=true;selectedRowLayers.clear();selectedFrames.clear();selectedFrames.add(key.frame);
+      cameraTrackSelected=true;cameraSelectedProperty=null;selectedRowLayers.clear();selectedFrames.clear();selectedFrames.add(key.frame);
       selectedKFs.clear();selectedKFs.add(id);kfSelectionAnchor={trackId:'camera',frameIndex:key.frame};refreshTimelineSelection();
     });
     cameraRow.appendChild(marker);
   });
   rowWrap.appendChild(cameraRow);
+  if(cameraTrackExpanded)_cameraProperties().forEach(property=>rowWrap.appendChild(_makeCameraPropertyRow(property,totalW,timelineFps)));
   }
 
   timelineTreeItems().forEach(item=>{
@@ -1595,6 +1602,8 @@ function renderRows(){
     const r=tlScroll.getBoundingClientRect();
     const f2=Math.max(0,Math.min(TOTAL-1,Math.floor((e.clientX-r.left+tlScroll.scrollLeft)/CellW)));
 
+    if(typeof tlSelDrag.trackId==='string'&&tlSelDrag.trackId.startsWith('camera-')){const property=tlSelDrag.trackId.slice(7),lo=Math.min(tlSelDrag.startF,f2),hi=Math.max(tlSelDrag.startF,f2);selectedFrames.clear();for(let frame=lo;frame<=hi;frame++)selectedFrames.add(frame);selectedKFs.clear();_cameraPropertyKeys(property).filter(key=>key.frame>=lo&&key.frame<=hi).forEach(key=>selectedKFs.add(_cameraPropertyId(property,key.frame)));cameraTrackSelected=true;cameraSelectedProperty=property;curFrame=f2;CameraSystem.evaluateAt(curFrame);refreshTimelineSelection();return;}
+
     if(tlSelDrag.trackId==='camera'){const lo=Math.min(tlSelDrag.startF,f2),hi=Math.max(tlSelDrag.startF,f2);selectedFrames.clear();for(let frame=lo;frame<=hi;frame++)selectedFrames.add(frame);selectedKFs.clear();_cameraTrackKeys().filter(key=>key.frame>=lo&&key.frame<=hi).forEach(key=>selectedKFs.add('camera:'+key.frame));cameraTrackSelected=true;curFrame=f2;CameraSystem.evaluateAt(curFrame);refreshTimelineSelection();return;}
 
     // Figure out which row (layer) the pointer is currently over so the drag
@@ -1622,14 +1631,14 @@ function renderRows(){
 
 function updateRangeOverlay(){
   const ro=document.getElementById('range-overlay');if(!ro) return;
-  const left=rangeStart*CellW,width=(rangeEnd-rangeStart+1)*CellW,totalH=(timelineTreeItems().length+(_cameraTrackExists()?1:0))*CellH;
+  const left=rangeStart*CellW,width=(rangeEnd-rangeStart+1)*CellW,totalH=(timelineTreeItems().length+_cameraTimelineRowCount())*CellH;
   ro.style.cssText='position:absolute;top:0;left:'+left+'px;width:'+width+'px;height:'+totalH+'px;border-left:2px solid rgba(29,158,117,0.6);border-right:2px solid rgba(226,75,74,0.6);pointer-events:none;z-index:6;';
 }
 
 function updatePlayhead(){
   const ph=document.getElementById('playhead');if(!ph) return;
   const left=curFrame*CellW+CellW/2-1;
-  ph.style.left=left+'px';ph.style.height=((timelineTreeItems().length+(_cameraTrackExists()?1:0))*CellH)+'px';ph.style.top='0';
+  ph.style.left=left+'px';ph.style.height=((timelineTreeItems().length+_cameraTimelineRowCount())*CellH)+'px';ph.style.top='0';
   const oldFrameLabel=ph.querySelector('.ph-frame-label');
   if(oldFrameLabel)oldFrameLabel.remove();
   // Auto-scroll to keep the playhead in view — but NOT while the scrollbar
