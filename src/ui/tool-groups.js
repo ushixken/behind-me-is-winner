@@ -41,7 +41,7 @@
     return {expanded:raw.expanded===true,height:Number.isFinite(+raw.height)?Math.max(80,Math.min(500,+raw.height)):150};
   }
   function saveDrawerState(stateId,state){drawerSaved[stateId]={expanded:!!state.expanded,height:Math.round(state.height)};localStorage.setItem(DRAWER_STORAGE_KEY,JSON.stringify(drawerSaved));}
-  function drawerStateId(){return TOOL_OPTIONS_DRAWER_STATE_ID;}
+  function drawerStateId(drawer,group){return group&&group.id==='camera'?'camera-tool-options':TOOL_OPTIONS_DRAWER_STATE_ID;}
   function setDrawerGeometry(drawer,state){
     if(!state.expanded){drawer.style.height='';drawer.style.flexBasis='';drawer.style.minHeight='';drawer.style.maxHeight='';return;}
     const size=Math.round(state.height)+'px';
@@ -56,30 +56,30 @@
   function captureOptionsPanelLayout(){
     const shell=document.getElementById('brush-presets-panel'),body=shell&&shell.querySelector('.fp-body.active');
     const drawer=body&&body.querySelector('.tool-options-drawer');if(!drawer||!drawer.isConnected)return null;
-    const savedState=drawerState(TOOL_OPTIONS_DRAWER_STATE_ID),expanded=drawer.classList.contains('expanded'),rect=drawer.getBoundingClientRect();
+    const stateId=drawer.dataset.drawerStateId||drawerStateId(drawer,getGroup(activeGroupId)),savedState=drawerState(stateId),expanded=drawer.classList.contains('expanded'),rect=drawer.getBoundingClientRect();
     const height=expanded&&rect.height>0?rect.height:savedState.height;
     const content=drawer.querySelector('.tool-options-drawer-content');
-    const snapshot={expanded,height,scrollTop:content?content.scrollTop:0};
-    saveDrawerState(TOOL_OPTIONS_DRAWER_STATE_ID,{expanded,height});
+    const snapshot={stateId,expanded,height,scrollTop:content?content.scrollTop:0};
+    saveDrawerState(stateId,{expanded,height});
     return snapshot;
   }
   function restoreOptionsPanelLayout(snapshot,group){
     if(!snapshot||!group||activeGroupId!==group.id)return;
     const body=optionsBodyForGroup(group.id),drawer=body&&body.querySelector('.tool-options-drawer');
     if(!drawer||!drawer.isConnected)return;
-    saveDrawerState(TOOL_OPTIONS_DRAWER_STATE_ID,{expanded:snapshot.expanded,height:snapshot.height});
+    const stateId=drawerStateId(drawer,group);if(snapshot.stateId===stateId)saveDrawerState(stateId,{expanded:snapshot.expanded,height:snapshot.height});
     applyDrawerState(body,group);
     const content=drawer.querySelector('.tool-options-drawer-content');
-    if(content)content.scrollTop=Math.min(snapshot.scrollTop,Math.max(0,content.scrollHeight-content.clientHeight));
+    if(content&&snapshot.stateId===stateId)content.scrollTop=Math.min(snapshot.scrollTop,Math.max(0,content.scrollHeight-content.clientHeight));
   }
   function applyDrawerState(body,group){
     const drawer=body.querySelector('.tool-options-drawer');if(!drawer)return;
     const stateId=drawerStateId(drawer,group);
-    // Migrate one prior drawer size once, then ignore tool-specific geometry.
-    // Every tool group renders into the same persisted lower-options slot size.
+    // Camera keeps an independent expanded height so its full settings can stay
+    // visible without changing the shared drawer size used by every other tool.
     if(!drawerSaved[stateId]){
       const previous=drawerSaved['tool-settings']||drawerSaved['selection-options']||drawerSaved['transform-options']||drawerSaved[group.id];
-      drawerSaved[stateId]=previous?{expanded:previous.expanded===true,height:Math.max(80,Math.min(500,+previous.height||150))}:{expanded:false,height:150};
+      drawerSaved[stateId]=stateId==='camera-tool-options'?{expanded:true,height:420}:(previous?{expanded:previous.expanded===true,height:Math.max(80,Math.min(500,+previous.height||150))}:{expanded:false,height:150});
       localStorage.setItem(DRAWER_STORAGE_KEY,JSON.stringify(drawerSaved));
     }
     const state=drawerState(stateId),header=drawer.querySelector('.tool-options-drawer-header'),chevron=drawer.querySelector('.tool-options-drawer-chevron');
