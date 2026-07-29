@@ -423,7 +423,7 @@ function onKFDragMove(e){
     const min=Math.min(...dragKF.items.map(item=>item.frame)),max=Math.max(...dragKF.items.map(item=>item.frame)),delta=Math.max(-min,Math.min(TOTAL-1-max,rawTarget-dragKF.originFi));
     if(delta===dragKF.appliedDelta||dragKF.items.some(item=>dragKF.occupied.has(item.frame+delta)))return;
     dragKF.appliedDelta=delta;const moved=dragKF.items.map(item=>Object.assign({},item,{frame:item.frame+delta})),origins=new Set(dragKF.items.map(item=>item.frame));
-    CameraSystem.replaceTrackKeys(dragKF.before.keys.filter(key=>!origins.has(key.frame)).concat(moved));selectedKFs.clear();moved.forEach(key=>selectedKFs.add(`camera:${key.frame}`));curFrame=Math.max(0,Math.min(TOTAL-1,dragKF.originFi+delta));CameraSystem.evaluateAt(curFrame);renderTimeline();return;
+    CameraSystem.replaceTrackKeys(dragKF.before.keys.filter(key=>!origins.has(key.frame)).concat(moved));selectedKFs.clear();selectedFrames.clear();moved.forEach(key=>{selectedKFs.add(`camera:${key.frame}`);selectedFrames.add(key.frame);});curFrame=Math.max(0,Math.min(TOTAL-1,dragKF.originFi+delta));CameraSystem.evaluateAt(curFrame);renderTimeline();return;
   }
 
   // Work out how many frames the dragged item(s) need to move.
@@ -1219,7 +1219,7 @@ function selectTimelineKey(trackId,frame,event){
   const frames=_cameraTrackKeys().map(key=>key.frame).sort((a,b)=>a-b),id=`camera:${frame}`;frame=Number(frame);cameraTrackSelected=true;selectedRowLayers.clear();
   if(event&&event.shiftKey&&kfSelectionAnchor&&kfSelectionAnchor.trackId==='camera'){const lo=Math.min(kfSelectionAnchor.frameIndex,frame),hi=Math.max(kfSelectionAnchor.frameIndex,frame);selectedKFs.clear();frames.filter(value=>value>=lo&&value<=hi).forEach(value=>selectedKFs.add(`camera:${value}`));}
   else if(event&&(event.ctrlKey||event.metaKey)){if(selectedKFs.has(id))selectedKFs.delete(id);else selectedKFs.add(id);kfSelectionAnchor={trackId:'camera',frameIndex:frame};}
-  else{selectedKFs.clear();selectedKFs.add(id);kfSelectionAnchor={trackId:'camera',frameIndex:frame};}
+  else{if(!selectedKFs.has(id)){selectedKFs.clear();selectedKFs.add(id);}kfSelectionAnchor={trackId:'camera',frameIndex:frame};}
 }
 function _addOrUpdateCameraKey(){if(!window.CameraSystem)return;CameraSystem.addOrUpdateKey(curFrame);selectedKFs.clear();selectedKFs.add(`camera:${curFrame}`);selectedFrames.clear();selectedFrames.add(curFrame);kfSelectionAnchor={trackId:'camera',frameIndex:curFrame};cameraTrackSelected=true;renderTimeline();}
 function _deleteSelectedCameraKeys(){const frames=_selectedCameraFrames();if(!window.CameraSystem||!frames.length)return false;CameraSystem.deleteKeys(frames);selectedKFs.clear();selectedFrames.clear();selectedFrames.add(curFrame);kfSelectionAnchor=null;renderTimeline();return true;}
@@ -1440,10 +1440,12 @@ function renderRows(){
         if(key){if(selectedKFs.has(id))selectedKFs.delete(id);else selectedKFs.add(id);}
         kfSelectionAnchor={trackId:'camera',frameIndex:frame};
       }else{
-        selectedFrames.clear();selectedFrames.add(frame);selectedKFs.clear();
-        const key=_cameraKeyAt(frame);if(key)selectedKFs.add('camera:'+frame);
+        const key=_cameraKeyAt(frame),id='camera:'+frame,dragSelectedKey=event.button===0&&key&&selectedKFs.has(id);
+        if(!dragSelectedKey){selectedKFs.clear();if(key)selectedKFs.add(id);}
+        selectedFrames.clear();
+        if(dragSelectedKey){const frames=_selectedCameraFrames();if(frames.length){const lo=Math.min(...frames),hi=Math.max(...frames);for(let value=lo;value<=hi;value++)selectedFrames.add(value);}}else selectedFrames.add(frame);
         kfSelectionAnchor={trackId:'camera',frameIndex:frame};
-        if(event.button===0)tlSelDrag={startF:frame,trackId:'camera'};
+        if(event.button===0){if(dragSelectedKey)startKFDrag('camera',frame,event);else tlSelDrag={startF:frame,trackId:'camera'};}
       }
       if(event.button===2){refreshTimelineSelection();return;}
       goToFrame(frame,false,false,true);renderTimeline();

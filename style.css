@@ -563,6 +563,7 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 .kf-block:hover{filter:brightness(1.15);}
 .kf-block.selected{filter:brightness(1.4);outline:2px solid rgba(255,255,255,0.25);}
 .camera-kf{position:absolute;width:10px;height:10px;border:1px solid color-mix(in srgb,var(--accent) 80%,white);background:var(--accent);transform:translate(-50%,-50%) rotate(45deg);border-radius:2px;z-index:7;cursor:grab;touch-action:none;box-sizing:border-box;}
+.camera-kf::before{content:'';position:absolute;inset:-5px;}
 .camera-kf:hover{filter:brightness(1.18);}
 .camera-kf.selected{outline:2px solid rgba(255,255,255,.4);outline-offset:2px;filter:brightness(1.25);}
 .camera-track-cell.cur-col{background:color-mix(in srgb,var(--accent) 12%,var(--bg2));}
