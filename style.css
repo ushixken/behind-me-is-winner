@@ -515,7 +515,7 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 .tl-group-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .tl-group-track-row{background:color-mix(in srgb,var(--bg3) 55%,var(--bg2));border-bottom-color:var(--border);}
 .tl-camera-lbl{background:color-mix(in srgb,var(--bg3) 82%,var(--bg2));font-weight:600;}
-.tl-camera-icon{color:var(--accent);font-size:9px;flex:0 0 13px;text-align:center;}
+
 .tl-camera-lbl .tl-lbl-name{flex:1;}
 .tl-camera-disclosure{width:14px;height:18px;flex:0 0 14px;padding:0;border:0;background:transparent;color:var(--text2);display:flex;align-items:center;justify-content:center;font-size:10px;cursor:pointer;}
 
