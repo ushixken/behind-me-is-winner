@@ -242,6 +242,10 @@ function refreshTimelineSelection(){
   const rows=document.getElementById('tl-rows-wrap');
   if(!rows)return;
   rows.querySelectorAll('.tl-cell.selected').forEach(cell=>cell.classList.remove('selected'));
+  if(cameraTrackSelected)selectedFrames.forEach(frameIndex=>{
+    const cell=rows.querySelector('.camera-track-cell[data-camera-frame="'+frameIndex+'"]');
+    if(cell)cell.classList.add('selected');
+  });
   selectedRowLayers.forEach(layerIndex=>selectedFrames.forEach(frameIndex=>{
     const cell=rows.querySelector('.tl-cell[data-layer-idx="'+layerIndex+'"][data-frame-idx="'+frameIndex+'"]');
     if(cell)cell.classList.add('selected');
@@ -249,15 +253,16 @@ function refreshTimelineSelection(){
   rows.querySelectorAll('.tl-cell.cur-col').forEach(cell=>cell.classList.remove('cur-col'));
   const current=rows.querySelector('.tl-cell[data-layer-idx="'+curLayer+'"][data-frame-idx="'+curFrame+'"]');
   if(current)current.classList.add('cur-col');
-  rows.querySelectorAll('.kf-block.selected').forEach(block=>block.classList.remove('selected'));
+  rows.querySelectorAll('.kf-block.selected,.camera-kf.selected').forEach(block=>block.classList.remove('selected'));
   selectedKFs.forEach(key=>{
     const block=key.startsWith('camera:')?rows.querySelector('.camera-kf[data-kk="'+key+'"]'):rows.querySelector('.kf-block[data-kk="'+key+'"]');
     if(block)block.classList.add('selected');
   });
   document.querySelectorAll('.tl-layer-lbl.active').forEach(label=>label.classList.remove('active'));
-  const activeLabel=activeGroupId?document.querySelector('.tl-group-lbl[data-gid="'+CSS.escape(activeGroupId)+'"]'):document.querySelector('.tl-layer-lbl[data-idx="'+curLayer+'"]');
+  const activeLabel=cameraTrackSelected
+    ?document.querySelector('.tl-camera-lbl')
+    :(activeGroupId?document.querySelector('.tl-group-lbl[data-gid="'+CSS.escape(activeGroupId)+'"]'):document.querySelector('.tl-layer-lbl[data-idx="'+curLayer+'"]'));
   if(activeLabel)activeLabel.classList.add('active');
-  if(cameraTrackSelected){const cameraLabel=document.querySelector('.tl-camera-lbl');if(cameraLabel)cameraLabel.classList.add('active');}
   updatePlayhead();renderRulerHighlight();updateStatus();
   document.getElementById('frame-info').textContent=frameLabel(curFrame)+' / '+frameLabel(TOTAL-1);
 }
@@ -278,7 +283,7 @@ function clearKeyframeSelection(){
   selectedKFs.clear();
   kfSelectionAnchor=null;
   selectedRowLayers.clear();
-  document.querySelectorAll('.kf-block.selected').forEach(block=>block.classList.remove('selected'));
+  document.querySelectorAll('.kf-block.selected,.camera-kf.selected').forEach(block=>block.classList.remove('selected'));
 }
 
 document.addEventListener('pointerdown',event=>{
@@ -1216,13 +1221,13 @@ function selectTimelineKey(trackId,frame,event){
   else if(event&&(event.ctrlKey||event.metaKey)){if(selectedKFs.has(id))selectedKFs.delete(id);else selectedKFs.add(id);kfSelectionAnchor={trackId:'camera',frameIndex:frame};}
   else{selectedKFs.clear();selectedKFs.add(id);kfSelectionAnchor={trackId:'camera',frameIndex:frame};}
 }
-function _addOrUpdateCameraKey(){if(!window.CameraSystem)return;CameraSystem.addOrUpdateKey(curFrame);selectedKFs.clear();selectedKFs.add(`camera:${curFrame}`);kfSelectionAnchor={trackId:'camera',frameIndex:curFrame};cameraTrackSelected=true;renderTimeline();}
-function _deleteSelectedCameraKeys(){const frames=_selectedCameraFrames();if(!window.CameraSystem||!frames.length)return false;CameraSystem.deleteKeys(frames);selectedKFs.clear();kfSelectionAnchor=null;renderTimeline();return true;}
+function _addOrUpdateCameraKey(){if(!window.CameraSystem)return;CameraSystem.addOrUpdateKey(curFrame);selectedKFs.clear();selectedKFs.add(`camera:${curFrame}`);selectedFrames.clear();selectedFrames.add(curFrame);kfSelectionAnchor={trackId:'camera',frameIndex:curFrame};cameraTrackSelected=true;renderTimeline();}
+function _deleteSelectedCameraKeys(){const frames=_selectedCameraFrames();if(!window.CameraSystem||!frames.length)return false;CameraSystem.deleteKeys(frames);selectedKFs.clear();selectedFrames.clear();selectedFrames.add(curFrame);kfSelectionAnchor=null;renderTimeline();return true;}
 function _copySelectedCameraKeys(){const selected=new Set(_selectedCameraFrames()),keys=_cameraTrackKeys().filter(key=>selected.has(key.frame));if(!keys.length)return false;const first=Math.min(...keys.map(key=>key.frame));cameraKeyClipboard=keys.map(key=>({offset:key.frame-first,x:key.x,y:key.y,zoom:key.zoom,rotation:key.rotation,interpolation:key.interpolation||'linear',bezier:key.bezier?JSON.parse(JSON.stringify(key.bezier)):null}));return true;}
-function _pasteCameraKeys(frame){if(!window.CameraSystem||!cameraKeyClipboard||!cameraKeyClipboard.length)return false;const before=CameraSystem.trackSnapshot(),targets=new Set(cameraKeyClipboard.map(key=>Math.min(TOTAL-1,Math.max(0,frame+key.offset)))),kept=_cameraTrackKeys().filter(key=>!targets.has(key.frame)),added=cameraKeyClipboard.map(key=>({frame:Math.min(TOTAL-1,Math.max(0,frame+key.offset)),x:key.x,y:key.y,zoom:key.zoom,rotation:key.rotation,interpolation:key.interpolation||'linear',bezier:key.bezier?JSON.parse(JSON.stringify(key.bezier)):null}));CameraSystem.replaceTrackKeys(kept.concat(added),'paste',before);selectedKFs.clear();added.forEach(key=>selectedKFs.add(`camera:${key.frame}`));cameraTrackSelected=true;return true;}
+function _pasteCameraKeys(frame){if(!window.CameraSystem||!cameraKeyClipboard||!cameraKeyClipboard.length)return false;const before=CameraSystem.trackSnapshot(),targets=new Set(cameraKeyClipboard.map(key=>Math.min(TOTAL-1,Math.max(0,frame+key.offset)))),kept=_cameraTrackKeys().filter(key=>!targets.has(key.frame)),added=cameraKeyClipboard.map(key=>({frame:Math.min(TOTAL-1,Math.max(0,frame+key.offset)),x:key.x,y:key.y,zoom:key.zoom,rotation:key.rotation,interpolation:key.interpolation||'linear',bezier:key.bezier?JSON.parse(JSON.stringify(key.bezier)):null}));CameraSystem.replaceTrackKeys(kept.concat(added),'paste',before);selectedKFs.clear();added.forEach(key=>selectedKFs.add(`camera:${key.frame}`));selectedFrames.clear();added.forEach(key=>selectedFrames.add(key.frame));cameraTrackSelected=true;return true;}
 function _duplicateCameraKeys(){if(!_copySelectedCameraKeys())return false;const frames=_selectedCameraFrames(),target=Math.min(TOTAL-1,Math.min(...frames)+1),targets=cameraKeyClipboard.map(key=>target+key.offset);if(targets.some(frame=>frame>=TOTAL||_cameraKeyAt(frame)))return false;return _pasteCameraKeys(target);}
 function _cameraShortcut(action){if(!cameraTrackSelected&&!_selectedCameraFrames().length)return false;if(action==='copy')return _copySelectedCameraKeys();if(action==='cut'){if(!_copySelectedCameraKeys())return false;return _deleteSelectedCameraKeys();}if(action==='paste')return _pasteCameraKeys(curFrame);if(action==='duplicate')return _duplicateCameraKeys();if(action==='delete')return _deleteSelectedCameraKeys();return false;}
-function _selectCameraTrack(selectCurrentKey){cameraTrackSelected=true;selectedKFs.clear();selectedRowLayers.clear();kfSelectionAnchor=null;if(selectCurrentKey&&_cameraKeyAt(curFrame)){selectedKFs.add(`camera:${curFrame}`);kfSelectionAnchor={trackId:'camera',frameIndex:curFrame};}renderTimeline();}
+function _selectCameraTrack(selectCurrentKey){cameraTrackSelected=true;selectedKFs.clear();selectedFrames.clear();selectedFrames.add(curFrame);selectedRowLayers.clear();kfSelectionAnchor=null;if(selectCurrentKey&&_cameraKeyAt(curFrame)){selectedKFs.add(`camera:${curFrame}`);kfSelectionAnchor={trackId:'camera',frameIndex:curFrame};}renderTimeline();}
 function _activateCameraFromTimeline(){if(tool!=='camera')setTool('camera','Camera');else _selectCameraTrack(true);}
 function _makeCameraTrackLabel(){const row=document.createElement('div');row.className='tl-layer-lbl tl-camera-lbl'+(cameraTrackSelected?' active':'');row.style.height=CellH+'px';const icon=document.createElement('span');icon.className='tl-camera-icon';icon.textContent='◆';const name=document.createElement('span');name.className='tl-lbl-name';name.textContent='Camera';const actions=document.createElement('span');actions.className='tl-layer-inline-actions';const add=document.createElement('button');add.type='button';add.className='tl-layer-quick-btn';add.textContent='+';add.title='Add or Update Camera Key';add.setAttribute('aria-label',add.title);add.dataset.timelineControl='camera-key';add.onpointerdown=event=>{event.preventDefault();event.stopPropagation();};add.onclick=event=>{event.preventDefault();event.stopPropagation();_addOrUpdateCameraKey();};actions.appendChild(add);row.append(icon,name,actions);row.onclick=_activateCameraFromTimeline;return row;}
 window.CameraTimeline={handleShortcut:_cameraShortcut,addOrUpdateKey:_addOrUpdateCameraKey,deleteSelected:_deleteSelectedCameraKeys,selectTrack:_selectCameraTrack,getSelectedFrames(){return _selectedCameraFrames();},get selected(){return cameraTrackSelected||_selectedCameraFrames().length>0;}};
@@ -1235,7 +1240,7 @@ function renderLabelCol(){
     const i=item.idx,l=layers[i];const lbl=document.createElement('div');
     lbl.style.setProperty('--tl-tree-depth',item.depth||0);
     const isMultiSel=selectedTlLabelIndices.has(i);
-    lbl.className='tl-layer-lbl'+(!activeGroupId&&i===curLayer?' active':isMultiSel?' multi-sel':'');
+    lbl.className='tl-layer-lbl'+(!cameraTrackSelected&&!activeGroupId&&i===curLayer?' active':isMultiSel?' multi-sel':'');
     lbl.style.height=CellH+'px';
     lbl.dataset.idx=i;
     lbl.title='Click to select. Shift+click range, Ctrl+click individual. Drag name to Hide zone to remove from timeline. Drag empty space to rubber-band select.';
@@ -1413,9 +1418,65 @@ function renderRows(){
   const totalW=TOTAL*CellW,timelineFps=Math.max(1,getFPS());rowWrap.style.width=totalW+'px';
   document.getElementById('tl-inner').style.setProperty('--timeline-second-span',(timelineFps*CellW)+'px');
 
-  const cameraRow=document.createElement('div');cameraRow.className='tl-row tl-camera-track-row'+(cameraTrackSelected?' selected':'');cameraRow.style.width=totalW+'px';cameraRow.style.height=CellH+'px';cameraRow.style.position='relative';
-  for(let frame=0;frame<TOTAL;frame++){const cell=document.createElement('div');cell.className='tl-cell camera-track-cell'+(frame===curFrame?' cur-col':'');cell.style.cssText='left:'+(frame*CellW)+'px;position:absolute;width:'+CellW+'px;height:'+CellH+'px;';cell.dataset.cameraFrame=frame;cell.addEventListener('pointerdown',event=>{event.stopPropagation();if(tool!=='camera')setTool('camera','Camera');cameraTrackSelected=true;selectedKFs.clear();kfSelectionAnchor=null;selectedRowLayers.clear();goToFrame(frame,false,false,true);renderTimeline();});cameraRow.appendChild(cell);}
-  _cameraTrackKeys().filter(key=>key.frame<TOTAL).forEach(key=>{const id=`camera:${key.frame}`,marker=document.createElement('div');marker.className='camera-kf'+(selectedKFs.has(id)?' selected':'');marker.style.left=(key.frame*CellW+CellW/2)+'px';marker.style.top=(CellH/2)+'px';marker.dataset.cameraFrame=key.frame;marker.dataset.kk=id;marker.title='Camera Key F'+frameLabel(key.frame);marker.addEventListener('pointerdown',event=>{event.stopPropagation();if(tool!=='camera')setTool('camera','Camera');selectTimelineKey('camera',key.frame,event);goToFrame(key.frame,false,false,true);startKFDrag('camera',key.frame,event);renderTimeline();});cameraRow.appendChild(marker);});
+  const cameraRow=document.createElement('div');
+  cameraRow.className='tl-row tl-camera-track-row'+(cameraTrackSelected?' selected':'');
+  cameraRow.style.width=totalW+'px';cameraRow.style.height=CellH+'px';cameraRow.style.position='relative';
+  for(let frame=0;frame<TOTAL;frame++){
+    const cell=document.createElement('div');
+    cell.className='tl-cell camera-track-cell'+(frame===curFrame?' cur-col':'')+(cameraTrackSelected&&selectedFrames.has(frame)?' selected':'');
+    cell.style.cssText='left:'+(frame*CellW)+'px;position:absolute;width:'+CellW+'px;height:'+CellH+'px;';
+    cell.dataset.cameraFrame=frame;
+    cell.addEventListener('pointerdown',event=>{
+      event.stopPropagation();
+      if(tool!=='camera')setTool('camera','Camera');
+      cameraTrackSelected=true;selectedRowLayers.clear();
+      if(event.shiftKey&&kfSelectionAnchor&&kfSelectionAnchor.trackId==='camera'){
+        const lo=Math.min(kfSelectionAnchor.frameIndex,frame),hi=Math.max(kfSelectionAnchor.frameIndex,frame);
+        selectedFrames.clear();for(let value=lo;value<=hi;value++)selectedFrames.add(value);
+        selectedKFs.clear();_cameraTrackKeys().filter(key=>key.frame>=lo&&key.frame<=hi).forEach(key=>selectedKFs.add('camera:'+key.frame));
+      }else if(event.ctrlKey||event.metaKey){
+        if(selectedFrames.has(frame))selectedFrames.delete(frame);else selectedFrames.add(frame);
+        const key=_cameraKeyAt(frame),id='camera:'+frame;
+        if(key){if(selectedKFs.has(id))selectedKFs.delete(id);else selectedKFs.add(id);}
+        kfSelectionAnchor={trackId:'camera',frameIndex:frame};
+      }else{
+        selectedFrames.clear();selectedFrames.add(frame);selectedKFs.clear();
+        const key=_cameraKeyAt(frame);if(key)selectedKFs.add('camera:'+frame);
+        kfSelectionAnchor={trackId:'camera',frameIndex:frame};
+        if(event.button===0)tlSelDrag={startF:frame,trackId:'camera'};
+      }
+      if(event.button===2){refreshTimelineSelection();return;}
+      goToFrame(frame,false,false,true);renderTimeline();
+    });
+    cell.addEventListener('contextmenu',()=>{
+      cameraTrackSelected=true;selectedRowLayers.clear();selectedFrames.clear();selectedFrames.add(frame);
+      const key=_cameraKeyAt(frame);selectedKFs.clear();if(key)selectedKFs.add('camera:'+frame);
+      kfSelectionAnchor={trackId:'camera',frameIndex:frame};refreshTimelineSelection();
+    });
+    cameraRow.appendChild(cell);
+  }
+  _cameraTrackKeys().filter(key=>key.frame<TOTAL).forEach(key=>{
+    const id=`camera:${key.frame}`,marker=document.createElement('div');
+    marker.className='camera-kf'+(selectedKFs.has(id)?' selected':'');
+    marker.style.left=(key.frame*CellW+CellW/2)+'px';marker.style.top=(CellH/2)+'px';
+    marker.dataset.cameraFrame=key.frame;marker.dataset.kk=id;marker.title='Camera Key F'+frameLabel(key.frame);
+    marker.addEventListener('pointerdown',event=>{
+      event.stopPropagation();if(tool!=='camera')setTool('camera','Camera');
+      selectTimelineKey('camera',key.frame,event);
+      if(!event.shiftKey&&!event.ctrlKey&&!event.metaKey){selectedFrames.clear();selectedFrames.add(key.frame);}
+      else if(event.shiftKey){const frames=_selectedCameraFrames();if(frames.length){const lo=Math.min(...frames),hi=Math.max(...frames);selectedFrames.clear();for(let value=lo;value<=hi;value++)selectedFrames.add(value);}}
+      else{if(selectedKFs.has(id))selectedFrames.add(key.frame);else selectedFrames.delete(key.frame);}
+      if(event.button===2){refreshTimelineSelection();return;}
+      goToFrame(key.frame,false,false,true);
+      if(event.button===0)startKFDrag('camera',key.frame,event);
+      renderTimeline();
+    });
+    marker.addEventListener('contextmenu',()=>{
+      cameraTrackSelected=true;selectedRowLayers.clear();selectedFrames.clear();selectedFrames.add(key.frame);
+      selectedKFs.clear();selectedKFs.add(id);kfSelectionAnchor={trackId:'camera',frameIndex:key.frame};refreshTimelineSelection();
+    });
+    cameraRow.appendChild(marker);
+  });
   rowWrap.appendChild(cameraRow);
 
   timelineTreeItems().forEach(item=>{
@@ -1438,7 +1499,7 @@ function renderRows(){
         if(!ev.shiftKey)clearKeyframeSelection();
         if(ev.shiftKey){const anchor=kfSelectionAnchor||{layerIndex:curLayer,frameIndex:curFrame};selectKeyframeRange(anchor,{layerIndex:i,frameIndex:f});selectedRowLayers=new Set(_rowSpanLayers(anchor.layerIndex,i));const lo=Math.min(anchor.frameIndex,f),hi=Math.max(anchor.frameIndex,f);selectedFrames.clear();for(let ff=lo;ff<=hi;ff++)selectedFrames.add(ff);if(i!==curLayer)switchLayer(i,{skipTimelineRender:true,skipLoadFrame:true,preserveTimelineSelection:true});curFrame=f;loadFrame(curLayer,curFrame);refreshTimelineSelection();}
         else if(ev.ctrlKey||ev.metaKey){if(selectedFrames.has(f))selectedFrames.delete(f);else selectedFrames.add(f);selectedRowLayers.add(i);if(i!==curLayer)switchLayer(i,{skipTimelineRender:true,skipLoadFrame:true,preserveTimelineSelection:true});curFrame=f;loadFrame(curLayer,curFrame);refreshTimelineSelection();}
-        else{selectedFrames.clear();selectedFrames.add(f);selectedKFs.clear();selectedRowLayers=new Set([i]);kfSelectionAnchor={layerIndex:i,frameIndex:f};document.querySelectorAll('.kf-block.selected').forEach(b=>b.classList.remove('selected'));tlSelDrag={startF:f,anchorLayer:i};if(i!==curLayer)switchLayer(i,{skipTimelineRender:true,skipLoadFrame:true,preserveTimelineSelection:true});goToFrame(f,false,false,true);}
+        else{selectedFrames.clear();selectedFrames.add(f);selectedKFs.clear();selectedRowLayers=new Set([i]);kfSelectionAnchor={layerIndex:i,frameIndex:f};document.querySelectorAll('.kf-block.selected,.camera-kf.selected').forEach(b=>b.classList.remove('selected'));tlSelDrag={startF:f,anchorLayer:i};if(i!==curLayer)switchLayer(i,{skipTimelineRender:true,skipLoadFrame:true,preserveTimelineSelection:true});goToFrame(f,false,false,true);}
       });
       row.appendChild(cell);
     }
@@ -1521,6 +1582,8 @@ function renderRows(){
     if(!tlSelDrag) return;
     const r=tlScroll.getBoundingClientRect();
     const f2=Math.max(0,Math.min(TOTAL-1,Math.floor((e.clientX-r.left+tlScroll.scrollLeft)/CellW)));
+
+    if(tlSelDrag.trackId==='camera'){const lo=Math.min(tlSelDrag.startF,f2),hi=Math.max(tlSelDrag.startF,f2);selectedFrames.clear();for(let frame=lo;frame<=hi;frame++)selectedFrames.add(frame);selectedKFs.clear();_cameraTrackKeys().filter(key=>key.frame>=lo&&key.frame<=hi).forEach(key=>selectedKFs.add('camera:'+key.frame));cameraTrackSelected=true;curFrame=f2;CameraSystem.evaluateAt(curFrame);refreshTimelineSelection();return;}
 
     // Figure out which row (layer) the pointer is currently over so the drag
     // can span multiple rows, not just the layer it started on.

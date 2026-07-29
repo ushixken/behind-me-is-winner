@@ -1,4 +1,4 @@
-﻿*{box-sizing:border-box;margin:0;padding:0;}
+*{box-sizing:border-box;margin:0;padding:0;}
 
 /* Hide number input spinners globally */
 input[type=number]::-webkit-inner-spin-button,
@@ -566,6 +566,8 @@ body.layer-dragging,body.layer-dragging *{cursor:grabbing !important;}
 .camera-kf:hover{filter:brightness(1.18);}
 .camera-kf.selected{outline:2px solid rgba(255,255,255,.4);outline-offset:2px;filter:brightness(1.25);}
 .camera-track-cell.cur-col{background:color-mix(in srgb,var(--accent) 12%,var(--bg2));}
+.camera-track-cell.selected{background:rgba(127,119,221,0.22);outline:1px solid rgba(127,119,221,0.45);}
+.camera-track-cell.cur-col.selected{background:rgba(127,119,221,0.28);outline:1px solid rgba(127,119,221,0.55);}
 .kf-block.drawing-hidden{background:color-mix(in srgb,var(--kf-mark-color,var(--accent)) 28%,var(--bg2));}
 .kf-hidden-x{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:800;line-height:1;text-shadow:0 1px 2px #000;pointer-events:none;}
 .kf-extend{position:absolute;top:50%;height:2px;background:#4a4780;transform:translateY(-50%);z-index:2;pointer-events:none;}
