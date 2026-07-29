@@ -673,7 +673,11 @@
       <div id="graph-editor-toolbar">
         <div class="graph-mode-switch" role="group" aria-label="Graph type"><button type="button" class="graph-mode-btn active" data-graph-mode="value">Value</button><button type="button" class="graph-mode-btn" data-graph-mode="speed">Speed</button></div>
         <select id="graph-channel" class="ts-select" aria-label="Graph channel"><option value="x">Position X</option><option value="y">Position Y</option><option value="zoom">Zoom</option><option value="rotation">Rotation</option></select>
-        <div id="graph-interpolation-controls" hidden><select id="graph-interpolation" class="ts-select" aria-label="Keyframe interpolation"><option value="linear">Linear</option><option value="hold">Hold</option><option value="ease" selected>Ease</option><option value="ease-in">Ease In</option><option value="ease-out">Ease Out</option><option value="bezier">Custom</option></select></div>
+        <div id="graph-interpolation-controls" hidden>
+          <button id="graph-copy-values" class="tl-btn graph-value-btn" type="button" title="Copy Graph Values" aria-label="Copy Graph Values">⧉</button>
+          <button id="graph-paste-values" class="tl-btn graph-value-btn" type="button" title="Paste Graph Values" aria-label="Paste Graph Values" disabled>▣</button>
+          <select id="graph-interpolation" class="ts-select" aria-label="Keyframe interpolation"><option value="linear">Linear</option><option value="hold">Hold</option><option value="ease" selected>Ease</option><option value="ease-in">Ease In</option><option value="ease-out">Ease Out</option><option value="bezier">Custom</option></select>
+        </div>
       </div>
       <div id="graph-editor-viewport"><canvas id="graph-editor-canvas"></canvas><div id="graph-editor-empty">No selected keyframes</div></div>
     </section>
