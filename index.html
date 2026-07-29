@@ -673,7 +673,7 @@
             <span class="audio-timeline-disclosure" aria-hidden="true">▼</span>
             <span>Audio Tracks</span>
           </button>
-          <button id="audio-track-add" type="button" title="Add Track" aria-label="Add Audio Track">+</button>
+          <div class="audio-header-actions"><button id="audio-test-clip-add" type="button" title="Add Test Clip">Add Test Clip</button><button id="audio-track-add" type="button" title="Add Track" aria-label="Add Audio Track">+</button></div>
         </div>
         <div id="audio-timeline-body">
           <div id="audio-timeline-labels" aria-label="Audio track list"></div>
@@ -731,6 +731,15 @@
   <div class="ctx-item" id="ctx-duplicate">Duplicate Frame</div>
   <div class="ctx-sep"></div>
   <div class="ctx-item danger" id="ctx-delete">⌫ Delete Frame</div>
+</div>
+
+<div class="ctx-menu" id="audio-clip-ctx-menu">
+  <div class="ctx-item" id="audio-clip-ctx-rename">Rename</div>
+  <div class="ctx-item" id="audio-clip-ctx-duplicate">Duplicate</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item danger" id="audio-clip-ctx-delete">Delete</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" id="audio-clip-ctx-properties">Properties</div>
 </div>
 
 <!-- ── RULER CONTEXT MENU ──────────────────────────────────── -->
@@ -1644,6 +1653,7 @@
 <script src="src/brush/brush-presets.js"></script>
 <script src="src/timeline/timeline.js"></script>
 <script src="src/timeline/audio-timeline.js"></script>
+<script src="src/timeline/audio-clips.js"></script>
 <script src="src/core/layers.js"></script>
 <script src="src/core/project-io.js"></script>
 <script src="src/timeline/keyframe-switcher.js"></script>

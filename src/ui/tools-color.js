@@ -283,6 +283,7 @@ function undo(){
   if(window.RepeatableTransformController&&RepeatableTransformController.active)RepeatableTransformController.cancelForToolExit();
   if(!undoStack.length)return;
   const action=undoStack.pop();
+  if(action.type==='audio-clips'&&window.AudioClipUI){if(AudioClipUI.restore(action.before))redoStack.push(action);return;}
   if(action.type==='camera-state'&&window.CameraSystem){CameraSystem.restore(action.before);redoStack.push(action);if(typeof renderTimeline==='function')renderTimeline();return;}
   if(action.type==='camera-track'&&window.CameraSystem){CameraSystem.restoreTrack(action.before);redoStack.push(action);if(typeof renderTimeline==='function')renderTimeline();return;}
   if(action.type==='canvas-resize'&&window.CanvasResizeTool){if(CanvasResizeTool.restoreHistory(action.before))redoStack.push(action);return;}
@@ -313,6 +314,7 @@ function redo(){
   if(window.RepeatableTransformController&&RepeatableTransformController.active)RepeatableTransformController.cancelForToolExit();
   if(!redoStack.length)return;
   const action=redoStack.pop();
+  if(action.type==='audio-clips'&&window.AudioClipUI){if(AudioClipUI.restore(action.after))undoStack.push(action);return;}
   if(action.type==='camera-state'&&window.CameraSystem){CameraSystem.restore(action.after);undoStack.push(action);if(typeof renderTimeline==='function')renderTimeline();return;}
   if(action.type==='camera-track'&&window.CameraSystem){CameraSystem.restoreTrack(action.after);undoStack.push(action);if(typeof renderTimeline==='function')renderTimeline();return;}
   if(action.type==='canvas-resize'&&window.CanvasResizeTool){if(CanvasResizeTool.restoreHistory(action.after))undoStack.push(action);return;}

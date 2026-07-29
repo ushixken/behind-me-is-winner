@@ -533,6 +533,19 @@ body.audio-timeline-resizing{cursor:row-resize;user-select:none;}
 .audio-timeline-track-label.reorder-target{box-shadow:inset 0 -2px 0 var(--accent);}
 .audio-timeline-empty-label{height:auto;min-height:var(--cell-h);flex-direction:column;align-items:flex-start;justify-content:center;gap:5px;padding:6px 8px;}
 .audio-empty-add{height:21px;padding:0 8px;border-radius:4px;font-size:9px;}
+.audio-header-actions{display:flex;align-items:center;gap:4px;flex:0 0 auto;}
+#audio-test-clip-add{height:20px;padding:0 7px;border:1px solid var(--border2);border-radius:4px;background:var(--bg2);color:var(--text2);font:inherit;font-size:9px;cursor:pointer;white-space:nowrap;}
+#audio-test-clip-add:hover{background:var(--bg4);border-color:var(--accent);color:var(--text);}
+.audio-timeline-track-label.track-selected{background:var(--accent-bg);color:var(--accent);}
+.audio-timeline-track-grid{overflow:visible;}
+.audio-timeline-track-grid.drop-target{background-color:color-mix(in srgb,var(--accent) 10%,var(--timeline-row));}
+.audio-clip{position:absolute;top:3px;height:calc(var(--cell-h) - 6px);min-width:8px;box-sizing:border-box;z-index:3;padding:3px 7px;border:1px solid color-mix(in srgb,var(--accent) 55%,var(--border2));border-radius:5px;background:color-mix(in srgb,var(--accent-bg) 72%,var(--bg4));color:var(--text);font-size:9px;overflow:hidden;cursor:grab;touch-action:none;user-select:none;transition:background-color .1s,border-color .1s,opacity .1s;}
+.audio-clip:hover{background:color-mix(in srgb,var(--accent) 22%,var(--bg4));border-color:var(--accent);}
+.audio-clip.selected{background:color-mix(in srgb,var(--accent) 34%,var(--bg3));border-color:var(--accent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 50%,transparent);}
+.audio-clip.dragging{opacity:.62;z-index:12;cursor:grabbing;transition:none;pointer-events:none;}
+.audio-clip-name{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;pointer-events:none;}
+.audio-clip-name-input{width:100%;height:100%;padding:0 3px;border:1px solid var(--accent);border-radius:2px;background:var(--bg1);color:var(--text);font:inherit;font-size:9px;outline:none;}
+#audio-clip-ctx-menu{min-width:145px;}
 
 /* ── FL-style horizontal scrollbar row ───────────────────────────────── */
 /* Sits as a flex sibling of #tl-body inside #timeline-area (flex column).

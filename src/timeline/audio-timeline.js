@@ -162,6 +162,7 @@
         this.grid.appendChild(gridRows);
       }
       this.updateGeometry();
+      window.dispatchEvent(new CustomEvent('audio-tracks-rendered'));
     }
 
     updateGeometry() {
