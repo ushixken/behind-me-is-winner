@@ -251,8 +251,13 @@ function refreshTimelineSelection(){
     if(cell)cell.classList.add('selected');
   }));
   rows.querySelectorAll('.tl-cell.cur-col').forEach(cell=>cell.classList.remove('cur-col'));
-  const current=rows.querySelector('.tl-cell[data-layer-idx="'+curLayer+'"][data-frame-idx="'+curFrame+'"]');
+  const current=cameraTrackSelected
+    ?rows.querySelector('.camera-track-cell[data-camera-frame="'+curFrame+'"]')
+    :rows.querySelector('.tl-cell[data-layer-idx="'+curLayer+'"][data-frame-idx="'+curFrame+'"]');
   if(current)current.classList.add('cur-col');
+  rows.querySelectorAll('.timeline-row-active').forEach(row=>row.classList.remove('timeline-row-active'));
+  const activeRow=cameraTrackSelected?rows.querySelector('.tl-camera-track-row'):rows.querySelector('.tl-layer-track-row[data-layer-idx="'+curLayer+'"]');
+  if(activeRow)activeRow.classList.add('timeline-row-active');
   rows.querySelectorAll('.kf-block.selected,.camera-kf.selected').forEach(block=>block.classList.remove('selected'));
   selectedKFs.forEach(key=>{
     const block=key.startsWith('camera:')?rows.querySelector('.camera-kf[data-kk="'+key+'"]'):rows.querySelector('.kf-block[data-kk="'+key+'"]');
@@ -1421,11 +1426,11 @@ function renderRows(){
   document.getElementById('tl-inner').style.setProperty('--timeline-second-span',(timelineFps*CellW)+'px');
 
   const cameraRow=document.createElement('div');
-  cameraRow.className='tl-row tl-camera-track-row tl-layer-track-row'+(cameraTrackSelected?' selected':'');
+  cameraRow.className='tl-row tl-camera-track-row tl-layer-track-row'+(cameraTrackSelected?' timeline-row-active':'');
   cameraRow.style.width=totalW+'px';cameraRow.style.height=CellH+'px';cameraRow.style.position='relative';
   for(let frame=0;frame<TOTAL;frame++){
     const cell=document.createElement('div');
-    cell.className='tl-cell camera-track-cell'+(Math.floor(frame/timelineFps)%2===1?' second-band':'')+(frame===curFrame?' cur-col':'')+(cameraTrackSelected&&selectedFrames.has(frame)?' selected':'');
+    cell.className='tl-cell camera-track-cell'+(Math.floor(frame/timelineFps)%2===1?' second-band':'')+(cameraTrackSelected&&frame===curFrame?' cur-col':'')+(cameraTrackSelected&&selectedFrames.has(frame)?' selected':'');
     cell.style.cssText='left:'+(frame*CellW)+'px;position:absolute;width:'+CellW+'px;height:'+CellH+'px;';
     cell.dataset.cameraFrame=frame;
     cell.addEventListener('pointerdown',event=>{
@@ -1486,14 +1491,14 @@ function renderRows(){
   timelineTreeItems().forEach(item=>{
     if(item.type==='group'){const groupRow=document.createElement('div'),group=_groupById(item.id);groupRow.className='tl-row tl-group-track-row';groupRow.style.width=totalW+'px';groupRow.style.height=CellH+'px';groupRow.dataset.groupId=item.id;if(group&&group.color&&group.color!=='transparent'){const hex=group.color,r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);groupRow.style.background=`rgba(${r},${g},${b},0.22)`;}rowWrap.appendChild(groupRow);return;}
     const i=item.idx,l=layers[i];const row=document.createElement('div');
-    row.className='tl-row tl-layer-track-row'+(l.color&&l.color!=='transparent'?' has-layer-color':'');row.style.width=totalW+'px';row.style.position='relative';
+    row.className='tl-row tl-layer-track-row'+(!cameraTrackSelected&&i===curLayer?' timeline-row-active':'')+(l.color&&l.color!=='transparent'?' has-layer-color':'');row.style.width=totalW+'px';row.style.position='relative';row.dataset.layerIdx=i;
     if(l.color&&l.color!=='transparent'){const hex=l.color;const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);row.style.background=`rgba(${r},${g},${b},0.22)`;}
 
     for(let f=0;f<TOTAL;f++){
       const cell=document.createElement('div');
       let cls='tl-cell';
       if(Math.floor(f/timelineFps)%2===1)cls+=' second-band';
-      if(f===curFrame&&i===curLayer) cls+=' cur-col';
+      if(!cameraTrackSelected&&f===curFrame&&i===curLayer) cls+=' cur-col';
       if(selectedFrames.has(f)&&selectedRowLayers.has(i)) cls+=' selected';
       cell.className=cls;cell.style.cssText='left:'+(f*CellW)+'px;position:absolute;width:'+CellW+'px;height:'+CellH+'px;';
       cell.dataset.layerIdx=i;
