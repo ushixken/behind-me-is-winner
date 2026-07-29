@@ -1618,7 +1618,7 @@ function renderRows(){
 
 function updateRangeOverlay(){
   const ro=document.getElementById('range-overlay');if(!ro) return;
-  const left=rangeStart*CellW,width=(rangeEnd-rangeStart+1)*CellW,totalH=timelineTreeItems().length*CellH;
+  const left=rangeStart*CellW,width=(rangeEnd-rangeStart+1)*CellW,totalH=(timelineTreeItems().length+1)*CellH;
   ro.style.cssText='position:absolute;top:0;left:'+left+'px;width:'+width+'px;height:'+totalH+'px;border-left:2px solid rgba(29,158,117,0.6);border-right:2px solid rgba(226,75,74,0.6);pointer-events:none;z-index:6;';
 }
 
