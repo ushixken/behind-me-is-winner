@@ -387,7 +387,7 @@ function setTool(t,lbl){
   if(typeof refreshSizeUI==='function') refreshSizeUI(); else szValEl.textContent=s;
   if(typeof refreshColorSwatches==='function') refreshColorSwatches();
   if(t==='resize-canvas'&&window.CanvasResizeTool)CanvasResizeTool.enter();
-  if(t==='camera'&&window.CameraSystem){CameraSystem.enter();if(window.CameraTimeline&&typeof CameraTimeline.selectTrack==='function')CameraTimeline.selectTrack(true);}
+  if(t==='camera'&&window.CameraSystem)CameraSystem.enter();
   if(t==='transform'&&typeof enterTransformTool==='function'){
     enterTransformTool();
     if(window.RepeatableTransformController&&RepeatableTransformController.enabled&&!RepeatableTransformController.active)RepeatableTransformController.start();

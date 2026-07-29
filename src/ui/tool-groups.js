@@ -362,6 +362,15 @@
     const signal=cameraSettingsController.signal,panel=document.createElement('div'),camera=window.CameraSystem&&CameraSystem.value;
     panel.className='tool-settings-panel camera-options-panel';
     if(!camera){body.appendChild(panel);return;}
+    if(!camera.enabled){
+      panel.classList.add('camera-options-inactive');
+      const actionRow=document.createElement('div');actionRow.className='tool-setting-action-row camera-activation-row';
+      const activate=document.createElement('button');activate.type='button';activate.className='modal-btn camera-activate-btn';activate.textContent='Activate Camera';
+      activate.onclick=()=>{if(!CameraSystem.activate())return;if(window.CameraTimeline&&typeof CameraTimeline.selectTrack==='function')CameraTimeline.selectTrack(true);};
+      actionRow.appendChild(activate);panel.appendChild(actionRow);body.appendChild(panel);
+      window.addEventListener('camera-changed',event=>{if(event.detail&&event.detail.camera&&event.detail.camera.enabled){body.innerHTML='';renderCameraOptions(body);}},{signal});
+      return;
+    }
     const tabs=document.createElement('div');tabs.className='camera-tool-tabs';tabs.setAttribute('role','tablist');
     const basicTab=document.createElement('button'),advancedTab=document.createElement('button');
     basicTab.type=advancedTab.type='button';basicTab.className=advancedTab.className='bp-tool-tab';basicTab.textContent='Basic';advancedTab.textContent='Advanced';basicTab.setAttribute('role','tab');advancedTab.setAttribute('role','tab');tabs.append(basicTab,advancedTab);panel.appendChild(tabs);
@@ -388,7 +397,7 @@
     const setTab=(id,persist)=>{const isAdvanced=id==='advanced';basic.hidden=isAdvanced;advanced.hidden=!isAdvanced;basicTab.classList.toggle('active',!isAdvanced);advancedTab.classList.toggle('active',isAdvanced);basicTab.setAttribute('aria-selected',String(!isAdvanced));advancedTab.setAttribute('aria-selected',String(isAdvanced));if(persist&&CameraSystem.value.settingsTab!==id)CameraSystem.update({settingsTab:id},true);};basicTab.onclick=()=>setTab('basic',true);advancedTab.onclick=()=>setTab('advanced',true);setTab(camera.settingsTab,false);
     body.appendChild(panel);
     const syncSlider=(control,value)=>{control.input.value=value;control.output.textContent=Math.round(value)+'%';};
-    window.addEventListener('camera-changed',event=>{const value=event.detail.camera;controls.forEach(control=>control.sync(value));Object.entries(guideInputs).forEach(([key,input])=>input.checked=!!value.guides[key]);presetControl.select.value=value.output.preset;syncSlider(shade,value.view.shade);syncSlider(frameOpacity,value.view.frameOpacity);syncSlider(outer,value.guides.outer);syncSlider(inner,value.guides.inner);setTab(value.settingsTab,false);},{signal});
+    window.addEventListener('camera-changed',event=>{const value=event.detail.camera;if(!value.enabled){body.innerHTML='';renderCameraOptions(body);return;}controls.forEach(control=>control.sync(value));Object.entries(guideInputs).forEach(([key,input])=>input.checked=!!value.guides[key]);presetControl.select.value=value.output.preset;syncSlider(shade,value.view.shade);syncSlider(frameOpacity,value.view.frameOpacity);syncSlider(outer,value.guides.outer);syncSlider(inner,value.guides.inner);setTab(value.settingsTab,false);},{signal});
     window.addEventListener('tool-changed',event=>{if(event.detail&&event.detail.tool!=='camera'&&cameraSettingsController){cameraSettingsController.abort();cameraSettingsController=null;}},{signal});
   }
   registerGroup({id:'brush',name:'Brush',shortcutActionId:'toolBrush',icon:'B',defaultSubToolId:'brush:hard-round',subTools:presetSubTools('brush')});
