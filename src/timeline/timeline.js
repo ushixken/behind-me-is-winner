@@ -1375,7 +1375,7 @@ function startTlLabelRubberBand(ev){
   tlLbSelecting=true;tlLbStartX=ev.clientX;tlLbStartY=ev.clientY;
   if(!tlLbBoxEl){
     tlLbBoxEl=document.createElement('div');
-    tlLbBoxEl.style.cssText='position:fixed;border:1px solid var(--accent);background:rgba(127,119,221,0.08);z-index:9998;pointer-events:none;display:none;border-radius:2px;';
+    tlLbBoxEl.style.cssText='position:fixed;border:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 50%,transparent);z-index:9998;pointer-events:none;display:none;border-radius:2px;';
     document.body.appendChild(tlLbBoxEl);
   }
   tlLbBoxEl.style.left=tlLbStartX+'px';tlLbBoxEl.style.top=tlLbStartY+'px';
@@ -1506,7 +1506,7 @@ function renderRows(){
     if(item.type==='group'){const groupRow=document.createElement('div'),group=_groupById(item.id);groupRow.className='tl-row tl-group-track-row';groupRow.style.width=totalW+'px';groupRow.style.height=CellH+'px';groupRow.dataset.groupId=item.id;if(group&&group.color&&group.color!=='transparent'){const hex=group.color,r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);groupRow.style.background=`rgba(${r},${g},${b},0.22)`;}rowWrap.appendChild(groupRow);return;}
     const i=item.idx,l=layers[i];const row=document.createElement('div');
     row.className='tl-row tl-layer-track-row'+(!cameraTrackSelected&&i===curLayer?' timeline-row-active':'')+(l.color&&l.color!=='transparent'?' has-layer-color':'');row.style.width=totalW+'px';row.style.position='relative';row.dataset.layerIdx=i;
-    if(l.color&&l.color!=='transparent'){const hex=l.color;const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);row.style.background=`rgba(${r},${g},${b},0.25)`;}
+    if(l.color&&l.color!=='transparent'){const hex=l.color;const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);row.style.background=`rgba(${r},${g},${b},0.25)`;row.style.setProperty('--timeline-layer-color',l.color);}
 
     for(let f=0;f<TOTAL;f++){
       const cell=document.createElement('div');
@@ -1577,7 +1577,7 @@ function renderRows(){
         tlRbStartX=ev.clientX;tlRbStartY=ev.clientY;
         if(!tlRbBoxEl){
           tlRbBoxEl=document.createElement('div');
-          tlRbBoxEl.style.cssText='position:fixed;border:1px solid var(--accent);background:rgba(127,119,221,0.08);z-index:9998;pointer-events:none;border-radius:2px;display:none;';
+          tlRbBoxEl.style.cssText='position:fixed;border:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 50%,transparent);z-index:9998;pointer-events:none;border-radius:2px;display:none;';
           document.body.appendChild(tlRbBoxEl);
         }
         tlRbBoxEl.style.left=tlRbStartX+'px';tlRbBoxEl.style.top=tlRbStartY+'px';
@@ -2338,7 +2338,7 @@ function startLayerRubberBand(ev){
   lbSelecting=true;lbStartX=ev.clientX;lbStartY=ev.clientY;
   if(!lbBoxEl){
     lbBoxEl=document.createElement('div');
-    lbBoxEl.style.cssText='position:fixed;border:1px solid var(--accent);background:rgba(127,119,221,0.08);z-index:9998;pointer-events:none;display:none;border-radius:2px;';
+    lbBoxEl.style.cssText='position:fixed;border:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 50%,transparent);z-index:9998;pointer-events:none;display:none;border-radius:2px;';
     document.body.appendChild(lbBoxEl);
   }
   lbBoxEl.style.left=lbStartX+'px';lbBoxEl.style.top=lbStartY+'px';
