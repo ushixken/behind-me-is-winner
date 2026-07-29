@@ -45,6 +45,16 @@
     if (!layer) return [];
     return Object.keys(layer.frames).map(Number).sort((a, b) => a - b);
   }
+  function selectedExposureFrame(li) {
+    if (typeof selectedKFs !== 'undefined' && selectedKFs && selectedKFs.size) {
+      const frames = Array.from(selectedKFs).map(id => {
+        const match = /^(\d+):(\d+)$/.exec(id);
+        return match && Number(match[1]) === li ? Number(match[2]) : null;
+      }).filter(frame => frame !== null);
+      if (frames.length === 1) return frames[0];
+    }
+    return layers[li] && layers[li].frames[curFrame] ? curFrame : null;
+  }
 
   // Insert a hold frame at position `at` on layer `li`: shift every keyframe
   // at >= `at` one step to the right (clamped to TOTAL-1).
@@ -138,38 +148,37 @@
     if (!layer) { setStatus('⚠ No active layer.'); return; }
 
     const amount = Math.max(1, Math.min(999, parseInt(spinAmount.value) || 2));
-    const shift  = forcePositive ? amount : -amount;
+    const shift = forcePositive ? amount : -amount;
+    const targetFrame = selectedExposureFrame(curLayer);
 
-    if (!layer.frames[curFrame]) {
-      setStatus(`⚠ No keyframe at frame ${curFrame + 1}. Seek to a keyframe first.`);
+    if (targetFrame === null || !layer.frames[targetFrame]) {
+      setStatus('⚠ Select one keyframe first.');
       return;
     }
 
-    pushUndo();
-
     if (shift > 0) {
-      // Insert `shift` hold frames at curFrame+1 (extends the current key's
-      // duration by pushing subsequent keys to the right, one slot at a time).
-      for (let i = 0; i < shift; i++) {
-        insertHoldFrame(curLayer, curFrame + 1);
-      }
-      setStatus(`✔ Frame ${curFrame + 1}: inserted ${shift} hold frame(s).`);
+      pushUndo();
+      for (let i = 0; i < shift; i++) insertHoldFrame(curLayer, targetFrame + 1);
+      setStatus(`✔ Frame ${targetFrame + 1}: inserted ${shift} hold frame(s).`);
     } else {
-      // Remove |shift| hold frames immediately after curFrame.
-      const absShift = Math.abs(shift);
-      for (let i = 0; i < absShift; i++) {
-        removeHoldFrame(curLayer, curFrame + 1);
+      const nextFrame = keyframeTimes(curLayer).find(frame => frame > targetFrame);
+      const removable = nextFrame === undefined ? 0 : Math.max(0, nextFrame - targetFrame - 1);
+      const actualShift = Math.min(Math.abs(shift), removable);
+      if (!actualShift) {
+        setStatus(`✔ Frame ${targetFrame + 1} is already at minimum exposure.`);
+        return;
       }
-      setStatus(`✔ Frame ${curFrame + 1}: removed ${absShift} hold frame(s).`);
+      pushUndo();
+      for (let i = 0; i < actualShift; i++) removeHoldFrame(curLayer, targetFrame + 1);
+      setStatus(`✔ Frame ${targetFrame + 1}: removed ${actualShift} hold frame(s).`);
     }
 
     renderTimeline();
-    recomposite(curLayer, curFrame);
+    recomposite(curLayer, targetFrame);
     updateStatus();
   }
 
-  // ── Bypass mode ────────────────────────────────────────────────
-  // Mirrors _bypass_exposure() from the Python docker.
+  // Bypass mode
   function bypassExposure(forward) {
     const layer = layers[curLayer];
     if (!layer) { setStatus('⚠ No active layer.'); return; }
