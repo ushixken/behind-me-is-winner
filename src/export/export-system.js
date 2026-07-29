@@ -224,7 +224,11 @@
     body.append(left,right);
     const actions=el('div','modal-actions export-modal-actions'),cancel=el('button','modal-btn','Cancel'),submit=el('button','modal-btn primary','Export');submit.id='export-submit';actions.append(cancel,submit);
     modal.append(header,body,actions);root.appendChild(modal);document.body.appendChild(root);
-    root.querySelector('#export-source').value=cameraActive()?'camera':'canvas';root.querySelector('#export-type').value='animation';previewFrame=curFrame;
+    root.querySelector('#export-source').value=cameraActive()?'camera':'canvas';
+    root.querySelector('#export-type').value='animation';
+    root.querySelector('#export-format').value='mp4';
+    root.querySelector('#export-range').value='work';
+    previewFrame=curFrame;
 root.addEventListener('input',event=>{
       if(event.target.id==='export-filename'){
         syncNumberingLabel();
