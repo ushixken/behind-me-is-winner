@@ -1423,7 +1423,6 @@ function renderRows(){
   const ph=document.createElement('div');ph.id='playhead';rowWrap.appendChild(ph);
   const ro=document.createElement('div');ro.id='range-overlay';rowWrap.appendChild(ro);
   const totalW=TOTAL*CellW,timelineFps=Math.max(1,getFPS());rowWrap.style.width=totalW+'px';
-  document.getElementById('tl-inner').style.setProperty('--timeline-second-span',(timelineFps*CellW)+'px');
 
   const cameraRow=document.createElement('div');
   cameraRow.className='tl-row tl-camera-track-row tl-layer-track-row'+(cameraTrackSelected?' timeline-row-active':'');
@@ -1492,7 +1491,7 @@ function renderRows(){
     if(item.type==='group'){const groupRow=document.createElement('div'),group=_groupById(item.id);groupRow.className='tl-row tl-group-track-row';groupRow.style.width=totalW+'px';groupRow.style.height=CellH+'px';groupRow.dataset.groupId=item.id;if(group&&group.color&&group.color!=='transparent'){const hex=group.color,r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);groupRow.style.background=`rgba(${r},${g},${b},0.22)`;}rowWrap.appendChild(groupRow);return;}
     const i=item.idx,l=layers[i];const row=document.createElement('div');
     row.className='tl-row tl-layer-track-row'+(!cameraTrackSelected&&i===curLayer?' timeline-row-active':'')+(l.color&&l.color!=='transparent'?' has-layer-color':'');row.style.width=totalW+'px';row.style.position='relative';row.dataset.layerIdx=i;
-    if(l.color&&l.color!=='transparent'){const hex=l.color;const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);row.style.background=`rgba(${r},${g},${b},0.22)`;}
+    if(l.color&&l.color!=='transparent'){const hex=l.color;const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);row.style.background=`rgba(${r},${g},${b},0.25)`;}
 
     for(let f=0;f<TOTAL;f++){
       const cell=document.createElement('div');
