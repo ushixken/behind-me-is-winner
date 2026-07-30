@@ -82,7 +82,12 @@
       viewport.addEventListener('pointermove', event => this.moveScrub(event));
       viewport.addEventListener('pointerup', event => this.endScrub(event));
       viewport.addEventListener('pointercancel', event => this.endScrub(event));
-      viewport.addEventListener('lostpointercapture', () => { this.scrubPointerId = null; });
+      viewport.addEventListener('lostpointercapture', event => {
+        if(this.scrubPointerId != null) window.TimelineScrubController?.end(this.scrubPointerId);
+        this.scrubPointerId = null;
+        this.viewport.classList.remove('audio-scrubbing');
+        window.AudioPlaybackEngine?.endScrub();
+      });
 
       viewport.addEventListener('wheel', event => {
         const timelineScroll = document.getElementById('tl-scroll');
@@ -95,7 +100,10 @@
 
     frameFromPointer(event) {
       const rect = this.viewport.getBoundingClientRect();
-      return Math.max(0, Math.min(TOTAL - 1, Math.floor((event.clientX - rect.left + this.viewport.scrollLeft) / CellW)));
+      return Math.max(0, Math.min(
+        TOTAL - 1,
+        (event.clientX - rect.left + this.viewport.scrollLeft - CellW / 2) / CellW
+      ));
     }
 
     beginScrub(event) {
@@ -105,18 +113,18 @@
       this.scrubPointerId = event.pointerId;
       this.viewport.setPointerCapture(event.pointerId);
       this.viewport.classList.add('audio-scrubbing');
-      goToFrame(this.frameFromPointer(event), false, false, true);
-      if(!(typeof playing==='boolean'&&playing))window.AudioPlaybackEngine?.frameChanged(curFrame,{playing:false,scrubbing:true});
+      const position = this.frameFromPointer(event);
+      window.TimelineScrubController?.begin('audio', event.pointerId, position);
+      const continuous = window.TimelineScrubController?.updateAudio(position, frame => goToFrame(frame, false, false, true)) ?? position;
+      if(!(typeof playing === 'boolean' && playing)) window.AudioPlaybackEngine?.frameChanged(continuous,{playing:false,scrubbing:true});
       event.preventDefault();
     }
 
     moveScrub(event) {
       if (event.pointerId !== this.scrubPointerId) return;
-      const frame = this.frameFromPointer(event);
-      if (frame !== curFrame) {
-        goToFrame(frame, false, false, true);
-        if(!(typeof playing==='boolean'&&playing))window.AudioPlaybackEngine?.frameChanged(curFrame,{playing:false,scrubbing:true});
-      }
+      const position = this.frameFromPointer(event);
+      const continuous = window.TimelineScrubController?.updateAudio(position, frame => goToFrame(frame, false, false, true)) ?? position;
+      if(!(typeof playing === 'boolean' && playing)) window.AudioPlaybackEngine?.frameChanged(continuous,{playing:false,scrubbing:true});
       event.preventDefault();
     }
 
@@ -125,6 +133,7 @@
       if (this.viewport.hasPointerCapture(event.pointerId)) this.viewport.releasePointerCapture(event.pointerId);
       this.scrubPointerId = null;
       this.viewport.classList.remove('audio-scrubbing');
+      window.TimelineScrubController?.end(event.pointerId);
       window.AudioPlaybackEngine?.endScrub();
     }
 
@@ -174,7 +183,7 @@
       const cellWidth = typeof CellW === 'number' ? CellW : 28;
       const totalFrames = typeof TOTAL === 'number' ? TOTAL : 1;
       const fps = typeof getFPS === 'function' ? Math.max(1, getFPS()) : 24;
-      const frame = typeof curFrame === 'number' ? curFrame : 0;
+      const frame = Number.isFinite(window.SharedPlayhead?.position) ? window.SharedPlayhead.position : (typeof curFrame === 'number' ? curFrame : 0);
       const timelineBody = document.getElementById('tl-body');
       const timelineScroll = document.getElementById('tl-scroll');
       if (timelineBody && timelineScroll) {

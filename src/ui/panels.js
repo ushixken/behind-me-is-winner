@@ -719,6 +719,7 @@ window.KeyframeLatencyExperiment=KeyframeLatencyExperiment;
 function goToFrame(f,addSel,noSel,selectionOnly){
   if(typeof window.prepareTransformForArtworkChange==='function')window.prepareTransformForArtworkChange(curLayer,f);
   saveActiveToKey();curFrame=Math.max(0,Math.min(TOTAL-1,f));
+  window.TimelineScrubController?.reset(curFrame);
   if(!noSel){if(!addSel) selectedFrames.clear();selectedFrames.add(curFrame);}
   loadFrame(curLayer,curFrame);
   window.AudioPlaybackEngine?.frameChanged(curFrame,{playing:typeof playing==='boolean'&&playing,scrubbing:typeof scrubbing==='boolean'&&scrubbing});

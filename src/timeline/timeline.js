@@ -40,7 +40,7 @@ function togglePlay(){
         else{clearInterval(playTimer);playing=false;window.AudioPlaybackEngine?.stop();btn.textContent='▶ Play';btn.classList.remove('playing');loadFrame(curLayer,curFrame);renderTimeline();return;}
       }
       if(typeof window.prepareTransformForArtworkChange==='function')window.prepareTransformForArtworkChange(curLayer,next);
-      curFrame=next;if(window.CameraSystem&&typeof CameraSystem.evaluateAt==='function')CameraSystem.evaluateAt(curFrame);artworkCompositeCtx.clearRect(0,0,CW,CH);
+      curFrame=next;window.TimelineScrubController?.reset(curFrame);if(window.CameraSystem&&typeof CameraSystem.evaluateAt==='function')CameraSystem.evaluateAt(curFrame);artworkCompositeCtx.clearRect(0,0,CW,CH);
       for(let i=0;i<layers.length;i++){
         if(!layers[i].visible)continue;
         if(!_layerGroupChainVisible(layers[i]))continue;
@@ -195,7 +195,7 @@ rulerEl.addEventListener('pointerdown',e=>{
   const x=e.clientX-r.left+tlScroll.scrollLeft;
   if(Math.abs(x-(rangeStart*CellW+CellW/2))<10){draggingStart=true;return;}
   if(Math.abs(x-(rangeEnd*CellW+CellW/2))<10){draggingEnd=true;return;}
-  scrubbing=true;const f=frameFromX(e.clientX);goToFrame(f,false,false,true);
+  scrubbing=true;window.TimelineScrubController?.begin('animation',e.pointerId,frameFromX(e.clientX));const f=frameFromX(e.clientX);goToFrame(f,false,false,true);
 });
 rulerEl.addEventListener('contextmenu',e=>{
   e.preventDefault();e.stopPropagation();
@@ -210,12 +210,18 @@ document.addEventListener('pointermove',e=>{
   if(draggingStart){rangeStart=Math.min(frameFromX(e.clientX),rangeEnd);clampRange();renderTimeline();updateStatus();}
   if(draggingEnd){rangeEnd=Math.max(frameFromX(e.clientX),rangeStart);clampRange();renderTimeline();updateStatus();}
 });
-document.addEventListener('pointerup',()=>{
+document.addEventListener('pointerup',event=>{
+  if(scrubbing)window.TimelineScrubController?.end(event.pointerId);
   scrubbing=false;draggingStart=false;draggingEnd=false;
   if(tlSelDrag){tlSelDrag=null;updateStatus();}
 });
 
 // ════════════════════════════════════════════════════════════════
+document.addEventListener('pointercancel',event=>{
+  if(scrubbing)window.TimelineScrubController?.end(event.pointerId);
+  scrubbing=false;draggingStart=false;draggingEnd=false;
+});
+
 // RULER CONTEXT MENU
 // ════════════════════════════════════════════════════════════════
 document.getElementById('ruler-ctx-in').onclick=()=>{rangeStart=Math.min(rulerCtxFrame,rangeEnd);clampRange();renderTimeline();updateStatus();document.getElementById('ruler-ctx-menu').classList.remove('visible');};
@@ -1643,9 +1649,10 @@ function updateRangeOverlay(){
 
 function updatePlayhead(){
   const ph=document.getElementById('playhead');if(!ph) return;
-  const left=curFrame*CellW+CellW/2-1;
+  const playheadFrame=Number.isFinite(window.SharedPlayhead?.position)?window.SharedPlayhead.position:curFrame;
+  const left=playheadFrame*CellW+CellW/2-1;
   ph.style.left=left+'px';ph.style.height=((timelineTreeItems().length+_cameraTimelineRowCount())*CellH)+'px';ph.style.top='0';
-  window.dispatchEvent(new CustomEvent('timeline-playhead-updated',{detail:{frame:curFrame,left}}));
+  window.dispatchEvent(new CustomEvent('timeline-playhead-updated',{detail:{frame:playheadFrame,left}}));
   const oldFrameLabel=ph.querySelector('.ph-frame-label');
   if(oldFrameLabel)oldFrameLabel.remove();
   // Auto-scroll to keep the playhead in view — but NOT while the scrollbar
