@@ -281,6 +281,11 @@
   // if any prior dragover was not prevented.
   function isImageDrop(dt) {
     if (!dt) return false;
+    const fileItems = Array.from(dt.items || []).filter(item => item.kind === 'file');
+    if (fileItems.length) {
+      const typedItems = fileItems.filter(item => item.type);
+      if (typedItems.length) return typedItems.some(item => item.type.startsWith('image/'));
+    }
     // During dragover, browsers expose types but not the actual files.
     // 'Files' covers all file drags. We filter to images on actual drop.
     for (const t of (dt.types || [])) {

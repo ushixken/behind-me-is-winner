@@ -46,6 +46,7 @@
       sourceEnd,
       sourceDuration,
       sourceOffset,
+      sourceId: clip.sourceId || null,
       fadeInLength: Math.max(0, Number(clip.fadeInLength) || 0),
       fadeOutLength: Math.max(0, Number(clip.fadeOutLength) || 0),
       fadeCurve: clip.fadeCurve || { type: 'smooth' },
@@ -538,6 +539,23 @@
       this.render();
       return true;
     }
+    importClips(items) {
+      if (!Array.isArray(items) || !items.length) return [];
+      const before = this.snapshot();
+      this.selection.clear();
+      const imported = items.map(item => normalizeClip({
+        ...item,
+        id: `audio-clip-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      }));
+      imported.forEach(clip => {
+        this.clips.push(clip);
+        this.selection.ids.add(clip.id);
+      });
+      this.selection.anchorId = imported[imported.length - 1].id;
+      this.commit(before);
+      this.render();
+      return imported.map(clip => clip.id);
+    }
     stretchClip(id, change) {
       const clip = this.find(id);
       if (!clip || !this.selection.ids.has(id)) return false;
@@ -694,6 +712,7 @@
     restore: snapshot => editor.restore(snapshot),
     snapshot: () => editor.snapshot(),
     splitAt: (id, frame) => editor.splitClip(id, frame),
+    importClips: items => editor.importClips(items),
     stretchClip: (id, change) => editor.stretchClip(id, change),
     previewSlip: (id, offset) => editor.previewSlip(id, offset),
     slipClip: (id, offset) => editor.slipClip(id, offset),

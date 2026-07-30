@@ -12,6 +12,7 @@
 <link rel="stylesheet" href="src/timeline/audio-split-tool.css"/>
 <link rel="stylesheet" href="src/timeline/audio-stretch-tool.css"/>
 <link rel="stylesheet" href="src/timeline/audio-slip-tool.css"/>
+<link rel="stylesheet" href="src/timeline/audio-import.css"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script>
 //
@@ -86,6 +87,7 @@
       <div class="dd-item" id="dd-export-project">Save Project…</div>
       <div class="dd-sep"></div>
       <div class="dd-item" id="dd-import-image">Import Image…</div>
+      <div class="dd-item" id="dd-import-audio">Import Audio…</div>
       <div class="dd-sep"></div>
       <div class="dd-item" id="dd-export">Export…</div>
     </div>
@@ -679,7 +681,7 @@
             <span>Audio Tracks</span>
           </button>
           <div class="audio-toolbar-tools" role="toolbar" aria-label="Audio editing tools"></div>
-          <div class="audio-header-actions"><button id="audio-test-clip-add" type="button" title="Add Test Clip">Add Test Clip</button><button id="audio-track-add" type="button" title="Add Track" aria-label="Add Audio Track">+</button></div>
+          <div class="audio-header-actions"><button id="audio-track-add" type="button" title="Add Track" aria-label="Add Audio Track">+</button></div>
         </div>
         <div id="audio-timeline-body">
           <div id="audio-timeline-labels" aria-label="Audio track list"></div>
@@ -1665,6 +1667,7 @@
 <script src="src/timeline/audio-split-tool.js"></script>
 <script src="src/timeline/audio-stretch-tool.js"></script>
 <script src="src/timeline/audio-slip-tool.js"></script>
+<script src="src/timeline/audio-import.js"></script>
 <script src="src/core/layers.js"></script>
 <script src="src/core/project-io.js"></script>
 <script src="src/timeline/keyframe-switcher.js"></script>
