@@ -34,6 +34,8 @@
     const sourceStart = Math.max(0, Number(clip.sourceStart) || 0);
     const storedSourceEnd = Number(clip.sourceEnd);
     const sourceEnd = Number.isFinite(storedSourceEnd) ? Math.max(sourceStart, storedSourceEnd) : sourceStart + duration;
+    const sourceDuration = Math.max(sourceEnd, Number(clip.sourceDuration) || sourceEnd);
+    const sourceOffset = Math.max(-sourceStart, Math.min(sourceDuration - sourceEnd, Number(clip.sourceOffset) || 0));
     return {
       id: clip.id,
       name: clip.name || 'Audio Clip',
@@ -42,7 +44,8 @@
       duration,
       sourceStart,
       sourceEnd,
-      sourceDuration: Math.max(sourceEnd, Number(clip.sourceDuration) || sourceEnd),
+      sourceDuration,
+      sourceOffset,
       fadeInLength: Math.max(0, Number(clip.fadeInLength) || 0),
       fadeOutLength: Math.max(0, Number(clip.fadeOutLength) || 0),
       fadeCurve: clip.fadeCurve || { type: 'smooth' },
@@ -106,6 +109,8 @@
       context.clearRect(0, 0, width, height);
       const samples = clip.waveform || [];
       const sourceLength = Math.max(1, clip.sourceEnd - clip.sourceStart);
+      const sourceOffset = Number(clip.sourceOffset) || 0;
+      const effectiveSourceStart = clip.sourceStart + sourceOffset;
       const sourceTotal = Math.max(sourceLength, clip.sourceDuration || clip.sourceEnd);
       const center = height / 2;
 
@@ -114,7 +119,7 @@
         context.fillStyle = 'rgba(226, 224, 255, .82)';
         for (let x = 0; x < width; x++) {
           const progress = x / Math.max(1, width - 1);
-          const sourceFrame = clip.sourceStart + progress * sourceLength;
+          const sourceFrame = effectiveSourceStart + progress * sourceLength;
           const sampleIndex = Math.min(samples.length - 1, Math.max(0, Math.floor(sourceFrame / sourceTotal * samples.length)));
           const fadeLevel = this.envelopeAt(clip, progress * clip.duration);
           const amplitude = Math.min(height * 0.47, (samples[sampleIndex] || 0) * fadeLevel * gainScale * (height * 0.42));
@@ -500,7 +505,8 @@
       const name = TEST_NAMES[this.testCounter++ % TEST_NAMES.length];
       const clip = normalizeClip({
         id: `audio-clip-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        name, track: track || tracks[0], startFrame: Math.max(0, Number(startFrame) || 0), duration: DEFAULT_DURATION
+        name, track: track || tracks[0], startFrame: Math.max(0, Number(startFrame) || 0), duration: DEFAULT_DURATION,
+        sourceStart: DEFAULT_DURATION, sourceEnd: DEFAULT_DURATION * 2, sourceDuration: DEFAULT_DURATION * 3
       });
       this.clips.push(clip);
       this.selection.clear();
@@ -508,6 +514,29 @@
       this.selection.anchorId = clip.id;
       this.commit(before);
       this.render();
+    }
+    previewSlip(id, offset) {
+      const clip = this.find(id);
+      if (!clip) return false;
+      const minimum = -clip.sourceStart;
+      const maximum = Math.max(minimum, clip.sourceDuration - clip.sourceEnd);
+      const previewOffset = Math.max(minimum, Math.min(maximum, Math.round(offset)));
+      const canvas = document.querySelector(`.audio-clip[data-audio-clip-id="${CSS.escape(id)}"] .audio-clip-waveform`);
+      if (canvas) this.renderer.waveforms.draw(canvas, { ...clip, sourceOffset: previewOffset });
+      return true;
+    }
+    slipClip(id, offset) {
+      const clip = this.find(id);
+      if (!clip || !this.selection.ids.has(id)) return false;
+      const minimum = -clip.sourceStart;
+      const maximum = Math.max(minimum, clip.sourceDuration - clip.sourceEnd);
+      const nextOffset = Math.max(minimum, Math.min(maximum, Math.round(offset)));
+      if (nextOffset === clip.sourceOffset) return false;
+      const before = this.snapshot();
+      clip.sourceOffset = nextOffset;
+      this.commit(before);
+      this.render();
+      return true;
     }
     stretchClip(id, change) {
       const clip = this.find(id);
@@ -666,6 +695,8 @@
     snapshot: () => editor.snapshot(),
     splitAt: (id, frame) => editor.splitClip(id, frame),
     stretchClip: (id, change) => editor.stretchClip(id, change),
+    previewSlip: (id, offset) => editor.previewSlip(id, offset),
+    slipClip: (id, offset) => editor.slipClip(id, offset),
     get clips() { return editor.snapshot(); }
   };
 })();

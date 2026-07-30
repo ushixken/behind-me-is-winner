@@ -182,3 +182,24 @@ body.audio-gain-dragging * {
   color: var(--text);
   opacity: 1;
 }
+
+#audio-timeline-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+}
+#audio-timeline-collapse {
+  justify-self: start;
+  width: auto;
+}
+.audio-toolbar-tools {
+  grid-column: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+.audio-header-actions {
+  grid-column: 3;
+  justify-self: end;
+}

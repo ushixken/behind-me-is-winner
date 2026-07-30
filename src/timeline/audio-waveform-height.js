@@ -18,7 +18,7 @@
       this.tooltip = document.createElement('div');
       this.tooltip.className = 'audio-height-tooltip';
       document.body.appendChild(this.tooltip);
-      document.querySelector('.audio-header-actions').prepend(this.control);
+      document.querySelector('.audio-toolbar-tools').appendChild(this.control);
       this.value = this.read();
       this.drag = null;
       this.apply(this.value, false);

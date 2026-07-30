@@ -16,7 +16,7 @@
       this.button.title = 'Time Stretch Tool';
       this.button.setAttribute('aria-label', 'Time Stretch Tool');
       this.button.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8h13M1.5 8l3-3M1.5 8l3 3M14.5 8l-3-3M14.5 8l-3 3"/></svg>';
-      document.querySelector('.audio-header-actions').prepend(this.button);
+      document.querySelector('.audio-toolbar-tools').appendChild(this.button);
       this.grid = document.getElementById('audio-timeline-grid');
       this.viewport = document.getElementById('audio-timeline-grid-viewport');
       this.tooltip = document.createElement('div');

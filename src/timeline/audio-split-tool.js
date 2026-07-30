@@ -12,7 +12,7 @@
       this.button.title = 'Split Tool';
       this.button.setAttribute('aria-label', 'Split Tool');
       this.button.textContent = '✂';
-      document.querySelector('.audio-header-actions').prepend(this.button);
+      document.querySelector('.audio-toolbar-tools').appendChild(this.button);
       this.grid = document.getElementById('audio-timeline-grid');
       this.viewport = document.getElementById('audio-timeline-grid-viewport');
       this.button.addEventListener('click', () => this.setActive(!this.active));
