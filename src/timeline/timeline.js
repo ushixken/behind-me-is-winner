@@ -32,11 +32,12 @@ function togglePlay(){
     // If at or past the out-point (and not looping), restart from in-point
     if(curFrame<rangeStart||curFrame>=rangeEnd) goToFrame(rangeStart);
     const fps=getFPS();
+    window.AudioPlaybackEngine?.play(curFrame);
     playTimer=setInterval(()=>{
       let next=curFrame+1;
       if(next>rangeEnd){
-        if(loopRange){next=rangeStart;}
-        else{clearInterval(playTimer);playing=false;btn.textContent='▶ Play';btn.classList.remove('playing');loadFrame(curLayer,curFrame);renderTimeline();return;}
+        if(loopRange){next=rangeStart;window.AudioPlaybackEngine?.seek(next);}
+        else{clearInterval(playTimer);playing=false;window.AudioPlaybackEngine?.stop();btn.textContent='▶ Play';btn.classList.remove('playing');loadFrame(curLayer,curFrame);renderTimeline();return;}
       }
       if(typeof window.prepareTransformForArtworkChange==='function')window.prepareTransformForArtworkChange(curLayer,next);
       curFrame=next;if(window.CameraSystem&&typeof CameraSystem.evaluateAt==='function')CameraSystem.evaluateAt(curFrame);artworkCompositeCtx.clearRect(0,0,CW,CH);
@@ -54,6 +55,7 @@ function togglePlay(){
       renderRulerHighlight();
     },1000/fps);
   } else {
+    window.AudioPlaybackEngine?.pause();
     btn.textContent='▶ Play';btn.classList.remove('playing');clearInterval(playTimer);loadFrame(curLayer,curFrame);renderTimeline();
   }
 }

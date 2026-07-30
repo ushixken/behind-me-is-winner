@@ -4,6 +4,20 @@
   const ACCEPTED_EXTENSIONS = new Set(['wav', 'mp3', 'ogg', 'oga', 'flac']);
   const WAVEFORM_SAMPLES = 720;
 
+  const audioContextManager = window.AudioContextManager || {
+    context: null,
+    get() {
+      if (this.context?.state === 'closed') this.context = null;
+      if (!this.context) {
+        const Context = window.AudioContext || window.webkitAudioContext;
+        if (!Context) throw new Error('Web Audio is not supported by this browser.');
+        this.context = new Context();
+      }
+      return this.context;
+    }
+  };
+  window.AudioContextManager = audioContextManager;
+
   class AudioSourceStore {
     constructor() {
       this.sources = new Map();
@@ -25,15 +39,7 @@
   }
 
   class AudioDecoder {
-    constructor() { this.context = null; }
-    getContext() {
-      if (!this.context) {
-        const Context = window.AudioContext || window.webkitAudioContext;
-        if (!Context) throw new Error('Web Audio decoding is not supported by this browser.');
-        this.context = new Context();
-      }
-      return this.context;
-    }
+    getContext() { return audioContextManager.get(); }
     async decode(file) {
       const bytes = await file.arrayBuffer();
       return this.getContext().decodeAudioData(bytes.slice(0));

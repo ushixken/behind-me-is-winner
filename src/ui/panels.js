@@ -721,6 +721,7 @@ function goToFrame(f,addSel,noSel,selectionOnly){
   saveActiveToKey();curFrame=Math.max(0,Math.min(TOTAL-1,f));
   if(!noSel){if(!addSel) selectedFrames.clear();selectedFrames.add(curFrame);}
   loadFrame(curLayer,curFrame);
+  window.AudioPlaybackEngine?.frameChanged(curFrame,{playing:typeof playing==='boolean'&&playing,scrubbing:typeof scrubbing==='boolean'&&scrubbing});
   if(selectionOnly&&typeof refreshTimelineSelection==='function')refreshTimelineSelection();
   else renderTimeline();
 }

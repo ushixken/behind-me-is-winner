@@ -406,6 +406,7 @@
       this.selection.clear();
       this.persist();
       this.render();
+      window.AudioPlaybackEngine?.clipsChanged();
       return true;
     }
     commit(before) {
@@ -415,6 +416,7 @@
       if (undoStack.length > 40) undoStack.shift();
       redoStack.length = 0;
       this.persist();
+      window.AudioPlaybackEngine?.clipsChanged();
     }
     trackIds() { return window.AudioTimelineUI ? AudioTimelineUI.tracks.map(track => track.id) : []; }
     find(id) { return this.clips.find(clip => clip.id === id); }

@@ -106,13 +106,17 @@
       this.viewport.setPointerCapture(event.pointerId);
       this.viewport.classList.add('audio-scrubbing');
       goToFrame(this.frameFromPointer(event), false, false, true);
+      if(!(typeof playing==='boolean'&&playing))window.AudioPlaybackEngine?.frameChanged(curFrame,{playing:false,scrubbing:true});
       event.preventDefault();
     }
 
     moveScrub(event) {
       if (event.pointerId !== this.scrubPointerId) return;
       const frame = this.frameFromPointer(event);
-      if (frame !== curFrame) goToFrame(frame, false, false, true);
+      if (frame !== curFrame) {
+        goToFrame(frame, false, false, true);
+        if(!(typeof playing==='boolean'&&playing))window.AudioPlaybackEngine?.frameChanged(curFrame,{playing:false,scrubbing:true});
+      }
       event.preventDefault();
     }
 
@@ -121,6 +125,7 @@
       if (this.viewport.hasPointerCapture(event.pointerId)) this.viewport.releasePointerCapture(event.pointerId);
       this.scrubPointerId = null;
       this.viewport.classList.remove('audio-scrubbing');
+      window.AudioPlaybackEngine?.endScrub();
     }
 
     syncVertical(source, target) {
