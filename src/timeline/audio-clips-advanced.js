@@ -113,8 +113,10 @@
       if (!this.fallbackCache.has(samples)) this.fallbackCache.set(samples, samples);
       const count = samples.length;
       const total = Math.max(1, sourceTotal);
-      const fromIndex = Math.max(0, Math.min(count - 1, Math.floor(sourceFrom / total * count)));
-      const toIndex = Math.max(fromIndex, Math.min(count - 1, Math.floor(sourceTo / total * count)));
+      const from = Number.isFinite(sourceFrom) ? sourceFrom : 0;
+      const to = Number.isFinite(sourceTo) ? sourceTo : from;
+      const fromIndex = Math.max(0, Math.min(count - 1, Math.floor(from / total * count)));
+      const toIndex = Math.max(fromIndex, Math.min(count - 1, Math.floor(to / total * count)));
       let peak = 0;
       for (let index = fromIndex; index <= toIndex; index++) peak = Math.max(peak, samples[index] || 0);
       return { min: -peak, max: peak };
@@ -128,59 +130,121 @@
       const source = clip.sourceId ? window.AudioSources?.get(clip.sourceId) : null;
       if (source && source.pcm && source.pcm.length && window.AudioWaveformEnvelope) {
         const total = Math.max(1, sourceTotal);
-        const scale = (Number(source.frameLength) || 0) / total;
-        return window.AudioWaveformEnvelope.range(source, sourceFrom * scale, sourceTo * scale);
+        const frameLength = Number(source.frameLength) || 0;
+        const scale = frameLength > 0 && Number.isFinite(total) ? frameLength / total : 0;
+        const from = Number.isFinite(sourceFrom) ? sourceFrom * scale : 0;
+        const to = Number.isFinite(sourceTo) ? sourceTo * scale : from;
+        return window.AudioWaveformEnvelope.range(source, from, to);
       }
       return this.fallbackEnvelope(clip, sourceFrom, sourceTo, sourceTotal);
     }
 
     draw(canvas, clip) {
-      const width = Math.max(1, Math.round(clip.duration * CellW));
-      const height = Math.max(1, Math.round(audioWaveformHeight() - 4));
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = Math.round(width * dpr);
-      canvas.height = Math.round(height * dpr);
+      // --- Sanitize all size inputs up front. Nothing below this point should ever
+      // see a non-finite, zero, or negative width/height, regardless of zoom level. ---
+      const rawWidth = Number(clip.duration) * Number(CellW);
+      const width = Number.isFinite(rawWidth) && rawWidth > 0 ? Math.max(1, Math.round(rawWidth)) : 1;
+      const rawHeight = audioWaveformHeight() - 4;
+      const height = Number.isFinite(rawHeight) && rawHeight > 0 ? Math.max(1, Math.round(rawHeight)) : 1;
+      const dpr = Number.isFinite(window.devicePixelRatio) && window.devicePixelRatio > 0 ? window.devicePixelRatio : 1;
+
+      // --- Root cause of the "solid rectangle at high zoom" bug: `width` scales
+      // unbounded with clip.duration * CellW, so at sufficient zoom the *device pixel*
+      // canvas backing store (width * dpr) exceeds the hard limit browsers impose on a
+      // single canvas (a per-axis cap, generally in the ~16k-32k px range, and/or a total
+      // area budget). Exceeding that limit does not throw - the browser silently produces
+      // a truncated/empty backing store while canvas.style.width/height (the CSS box) stays
+      // at the full, uncapped logical size. The result is a near-empty bitmap stretched
+      // across a huge CSS box, which reads as one solid-colored rectangle - exactly what
+      // reappears/disappears as CellW crosses that threshold while zooming.
+      //
+      // Fix: clamp the *backing store* to a safe device-pixel budget, and compensate with
+      // a non-uniform transform (scaleX/scaleY) instead of a flat dpr scale, so every
+      // drawing coordinate below (still expressed in 0..width / 0..height logical space)
+      // maps correctly onto whatever real bitmap size we ended up with. Below the cap this
+      // is identical to the previous behavior (scaleX === scaleY === dpr).
+      const MAX_CANVAS_DEVICE_DIMENSION = 32000;
+      const MAX_CANVAS_DEVICE_AREA = 200 * 1024 * 1024;
+      let deviceWidth = Math.max(1, Math.round(width * dpr));
+      let deviceHeight = Math.max(1, Math.round(height * dpr));
+      if (deviceWidth > MAX_CANVAS_DEVICE_DIMENSION) deviceWidth = MAX_CANVAS_DEVICE_DIMENSION;
+      if (deviceHeight > MAX_CANVAS_DEVICE_DIMENSION) deviceHeight = MAX_CANVAS_DEVICE_DIMENSION;
+      if (deviceWidth * deviceHeight > MAX_CANVAS_DEVICE_AREA) {
+        deviceWidth = Math.max(1, Math.floor(MAX_CANVAS_DEVICE_AREA / deviceHeight));
+      }
+
+      canvas.width = deviceWidth;
+      canvas.height = deviceHeight;
       canvas.style.width = `${width}px`;
       canvas.style.height = `${height}px`;
+      // Only the rare case where the cap above actually kicked in leaves the backing
+      // store smaller than the CSS box, which forces the browser to stretch it - by
+      // default with smoothing, which looks blurry. In that fallback case, render
+      // crisp/blocky instead of smoothed; in the normal (uncapped) case this has no effect.
+      canvas.style.imageRendering = deviceWidth < width * dpr ? 'pixelated' : 'auto';
+
       const context = canvas.getContext('2d');
-      context.setTransform(dpr, 0, 0, dpr, 0, 0);
+      if (!context) return; // context creation can fail on OOM; bail out rather than throw mid-render
+
+      const scaleX = deviceWidth / width;
+      const scaleY = deviceHeight / height;
+      context.setTransform(scaleX, 0, 0, scaleY, 0, 0);
       context.clearRect(0, 0, width, height);
       const center = height / 2;
       const timeMapping = window.AudioClipTimeMapping;
       const sourceTotal = Math.max(1, clip.sourceDuration || (clip.sourceEnd - clip.sourceStart) || clip.duration);
 
+      // Never rasterize more columns than the backing store actually has device pixels
+      // for - doing so wastes work on columns that can't be distinguished on screen anyway,
+      // and keeps per-draw cost bounded (proportional to real screen resolution) no matter
+      // how long the clip or how far zoomed in, which also keeps envelope sampling
+      // resolution matched to the current zoom level instead of oversampling blindly.
+      const columns = Math.max(1, Math.min(width, deviceWidth));
+      const colToLogicalX = col => (col / columns) * width;
+
       if (clip.showWaveform) {
         const gainScale = clip.gain <= MIN_GAIN ? 0 : Math.pow(10, clip.gain / 20);
         const maxAmp = height * 0.47;
-        const tops = new Float32Array(width);
-        const bottoms = new Float32Array(width);
+        const tops = new Float32Array(columns);
+        const bottoms = new Float32Array(columns);
+        const xs = new Float32Array(columns);
 
-        for (let x = 0; x < width; x++) {
+        for (let col = 0; col < columns; col++) {
+          const x = colToLogicalX(col);
+          const xNext = colToLogicalX(col + 1);
+          xs[col] = x;
+
           // Same timeline-to-source mapping used previously, but evaluated over the
-          // full pixel span [x, x + 1) rather than a single point, so the envelope
-          // reflects everything that pixel column actually covers.
+          // full column span [x, xNext) rather than a single point, so the envelope
+          // reflects everything that column actually covers.
           const timelineFrameStart = timeMapping.waveformPixelToTimelineFrame(clip, x, CellW);
-          const timelineFrameEnd = timeMapping.waveformPixelToTimelineFrame(clip, x + 1, CellW);
+          const timelineFrameEnd = timeMapping.waveformPixelToTimelineFrame(clip, xNext, CellW);
           const sourceFrameStart = timeMapping.timelineFrameToSourceFrame(clip, timelineFrameStart, true);
           const sourceFrameEnd = timeMapping.timelineFrameToSourceFrame(clip, timelineFrameEnd, true);
-          const sFrom = Math.min(sourceFrameStart, sourceFrameEnd) - clip.sourceStart;
-          const sTo = Math.max(sourceFrameStart, sourceFrameEnd) - clip.sourceStart;
+          const sFromRaw = Math.min(sourceFrameStart, sourceFrameEnd) - clip.sourceStart;
+          const sToRaw = Math.max(sourceFrameStart, sourceFrameEnd) - clip.sourceStart;
+          const sFrom = Number.isFinite(sFromRaw) ? sFromRaw : 0;
+          const sTo = Number.isFinite(sToRaw) ? sToRaw : sFrom;
 
           const localFrame = Math.max(0, Math.min(clip.duration, (timelineFrameStart + timelineFrameEnd) / 2 - clip.startFrame));
           const fadeLevel = this.envelopeAt(clip, localFrame);
           const scale = fadeLevel * gainScale * (height * 0.42);
 
           const env = this.pixelEnvelope(clip, sFrom, sTo, sourceTotal);
-          const topOffset = Math.min(maxAmp, Math.max(0, env.max) * scale);
-          const bottomOffset = Math.min(maxAmp, Math.max(0, -env.min) * scale);
-          tops[x] = center - topOffset;
-          bottoms[x] = center + bottomOffset;
+          const envMax = Number.isFinite(env.max) ? env.max : 0;
+          const envMin = Number.isFinite(env.min) ? env.min : 0;
+          const topOffset = Math.min(maxAmp, Math.max(0, envMax) * scale);
+          const bottomOffset = Math.min(maxAmp, Math.max(0, -envMin) * scale);
+          tops[col] = center - topOffset;
+          bottoms[col] = center + bottomOffset;
         }
 
         context.beginPath();
-        context.moveTo(0, tops[0]);
-        for (let x = 1; x < width; x++) context.lineTo(x, tops[x]);
-        for (let x = width - 1; x >= 0; x--) context.lineTo(x, bottoms[x]);
+        context.moveTo(xs[0], tops[0]);
+        for (let col = 1; col < columns; col++) context.lineTo(xs[col], tops[col]);
+        context.lineTo(width, tops[columns - 1]);
+        context.lineTo(width, bottoms[columns - 1]);
+        for (let col = columns - 1; col >= 0; col--) context.lineTo(xs[col], bottoms[col]);
         context.closePath();
         context.fillStyle = 'rgba(226, 224, 255, .82)';
         context.fill();
@@ -190,11 +254,12 @@
       }
 
       context.beginPath();
-      for (let x = 0; x < width; x++) {
+      for (let col = 0; col < columns; col++) {
+        const x = colToLogicalX(col);
         const progress = x / Math.max(1, width - 1);
         const level = this.envelopeAt(clip, progress * clip.duration);
         const y = height - 1 - level * (height - 3);
-        if (x === 0) context.moveTo(x, y); else context.lineTo(x, y);
+        if (col === 0) context.moveTo(x, y); else context.lineTo(x, y);
       }
       context.strokeStyle = 'rgba(247,246,255,.9)';
       context.lineWidth = 1.25;
