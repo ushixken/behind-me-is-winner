@@ -2297,7 +2297,18 @@ function _smoothPoint(x,y,t){
   const aD=_oefAlpha(_OEF_DCUTOFF,dt);
   _oefDX=_oefDX+aD*(rawDX-_oefDX);
   _oefDY=_oefDY+aD*(rawDY-_oefDY);
-  const speed=Math.hypot(_oefDX,_oefDY);
+  // x/y (and therefore rawDX/rawDY) are in CANVAS space, which is
+  // getPos()'s (screenDelta)/zoom. That means the exact same physical hand
+  // jitter produces a canvas-space speed that scales as 1/zoom — at 25%
+  // zoom a given pixel of hand tremor is 4x the canvas-space speed it is
+  // at 100%. Since the adaptive cutoff below opens up (filters less) as
+  // speed rises, feeding it raw canvas-space speed made the filter open up
+  // purely because of zoom, not because the hand actually moved faster —
+  // that's what caused slow straight lines to look wavy only when zoomed
+  // out. Fix: convert back to a zoom-independent (screen/physical) speed
+  // for the cutoff decision only; the filtered position itself stays in
+  // canvas space so spacing/interpolation downstream is unaffected.
+  const speed=Math.hypot(_oefDX,_oefDY)*zoom;
   // Adaptive cutoff: opens up (less smoothing, tighter tracking) as speed
   // rises, so fast flicks stay glued to the pen while slow strokes get the
   // de-wobble benefit — no fixed spatial or temporal lag either way.
@@ -2610,23 +2621,79 @@ function _quadPoint(x0,y0,cx,cy,x1,y1,t){
     y: mt*mt*y0 + 2*mt*t*cy + t*t*y1
   };
 }
-// Rough arc-length estimate (control-polygon length) — good enough to pick
-// a dab count; exact arc length isn't needed since dab spacing is already
-// approximate/adaptive elsewhere in this engine.
-function _quadArcTable(x0,y0,cx,cy,x1,y1,maxDivisions=256){
-  const controlLen=Math.hypot(cx-x0,cy-y0)+Math.hypot(x1-cx,y1-cy);
-  const chordLen=Math.hypot(x1-x0,y1-y0);
-  const divisions=Math.max(8,Math.min(maxDivisions,Math.ceil(Math.max(controlLen,chordLen)/0.5)));
-  const table=new Array(divisions+1);
-  let prev={x:x0,y:y0},length=0;
-  table[0]={t:0,x:x0,y:y0,length:0};
-  for(let i=1;i<=divisions;i++){
-    const t=i/divisions;
-    const pt=_quadPoint(x0,y0,cx,cy,x1,y1,t);
-    length+=Math.hypot(pt.x-prev.x,pt.y-prev.y);
-    table[i]={t,x:pt.x,y:pt.y,length};
-    prev=pt;
+// Flatness-adaptive arc-length table (replaces the old length-only, 256-cap
+// scheme). Rather than deciding "how many divisions" from total estimated
+// length up front (which starves long curves once the cap is hit), this
+// recursively de-Casteljau splits the quadratic wherever it is locally NOT
+// flat, and stops subdividing wherever it already is. A long, gently-curving
+// stroke ends up with very few segments (each is nearly straight already); a
+// short, sharp curve gets many. Perfectly straight input degenerates to a
+// single segment. Total sample count now tracks curvature, not length.
+//
+// Flatness test: for a quadratic (P0,P1,P2), the maximum deviation of the
+// curve from the chord P0->P2 is bounded by (perpendicular distance of P1
+// from that chord) / 2. If that's under the tolerance, the chord is an
+// acceptable stand-in for the curve over this sub-range.
+//
+// _QUAD_FLATNESS_TOLERANCE is in canvas-space px (coordinates arriving here
+// are already canvas-space, so this is intentionally NOT scaled by zoom).
+const _QUAD_FLATNESS_TOLERANCE = 0.25;
+// Recursion-depth safety net only — not a length-based cap. Depth 12 allows
+// up to ~4096 segments for a single curve in the extreme case where every
+// split fails the flatness test at every level, which does not happen for
+// any curve a real pen stroke produces; this exists purely to guarantee
+// termination on pathological/degenerate input.
+const _QUAD_MAX_SPLIT_DEPTH = 12;
+const _QUAD_MAX_SEGMENTS = 4096; // paired safety net (segment-count based)
+function _quadFlatnessDeviation(x0,y0,cx,cy,x1,y1){
+  // Perpendicular distance from control point to the chord, halved (the
+  // standard bound on a quadratic's max deviation from its chord).
+  const dx=x1-x0,dy=y1-y0;
+  const chordLenSq=dx*dx+dy*dy;
+  if(chordLenSq<1e-9){
+    // Degenerate/near-zero chord (curve doubles back on itself or is a
+    // point): fall back to raw control-point offset from the shared
+    // endpoint so we still split instead of dividing by ~0.
+    return Math.hypot(cx-x0,cy-y0);
   }
+  const cross=(cx-x0)*dy-(cy-y0)*dx;
+  return Math.abs(cross)/Math.sqrt(chordLenSq)/2;
+}
+function _quadArcTable(x0,y0,cx,cy,x1,y1){
+  const table=[{t:0,x:x0,y:y0,length:0}];
+  let length=0,prevX=x0,prevY=y0,segmentCount=0;
+  // Iterative stack (avoids recursion-depth concerns) of quadratic
+  // sub-segments still needing a flatness decision. Each entry is the
+  // sub-segment's own control polygon plus its [t0,t1] range within the
+  // original curve and its split depth so far.
+  const stack=[{x0,y0,cx,cy,x1,y1,t0:0,t1:1,depth:0}];
+  while(stack.length){
+    const seg=stack.pop();
+    const flat = seg.depth>=_QUAD_MAX_SPLIT_DEPTH
+      || segmentCount>=_QUAD_MAX_SEGMENTS
+      || _quadFlatnessDeviation(seg.x0,seg.y0,seg.cx,seg.cy,seg.x1,seg.y1) <= _QUAD_FLATNESS_TOLERANCE;
+    if(flat){
+      length+=Math.hypot(seg.x1-prevX,seg.y1-prevY);
+      table.push({t:seg.t1,x:seg.x1,y:seg.y1,length});
+      prevX=seg.x1;prevY=seg.y1;segmentCount++;
+      continue;
+    }
+    // De Casteljau split at the sub-segment's own midpoint (t=0.5 of THIS
+    // sub-segment, i.e. tmid of the original curve's [t0,t1] range).
+    const m0x=(seg.x0+seg.cx)/2, m0y=(seg.y0+seg.cy)/2;
+    const m1x=(seg.cx+seg.x1)/2, m1y=(seg.cy+seg.y1)/2;
+    const mx=(m0x+m1x)/2, my=(m0y+m1y)/2;
+    const tmid=(seg.t0+seg.t1)/2;
+    // Push right half first, then left, so the stack (LIFO) pops left
+    // half first — keeps emitted table entries in increasing-t order.
+    stack.push({x0:mx,y0:my,cx:m1x,cy:m1y,x1:seg.x1,y1:seg.y1,t0:tmid,t1:seg.t1,depth:seg.depth+1});
+    stack.push({x0:seg.x0,y0:seg.y0,cx:m0x,cy:m0y,x1:mx,y1:my,t0:seg.t0,t1:tmid,depth:seg.depth+1});
+  }
+  // Stash the original control points so _quadPointAtLength can evaluate
+  // the TRUE curve at an interpolated t, instead of lerping between two
+  // table chord endpoints. (Attached as a plain property; `table` is still
+  // used as a normal array everywhere else via its indices/length.)
+  table.coeffs={x0,y0,cx,cy,x1,y1};
   return table;
 }
 function _quadPointAtLength(table,distance){
@@ -2638,7 +2705,18 @@ function _quadPointAtLength(table,distance){
   const b=table[lo],a=table[lo-1];
   const span=b.length-a.length;
   const f=span>0?(distance-a.length)/span:0;
-  return{t:a.t+(b.t-a.t)*f,x:a.x+(b.x-a.x)*f,y:a.y+(b.y-a.y)*f};
+  const t=a.t+(b.t-a.t)*f;
+  const coeffs=table.coeffs;
+  if(coeffs){
+    // Evaluate the true quadratic at the interpolated t so stamp centers
+    // land on the mathematical curve rather than on a table chord. This is
+    // still an approximate arc-length parameterization (t isn't exactly
+    // proportional to true arc length between table entries), but the
+    // (x,y) position itself is now exact for that t, not a lerp.
+    const pt=_quadPoint(coeffs.x0,coeffs.y0,coeffs.cx,coeffs.cy,coeffs.x1,coeffs.y1,t);
+    return{t,x:pt.x,y:pt.y};
+  }
+  return{t,x:a.x+(b.x-a.x)*f,y:a.y+(b.y-a.y)*f};
 }
 function _stampQuadCurve(x0,y0,cx,cy,x1,y1,e,startPressure,endPressure){
   const arcTable=_quadArcTable(x0,y0,cx,cy,x1,y1);
@@ -2687,6 +2765,39 @@ function _stampQuadCurve(x0,y0,cx,cy,x1,y1,e,startPressure,endPressure){
   _strokeSegCarryOver = Math.max(0, traveled - len);
   currentPressure = endPressure;
 }
+// Collinearity deadband for the quadratic curve fit below. A,B,C nearly
+// collinear -> B's sideways offset is almost certainly hand tremor, not
+// intent, and the quadratic fit turns even a tiny offset into a visible
+// bow (curvature ~ offset / segmentLength^2 -- see _curveAddPoint), which
+// is why it's most visible on slow strokes (short A->C segments). Real
+// curves/corners have a much larger offset relative to segment length, so
+// scoring the deviation as a RATIO of chord length (not a fixed pixel
+// value) keeps the same behavior across zoom, brush size and stroke speed,
+// and leaves intentional curvature completely alone.
+const _COLLINEAR_LOW_RATIO  = 0.015; // deviation below 1.5% of chord -> fully straighten
+const _COLLINEAR_HIGH_RATIO = 0.08;  // deviation above 8% of chord -> real curve, untouched
+function _deadbandControlPoint(A,B,C){
+  const acx=C.x-A.x, acy=C.y-A.y;
+  const chordLenSq=acx*acx+acy*acy;
+  const chordLen=Math.sqrt(chordLenSq);
+  if(chordLen<1e-6) return B; // A and C nearly coincide (near-stationary); nothing to deadband
+  // Perpendicular distance of B from line A->C (standard point-to-line
+  // distance via the 2D cross product), then normalized by chord length so
+  // the result is a scale-independent ratio rather than an absolute pixel
+  // offset.
+  const cross=(B.x-A.x)*acy-(B.y-A.y)*acx;
+  const ratio=Math.abs(cross)/chordLen/chordLen;
+  if(ratio>=_COLLINEAR_HIGH_RATIO) return B; // clearly a real curve/corner: unchanged
+  // Smoothstep between the two ratio thresholds so the control point eases
+  // continuously from "on the chord" to "the real B" -- no snapping, no
+  // faceting, no discontinuity as a stroke transitions from straight to
+  // curved.
+  let t = ratio<=_COLLINEAR_LOW_RATIO ? 0 : (ratio-_COLLINEAR_LOW_RATIO)/(_COLLINEAR_HIGH_RATIO-_COLLINEAR_LOW_RATIO);
+  t = t*t*(3-2*t);
+  const proj=((B.x-A.x)*acx+(B.y-A.y)*acy)/chordLenSq;
+  const px=A.x+acx*proj, py=A.y+acy*proj; // B projected straight onto the chord
+  return { x: px+(B.x-px)*t, y: py+(B.y-py)*t };
+}
 // Rolling 3-point buffer feeding the curve above. Reset at stroke start so
 // the first two segments of a stroke (before 3 real points exist) fall
 // back to a straight stamp — there's no earlier geometry to curve through
@@ -2701,14 +2812,19 @@ function _resetCurve(x,y,pressure){
 function _curveAddPoint(x,y,pressure,e){
   if(_curveP0===null){_resetCurve(x,y,pressure);return;}
   const A=_curveP0,B=_curveP1,C={x,y};
-  const startPt = {x:(A.x+B.x)/2, y:(A.y+B.y)/2};
-  const endPt   = {x:(B.x+C.x)/2, y:(B.y+C.y)/2};
+  // Only the control point used for THIS emitted arc is softened; the
+  // rolling buffer below still stores the real, un-blended B so later
+  // segments keep seeing true sample geometry.
+  const Bc=_deadbandControlPoint(A,B,C);
+  const startPt = {x:(A.x+Bc.x)/2, y:(A.y+Bc.y)/2};
+  const endPt   = {x:(Bc.x+C.x)/2, y:(Bc.y+C.y)/2};
   const startPr = (_curvePr0+_curvePr1)/2;
   const endPr   = (_curvePr1+pressure)/2;
-  _stampQuadCurve(startPt.x,startPt.y,B.x,B.y,endPt.x,endPt.y,e,startPr,endPr);
+  _stampQuadCurve(startPt.x,startPt.y,Bc.x,Bc.y,endPt.x,endPt.y,e,startPr,endPr);
   _curveP0=B;_curveP1=C;_curvePr0=_curvePr1;_curvePr1=pressure;
 }
 // Called once at stroke end to draw the final bit of curve from the last
+
 // completed midpoint segment all the way out to the true last pen
 // position, so the stroke always ends exactly under the pen (no
 // perceptible "still catching up" tail — this is a one-time geometric
@@ -2824,7 +2940,7 @@ function _curvePressureProfile(){
   return t=>_linePressureAtDistance(samples,Math.max(0,Math.min(1,t))*domain);
 }
 function _strokeQuadraticProfile(p0,p1,p2,e,pressureAt){
-  const table=_quadArcTable(p0.x,p0.y,p1.x,p1.y,p2.x,p2.y,1024),length=table[table.length-1].length;
+  const table=_quadArcTable(p0.x,p0.y,p1.x,p1.y,p2.x,p2.y),length=table[table.length-1].length;
   _walkDabArc(length,d=>{const point=_quadPointAtLength(table,d);point.t=length>0?d/length:1;return point;},e,0,0,pressureAt);
 }
 function _ensureCurveGuide(){
@@ -3207,7 +3323,12 @@ function _updateVelocity(x, y, t){
   if(_lastMoveTime > 0){
     const dt = Math.max(1, t - _lastMoveTime);
     const dx = x - _lastMoveX, dy = y - _lastMoveY;
-    const spd = Math.sqrt(dx*dx+dy*dy) / dt;
+    // x/y are canvas-space (post /zoom), so raw canvas-space speed scales
+    // with 1/zoom for the same physical motion. _strokeVelocity feeds the
+    // "velocity" spacing mode (_effectiveSpacingFrac), and spacing must be
+    // zoom-independent (see PART 2), so convert back to screen/physical
+    // speed here rather than letting zoom alone change perceived velocity.
+    const spd = (Math.sqrt(dx*dx+dy*dy) * zoom) / dt;
     _strokeVelocity = _strokeVelocity * 0.7 + spd * 0.3; // EMA smoothing
   }
   _lastMoveTime = t; _lastMoveX = x; _lastMoveY = y;
