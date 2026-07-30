@@ -31,20 +31,24 @@
 
   const normalizeClip = clip => {
     const duration = Math.max(1, Number(clip.duration) || DEFAULT_DURATION);
+    const sourceStart = Math.max(0, Number(clip.sourceStart) || 0);
+    const storedSourceEnd = Number(clip.sourceEnd);
+    const sourceEnd = Number.isFinite(storedSourceEnd) ? Math.max(sourceStart, storedSourceEnd) : sourceStart + duration;
     return {
       id: clip.id,
       name: clip.name || 'Audio Clip',
       track: clip.track || clip.trackId,
       startFrame: Math.max(0, Number(clip.startFrame) || 0),
       duration,
-      sourceStart: Math.max(0, Number(clip.sourceStart) || 0),
-      sourceEnd: Math.max(duration, Number(clip.sourceEnd) || duration),
-      sourceDuration: Math.max(duration, Number(clip.sourceDuration) || Number(clip.sourceEnd) || duration),
+      sourceStart,
+      sourceEnd,
+      sourceDuration: Math.max(sourceEnd, Number(clip.sourceDuration) || sourceEnd),
       fadeInLength: Math.max(0, Number(clip.fadeInLength) || 0),
       fadeOutLength: Math.max(0, Number(clip.fadeOutLength) || 0),
       fadeCurve: clip.fadeCurve || { type: 'smooth' },
       gain: Number.isFinite(clip.gain) ? Math.max(MIN_GAIN, Math.min(MAX_GAIN, clip.gain)) : 0,
       showWaveform: clip.showWaveform !== false,
+      stretchFactor: Number.isFinite(clip.stretchFactor) && clip.stretchFactor > 0 ? clip.stretchFactor : 1,
       waveform: Array.isArray(clip.waveform) ? clip.waveform : makeWaveform(clip.name || clip.id || 'audio')
     };
   };
@@ -505,6 +509,23 @@
       this.commit(before);
       this.render();
     }
+    stretchClip(id, change) {
+      const clip = this.find(id);
+      if (!clip || !this.selection.ids.has(id)) return false;
+      const nextDuration = Math.max(1, Math.round(Number(change.duration) || clip.duration));
+      const nextStart = Math.max(0, Math.round(Number(change.startFrame) || 0));
+      const nextFactor = Number(change.stretchFactor);
+      if (clip.duration === nextDuration && clip.startFrame === nextStart && clip.stretchFactor === nextFactor) return false;
+      const before = this.snapshot();
+      clip.startFrame = nextStart;
+      clip.duration = nextDuration;
+      clip.stretchFactor = Number.isFinite(nextFactor) && nextFactor > 0 ? nextFactor : 1;
+      clip.fadeInLength = Math.min(clip.fadeInLength, clip.duration);
+      clip.fadeOutLength = Math.min(clip.fadeOutLength, Math.max(0, clip.duration - clip.fadeInLength));
+      this.commit(before);
+      this.render();
+      return true;
+    }
     splitClip(id, absoluteFrame) {
       const clip = this.find(id);
       if (!clip) return false;
@@ -644,6 +665,7 @@
     restore: snapshot => editor.restore(snapshot),
     snapshot: () => editor.snapshot(),
     splitAt: (id, frame) => editor.splitClip(id, frame),
+    stretchClip: (id, change) => editor.stretchClip(id, change),
     get clips() { return editor.snapshot(); }
   };
 })();

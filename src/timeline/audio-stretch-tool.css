@@ -1,0 +1,87 @@
+#audio-stretch-tool {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  padding: 0;
+  border: 1px solid var(--border2);
+  border-radius: 4px;
+  background: var(--bg2);
+  color: var(--text2);
+  font: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1;
+  text-align: center;
+  cursor: pointer;
+}
+
+#audio-stretch-tool:hover {
+  border-color: var(--accent);
+  background: var(--bg4);
+  color: var(--text);
+}
+
+#audio-stretch-tool.active {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb,var(--accent) 35%,transparent);
+}
+
+.audio-clip.audio-stretch-hover,
+.audio-clip.audio-stretch-dragging {
+  cursor: ew-resize;
+}
+
+.audio-clip.audio-stretch-hover::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 20;
+  width: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.audio-clip.audio-stretch-left::after { left: 0; }
+.audio-clip.audio-stretch-right::after { right: 0; }
+
+.audio-stretch-tooltip {
+  position: fixed;
+  z-index: 10030;
+  display: none;
+  padding: 3px 6px;
+  border: 1px solid var(--border2);
+  border-radius: 4px;
+  background: var(--panel-bg, var(--bg2));
+  color: var(--text);
+  font: 10px/1.2 sans-serif;
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0,0,0,.35);
+}
+
+.audio-stretch-tooltip.visible { display: block; }
+
+body.audio-stretch-drag-active,
+body.audio-stretch-drag-active * {
+  cursor: ew-resize !important;
+  user-select: none !important;
+}
+
+#audio-stretch-tool svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  overflow: visible;
+}
+#audio-stretch-tool svg path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
