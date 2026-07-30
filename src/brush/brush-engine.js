@@ -1,4 +1,4 @@
-//
+﻿//
 // DRAWING — getPos uses activeC's own getBoundingClientRect()
 // which accounts for the CSS transform, giving pixel-perfect coords
 //
@@ -3635,7 +3635,39 @@ function _sampleVisibleCanvasColor(e){
 }
 
 
-activeC.addEventListener('pointerdown',e=>{
+// Stroke initiation outside canvas bounds
+// -----------------------------------------------------------------------
+// Historically this pointerdown handler was ONLY bound to activeC, so a
+// press that landed outside the canvas element (but still inside the
+// pannable canvas-area viewport, e.g. in the zoomed-out margin around a
+// small canvas) never reached this code at all: no stroke session was
+// created, and dragging in from outside began painting from wherever the
+// pointer happened to be the moment it crossed the canvas edge, with no
+// warm stabilizer/pressure/velocity state and a hard "snap-in" look.
+//
+// Fix: keep this exact handler (unchanged) bound to activeC for the
+// normal in-canvas case, but ALSO invoke it — via _brushPointerDownOutside
+// below — when the press lands on canvas-area outside activeC itself. The
+// handler doesn't need to know which path it came from: getPos() maps
+// through canvas-area's rect using plain client coordinates with no
+// clamping, so it already produces correct (possibly negative / >CW,CH)
+// canvas-space coordinates for an outside point. activeC.setPointerCapture
+// is likewise valid to call even though the pointerdown event's target
+// wasn't activeC — capture only requires an active pointer, not that the
+// captor be the original target — and once captured, every subsequent
+// pointermove/up/cancel event is redirected to activeC's own listeners
+// automatically, so no other code needs to change.
+//
+// The very first dab this handler stamps (see _stampDab call below) may
+// land outside [0,CW)x[0,CH) when the stroke starts off-canvas. That's
+// safe by construction: _strokeCanvas is allocated at exactly CW x CH, and
+// a canvas 2D context can never rasterize past its own backing store, so
+// an out-of-bounds stamp is a guaranteed no-op rather than a visible mark
+// or an out-of-canvas raster write. As the pointer moves and eventually
+// crosses into the canvas, dab-walking naturally starts producing visible
+// pixels exactly where the stroke path enters the canvas — no special
+// "entry" case needed, no gap, no restart.
+function _brushPointerDown(e){
   const diagnosticPointerdownEntry=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
   const customTraceEntry=window.CustomFirstDabTrace&&window.CustomFirstDabTrace.enabled?performance.now():0;
   // e.button can be -1 on some tablet drivers for pen primary contact; use e.buttons&1 instead
@@ -3776,6 +3808,23 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
   _scheduleRecomposite({firstDab:true});
   if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.event('recomposite-scheduled');
   if(window._brushAirbrush&&window._brushContinuousSpraying) _startAirbrushSpray();
+}
+activeC.addEventListener('pointerdown',_brushPointerDown);
+// Lightweight outside-canvas entry point. Only brush/eraser strokes are
+// eligible to start off-canvas (fill/line/curve/eyedropper keep their
+// existing on-canvas-only behavior — nothing about them regresses since
+// this listener simply never calls through for those tools). Interactive
+// controls that happen to live inside canvas-area (resize-canvas fields,
+// the camera-view activation button, etc.) are excluded so this never
+// hijacks a normal UI click; anything else in the viewport — empty
+// panning margin, the guide/transform overlay canvases, canvas-area
+// itself — is treated as "outside the canvas" and handed to the exact
+// same stroke-start logic used for an on-canvas press.
+canvasArea.addEventListener('pointerdown',e=>{
+  if(e.target===activeC) return; // already handled by the listener above
+  if(tool!=='brush'&&tool!=='eraser') return;
+  if(e.target.closest&&e.target.closest('button,input,select,textarea,[contenteditable],.tf-floating-action,#resize-canvas-settings,#camera-view-preview')) return;
+  _brushPointerDown(e);
 });
 // Line tool preview scheduler ------------------------------------------
 // pointerrawupdate deliberately fires at full tablet/OS sampling rate (up
