@@ -357,11 +357,12 @@
       this.drag = new AudioClipDragController(this);
       this.edit = new AudioClipEditController(this);
       this.contextId = null;
+      this.testClipDrag = null;
       this.testCounter = this.clips.length;
       this.gainTooltip = document.createElement('div');
       this.gainTooltip.className = 'audio-gain-tooltip';
       document.body.appendChild(this.gainTooltip);
-      document.getElementById('audio-test-clip-add')?.addEventListener('click', () => this.addTestClip());
+      document.getElementById('audio-test-clip-add')?.addEventListener('pointerdown', event => this.beginTestClipDrag(event));
       document.getElementById('audio-timeline-labels').addEventListener('pointerdown', event => {
         const label = event.target.closest('.audio-timeline-track-label');
         if (!label || event.target.closest('button,input')) return;
@@ -437,15 +438,65 @@
       this.gainTooltip.classList.add('visible');
     }
     hideGainTooltip() { this.gainTooltip.classList.remove('visible'); }
-    addTestClip() {
+    beginTestClipDrag(event) {
+      if (event.button !== 0) return;
+      const button = event.currentTarget;
+      const ghost = document.createElement('div');
+      ghost.className = 'audio-test-clip-ghost';
+      ghost.textContent = 'Audio Test';
+      document.body.appendChild(ghost);
+      this.testClipDrag = { pointerId: event.pointerId, button, ghost, startX: event.clientX, startY: event.clientY, moved: false, targetTrack: null, targetFrame: 0 };
+      button.setPointerCapture(event.pointerId);
+      button.classList.add('dragging');
+      button.addEventListener('pointermove', this.moveTestClipDrag);
+      button.addEventListener('pointerup', this.endTestClipDrag);
+      button.addEventListener('pointercancel', this.endTestClipDrag);
+      event.preventDefault();
+    }
+    moveTestClipDrag = event => {
+      const state = this.testClipDrag;
+      if (!state || event.pointerId !== state.pointerId) return;
+      if (!state.moved && Math.hypot(event.clientX - state.startX, event.clientY - state.startY) >= 3) {
+        state.moved = true;
+        state.ghost.classList.add('visible');
+      }
+      if (!state.moved) return;
+      state.ghost.style.left = `${event.clientX + 12}px`;
+      state.ghost.style.top = `${event.clientY + 10}px`;
+      document.querySelectorAll('.audio-timeline-track-grid.drop-target').forEach(row => row.classList.remove('drop-target'));
+      const viewport = document.getElementById('audio-timeline-grid-viewport');
+      const viewportBounds = viewport.getBoundingClientRect();
+      const row = [...document.querySelectorAll('.audio-timeline-track-grid')].find(candidate => {
+        const bounds = candidate.getBoundingClientRect();
+        return event.clientY >= bounds.top && event.clientY <= bounds.bottom && event.clientX >= viewportBounds.left && event.clientX <= viewportBounds.right;
+      });
+      state.targetTrack = row ? row.dataset.audioTrackId : null;
+      state.targetFrame = Math.max(0, Math.round((event.clientX - viewportBounds.left + viewport.scrollLeft) / CellW));
+      state.ghost.classList.toggle('can-drop', !!row);
+      if (row) row.classList.add('drop-target');
+      event.preventDefault();
+    };
+    endTestClipDrag = event => {
+      const state = this.testClipDrag;
+      if (!state || event.pointerId !== state.pointerId) return;
+      this.testClipDrag = null;
+      if (state.button.hasPointerCapture(event.pointerId)) state.button.releasePointerCapture(event.pointerId);
+      state.button.removeEventListener('pointermove', this.moveTestClipDrag);
+      state.button.removeEventListener('pointerup', this.endTestClipDrag);
+      state.button.removeEventListener('pointercancel', this.endTestClipDrag);
+      state.button.classList.remove('dragging');
+      state.ghost.remove();
+      document.querySelectorAll('.audio-timeline-track-grid.drop-target').forEach(row => row.classList.remove('drop-target'));
+      if (state.moved && state.targetTrack) this.addTestClip(state.targetTrack, state.targetFrame);
+    };
+    addTestClip(track, startFrame) {
       const tracks = this.trackIds();
       if (!tracks.length) return;
       const before = this.snapshot();
       const name = TEST_NAMES[this.testCounter++ % TEST_NAMES.length];
-      const selectedTrack = document.querySelector('.audio-timeline-track-label.track-selected');
       const clip = normalizeClip({
         id: `audio-clip-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        name, track: selectedTrack ? selectedTrack.dataset.audioTrackId : tracks[0], startFrame: Math.max(0, curFrame || 0), duration: DEFAULT_DURATION
+        name, track: track || tracks[0], startFrame: Math.max(0, Number(startFrame) || 0), duration: DEFAULT_DURATION
       });
       this.clips.push(clip);
       this.selection.clear();
@@ -453,6 +504,39 @@
       this.selection.anchorId = clip.id;
       this.commit(before);
       this.render();
+    }
+    splitClip(id, absoluteFrame) {
+      const clip = this.find(id);
+      if (!clip) return false;
+      const splitFrame = Math.round(absoluteFrame);
+      const localFrame = splitFrame - clip.startFrame;
+      if (localFrame <= 0 || localFrame >= clip.duration) return false;
+      const before = this.snapshot();
+      const original = clone(clip);
+      const sourceSplit = original.sourceStart + localFrame;
+      clip.duration = localFrame;
+      clip.sourceEnd = sourceSplit;
+      clip.fadeInLength = Math.min(original.fadeInLength, clip.duration);
+      clip.fadeOutLength = Math.min(original.fadeOutLength, Math.max(0, clip.duration - clip.fadeInLength));
+      const right = normalizeClip({
+        ...original,
+        id: `audio-clip-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        startFrame: splitFrame,
+        duration: original.duration - localFrame,
+        sourceStart: sourceSplit,
+        sourceEnd: original.sourceEnd
+      });
+      right.fadeInLength = Math.min(original.fadeInLength, right.duration);
+      right.fadeOutLength = Math.min(original.fadeOutLength, Math.max(0, right.duration - right.fadeInLength));
+      const index = this.clips.indexOf(clip);
+      this.clips.splice(index + 1, 0, right);
+      this.selection.clear();
+      this.selection.ids.add(clip.id);
+      this.selection.ids.add(right.id);
+      this.selection.anchorId = right.id;
+      this.commit(before);
+      this.render();
+      return true;
     }
     duplicateSelected() {
       const selected = this.selectedClips();
@@ -559,6 +643,7 @@
   window.AudioClipUI = {
     restore: snapshot => editor.restore(snapshot),
     snapshot: () => editor.snapshot(),
+    splitAt: (id, frame) => editor.splitClip(id, frame),
     get clips() { return editor.snapshot(); }
   };
 })();

@@ -149,3 +149,36 @@ body.audio-gain-dragging * {
   cursor: ns-resize !important;
   user-select: none !important;
 }
+
+#audio-test-clip-add {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+#audio-test-clip-add.dragging {
+  cursor: grabbing;
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+.audio-test-clip-ghost {
+  position: fixed;
+  z-index: 10030;
+  display: none;
+  width: 96px;
+  height: 24px;
+  padding: 4px 7px;
+  box-sizing: border-box;
+  border: 1px solid var(--border2);
+  border-radius: 5px;
+  background: color-mix(in srgb,var(--accent-bg) 80%,var(--bg4));
+  color: var(--text2);
+  font-size: 9px;
+  pointer-events: none;
+  opacity: .8;
+}
+.audio-test-clip-ghost.visible { display: block; }
+.audio-test-clip-ghost.can-drop {
+  border-color: var(--accent);
+  color: var(--text);
+  opacity: 1;
+}
