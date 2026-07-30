@@ -83,6 +83,13 @@
   }
 
   class WaveformRenderer {
+    constructor() {
+      // Identity-keyed cache for clips that only have a synthetic/legacy peak array
+      // (no decoded source PCM available). Keyed by the samples array reference itself,
+      // so it's naturally invalidated whenever a clip's waveform data actually changes.
+      this.fallbackCache = new WeakMap();
+    }
+
     envelopeAt(clip, frame) {
       let level = 1;
       if (clip.fadeInLength > 0 && frame < clip.fadeInLength) {
@@ -97,6 +104,36 @@
       return level;
     }
 
+    // Envelope (min/max) for a legacy/synthetic peak-only waveform array, using the same
+    // proportional-position approach as the previous bucket lookup, but reduced across the
+    // full [sourceFrom, sourceTo) span rather than sampled at a single point.
+    fallbackEnvelope(clip, sourceFrom, sourceTo, sourceTotal) {
+      const samples = clip.waveform || [];
+      if (!samples.length) return { min: 0, max: 0 };
+      if (!this.fallbackCache.has(samples)) this.fallbackCache.set(samples, samples);
+      const count = samples.length;
+      const total = Math.max(1, sourceTotal);
+      const fromIndex = Math.max(0, Math.min(count - 1, Math.floor(sourceFrom / total * count)));
+      const toIndex = Math.max(fromIndex, Math.min(count - 1, Math.floor(sourceTo / total * count)));
+      let peak = 0;
+      for (let index = fromIndex; index <= toIndex; index++) peak = Math.max(peak, samples[index] || 0);
+      return { min: -peak, max: peak };
+    }
+
+    // High-resolution envelope (min/max amplitude pair) covering the source-frame span
+    // [sourceFrom, sourceTo) for a single output pixel column. Prefers the shared,
+    // per-source envelope mip cache built from decoded PCM; falls back to the legacy
+    // peak-array approximation when no decoded source is available (e.g. synthetic clips).
+    pixelEnvelope(clip, sourceFrom, sourceTo, sourceTotal) {
+      const source = clip.sourceId ? window.AudioSources?.get(clip.sourceId) : null;
+      if (source && source.pcm && source.pcm.length && window.AudioWaveformEnvelope) {
+        const total = Math.max(1, sourceTotal);
+        const scale = (Number(source.frameLength) || 0) / total;
+        return window.AudioWaveformEnvelope.range(source, sourceFrom * scale, sourceTo * scale);
+      }
+      return this.fallbackEnvelope(clip, sourceFrom, sourceTo, sourceTotal);
+    }
+
     draw(canvas, clip) {
       const width = Math.max(1, Math.round(clip.duration * CellW));
       const height = Math.max(1, Math.round(audioWaveformHeight() - 4));
@@ -106,24 +143,48 @@
       canvas.style.width = `${width}px`;
       canvas.style.height = `${height}px`;
       const context = canvas.getContext('2d');
-      context.scale(dpr, dpr);
+      context.setTransform(dpr, 0, 0, dpr, 0, 0);
       context.clearRect(0, 0, width, height);
-      const samples = clip.waveform || [];
       const center = height / 2;
       const timeMapping = window.AudioClipTimeMapping;
+      const sourceTotal = Math.max(1, clip.sourceDuration || (clip.sourceEnd - clip.sourceStart) || clip.duration);
 
       if (clip.showWaveform) {
         const gainScale = clip.gain <= MIN_GAIN ? 0 : Math.pow(10, clip.gain / 20);
-        context.fillStyle = 'rgba(226, 224, 255, .82)';
+        const maxAmp = height * 0.47;
+        const tops = new Float32Array(width);
+        const bottoms = new Float32Array(width);
+
         for (let x = 0; x < width; x++) {
-          const timelineFrame = timeMapping.waveformPixelToTimelineFrame(clip, x, CellW);
-          const sourceFrame = timeMapping.timelineFrameToSourceFrame(clip, timelineFrame, true);
-          const sampleIndex = timeMapping.waveformBucketForSourceFrame(clip, sourceFrame, samples.length);
-          const localFrame = Math.max(0, Math.min(clip.duration, timelineFrame - clip.startFrame));
+          // Same timeline-to-source mapping used previously, but evaluated over the
+          // full pixel span [x, x + 1) rather than a single point, so the envelope
+          // reflects everything that pixel column actually covers.
+          const timelineFrameStart = timeMapping.waveformPixelToTimelineFrame(clip, x, CellW);
+          const timelineFrameEnd = timeMapping.waveformPixelToTimelineFrame(clip, x + 1, CellW);
+          const sourceFrameStart = timeMapping.timelineFrameToSourceFrame(clip, timelineFrameStart, true);
+          const sourceFrameEnd = timeMapping.timelineFrameToSourceFrame(clip, timelineFrameEnd, true);
+          const sFrom = Math.min(sourceFrameStart, sourceFrameEnd) - clip.sourceStart;
+          const sTo = Math.max(sourceFrameStart, sourceFrameEnd) - clip.sourceStart;
+
+          const localFrame = Math.max(0, Math.min(clip.duration, (timelineFrameStart + timelineFrameEnd) / 2 - clip.startFrame));
           const fadeLevel = this.envelopeAt(clip, localFrame);
-          const amplitude = Math.min(height * 0.47, (samples[sampleIndex] || 0) * fadeLevel * gainScale * (height * 0.42));
-          context.fillRect(x, Math.round(center - amplitude), 1, Math.max(1, Math.round(amplitude * 2)));
+          const scale = fadeLevel * gainScale * (height * 0.42);
+
+          const env = this.pixelEnvelope(clip, sFrom, sTo, sourceTotal);
+          const topOffset = Math.min(maxAmp, Math.max(0, env.max) * scale);
+          const bottomOffset = Math.min(maxAmp, Math.max(0, -env.min) * scale);
+          tops[x] = center - topOffset;
+          bottoms[x] = center + bottomOffset;
         }
+
+        context.beginPath();
+        context.moveTo(0, tops[0]);
+        for (let x = 1; x < width; x++) context.lineTo(x, tops[x]);
+        for (let x = width - 1; x >= 0; x--) context.lineTo(x, bottoms[x]);
+        context.closePath();
+        context.fillStyle = 'rgba(226, 224, 255, .82)';
+        context.fill();
+
         context.fillStyle = 'rgba(255,255,255,.26)';
         context.fillRect(0, Math.round(center), width, 1);
       }
