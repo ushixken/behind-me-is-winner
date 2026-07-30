@@ -104,42 +104,127 @@
       this.engine = engine;
       this.record = null;
       this.lastAt = 0;
+      this.continuousGeneration = 0;
+      this.continuousPending = null;
+      this.continuousTimer = null;
+      this.continuousInFlight = false;
     }
-    async preview(frame) {
+    async preview(frame, options = {}) {
+      if (!options.centered) {
+        this.requestContinuous(frame);
+        return;
+      }
       const now = performance.now();
       if (now - this.lastAt < 45) return;
       this.lastAt = now;
-      this.stop();
+      this.stopRecord();
       const context = await this.engine.ensureContext();
       if (!context) return;
+      return this.startPreview(frame, options, context);
+    }
+    requestContinuous(frame) {
+      this.continuousPending = { frame, generation: ++this.continuousGeneration };
+      this.scheduleContinuous();
+    }
+    scheduleContinuous() {
+      if (this.continuousInFlight || this.continuousTimer || !this.continuousPending) return;
+      const delay = Math.max(0, 45 - (performance.now() - this.lastAt));
+      if (delay > 0) {
+        this.continuousTimer = setTimeout(() => {
+          this.continuousTimer = null;
+          this.flushContinuous();
+        }, delay);
+        return;
+      }
+      this.flushContinuous();
+    }
+    async flushContinuous() {
+      if (this.continuousInFlight || !this.continuousPending) return;
+      const request = this.continuousPending;
+      this.continuousPending = null;
+      this.continuousInFlight = true;
+      this.lastAt = performance.now();
+      try {
+        const context = await this.engine.ensureContext();
+        if (!context || request.generation !== this.continuousGeneration) return;
+        this.stopRecord();
+        await this.startPreview(request.frame, { centered: false }, context, request.generation);
+      } finally {
+        this.continuousInFlight = false;
+        this.scheduleContinuous();
+      }
+    }
+    async startPreview(frame, options, context, continuousGeneration = null) {
+      if (continuousGeneration != null && continuousGeneration !== this.continuousGeneration) return;
       const clip = this.engine.clips().find(item =>
         frame >= item.startFrame && frame < item.startFrame + item.duration);
       if (!clip) return;
       const sourceRecord = window.AudioSources?.get(clip.sourceId);
       if (!sourceRecord?.audioBuffer) return;
       const frameRate = fps();
-      const rate = 1 / Math.max(0.01, Number(clip.stretchFactor) || 1);
-      const local = frame - clip.startFrame;
-      const offset = Math.max(0, ((clip.sourceStart || 0) + (clip.sourceOffset || 0) + local * rate) / frameRate);
+      const timeMapping = window.AudioClipTimeMapping;
+      const rate = timeMapping.playbackRate(clip);
+      const bounds = timeMapping.sourceBounds(clip);
+      const offset = Math.max(0, timeMapping.timelineFrameToSourceTime(clip, frame, frameRate, true));
       if (offset >= sourceRecord.audioBuffer.duration) return;
       const source = context.createBufferSource();
       const gain = context.createGain();
       source.buffer = sourceRecord.audioBuffer;
       source.playbackRate.value = rate;
-      gain.gain.value = dbToGain(Number(clip.gain) || 0) * 0.8;
+      const baseGain = dbToGain(Number(clip.gain) || 0) * 0.8;
+      let previewOffset = offset;
+      const trimEnd = Math.min(sourceRecord.audioBuffer.duration, bounds.end / frameRate);
+      let sourceDuration = Math.min(0.075, trimEnd - offset);
+      let outputDuration = sourceDuration / rate;
+      if (options.centered) {
+        const halfWindow = 0.065 * rate;
+        const trimStart = Math.max(0, bounds.start / frameRate);
+        const centeredTrimEnd = Math.min(sourceRecord.audioBuffer.duration, bounds.end / frameRate);
+        previewOffset = Math.max(trimStart, offset - halfWindow);
+        const previewEnd = Math.min(centeredTrimEnd, offset + halfWindow);
+        sourceDuration = Math.max(0, previewEnd - previewOffset);
+        outputDuration = sourceDuration / rate;
+        if (sourceDuration <= 0) return;
+      }
+      if (sourceDuration <= 0) return;
+      if (continuousGeneration != null && continuousGeneration !== this.continuousGeneration) return;
+      const when = context.currentTime;
+      if (options.centered) {
+        const envelope = Math.min(0.005, outputDuration / 2);
+        gain.gain.setValueAtTime(0, when);
+        gain.gain.linearRampToValueAtTime(baseGain, when + envelope);
+        gain.gain.setValueAtTime(baseGain, Math.max(when + envelope, when + outputDuration - envelope));
+        gain.gain.linearRampToValueAtTime(0, when + outputDuration);
+      } else {
+        gain.gain.value = baseGain;
+      }
       source.connect(gain);
       gain.connect(this.engine.master);
-      source.start(0, offset, Math.min(0.075, sourceRecord.audioBuffer.duration - offset));
-      source.stop(context.currentTime + 0.08);
+      if (continuousGeneration != null && continuousGeneration !== this.continuousGeneration) {
+        source.disconnect();
+        gain.disconnect();
+        return;
+      }
+      source.start(0, previewOffset, sourceDuration);
+      source.stop(when + (options.centered ? outputDuration : 0.08));
       this.record = { source, gain };
       source.addEventListener('ended', () => this.stop(source), { once: true });
     }
-    stop(expected) {
+    stopRecord(expected) {
       if (!this.record || (expected && this.record.source !== expected)) return;
       try { this.record.source.stop(); } catch (_) {}
       try { this.record.source.disconnect(); } catch (_) {}
       try { this.record.gain.disconnect(); } catch (_) {}
       this.record = null;
+    }
+    stop(expected) {
+      if (!expected) {
+        this.continuousGeneration++;
+        this.continuousPending = null;
+        if (this.continuousTimer) clearTimeout(this.continuousTimer);
+        this.continuousTimer = null;
+      }
+      this.stopRecord(expected);
     }
   }
 
@@ -200,7 +285,11 @@
       if (this.playing) this.play(frame);
     }
     frameChanged(frame, options = {}) {
-      if (options.scrubbing && !this.playing) this.scrub.preview(frame);
+      if (options.scrubbing && !this.playing) {
+        this.scrub.preview(frame, {
+          centered: window.SharedPlayhead?.scrubMode === 'animation'
+        });
+      }
       else if (this.playing && options.seek !== false) this.seek(frame);
     }
     endScrub() { this.scrub.stop(); }

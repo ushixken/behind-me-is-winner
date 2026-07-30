@@ -109,20 +109,18 @@
       context.scale(dpr, dpr);
       context.clearRect(0, 0, width, height);
       const samples = clip.waveform || [];
-      const sourceLength = Math.max(1, clip.sourceEnd - clip.sourceStart);
-      const sourceOffset = Number(clip.sourceOffset) || 0;
-      const effectiveSourceStart = clip.sourceStart + sourceOffset;
-      const sourceTotal = Math.max(sourceLength, clip.sourceDuration || clip.sourceEnd);
       const center = height / 2;
+      const timeMapping = window.AudioClipTimeMapping;
 
       if (clip.showWaveform) {
         const gainScale = clip.gain <= MIN_GAIN ? 0 : Math.pow(10, clip.gain / 20);
         context.fillStyle = 'rgba(226, 224, 255, .82)';
         for (let x = 0; x < width; x++) {
-          const progress = x / Math.max(1, width - 1);
-          const sourceFrame = effectiveSourceStart + progress * sourceLength;
-          const sampleIndex = Math.min(samples.length - 1, Math.max(0, Math.floor(sourceFrame / sourceTotal * samples.length)));
-          const fadeLevel = this.envelopeAt(clip, progress * clip.duration);
+          const timelineFrame = timeMapping.waveformPixelToTimelineFrame(clip, x, CellW);
+          const sourceFrame = timeMapping.timelineFrameToSourceFrame(clip, timelineFrame, true);
+          const sampleIndex = timeMapping.waveformBucketForSourceFrame(clip, sourceFrame, samples.length);
+          const localFrame = Math.max(0, Math.min(clip.duration, timelineFrame - clip.startFrame));
+          const fadeLevel = this.envelopeAt(clip, localFrame);
           const amplitude = Math.min(height * 0.47, (samples[sampleIndex] || 0) * fadeLevel * gainScale * (height * 0.42));
           context.fillRect(x, Math.round(center - amplitude), 1, Math.max(1, Math.round(amplitude * 2)));
         }
