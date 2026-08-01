@@ -2238,10 +2238,12 @@ function _flushStrokeTail(){
 // Brush stabilization stage.
 // Input position is stabilized here, then continues unchanged through the
 // existing curve reconstruction, spacing, pressure interpolation, and
-// stamping pipeline. A value of zero is an exact raw-input bypass.
+// stamping pipeline. Zero intentionally aliases the strongest stabilizer so
+// the 0% preset uses the same proven motion path as 100%.
 function _stabilizationAmount(){
   const raw=Number(window._tsStabilization);
-  return Number.isFinite(raw)?Math.max(0,Math.min(1,raw)):0;
+  const amount=Number.isFinite(raw)?Math.max(0,Math.min(1,raw)):0;
+  return amount<=0?1:amount;
 }
 
 // Normal stabilization: a synchronous low-pass with a strict screen-space
@@ -2324,7 +2326,17 @@ function _stabilizerSchedule(){
 // Canonical sample generation. Device-rate samples become a stable stream at
 // uniform screen-space arc-length intervals. Coordinates and pen attributes
 // are interpolated together; no averaging filter or intentional trailing.
-const _BASELINE_CANONICAL_STEP_SCREEN_PX=2,_BASELINE_MAX_GAP_MS=32;
+const _BASELINE_CANONICAL_STEP_MIN_SCREEN_PX=0.5;
+const _BASELINE_CANONICAL_STEP_MAX_SCREEN_PX=2;
+const _BASELINE_MAX_GAP_MS=32;
+function _baselineCanonicalStepScreenPx(){
+  // Below 100%, generate fractional screen-space samples instead of letting
+  // one input pixel become a long document-space segment. The interval
+  // reaches 0.65px at 10% and returns smoothly to 2px at 100%+.
+  const viewScale=Math.max(0,Math.min(1,Number(zoom)||1));
+  return _BASELINE_CANONICAL_STEP_MIN_SCREEN_PX+
+    (_BASELINE_CANONICAL_STEP_MAX_SCREEN_PX-_BASELINE_CANONICAL_STEP_MIN_SCREEN_PX)*viewScale;
+}
 const _BASELINE_CORNER_ANGLE_RAD=Math.PI/6;
 let _baselineConditionerState=null;
 const _baselineConditionerReports=[];
@@ -2340,7 +2352,7 @@ function _baselineConditionerPush(sample,options={}){
   const a=s.lastRaw,segmentDistance=Math.hypot(sample.screenX-a.screenX,sample.screenY-a.screenY),rawDt=Math.max(0,sample.time-a.time);
   if(segmentDistance<=1e-12&&rawDt<=1e-9&&sample.pointerId===a.pointerId&&_baselineSameSample(sample,a)){n.exactDuplicatesRejected++;return out;}
   if(_baselineIsCorner(s.previousRaw,a,sample)){_baselineEmit(s,a,out,'corner');s.distanceCarry=0;}
-  if(segmentDistance>1e-12){let consumed=0;while(s.distanceCarry+(segmentDistance-consumed)>=_BASELINE_CANONICAL_STEP_SCREEN_PX){const needed=_BASELINE_CANONICAL_STEP_SCREEN_PX-s.distanceCarry;consumed+=needed;_baselineEmit(s,_baselineLerpSample(a,sample,Math.min(1,consumed/segmentDistance)),out,'distance');s.distanceCarry=0;}s.distanceCarry+=Math.max(0,segmentDistance-consumed);}else n.tinyMovementsConsolidated++;
+  if(segmentDistance>1e-12){const canonicalStep=_baselineCanonicalStepScreenPx();let consumed=0;while(s.distanceCarry+(segmentDistance-consumed)>=canonicalStep){const needed=canonicalStep-s.distanceCarry;consumed+=needed;_baselineEmit(s,_baselineLerpSample(a,sample,Math.min(1,consumed/segmentDistance)),out,'distance');s.distanceCarry=0;}s.distanceCarry+=Math.max(0,segmentDistance-consumed);}else n.tinyMovementsConsolidated++;
   if(!out.length&&s.lastForwarded&&sample.time-s.lastForwarded.time>=_BASELINE_MAX_GAP_MS){_baselineEmit(s,sample,out,segmentDistance<=1e-12?'attribute':'time');s.distanceCarry=0;}
   if(options.force){_baselineEmit(s,sample,out,'forced');s.distanceCarry=0;}
   s.previousRaw=a;s.lastRaw=sample;return out;
@@ -2984,13 +2996,19 @@ function _deadbandControlPoint(A,B,C){
 // back to a straight stamp Ã¢â‚¬â€ there's no earlier geometry to curve through
 // yet, and this matches the existing stroke-start taper behavior.
 let _curveP0=null,_curveP1=null,_curvePr0=0,_curvePr1=0;
+let _curveSubpixelConditioning=false,_curveBaselineSamples=null,_curveBaselineNext=0,_curveBaselineRadius=0;
 function _resetCurve(x,y,pressure){
   _curveP0={x,y};_curveP1={x,y};_curvePr0=pressure;_curvePr1=pressure;
+  _curveSubpixelConditioning=zoom<1;
+  // Keep the reconstruction span large enough in screen space at low zoom.
+  const viewScale=Math.max(0,Math.min(1,Number(zoom)||1));
+  _curveBaselineRadius=_curveSubpixelConditioning?Math.max(1,Math.round(1+6*(1-viewScale))):0;
+  _curveBaselineSamples=[];_curveBaselineNext=0;
 }
 // Feed one new raw sample (x,y,pressure) into the curve buffer and stamp
 // the newly-completed segment, if any. Returns nothing; mutates lx/ly-style
 // via direct dab stamping same as _strokeSegment did.
-function _curveAddPoint(x,y,pressure,e){
+function _curveAddReconstructedPoint(x,y,pressure,e){
   if(_curveP0===null){_resetCurve(x,y,pressure);return;}
   const A=_curveP0,B=_curveP1,C={x,y};
   // Only the control point used for THIS emitted arc is softened; the
@@ -3004,6 +3022,70 @@ function _curveAddPoint(x,y,pressure,e){
   _stampQuadCurve(startPt.x,startPt.y,Bc.x,Bc.y,endPt.x,endPt.y,e,startPr,endPr);
   _curveP0=B;_curveP1=C;_curvePr0=_curvePr1;_curvePr1=pressure;
 }
+// At low zoom one CSS-pixel tablet step covers many document pixels. Merely
+// inserting more points along those quantized chords preserves the staircase
+// as a broad wave. Reconstruct the underlying path with a short, symmetric
+// screen-space local-polynomial window before feeding the existing C1 curve.
+//
+// A quadratic Savitzky-Golay centre estimator preserves straight lines and
+// quadratic curvature while rejecting the high-frequency 1px coordinate
+// staircase. Its radius grows as zoom falls, removing wider low-zoom waves
+// without routing 0% through the user-facing stabilizer.
+const _BASELINE_SG_COEFFICIENTS=new Map();
+function _baselineSGCoefficients(radius){
+  if(_BASELINE_SG_COEFFICIENTS.has(radius))return _BASELINE_SG_COEFFICIENTS.get(radius);
+  const n=radius*2+1;
+  let s2=0,s4=0;
+  for(let i=-radius;i<=radius;i++){const q=i*i;s2+=q;s4+=q*q;}
+  const denominator=n*s4-s2*s2;
+  const coefficients=[];
+  for(let i=-radius;i<=radius;i++)coefficients.push((s4-s2*i*i)/denominator);
+  _BASELINE_SG_COEFFICIENTS.set(radius,coefficients);
+  return coefficients;
+}
+const _BASELINE_PRESERVE_CORNER_RAD=Math.PI/3;
+function _curveBaselineIsCorner(samples,index,radius){
+  if(radius<2)return false;
+  const a=samples[index-radius],b=samples[index],c=samples[index+radius];
+  const abx=b.x-a.x,aby=b.y-a.y,bcx=c.x-b.x,bcy=c.y-b.y;
+  const ab=Math.hypot(abx,aby),bc=Math.hypot(bcx,bcy);
+  if(ab<1e-9||bc<1e-9)return false;
+  const cosine=Math.max(-1,Math.min(1,(abx*bcx+aby*bcy)/(ab*bc)));
+  return Math.acos(cosine)>=_BASELINE_PRESERVE_CORNER_RAD;
+}
+function _curveBaselineEmit(index,finalizing=false){
+  const samples=_curveBaselineSamples,n=samples.length,source=samples[index];
+  if(!source)return;
+  if(index===0||finalizing&&index===n-1){
+    _curveAddReconstructedPoint(source.x,source.y,source.pressure,source.event);
+    return;
+  }
+  const radius=Math.min(_curveBaselineRadius,index,n-1-index);
+  if(radius<=0||_curveBaselineIsCorner(samples,index,radius)){
+    _curveAddReconstructedPoint(source.x,source.y,source.pressure,source.event);
+    return;
+  }
+  const coeffs=_baselineSGCoefficients(radius);
+  let x=0,y=0;
+  for(let j=-radius;j<=radius;j++){
+    const weight=coeffs[j+radius],sample=samples[index+j];
+    x+=sample.x*weight;y+=sample.y*weight;
+  }
+  _curveAddReconstructedPoint(x,y,source.pressure,source.event);
+}
+function _curveAddPoint(x,y,pressure,e){
+  if(!_curveSubpixelConditioning){_curveAddReconstructedPoint(x,y,pressure,e);return;}
+  const samples=_curveBaselineSamples;
+  samples.push({x,y,pressure,event:e});
+  if(samples.length===1){
+    _curveBaselineEmit(0);
+    _curveBaselineNext=1;
+    return;
+  }
+  while(_curveBaselineNext+_curveBaselineRadius<samples.length){
+    _curveBaselineEmit(_curveBaselineNext++);
+  }
+}
 // Called once at stroke end to draw the final bit of curve from the last
 
 // completed midpoint segment all the way out to the true last pen
@@ -3011,6 +3093,13 @@ function _curveAddPoint(x,y,pressure,e){
 // perceptible "still catching up" tail Ã¢â‚¬â€ this is a one-time geometric
 // closeout, not an ongoing lag).
 function _flushCurveTail(e){
+  // Complete the reconstruction window with progressively smaller symmetric
+  // kernels, then emit the final raw pen position exactly.
+  if(_curveSubpixelConditioning&&_curveBaselineSamples){
+    while(_curveBaselineNext<_curveBaselineSamples.length){
+      _curveBaselineEmit(_curveBaselineNext++,true);
+    }
+  }
   if(_curveP0===null||_curveP1===null) return;
   const B=_curveP1;
   // Finalization uses the same arc-length spacing path as movement. For a
@@ -3030,6 +3119,7 @@ function _flushCurveTail(e){
   }
   _strokeSegCarryOver=0;
   _curveP0=null;_curveP1=null;
+  _curveBaselineSamples=null;_curveBaselineNext=0;_curveBaselineRadius=0;_curveSubpixelConditioning=false;
 }
 
 // Line tool editable pressure profile. Samples live in a mutable distance
