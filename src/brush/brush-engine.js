@@ -1,10 +1,10 @@
-﻿//
-// DRAWING — getPos uses activeC's own getBoundingClientRect()
+//
+// DRAWING Ã¢â‚¬â€ getPos uses activeC's own getBoundingClientRect()
 // which accounts for the CSS transform, giving pixel-perfect coords
 //
 function getPos(e){
   // getBoundingClientRect() on activeC only gives the axis-aligned bounding
-  // box of the rotated element, NOT its true rotated geometry — using it
+  // box of the rotated element, NOT its true rotated geometry Ã¢â‚¬â€ using it
   // directly (as before) works fine at rotation=0 but drifts the stroke
   // away from the pen tip at any other rotation. Instead, map the client
   // point through canvas-area's rect and invert the same
@@ -137,7 +137,7 @@ window.brushTipVersion  = 0;      // integer, incremented on each tip change
 window.brushTipReferenceDiameter = null;
 window.brushTipSpacingBasis = 'diameter';
 // When true the tip mask is multiplied by the standard radial hardness
-// falloff — giving a soft feathered edge even on an imported ABR tip.
+// falloff Ã¢â‚¬â€ giving a soft feathered edge even on an imported ABR tip.
 // When false the tip image alpha is used verbatim (hard-edged custom shape).
 window.brushTipSoftAlpha = true;
 // 'multiply' applies the tip as an alpha-mask on top of the normal dab.
@@ -171,8 +171,8 @@ window.brushTextureVersion = 0;    // integer, incremented on each texture chang
 // _getTexturedStrokeCanvas gates on both this flag AND brushTextureCanvas to
 // prevent stale canvas state from masking solid-brush strokes.
 window.brushTextureEnabled = false;
-// 0–1 blend strength for the texture overlay (mirrors ts-texture-strength slider).
-// At 1.0 (100%) the texture grain is fully applied — texture-dark areas lose
+// 0Ã¢â‚¬â€œ1 blend strength for the texture overlay (mirrors ts-texture-strength slider).
+// At 1.0 (100%) the texture grain is fully applied Ã¢â‚¬â€ texture-dark areas lose
 // coverage, texture-bright areas keep it. At 0.0 the stroke is solid/unaffected.
 window.brushTextureStrength   = 1.0;
 Object.defineProperty(window,'brushTextureDepth',{
@@ -181,13 +181,13 @@ Object.defineProperty(window,'brushTextureDepth',{
   set(value){ window.brushTextureStrength=value; }
 });
 // Texture zoom/scale (1.0 = native resolution, 0.25 = 25%, 4.0 = 400%).
-// Controlled by the ts-texture-scale slider (25–400%).
+// Controlled by the ts-texture-scale slider (25Ã¢â‚¬â€œ400%).
 window.brushTextureScale   = 1.0;
-// Texture buildup strength (0–1). Controls how aggressively overlapping dabs
-// within one stroke fill in the grain holes — producing the TVPaint-style
+// Texture buildup strength (0Ã¢â‚¬â€œ1). Controls how aggressively overlapping dabs
+// within one stroke fill in the grain holes Ã¢â‚¬â€ producing the TVPaint-style
 // density accumulation where the centre darkens in a single pass.
-// At 1.0 (100%): full build-up — a single stroke becomes dense quickly.
-// At 0.0 (0%): no build-up — every dab gets the same static grain cut.
+// At 1.0 (100%): full build-up Ã¢â‚¬â€ a single stroke becomes dense quickly.
+// At 0.0 (0%): no build-up Ã¢â‚¬â€ every dab gets the same static grain cut.
 // Controlled by the ts-texture-buildup slider.
 window.brushTextureBuildup = 1.0;
 // Invert light/dark roles of the texture mask (mirrors the ts-texture-invert checkbox).
@@ -202,18 +202,18 @@ window.brushTextureBrightness = 0;
 // Studio's Contrast control in the Texture panel.
 window.brushTextureContrast = 0;
 
-// brushFlow: per-dab paint accumulation rate (0–1).
+// brushFlow: per-dab paint accumulation rate (0Ã¢â‚¬â€œ1).
 // Controls how much alpha each individual dab deposits while the stroke is
-// in progress. Dabs composite on top of each other freely — so dragging
+// in progress. Dabs composite on top of each other freely Ã¢â‚¬â€ so dragging
 // slowly over the same spot builds up to full coverage. This is "Flow" in
 // Photoshop / Clip Studio Paint.
 // Distinct from brushOpacity (see below), which caps the ENTIRE stroke's
-// final transparency as a layer-level composite — not individual dabs.
+// final transparency as a layer-level composite Ã¢â‚¬â€ not individual dabs.
 let brushFlow = 1;
 
 //  Dynamic Opacity tracking (Dynamics tab  "Opacity" control)
 // This dropdown used to be labeled "Opacity / Flow" but its influence was
-// actually only ever applied to per-dab Flow alpha below — the real
+// actually only ever applied to per-dab Flow alpha below Ã¢â‚¬â€ the real
 // stroke-level Opacity (brushOpacity, applied once in _commitStrokeCanvas)
 // never responded to pressure at all, despite the label.
 //
@@ -223,11 +223,11 @@ let brushFlow = 1;
 // broken in a different way: while actually drawing, every dab painted at
 // full alpha (the live preview only ever used brushOpacity, never the
 // dynamic multiplier), so a light touch still looked solid black in real
-// time — the opacity would only "snap" down to some fixed low value after
+// time Ã¢â‚¬â€ the opacity would only "snap" down to some fixed low value after
 // lifting the pen, instead of tracking pressure as it happened.
 //
 // Fixed here by applying the pressure influence PER DAB, in real time
-// exactly like Size dynamics already does — instead of deferring it to
+// exactly like Size dynamics already does Ã¢â‚¬â€ instead of deferring it to
 // stroke-end. Each dab's alpha is scaled by its own instantaneous pressure
 // reading, so light pressure paints light immediately and heavy pressure
 // paints dark immediately, live, matching what the user is actually doing
@@ -239,8 +239,8 @@ let brushFlow = 1;
 // Opacity (brushOpacity) works at the stroke level: all dabs within a single
 // stroke accumulate on a scratch canvas; when the stroke ends the scratch is
 // composited onto activeC with globalAlpha = brushOpacity. This means:
-//   • Flow  = how dabs build up within the stroke (per-dab alpha = brushFlow).
-//   • Opacity = the maximum final transparency of the completed stroke.
+//   Ã¢â‚¬Â¢ Flow  = how dabs build up within the stroke (per-dab alpha = brushFlow).
+//   Ã¢â‚¬Â¢ Opacity = the maximum final transparency of the completed stroke.
 // This matches Photoshop's and Clip Studio's Opacity / Flow behavior exactly.
 let _strokeCanvas = null; // offscreen scratch canvas for the current stroke
 let _strokeCtx    = null; // its 2D context
@@ -250,10 +250,10 @@ let _inStroke = false;
 let _strokeReplayDabs = [];
 let _strokeReplayBase = null;
 
-//  Line tool — Pressure Mode (Toon Boom Harmony-style)
-// 'fixed'  — constant-width line at the current brush size, tablet
+//  Line tool Ã¢â‚¬â€ Pressure Mode (Toon Boom Harmony-style)
+// 'fixed'  Ã¢â‚¬â€ constant-width line at the current brush size, tablet
 //            pressure ignored entirely (also what mouse/touch always get).
-// 'pen'    — width follows the smoothed pressure profile recorded while
+// 'pen'    Ã¢â‚¬â€ width follows the smoothed pressure profile recorded while
 //            dragging, projected onto the final straight line.
 let _linePressureMode = 'pen';
 try{
@@ -409,7 +409,7 @@ function _ensureStrokeCanvas(){
 // then clear the scratch for the next stroke. Per-dab pressure influence on
 // Opacity is already baked into each dab's alpha as it was painted (see
 // _computeEffectiveParams), so this only needs to apply the constant
-// brushOpacity ceiling — no separate end-of-stroke multiplier.
+// brushOpacity ceiling Ã¢â‚¬â€ no separate end-of-stroke multiplier.
 function _usesBrushPaintPipeline(){return tool==='brush'||tool==='line'||tool==='curve';}
 function _brushPaintCompositeOperation(){
   if(!_usesBrushPaintPipeline()) return 'source-over';
@@ -479,12 +479,12 @@ function _commitStrokeCanvas(){
 // While a stroke is in progress, dabs land on the offscreen _strokeCanvas
 // (not activeC) so stroke-level Opacity/Flow can be composited correctly
 // once at stroke-end (see _commitStrokeCanvas above). But recomposite()
-// only ever reads activeC for the active layer — so without this, nothing
+// only ever reads activeC for the active layer Ã¢â‚¬â€ so without this, nothing
 // the user is currently drawing shows up until pointerup finally commits
 // the scratch canvas, which is exactly the "stroke only appears when you
 // let go" bug. Fix: build a live preview canvas that layers the in-
-// progress _strokeCanvas over activeC at brushOpacity — the same blend
-// _commitStrokeCanvas will eventually perform for real — and hand THAT to
+// progress _strokeCanvas over activeC at brushOpacity Ã¢â‚¬â€ the same blend
+// _commitStrokeCanvas will eventually perform for real Ã¢â‚¬â€ and hand THAT to
 // recomposite() as the active layer's source while `_inStroke` is true.
 // This is purely a read-side preview: activeC itself is untouched, so the
 // stroke-canvas pipeline and its opacity handling at commit time are
@@ -519,14 +519,14 @@ function _getLiveStrokePreview(){
 
     // Smart Raster live preview fix:
     // _commitStrokeCanvas routes through commitSmartRasterBrush which calls
-    // SmartRasterLayer.renderFrame — resolving index -> palette RGBA and
+    // SmartRasterLayer.renderFrame Ã¢â‚¬â€ resolving index -> palette RGBA and
     // painting the correct style color.  _getLiveStrokePreview previously
     // just blitted the raw _strokeCanvas, which contains dabs drawn in the
     // default brush color (black/whatever color is), so the preview showed
     // the wrong color while drawing even though the committed result was
     // correct.  We now detect the same Smart Raster condition here and tint
     // the stroke coverage with the active palette style's RGBA before
-    // compositing into the preview — making the preview match the final
+    // compositing into the preview Ã¢â‚¬â€ making the preview match the final
     // committed render exactly.
     const smartStyleStart=perf?performance.now():0;
     const styleId = typeof activeAdvancedStyleIdForPainting === 'function'
@@ -594,7 +594,7 @@ function _getLiveStrokePreview(){
       }
       // If palette lookup failed (style not found yet), fall through to the
       // raw src so the preview is at least visible, even if temporarily the
-      // wrong color — better than a blank preview.
+      // wrong color Ã¢â‚¬â€ better than a blank preview.
     }
 
     const selectionStart=perf?performance.now():0;
@@ -699,17 +699,17 @@ window._prewarmRealDisposableDab=_prewarmRealDisposableDab;
 //
 // Two antialiasing modes, matching how professional animation apps work:
 //
-//  AA ON  (brushAA=true) — sub-pixel radial gradient dabs.
-//    Each dab is a radial gradient: fully opaque core → transparent edge.
+//  AA ON  (brushAA=true) Ã¢â‚¬â€ sub-pixel radial gradient dabs.
+//    Each dab is a radial gradient: fully opaque core Ã¢â€ â€™ transparent edge.
 //    The feather zone is controlled by brushHardness.
 //    This is TVPaint's PenBrush / Clip Studio Paint's normal pen/brush:
 //    smooth diagonal edges, anti-aliased curves, soft feel.
 //
-//  AA OFF (brushAA=false) — pixel-snapped hard stamps.
+//  AA OFF (brushAA=false) Ã¢â‚¬â€ pixel-snapped hard stamps.
 //    Each dab is filled with ctx.arc() at full opacity, then the result
 //    is quantised to whole pixels via getImageData/putImageData.
 //    This is TVPaint's Pencil (type 6) / Clip Studio's "pixel pen":
-//    every edge pixel is fully ON or fully OFF — no partial alpha.
+//    every edge pixel is fully ON or fully OFF Ã¢â‚¬â€ no partial alpha.
 //    Ideal for cel-animation clean line work.
 //
 // The eraser always uses the same mode as the current brush.
@@ -728,11 +728,11 @@ function _hexToRGB(hex){
 // Pressure/velocity/fade/taper dynamics nudge r and alpha by tiny fractions
 // on basically every dab, so keying the stamp cache on their EXACT values
 // (old code: r.toFixed(2), raw alpha) made the cache miss almost every
-// single dab — defeating the whole point of caching and forcing a fresh
+// single dab Ã¢â‚¬â€ defeating the whole point of caching and forcing a fresh
 // gradient/canvas (AA) or getImageData/putImageData readback (aliased) per
 // dab, which is what actually caused the lag in BOTH modes. Quantizing to a
 // coarse step means a stroke with continuously-varying pressure still hits
-// the same handful of cache entries almost every time — the size/alpha
+// the same handful of cache entries almost every time Ã¢â‚¬â€ the size/alpha
 // difference between two quantization buckets is sub-pixel/imperceptible,
 // but the perf difference (cache hit vs. full rebuild) is enormous.
 const _Q_R = 0.25;      // px
@@ -743,28 +743,28 @@ function _quantAlpha(v){return _quant(v,v<0.1?_Q_ALPHA_LOW:_Q_ALPHA);}
 
 //  Edge width: Photoshop/Photopea-style constant-ish antialiasing
 // The old falloff used `outerSpan = 1-hardness` as a FRACTION OF THE RADIUS,
-// so the soft edge band was literally (1-hardness)*r pixels wide — fine on a
+// so the soft edge band was literally (1-hardness)*r pixels wide Ã¢â‚¬â€ fine on a
 // small brush, but on a large one (say r=150 at hardness=0.5) that's a 75px
 // blurry gradient, exactly the fat soft edge seen on big brushes vs.
 // Photopea's crisp hairline rim at the same size. Real hard-round brushes in
 // Photoshop/Photopea keep the antialiased rim at only a couple of pixels
-// wide regardless of brush size — hardness controls how MUCH of the radius
+// wide regardless of brush size Ã¢â‚¬â€ hardness controls how MUCH of the radius
 // is solid core, but the transition itself doesn't keep growing forever.
 // Fix: compute the edge band in actual pixels and clamp it to a small max,
 // so a big hard brush still gets a crisp, near-constant-width edge instead
 // of a soft gradient that scales with size.
 const _EDGE_PX_MIN = 0.6;  // legacy floor, kept for airbrush-only math elsewhere
 
-//  AA strength modes (Edit ▸ Tool Settings ▸ Antialiasing dropdown)
+//  AA strength modes (Edit Ã¢â€“Â¸ Tool Settings Ã¢â€“Â¸ Antialiasing dropdown)
 // Root cause of the "chunky, stair-stepped" Hard Round edge (see bug report /
 // reference pics): for a near-100%-hardness brush, (1-hardness)*r collapses
 // to ~0, so the old _edgeWidthPx fell all the way down to its ONE global
 // floor, _EDGE_PX_MIN = 0.6px. A 0.6px-wide antialiasing ramp is barely more
-// than a single pixel row of partial coverage — on any diagonal/curved edge
+// than a single pixel row of partial coverage Ã¢â‚¬â€ on any diagonal/curved edge
 // that reads as a near-binary, stair-stepped boundary even though a
 // gradient/coverage calc technically ran. The GPU path made this worse by
 // only using extra gradient stops (12) when hardness<0.95; Hard Round
-// (hardness>=0.95) got just 3 stops across that already-tiny 0.6px band —
+// (hardness>=0.95) got just 3 stops across that already-tiny 0.6px band Ã¢â‚¬â€
 // effectively a linear, unantialiased-looking cliff.
 //
 // Fix: the edge-pixel floor is now driven by an explicit AA MODE that is
@@ -773,12 +773,12 @@ const _EDGE_PX_MIN = 0.6;  // legacy floor, kept for airbrush-only math elsewher
 // edge width for soft brushes); AA mode only sets the MINIMUM edge-pixel
 // coverage band and the number of samples/gradient stops used to render it.
 // For a 100%-hardness Hard Round, hardness contributes ~0px, so the AA mode
-// floor determines the whole visible rim — giving predictable, selectable
+// floor determines the whole visible rim Ã¢â‚¬â€ giving predictable, selectable
 // smoothing (None/Weak/Medium/Strong) without ever touching Hardness (the
 // solid core / "hard" feel is untouched; only the 1-2px boundary ring is).
 const _AA_MODE_EDGE_PX = { none:0, weak:0.85, medium:1.6, strong:2.6 };
 const _AA_MODE_EDGE_MAX_PX = { none:0, weak:2, medium:4, strong:7 };
-// Gradient stop / supersample counts per mode — more stops means the
+// Gradient stop / supersample counts per mode Ã¢â‚¬â€ more stops means the
 // (necessarily coarse, linearly-interpolated) canvas gradient reads as a
 // smooth curve instead of a visibly faceted ramp across the edge band.
 const _AA_MODE_STOPS = { none:2, weak:8, medium:14, strong:20 };
@@ -827,19 +827,19 @@ function _roundBrushFalloff(t,inner,hardness){
 // CPU-rendered stamps, keyed by quantized size/color/alpha/composite/hardness.
 // Other files call _aaDabCache.clear() whenever a brush setting that
 // affects the stamp's appearance changes (size, hardness, roundness, AA
-// toggle) — this invalidates every cached stamp so the next dab rebuilds.
+// toggle) Ã¢â‚¬â€ this invalidates every cached stamp so the next dab rebuilds.
 
 // AA dab: soft, sub-pixel accurate. Canvas 2D is the production path.
 // The CPU rasterizer below is retained only as an internal fallback.
 //
-// GPU mode (_dabAAGpu, default): ctx.createRadialGradient()+fill() — hands
+// GPU mode (_dabAAGpu, default): ctx.createRadialGradient()+fill() Ã¢â‚¬â€ hands
 // rasterization to the browser's hardware-accelerated canvas backend.
 // Cheap and smooth; this is the recommended default and matches how most
 // browser drawing apps behave.
 //
 // CPU mode (_dabAACpu): computes each dab's alpha falloff by hand,
 // pixel-by-pixel, in plain JS (see _buildAAStamp below) into an ImageData
-// buffer — closer to how TVPaint's own software brush engine works. This
+// buffer Ã¢â‚¬â€ closer to how TVPaint's own software brush engine works. This
 // is heavier on the CPU by nature (that's the whole point of the option),
 // so it's opt-in rather than forced on everyone.
 //
@@ -862,10 +862,10 @@ function _roundBrushFalloff(t,inner,hardness){
 //      while a milder version of the same sampling artifact persisted.
 //  v5: build the stamp bitmap ONCE per quantized
 //      (size,hardness,color,alpha,composite) combo via a hand-written
-//      per-pixel falloff loop — no gradient/scaling involved at all, so
-//      none of the v3/v4 resampling artifacts apply — then blit it at the
+//      per-pixel falloff loop Ã¢â‚¬â€ no gradient/scaling involved at all, so
+//      none of the v3/v4 resampling artifacts apply Ã¢â‚¬â€ then blit it at the
 //      dab's true fractional x/y with normal bilinear smoothing. Only the
-//      STAMP's own size is quantized (0.25px steps — imperceptible,
+//      STAMP's own size is quantized (0.25px steps Ã¢â‚¬â€ imperceptible,
 //      already proven fine by the aliased path below); the on-screen
 //      *position* stays fully sub-pixel accurate every single dab. This is
 //      the current CPU-mode implementation.
@@ -878,7 +878,7 @@ function _roundBrushFalloff(t,inner,hardness){
 // what makes Photopea's/Clip Studio's airbrush read as a soft cloud rather
 // than a disc with a blurry rim. Reusing the linear inner/outer model (even
 // with the widened edge from _edgeWidthPx) still leaves a visible plateau
-// where overlapping dabs saturate to solid — this bypasses that model
+// where overlapping dabs saturate to solid Ã¢â‚¬â€ this bypasses that model
 // entirely for airbrush dabs only.
 // t: distance/radius (0 at center, 1 at edge). Returns 0..1 alpha multiplier.
 // Normalized so f(0)=1 and f(1)=0 exactly (no ring/pop at the boundary).
@@ -887,7 +887,7 @@ function _airbrushFalloff(t){
   // Higher k = a tight, dense core with a long soft tail (matches
   // Photopea's look: a clearly darker center, not an evenly pale disc).
   // The previous k=2.0 spread density too evenly across the whole radius,
-  // which — combined with a heavily dampened peak alpha — made a single
+  // which Ã¢â‚¬â€ combined with a heavily dampened peak alpha Ã¢â‚¬â€ made a single
   // dab read as a flat, uniformly pale circle instead of a proper radial
   // gradient.
   const k=4.0; // shape: higher = more concentrated toward center, lower = flatter/broader
@@ -910,7 +910,7 @@ window._proceduralBrushFalloff=_proceduralBrushFalloff;
 // Airbrush needs denser dab placement than a normal round brush so
 // overlapping dabs blend into continuous fog instead of separate visible
 // stamps along a stroke (see _strokeSegment/_stampQuadCurve). But the peak
-// alpha of an INDIVIDUAL dab must stay strong — that's what gives the
+// alpha of an INDIVIDUAL dab must stay strong Ã¢â‚¬â€ that's what gives the
 // dark-center/soft-edge radial contrast Photopea shows even from one
 // stamp. Only a mild compensation is applied here (not a heavy dampening)
 // so tighter spacing doesn't cause the stroke to over-saturate too fast,
@@ -984,7 +984,7 @@ const _tipDabCache=new Map();
 const _TIP_DAB_CACHE_MAX=32;
 
 // Build a stamp canvas pre-shaped by the current brushTipCanvas.
-// Returns {canvas,w,h} — same contract as _buildAAStamp.
+// Returns {canvas,w,h} Ã¢â‚¬â€ same contract as _buildAAStamp.
 function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   const latencyProbe=window.FirstDabLatencyProbe,latencyBuildStart=latencyProbe&&latencyProbe.enabled?performance.now():0;
   const trace=window.CustomFirstDabTrace,lookupStart=trace&&trace.enabled?performance.now():0,generationStart=lookupStart;
@@ -1019,7 +1019,7 @@ function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   const rr=Math.max(0.05,r);
   // Preserve the tip's native aspect ratio instead of forcing it into a
   // square dab sized purely off the radius. Previously the tip image was
-  // always drawn into a square canvas (w=h, based on r alone) — a tall,
+  // always drawn into a square canvas (w=h, based on r alone) Ã¢â‚¬â€ a tall,
   // thin tip like a calligraphy bar got stretched to fill that square and
   // then clipped by the radial falloff below into a plain filled circle,
   // losing its actual shape entirely. Scaling by the tip's own aspect
@@ -1221,7 +1221,7 @@ let _activeDabRoundness=null;
 // When dabs land on the stroke scratch canvas (_inStroke=true), use 'lighten'
 // instead of 'source-over'. 'lighten' takes the per-channel maximum, so a
 // new dab NEVER darkens pixels already covered by an earlier dab in the same
-// stroke — it only fills in uncovered/lighter areas. This matches TVPaint's
+// stroke Ã¢â‚¬â€ it only fills in uncovered/lighter areas. This matches TVPaint's
 // behavior where one slow stroke builds to solid coverage without dabs
 // stacking and re-darkening the same spots (which required multiple strokes).
 // Eraser and direct-to-activeC paths are unaffected.
@@ -1255,7 +1255,7 @@ function _dabAAGpu(x,y,r,rgb,alpha,composite){
     return;
   }
   // When a custom tip image is loaded, build a pre-shaped stamp (cached)
-  // and blit it — no gradient is drawn. Falls back to the radial gradient
+  // and blit it Ã¢â‚¬â€ no gradient is drawn. Falls back to the radial gradient
   // path below when no tip is set, preserving existing behaviour exactly.
   if(window.brushTipCanvas){
     const dc=(_inStroke && composite!=='erase')?_strokeCtx:ctx;
@@ -1332,9 +1332,9 @@ function _dabAAGpu(x,y,r,rgb,alpha,composite){
 // That gave a visibly different result from the GPU path:
 //   1. The rendered radius snapped to the nearest 0.25px cache bucket
 //      instead of the exact, continuously-varying pressure-driven radius
-//      the GPU path uses — pressure response looked subtly "stepped".
+//      the GPU path uses Ã¢â‚¬â€ pressure response looked subtly "stepped".
 //   2. Sub-pixel positioning came from the browser's bilinear resample of
-//      the cached bitmap — an EXTRA blur pass on top of the already-soft
+//      the cached bitmap Ã¢â‚¬â€ an EXTRA blur pass on top of the already-soft
 //      falloff. The GPU path never resamples anything; it draws the exact
 //      gradient at the exact (x,y) every time. Net result: CPU strokes
 //      looked softer/blurrier than GPU strokes at the same hardness.
@@ -1616,17 +1616,17 @@ function _dabAA(x,y,r,rgb,alpha,composite){
   _dabAAGpu(x,y,r,rgb,alpha,composite);
 }
 
-// ── Aliased dab: solid circle, quantised edge pixels to full on/off.
+// Ã¢â€â‚¬Ã¢â€â‚¬ Aliased dab: solid circle, quantised edge pixels to full on/off.
 // Mirrors TVPaint Pencil and Clip Studio pixel pen behaviour exactly.
 //
 // PERF FIX: the old version allocated a brand-new <canvas> and called
 // getImageData/putImageData on EVERY single dab (every ~12% of brush
 // diameter moved, i.e. many times per pointermove). getImageData forces
-// a GPU→CPU pixel readback; doing that dozens of times per second is
+// a GPUÃ¢â€ â€™CPU pixel readback; doing that dozens of times per second is
 // what caused the severe lag/latency when antialiasing was OFF.
 // Fix: build the quantised stamp ONCE per (size,color,alpha,composite)
 // combo and cache it. Every dab after that is just ctx.drawImage of the
-// cached bitmap — no readback, no allocation, same pixel-perfect result.
+// cached bitmap Ã¢â‚¬â€ no readback, no allocation, same pixel-perfect result.
 let _stampCache=new Map(); // key -> {canvas,w,h}
 const _STAMP_CACHE_MAX=64;
 function _getAliasedStamp(rRaw,rgb,alphaRaw,composite){
@@ -1653,7 +1653,7 @@ function _getAliasedStamp(rRaw,rgb,alphaRaw,composite){
   const id=tc.getImageData(0,0,w,h);
   const d=id.data;
   const fa=Math.round(alpha*255);
-  // Snap EVERY channel to full on/off — not just alpha. The arc() fill
+  // Snap EVERY channel to full on/off Ã¢â‚¬â€ not just alpha. The arc() fill
   // that produced this bitmap is itself antialiased, so edge pixels come
   // out with partial alpha AND blended RGB (the canvas blends the fill
   // color against the transparent black backing, so a half-covered edge
@@ -1683,7 +1683,7 @@ function _dabAliased(x,y,r,rgb,alpha,composite){
   // perfectly hard-edged, fully-on/off-alpha stamp gets bilinearly resampled
   // (blurred) on the way into the destination canvas. Turning smoothing OFF
   // (nearest-neighbour sampling) keeps every "on" pixel fully opaque and
-  // every "off" pixel fully transparent — no blended fringe — while still
+  // every "off" pixel fully transparent Ã¢â‚¬â€ no blended fringe Ã¢â‚¬â€ while still
   // letting the stamp be placed at the pointer's true sub-pixel (x,y), so
   // strokes track the pointer smoothly instead of snapping to whole pixels.
   const x0=x-(stamp.w/2),y0=y-(stamp.h/2);
@@ -1709,17 +1709,17 @@ function _dabAliased(x,y,r,rgb,alpha,composite){
 //  Tail taper (the other half of the "flick" feel)
 // The head taper above can be applied the instant a dab is computed, because
 // we already know how far into the stroke we are. The TAIL can't work that
-// way — we don't know a stroke is ending until pointerup actually fires, by
+// way Ã¢â‚¬â€ we don't know a stroke is ending until pointerup actually fires, by
 // which point the final dabs would already be drawn at full width.
 // Fix: hold back the last few dabs in a small queue instead of drawing them
 // immediately (draw the OLDEST one once the queue is full, so steady-state
-// drawing is only a few dabs behind the pointer — imperceptible). When the
+// drawing is only a few dabs behind the pointer Ã¢â‚¬â€ imperceptible). When the
 // stroke ends, whatever's still sitting in the queue gets a tail-taper
 // factor applied (shrinking toward the very last dab) before being drawn.
 // Buffering by DAB COUNT rather than fixed pixels is what makes the tail
 // length scale with brush size automatically: dab spacing is ~12% of the
 // current diameter, so a bigger brush naturally gets a longer-looking flick
-// tail and a smaller brush a shorter one — exactly like the head taper.
+// tail and a smaller brush a shorter one Ã¢â‚¬â€ exactly like the head taper.
 //  Dirty-rect tracking for recomposite()
 // Every dab that actually lands on a canvas (immediate, tail-buffered, or
 // airbrush-timer) passes through _drawDabNow, so this is the one place
@@ -1774,7 +1774,7 @@ function _cleanupErasedSmartOwnership(){
 // _getLiveStrokePreview/_commitStrokeCanvas, since those may run on a
 // different cadence than recomposite's own consumer. This lets the texture
 // mask be (re)applied only over the region that actually changed since the
-// texture pass last ran, instead of reprocessing the whole stroke canvas —
+// texture pass last ran, instead of reprocessing the whole stroke canvas Ã¢â‚¬â€
 // the key to keeping texture real-time on fast strokes.
 let _texPendingRect = null;
 function _growTexDirtyRect(x,y,radiusX,radiusY=radiusX){
@@ -1810,7 +1810,7 @@ function _consumeDirtyRect(){
   return {x,y,w,h};
 }
 
-//  Per-dab texture overlay — ALPHA-ONLY masking pipeline
+//  Per-dab texture overlay Ã¢â‚¬â€ ALPHA-ONLY masking pipeline
 //
 // The texture modulates the ALPHA channel of the dab only. The brush color
 // is never changed by the texture. Pipeline per dab:
@@ -1818,16 +1818,16 @@ function _consumeDirtyRect(){
 //   2. We build a small temporary canvas covering just the dab footprint.
 //   3. We fill it with the brush color at the computed dab alpha (solid flat fill).
 //   4. We tile the grayscale texture mask over it using 'destination-in':
-//      this multiplies each pixel's alpha by the texture's grayscale value —
+//      this multiplies each pixel's alpha by the texture's grayscale value Ã¢â‚¬â€
 //      texture-white keeps full alpha, texture-black zeroes alpha.
 //   5. depth lerps between "no texture" (flat fill) and "full texture mask".
-//   6. The result is blitted onto dc with source-over — color is always the
+//   6. The result is blitted onto dc with source-over Ã¢â‚¬â€ color is always the
 //      brush color, only coverage/alpha varies with the texture.
 //
 // CACHE: Two cached canvases are maintained:
-//   _texCachedCanvas    — the source texture scaled to brushTextureScale.
-//   _texGrayMaskCanvas  — the same canvas converted to white+alpha (grayscale
-//                         luminance → alpha, RGB set to 255). Used as the
+//   _texCachedCanvas    Ã¢â‚¬â€ the source texture scaled to brushTextureScale.
+//   _texGrayMaskCanvas  Ã¢â‚¬â€ the same canvas converted to white+alpha (grayscale
+//                         luminance Ã¢â€ â€™ alpha, RGB set to 255). Used as the
 //                         destination-in mask. Rebuilt only when version/scale
 //                         or invert setting changes.
 //
@@ -1858,7 +1858,7 @@ function _getScaledTextureCanvas(){
     return _texCachedCanvas;
   }
   // Build (or rebuild) the pre-scaled canvas and its grayscale-alpha mask.
-  // This only runs when texture/scale/invert changes — never on the per-dab hot path.
+  // This only runs when texture/scale/invert changes Ã¢â‚¬â€ never on the per-dab hot path.
   const sw=Math.max(1,Math.round(texC.width*scale));
   const sh=Math.max(1,Math.round(texC.height*scale));
 
@@ -1868,17 +1868,17 @@ function _getScaledTextureCanvas(){
   c.getContext('2d').drawImage(texC,0,0,sw,sh);
   _texCachedCanvas=c;
 
-  // Grayscale-alpha mask: luminance → alpha, RGB forced to white (255,255,255).
+  // Grayscale-alpha mask: luminance Ã¢â€ â€™ alpha, RGB forced to white (255,255,255).
   // This way 'destination-in' compositing only touches alpha, never color.
   //
   // Paper-grain behavior:
   //   - The texture image is treated as a "paper grain" mask.
   //   - Light texture pixels = paint is kept (high alpha).
   //   - Dark texture pixels = paint is removed (low alpha).
-  //   - Raw luminance is used as-is — no automatic normalization or forced
+  //   - Raw luminance is used as-is Ã¢â‚¬â€ no automatic normalization or forced
   //     contrast curve, so mid-gray texture pixels stay mid-alpha instead of
   //     always being pushed toward solid/transparent (which was crushing
-  //     edges to solid black — a "wet ink" look nobody asked for).
+  //     edges to solid black Ã¢â‚¬â€ a "wet ink" look nobody asked for).
   //   - The Invert flag flips light/dark roles (for dark-on-light textures).
   //   - Brightness/Contrast (both default to neutral/0) are the only knobs
   //     that reshape the curve, and only when the user actually moves them.
@@ -1891,7 +1891,7 @@ function _getScaledTextureCanvas(){
     const d=id.data;
     const n=d.length;
 
-    // Brightness: -100..100 -> shifts the luminance value by up to ±0.5,
+    // Brightness: -100..100 -> shifts the luminance value by up to Ã‚Â±0.5,
     // same feel as Clip Studio's Brightness (opens up / closes down the grain holes).
     const brightShift = brightness/100 * 0.5;
     // Contrast: -100..100 -> a slope multiplier around the 0.5 midpoint.
@@ -1903,9 +1903,9 @@ function _getScaledTextureCanvas(){
       t=t+brightShift;
       t=0.5+(t-0.5)*contrastSlope;
       t=Math.max(0,Math.min(1,t));
-      // Full range [0..1]: dark grain → alpha 0 (transparent, shows canvas),
-      // bright grain → alpha 255 (opaque, full paint color).
-      d[i]=255; d[i+1]=255; d[i+2]=255; // white — color ignored by destination-in
+      // Full range [0..1]: dark grain Ã¢â€ â€™ alpha 0 (transparent, shows canvas),
+      // bright grain Ã¢â€ â€™ alpha 255 (opaque, full paint color).
+      d[i]=255; d[i+1]=255; d[i+2]=255; // white Ã¢â‚¬â€ color ignored by destination-in
       d[i+3]=Math.round(t*255);
     }
     gctx.putImageData(id,0,0);
@@ -1931,7 +1931,7 @@ window._invalidateTextureCache=function(){
   if(typeof _resetTexturedStrokeCanvas==='function') _resetTexturedStrokeCanvas();
 };
 
-// Cached CanvasPattern for the texture mask — recreated only when the mask
+// Cached CanvasPattern for the texture mask Ã¢â‚¬â€ recreated only when the mask
 // canvas changes (version/scale/invert). On the per-dab hot path this is a
 // single property read + setTransform, with no canvas allocations at all.
 let _texPatternCache = null;
@@ -1950,7 +1950,7 @@ function _getTexturePattern(ctx2d){
 // Mask a rectangular region of `dc` in place against the cached texture
 // pattern, blending by `strength`. Shared by both the rare direct-to-ctx
 // path and the stroke-canvas accumulation path below. `dc` must already
-// contain the painted (unmasked) pixels for the region [rx,ry,rw,rh] —
+// contain the painted (unmasked) pixels for the region [rx,ry,rw,rh] Ã¢â‚¬â€
 // this function only changes alpha via destination-in, never color.
 function _maskRegionInPlace(dc, rx, ry, rw, rh, strength){
   const pat = _getTexturePattern(dc);
@@ -2037,19 +2037,19 @@ function _applyTextureToDabDirect(dc, x, y, r, alpha){
   _maskRegionInPlace(dc, rx, ry, rw, rh, strength);
 }
 
-//  Stroke-canvas-level texture masking — flat single-pass stencil
+//  Stroke-canvas-level texture masking Ã¢â‚¬â€ flat single-pass stencil
 //
 // Texture is applied as a static grain mask over whatever the stroke's
 // CURRENT alpha looks like, recomputed fresh from the live stroke canvas
 // every call. This matches Clip Studio / Photoshop paper-texture behavior:
 // the grain reads the same whether a pixel was touched by one dab or by
-// twenty overlapping dabs (e.g. a single zigzag stroke crossing itself) —
+// twenty overlapping dabs (e.g. a single zigzag stroke crossing itself) Ã¢â‚¬â€
 // only actual ink buildup (Flow/Opacity, a separate and intentional control)
 // changes how dark a pixel is, never the texture pass itself.
 //
 // An earlier revision accumulated the mask incrementally per-dab so that
 // self-overlapping strokes progressively darkened toward solid black at
-// every crossing/turn-around point — a deliberate TVPaint-style effect, but
+// every crossing/turn-around point Ã¢â‚¬â€ a deliberate TVPaint-style effect, but
 // not what Clip Studio does and not what most people expect from a paper
 // texture. That accumulation has been removed; brushTextureBuildup is no
 // longer read here and has no effect on texture darkness.
@@ -2057,7 +2057,7 @@ function _applyTextureToDabDirect(dc, x, y, r, alpha){
 // PERFORMANCE: one clearRect + drawImage + mask pass per call, over the
 // full stroke-canvas bounds. Simpler and cheaper than the old delta/snapshot
 // diffing, at the cost of always processing the whole canvas rather than
-// just the dirty region — acceptable since stroke canvases are small.
+// just the dirty region Ã¢â‚¬â€ acceptable since stroke canvases are small.
 
 let _texturedStrokeCanvas = null, _texturedStrokeCtx = null;
 
@@ -2070,9 +2070,9 @@ function _ensureTexHelper(w, h, existing, existingCtx){
 
 function _getTexturedStrokeCanvas(srcCanvas, forceFull){
   // Bypass all texture masking when:
-  //   • brushTextureEnabled is false (preset has Texture turned off), OR
-  //   • brushTextureCanvas is null (no texture image loaded), OR
-  //   • brushTextureStrength is 0 (strength slider is at minimum).
+  //   Ã¢â‚¬Â¢ brushTextureEnabled is false (preset has Texture turned off), OR
+  //   Ã¢â‚¬Â¢ brushTextureCanvas is null (no texture image loaded), OR
+  //   Ã¢â‚¬Â¢ brushTextureStrength is 0 (strength slider is at minimum).
   // The enabled flag is the critical guard: a canvas may linger from a
   // previously-loaded textured preset after the user switches to a solid
   // brush (Hard Round, etc.) without an explicit clearBrushTexture() call.
@@ -2235,90 +2235,240 @@ function _flushStrokeTail(){
   _strokeReplayDabs.length=0;
   _strokeReplayBase=null;
 }
-//  Input smoothing (TVPaint calls this "Line Smoothing")
-// Raw pointer input — especially high-frequency pointerrawupdate samples on
-// pen tablets, but mouse jitter too — is never perfectly straight; stamping
-// dabs directly along the RAW points (as before) draws every tiny wobble in
-// the input, which is what made strokes look wavy/rippled compared to
-// TVPaint.
-//
-// v1 of this used a pure time-constant exponential moving average (EMA):
-// smoothX += (rawX - smoothX) * (1 - exp(-dt/tau)). That's the "averages
-// distance" feel — the smoothed point is a running average pulled toward
-// wherever the pen HAS been, so on a fast flick it trails the real pen tip
-// by a gap that grows with speed (a fixed TIME lag becomes a big SPATIAL
-// lag once velocity goes up), and only crawls back once the pen slows down.
-// It also stuttered on real pen data: pointerrawupdate delivers very
-// uneven dt between coalesced samples (sub-millisecond bursts mixed with
-// occasional bigger gaps), so `a` swings between "almost 0" and "almost 1"
-// event to event — the smoothed point advances in uneven little jump/creep
-// steps instead of a steady glide, which reads as stutter even though the
-// math is technically working.
-//
-// v2: same gentle EMA for de-jittering slow, deliberate strokes (that part
-// felt fine), but on top of it we clamp how far the smoothed point is
-// allowed to trail the raw pen position — a "leash". As soon as the gap
-// would exceed the leash, we pull the smoothed point back to leash-distance
-// from the pen instead of continuing to let it lag proportionally to speed.
-// That's the "brush catches up to the tip" feel: on a flick the tip snaps
-// to just-behind-the-pen and stays there (constant small offset) rather
-// than trailing further and further back, and it removes the stutter too,
-// since the leash turns the uneven jump/creep steps into one consistent
-// "keep pace at leash distance" motion during fast movement.
-// v3: One Euro Filter (Casiez et al.) — the same class of filter most pro
-// drawing/tracking apps use, chosen specifically because it has no fixed
-// catch-up lag: its cutoff frequency adapts to the point's own speed every
-// sample, so it barely filters at all once the pen is moving fast (stays
-// glued to the raw position, no trailing gap that "catches up" later)
-// while still knocking down the high-frequency micro-jitter that reads as
-// wobble on slow, deliberate strokes/mouse input. Replaces the earlier
-// "no smoothing at all" pass-through, which baked every raw hand-tremor
-// sample straight into the stroke.
-const _OEF_MINCUTOFF = 1.2;  // Hz — filtering strength at rest (higher = less smoothing)
-const _OEF_BETA      = 0.02; // speed coefficient — how fast cutoff opens up as speed rises
-const _OEF_DCUTOFF   = 1.0;  // Hz — cutoff for the derivative/speed estimate itself
-function _oefAlpha(cutoffHz, dt){
-  const tau = 1/(2*Math.PI*Math.max(0.0001,cutoffHz));
-  return 1/(1+tau/Math.max(0.0001,dt));
-}
-let _smoothX=0,_smoothY=0,_smoothInit=false,_lastSmoothT=0;
-let _oefDX=0,_oefDY=0; // filtered derivative (px/s) for x and y
-function _resetSmoothing(x,y,t){
-  _smoothX=x;_smoothY=y;_smoothInit=true;_lastSmoothT=t;
-  _oefDX=0;_oefDY=0;
-}
-function _smoothPoint(x,y,t){
-  if(!_smoothInit){ _resetSmoothing(x,y,t); return {x,y}; }
-  const dt=Math.max(0.001,(t-_lastSmoothT)/1000); // seconds
-  _lastSmoothT=t;
-  // Filter the derivative (speed) first, at a fixed low cutoff — this is
-  // what lets the position cutoff react to true speed instead of raw noise.
-  const rawDX=(x-_smoothX)/dt, rawDY=(y-_smoothY)/dt;
-  const aD=_oefAlpha(_OEF_DCUTOFF,dt);
-  _oefDX=_oefDX+aD*(rawDX-_oefDX);
-  _oefDY=_oefDY+aD*(rawDY-_oefDY);
-  // x/y (and therefore rawDX/rawDY) are in CANVAS space, which is
-  // getPos()'s (screenDelta)/zoom. That means the exact same physical hand
-  // jitter produces a canvas-space speed that scales as 1/zoom — at 25%
-  // zoom a given pixel of hand tremor is 4x the canvas-space speed it is
-  // at 100%. Since the adaptive cutoff below opens up (filters less) as
-  // speed rises, feeding it raw canvas-space speed made the filter open up
-  // purely because of zoom, not because the hand actually moved faster —
-  // that's what caused slow straight lines to look wavy only when zoomed
-  // out. Fix: convert back to a zoom-independent (screen/physical) speed
-  // for the cutoff decision only; the filtered position itself stays in
-  // canvas space so spacing/interpolation downstream is unaffected.
-  const speed=Math.hypot(_oefDX,_oefDY)*zoom;
-  // Adaptive cutoff: opens up (less smoothing, tighter tracking) as speed
-  // rises, so fast flicks stay glued to the pen while slow strokes get the
-  // de-wobble benefit — no fixed spatial or temporal lag either way.
-  const cutoff=_OEF_MINCUTOFF+_OEF_BETA*speed;
-  const a=_oefAlpha(cutoff,dt);
-  _smoothX=_smoothX+a*(x-_smoothX);
-  _smoothY=_smoothY+a*(y-_smoothY);
-  return{x:_smoothX,y:_smoothY};
+// Brush stabilization stage.
+// Input position is stabilized here, then continues unchanged through the
+// existing curve reconstruction, spacing, pressure interpolation, and
+// stamping pipeline. A value of zero is an exact raw-input bypass.
+function _stabilizationAmount(){
+  const raw=Number(window._tsStabilization);
+  return Number.isFinite(raw)?Math.max(0,Math.min(1,raw)):0;
 }
 
+// Normal stabilization: a synchronous low-pass with a strict screen-space
+// lag bound.  Unlike a pursuit/lazy-brush loop, every real pointer sample
+// advances the brush immediately.  The time response removes high-frequency
+// hand jitter while the spatial bound prevents fast strokes from opening a
+// large cursor-to-brush gap.  There is no velocity/inertia term, so the
+// result cannot overshoot or oscillate.
+//
+// Both internal values are derived from the one Stabilization slider.
+// smoothstep keeps the low end fine-grained while still reaching a strong,
+// controllable maximum.
+const _STABILIZER_TAU_MIN=0.001;
+const _STABILIZER_TAU_MAX=0.050;
+const _STABILIZER_LAG_MIN_SCREEN_PX=0.20;
+const _STABILIZER_LAG_MAX_SCREEN_PX=16;
+const _STABILIZER_IDLE_DELAY_MS=18;
+const _STABILIZER_EPS_SCREEN_PX=0.30;
+const _STABILIZER_SPEED_FILTER_TAU=0.016;
+
+let _stabilizerActive=false;
+let _stabilizerX=0,_stabilizerY=0;
+let _stabilizerRawX=0,_stabilizerRawY=0,_stabilizerSpeed=0;
+let _stabilizerTargetX=0,_stabilizerTargetY=0;
+let _stabilizerTargetPressure=1;
+let _stabilizerLastSampleT=0;
+let _stabilizerLastAdvanceT=0;
+let _stabilizerLastInputWallT=0;
+let _stabilizerEvent=null;
+let _stabilizerRAF=0;
+let _stabilizerFinishing=false;
+let _stabilizerFinalizeCB=null;
+
+function _stabilizerStrength(amount){
+  const a=Math.max(0,Math.min(1,amount));
+  return a*a*(3-2*a);
+}
+function _stabilizerTau(amount){
+  const s=_stabilizerStrength(amount);
+  return _STABILIZER_TAU_MIN+s*(_STABILIZER_TAU_MAX-_STABILIZER_TAU_MIN);
+}
+function _stabilizerEffectiveTau(amount){
+  const baseTau=_stabilizerTau(amount);
+  const maxLagScreen=_STABILIZER_LAG_MIN_SCREEN_PX+
+    _stabilizerStrength(amount)*(_STABILIZER_LAG_MAX_SCREEN_PX-_STABILIZER_LAG_MIN_SCREEN_PX);
+  // A first-order filter's expected steady lag is speed * tau. When that
+  // expected lag approaches the allowed spatial separation, shorten tau.
+  // This preserves fast loops and reversals instead of pulling them inward.
+  const expectedLagRatio=(_stabilizerSpeed*baseTau)/Math.max(0.01,maxLagScreen);
+  return baseTau/(1+Math.max(0,expectedLagRatio));
+}
+function _stabilizerMaxLagCanvas(amount){
+  const s=_stabilizerStrength(amount);
+  const screenPx=_STABILIZER_LAG_MIN_SCREEN_PX+s*(_STABILIZER_LAG_MAX_SCREEN_PX-_STABILIZER_LAG_MIN_SCREEN_PX);
+  return screenPx/Math.max(0.05,zoom);
+}
+function _resetStabilization(x,y,t){
+  _stabilizerX=x;_stabilizerY=y;
+  _stabilizerTargetX=x;_stabilizerTargetY=y;
+  _stabilizerLastSampleT=t||performance.now();
+  _stabilizerLastAdvanceT=performance.now();
+  _stabilizerLastInputWallT=_stabilizerLastAdvanceT;
+  _stabilizerTargetPressure=currentPressure;
+  _stabilizerEvent=null;
+  _stabilizerActive=true;
+  _stabilizerFinishing=false;
+  _stabilizerFinalizeCB=null;
+  if(_stabilizerRAF){cancelAnimationFrame(_stabilizerRAF);_stabilizerRAF=0;}
+}
+function _stabilizerCancel(){
+  _stabilizerActive=false;
+  _stabilizerFinishing=false;
+  _stabilizerFinalizeCB=null;
+  if(_stabilizerRAF){cancelAnimationFrame(_stabilizerRAF);_stabilizerRAF=0;}
+}
+function _stabilizerSchedule(){
+  if(_stabilizerActive&&!_stabilizerRAF)_stabilizerRAF=requestAnimationFrame(_stabilizerStep);
+}
+
+// Canonical sample generation. Device-rate samples become a stable stream at
+// uniform screen-space arc-length intervals. Coordinates and pen attributes
+// are interpolated together; no averaging filter or intentional trailing.
+const _BASELINE_CANONICAL_STEP_SCREEN_PX=2,_BASELINE_MAX_GAP_MS=32;
+const _BASELINE_CORNER_ANGLE_RAD=Math.PI/6;
+let _baselineConditionerState=null;
+const _baselineConditionerReports=[];
+function _baselineSampleFromEvent(e,p,pressure){return{x:p.x,y:p.y,screenX:Number.isFinite(e.clientX)?e.clientX:p.x*zoom,screenY:Number.isFinite(e.clientY)?e.clientY:p.y*zoom,pressure:Number.isFinite(pressure)?pressure:0,tiltX:Number.isFinite(e.tiltX)?e.tiltX:0,tiltY:Number.isFinite(e.tiltY)?e.tiltY:0,twist:Number.isFinite(e.twist)?e.twist:(Number.isFinite(e.rotationAngle)?e.rotationAngle:0),time:Number.isFinite(e.timeStamp)&&e.timeStamp>0?e.timeStamp:performance.now(),pointerId:e.pointerId,event:e};}
+function _baselineNewStats(){return{rawSampleCount:0,forwardedSampleCount:0,exactDuplicatesRejected:0,tinyMovementsConsolidated:0,timeGapEmissions:0,attributeChangeEmissions:0,cornerEmissions:0,screenDistance:{sum:0,min:Infinity,max:0,count:0},dt:{sum:0,min:Infinity,max:0,count:0}};}
+function _baselineSameSample(a,b){return!!a&&Math.abs(a.x-b.x)<=1e-12&&Math.abs(a.y-b.y)<=1e-12&&Math.abs(a.pressure-b.pressure)<=1e-12&&Math.abs(a.tiltX-b.tiltX)<=1e-12&&Math.abs(a.tiltY-b.tiltY)<=1e-12&&Math.abs(a.twist-b.twist)<=1e-12;}
+function _baselineLerpSample(a,b,t){const l=(x,y)=>x+(y-x)*t;return{x:l(a.x,b.x),y:l(a.y,b.y),screenX:l(a.screenX,b.screenX),screenY:l(a.screenY,b.screenY),pressure:l(a.pressure,b.pressure),tiltX:l(a.tiltX,b.tiltX),tiltY:l(a.tiltY,b.tiltY),twist:l(a.twist,b.twist),time:l(a.time,b.time),pointerId:b.pointerId,event:b.event};}
+function _baselineEmit(s,sample,out,reason){if(_baselineSameSample(s.lastForwarded,sample))return;if(s.lastForwarded){const d=Math.hypot(sample.screenX-s.lastForwarded.screenX,sample.screenY-s.lastForwarded.screenY),dt=Math.max(0,sample.time-s.lastForwarded.time),ds=s.stats.screenDistance,ts=s.stats.dt;ds.sum+=d;ds.min=Math.min(ds.min,d);ds.max=Math.max(ds.max,d);ds.count++;ts.sum+=dt;ts.min=Math.min(ts.min,dt);ts.max=Math.max(ts.max,dt);ts.count++;}s.lastForwarded=sample;s.stats.forwardedSampleCount++;if(reason==='time')s.stats.timeGapEmissions++;else if(reason==='attribute')s.stats.attributeChangeEmissions++;else if(reason==='corner')s.stats.cornerEmissions++;out.push(sample);}
+function _baselineConditionerReset(sample){_baselineConditionerState={previousRaw:null,lastRaw:sample,lastForwarded:null,distanceCarry:0,stats:_baselineNewStats()};_baselineConditionerState.stats.rawSampleCount=1;const out=[];_baselineEmit(_baselineConditionerState,sample,out,'initial');return out;}
+function _baselineIsCorner(a,b,c){if(!a||!b)return false;const abx=b.screenX-a.screenX,aby=b.screenY-a.screenY,bcx=c.screenX-b.screenX,bcy=c.screenY-b.screenY,ab=Math.hypot(abx,aby),bc=Math.hypot(bcx,bcy);if(ab<0.25||bc<0.25)return false;const cosine=Math.max(-1,Math.min(1,(abx*bcx+aby*bcy)/(ab*bc)));return Math.acos(cosine)>=_BASELINE_CORNER_ANGLE_RAD;}
+function _baselineConditionerPush(sample,options={}){
+  const s=_baselineConditionerState;if(!s)return[sample];const n=s.stats,out=[];n.rawSampleCount++;
+  const a=s.lastRaw,segmentDistance=Math.hypot(sample.screenX-a.screenX,sample.screenY-a.screenY),rawDt=Math.max(0,sample.time-a.time);
+  if(segmentDistance<=1e-12&&rawDt<=1e-9&&sample.pointerId===a.pointerId&&_baselineSameSample(sample,a)){n.exactDuplicatesRejected++;return out;}
+  if(_baselineIsCorner(s.previousRaw,a,sample)){_baselineEmit(s,a,out,'corner');s.distanceCarry=0;}
+  if(segmentDistance>1e-12){let consumed=0;while(s.distanceCarry+(segmentDistance-consumed)>=_BASELINE_CANONICAL_STEP_SCREEN_PX){const needed=_BASELINE_CANONICAL_STEP_SCREEN_PX-s.distanceCarry;consumed+=needed;_baselineEmit(s,_baselineLerpSample(a,sample,Math.min(1,consumed/segmentDistance)),out,'distance');s.distanceCarry=0;}s.distanceCarry+=Math.max(0,segmentDistance-consumed);}else n.tinyMovementsConsolidated++;
+  if(!out.length&&s.lastForwarded&&sample.time-s.lastForwarded.time>=_BASELINE_MAX_GAP_MS){_baselineEmit(s,sample,out,segmentDistance<=1e-12?'attribute':'time');s.distanceCarry=0;}
+  if(options.force){_baselineEmit(s,sample,out,'forced');s.distanceCarry=0;}
+  s.previousRaw=a;s.lastRaw=sample;return out;
+}
+function _baselineConditionerFinish(cancelled=false){const s=_baselineConditionerState;if(!s)return;if(window.BaselineStrokeConditionerDiagnostics?.enabled){const n=s.stats,f=v=>({average:v.count?v.sum/v.count:0,min:v.count?v.min:0,max:v.count?v.max:0});_baselineConditionerReports.push({cancelled,rawSampleCount:n.rawSampleCount,forwardedSampleCount:n.forwardedSampleCount,exactDuplicatesRejected:n.exactDuplicatesRejected,tinyMovementsConsolidated:n.tinyMovementsConsolidated,timeGapEmissions:n.timeGapEmissions,attributeChangeEmissions:n.attributeChangeEmissions,cornerEmissions:n.cornerEmissions,screenDistance:f(n.screenDistance),dt:f(n.dt)});if(_baselineConditionerReports.length>100)_baselineConditionerReports.shift();}_baselineConditionerState=null;}
+window.BaselineStrokeConditionerDiagnostics={enabled:false,enable(v=true){this.enabled=!!v;return this.enabled;},results(){return JSON.parse(JSON.stringify(_baselineConditionerReports));},latest(){const a=this.results();return a.length?a[a.length-1]:null;},clear(){_baselineConditionerReports.length=0;}};function _stabilizePoint(x,y,t){
+  const amount=_stabilizationAmount();
+  if(amount<=0){
+    // A true bypass: exact input coordinates, with no hidden filtering.
+    _stabilizerX=x;_stabilizerY=y;
+    _stabilizerTargetX=x;_stabilizerTargetY=y;
+    _stabilizerLastSampleT=t;
+    _stabilizerLastInputWallT=performance.now();
+    if(_stabilizerRAF){cancelAnimationFrame(_stabilizerRAF);_stabilizerRAF=0;}
+    return{x,y};
+  }
+  if(!_stabilizerActive)_resetStabilization(x,y,t);
+
+  const dt=Math.max(0.00025,Math.min(0.05,(t-_stabilizerLastSampleT)/1000));
+  _stabilizerLastSampleT=t;
+  const instantSpeed=Math.hypot(x-_stabilizerRawX,y-_stabilizerRawY)*Math.max(0.05,zoom)/dt;
+  const speedAlpha=1-Math.exp(-dt/_STABILIZER_SPEED_FILTER_TAU);
+  _stabilizerSpeed+=speedAlpha*(instantSpeed-_stabilizerSpeed);
+  _stabilizerRawX=x;_stabilizerRawY=y;
+  _stabilizerTargetX=x;_stabilizerTargetY=y;
+  _stabilizerLastInputWallT=performance.now();
+
+  const alpha=1-Math.exp(-dt/_stabilizerEffectiveTau(amount));
+  let nextX=_stabilizerX+(x-_stabilizerX)*alpha;
+  let nextY=_stabilizerY+(y-_stabilizerY)*alpha;
+
+  // Spatial leash is a limit, not the motion model: it only prevents the
+  // temporal filter from ever falling dramatically behind on fast input.
+  const dx=x-nextX,dy=y-nextY;
+  const distance=Math.hypot(dx,dy);
+  const maxLag=_stabilizerMaxLagCanvas(amount);
+  if(distance>maxLag){
+    const scale=maxLag/distance;
+    nextX=x-dx*scale;
+    nextY=y-dy*scale;
+  }
+
+  _stabilizerX=nextX;_stabilizerY=nextY;
+  _stabilizerLastAdvanceT=performance.now();
+  _stabilizerSchedule();
+  return{x:nextX,y:nextY};
+}
+function _stabilizerSetSampleContext(pressure,event){
+  _stabilizerTargetPressure=pressure;
+  _stabilizerEvent=event;
+}
+function _stabilizerGapCanvas(){
+  return Math.hypot(_stabilizerTargetX-_stabilizerX,_stabilizerTargetY-_stabilizerY);
+}
+function _stabilizerEmit(x,y,now){
+  _updateVelocity(x,y,now);
+  if(window._brushAirbrush&&Math.hypot(x-lx,y-ly)>0.01)_airbrushLastMovementTime=performance.now();
+  // Stabilization owns position only. Pressure remains the raw pressure
+  // already used by the normal reconstruction/interpolation pipeline.
+  _curveAddPoint(x,y,_stabilizerTargetPressure,_stabilizerEvent||_lastPointerEvent);
+  lx=x;ly=y;currentPressure=_stabilizerTargetPressure;
+  _scheduleRecomposite();
+}
+function _stabilizerAdvance(dt,now){
+  if(!_stabilizerActive)return true;
+  const amount=_stabilizationAmount();
+  if(amount<=0){
+    _stabilizerX=_stabilizerTargetX;_stabilizerY=_stabilizerTargetY;
+  }else{
+    const alpha=1-Math.exp(-Math.max(0.00025,dt)/_stabilizerTau(amount));
+    _stabilizerX+=(_stabilizerTargetX-_stabilizerX)*alpha;
+    _stabilizerY+=(_stabilizerTargetY-_stabilizerY)*alpha;
+  }
+  _stabilizerEmit(_stabilizerX,_stabilizerY,now);
+
+  const gapCanvas=_stabilizerGapCanvas();
+  const converged=gapCanvas*Math.max(0.05,zoom)<_STABILIZER_EPS_SCREEN_PX&&gapCanvas<0.4;
+  if(converged){
+    // End on the true input point. The remaining segment is sub-pixel and
+    // keeps endpoint behavior exact without a visible snap.
+    if(gapCanvas>0.001){
+      _stabilizerX=_stabilizerTargetX;_stabilizerY=_stabilizerTargetY;
+      _stabilizerEmit(_stabilizerX,_stabilizerY,now);
+    }
+    if(_stabilizerFinishing){
+      const cb=_stabilizerFinalizeCB;
+      _stabilizerFinalizeCB=null;
+      _stabilizerFinishing=false;
+      _stabilizerActive=false;
+      if(cb)cb();
+    }
+    return true;
+  }
+  return false;
+}
+function _stabilizerStep(now){
+  _stabilizerRAF=0;
+  if(!_stabilizerActive)return;
+  if(!_stabilizerFinishing&&now-_stabilizerLastInputWallT<_STABILIZER_IDLE_DELAY_MS){
+    _stabilizerSchedule();
+    return;
+  }
+  const dt=Math.max(0.00025,Math.min(0.05,(now-_stabilizerLastAdvanceT)/1000));
+  _stabilizerLastAdvanceT=now;
+  if(!_stabilizerAdvance(dt,now))_stabilizerSchedule();
+}
+function _stabilizerFinalize(x,y,pressure,event,cb){
+  _stabilizerTargetX=x;_stabilizerTargetY=y;
+  _stabilizerTargetPressure=pressure;
+  _stabilizerEvent=event||_stabilizerEvent;
+  _stabilizerFinishing=true;
+  _stabilizerFinalizeCB=cb;
+  _stabilizerLastAdvanceT=performance.now();
+  _stabilizerSchedule();
+}
+function _stabilizerAccelerateToCompletion(){
+  if(!(_stabilizerFinishing&&_stabilizerFinalizeCB)){
+    _stabilizerCancel();
+    return;
+  }
+  if(_stabilizerRAF){cancelAnimationFrame(_stabilizerRAF);_stabilizerRAF=0;}
+  let iterations=0;
+  while(_stabilizerActive&&iterations<32){
+    if(_stabilizerAdvance(1/30,performance.now()))return;
+    iterations++;
+  }
+  _stabilizerCancel();
+}
 let _rotationPrevX=0,_rotationPrevY=0,_rotationPrevValid=false,_rotationDirection=0;
 function _resolveDabRotation(x,y){
   const fixed=(Number(window._tsBrushAngle)||0)*Math.PI/180;
@@ -2385,12 +2535,12 @@ function _stampDab(x,y,e){
   }
 }
 
-// ── Airbrush continuous spray (Photoshop "Airbrush" toggle / Clip Studio
+// Ã¢â€â‚¬Ã¢â€â‚¬ Airbrush continuous spray (Photoshop "Airbrush" toggle / Clip Studio
 // Airbrush sub tool feel)
 // Every other brush here only stamps in response to pointer movement
 // (_strokeSegment walks dabs along the path you actually drew). A real
 // airbrush also keeps depositing paint for as long as the pen is held
-// down, even dead still — that's what lets you build density in one spot
+// down, even dead still Ã¢â‚¬â€ that's what lets you build density in one spot
 // just by holding the pen there, on top of a soft low-flow tip. This timer
 // is the one thing that adds that behavior: while drawing && airbrush mode
 // is on, it fires extra stamps at the last known position on its own
@@ -2439,7 +2589,7 @@ function _stopAirbrushSpray(){
 }
 window._stopAirbrushSpray=_stopAirbrushSpray;
 
-// Stamp dabs along a line segment from (ax,ay)→(bx,by). Step = ~12% of the
+// Stamp dabs along a line segment from (ax,ay)Ã¢â€ â€™(bx,by). Step = ~12% of the
 // CURRENT effective diameter (matches TVPaint's default stepval=12.5%)
 // not the brush's fixed max size. Walking adaptively like this is essential
 // for smooth pressure tapers: if spacing were based on max size, a thin
@@ -2447,10 +2597,10 @@ window._stopAirbrushSpray=_stopAirbrushSpray;
 // were full-size, leaving each round dab visible as a separate bump/notch
 // instead of blending into a continuous taper.
 // Pressure is interpolated linearly from startPressure to endPressure along
-// the segment — this prevents sudden size jumps at event boundaries when
+// the segment Ã¢â‚¬â€ this prevents sudden size jumps at event boundaries when
 // the tablet reports large pressure changes between coalesced events.
 //  Stroke-start taper (TVPaint-style natural pen tip)
-// TVPaint's pen eases in from a point at the start of every stroke — this
+// TVPaint's pen eases in from a point at the start of every stroke Ã¢â‚¬â€ this
 // happens even with a mouse (constant pressure=1.0 the whole time), so it
 // can't be pressure-driven; it has to be driven by distance traveled since
 // the stroke began. Without this, a stroke starts at full width/opacity
@@ -2466,22 +2616,39 @@ function _strokeTaperFactor(baseSize){
   return progress*progress*(3-2*progress);
 }
 
-// Resolve the spacing fraction used for the current dab. Fixed Distance
-// uses the manual value directly; Velocity widens it modestly from the
-// existing smoothed stroke velocity while preserving the same interpolation.
+// Resolve the user-selected brush-relative spacing fraction. Actual dab
+// placement also passes through _effectiveDabStep(), which supplies the
+// engine-level density floor shared by straight and curved stroke paths.
 function _effectiveSpacingFrac(settings){
   const fromSettings=!!settings;
   const mode=fromSettings?settings['ts-spacing-mode']:document.getElementById('ts-spacing-mode')?.value;
   const isAirbrush=fromSettings?!!settings['ts-airbrush']:!!window._brushAirbrush;
   const raw=fromSettings?Number(settings['ts-spacing'])/100:((typeof window!=='undefined'&&window._tsSpacing!=null)?Number(window._tsSpacing):NaN);
   const base=Number.isFinite(raw)&&raw>0?raw:(isAirbrush?0.02:0.12);
-  if(mode==='velocity'&&!fromSettings){
-    const velocity=Math.max(0,Math.min(1,_strokeVelocity/2));
-    return base*(1+0.75*velocity);
-  }
+  if(mode==='velocity'&&!fromSettings)return base;
   return base;
 }
 window._resolveBrushSpacingFrac=_effectiveSpacingFrac;
+// Professional paint engines cannot rely on brush-relative spacing alone:
+// a large brush, a wide preset spacing, or a fast input segment can otherwise
+// leave a visibly polygonal chain of dabs. Keep the preset's spacing as the
+// upper bound, then cap it by a screen-space density that tightens smoothly as
+// pen speed rises. The 0.25px canvas floor is only a runaway-work guard; it is
+// twice as dense as the former 0.5px minimum and remains subpixel throughout.
+const _DAB_STEP_MIN_CANVAS_PX=0.25;
+const _DAB_STEP_SCREEN_CAP_SLOW_PX=1.5;
+const _DAB_STEP_SCREEN_CAP_FAST_PX=0.65;
+const _DAB_STEP_SPEED_HALF_PX_PER_MS=0.45;
+function _effectiveDabStep(radius,settings){
+  const brushStep=Math.max(0,radius*2*_effectiveSpacingFrac(settings));
+  const speed=Math.max(0,_strokeVelocity);
+  const speedMix=speed/(speed+_DAB_STEP_SPEED_HALF_PX_PER_MS);
+  const screenCap=_DAB_STEP_SCREEN_CAP_SLOW_PX+
+    (_DAB_STEP_SCREEN_CAP_FAST_PX-_DAB_STEP_SCREEN_CAP_SLOW_PX)*speedMix;
+  const screenSpaceStep=screenCap/Math.max(0.05,zoom);
+  return Math.max(_DAB_STEP_MIN_CANVAS_PX,Math.min(brushStep,screenSpaceStep));
+}
+window._resolveEffectiveDabStep=_effectiveDabStep;
 let _hardRoundTailCoverageOnly=false;
 let _flowSpacingRatio=1;
 function _flowRatioForStep(step,radius){
@@ -2502,7 +2669,7 @@ function _airbrushCanonicalSpacingRatio(e,pressure){
 }
 function _initialDabSpacingRatio(e,pressure){
   const radius=_computeSpacingRadius(e,pressure);
-  const step=Math.max(0.5,radius*2*_effectiveSpacingFrac());
+  const step=_effectiveDabStep(radius);
   return _flowRatioForStep(step,radius);
 }
 function _walkDabArc(length,pointAt,e,startPressure,endPressure,pressureAt){
@@ -2513,7 +2680,7 @@ function _walkDabArc(length,pointAt,e,startPressure,endPressure,pressureAt){
     const sample=pointAt(distance);
     const pressure=pAt(sample.t);
     const spacingR=_computeSpacingRadius(e,pressure);
-    const step=Math.max(0.5,spacingR*2*_effectiveSpacingFrac());
+    const step=_effectiveDabStep(spacingR);
     const needed=Math.max(0,step-_strokeSegCarryOver);
     const remaining=length-distance;
     if(needed>remaining){
@@ -2535,7 +2702,7 @@ function _walkDabArc(length,pointAt,e,startPressure,endPressure,pressureAt){
 // Stamp a straight segment using an arbitrary pressureAt(t) profile (t is
 // 0..1 progress along the segment) instead of a simple linear ramp between
 // two endpoint pressures. Used by the Line tool's Pen Pressure mode so the
-// entire recorded pressure curve — not just its start/end values — shapes
+// entire recorded pressure curve Ã¢â‚¬â€ not just its start/end values Ã¢â‚¬â€ shapes
 // the rendered width.
 function _strokeSegmentProfile(ax,ay,bx,by,e,pressureAt){
   const dx=bx-ax,dy=by-ay,dist=Math.sqrt(dx*dx+dy*dy);
@@ -2582,7 +2749,7 @@ function _strokeSegment(ax,ay,bx,by,e,startPressure,endPressure){
     const spacingR = _computeSpacingRadius(e, interpP);
     const step = Math.max(0.5, spacingR * 2 * spacing);
     traveled += step;
-    if(traveled > dist) break; // past end — save remainder as carry-over
+    if(traveled > dist) break; // past end Ã¢â‚¬â€ save remainder as carry-over
     const t = traveled / dist;
     _strokeDistSoFar += step;
     currentPressure = sp + (ep - sp) * t;
@@ -2595,7 +2762,7 @@ function _strokeSegment(ax,ay,bx,by,e,startPressure,endPressure){
 //  Quadratic-curve stamping (fixes angular/wavy fast strokes)
 // _strokeSegment (above) stamps a STRAIGHT LINE between two consecutive raw
 // samples. At normal speed samples are dense enough that this is invisible,
-// but on a fast flick — even at pointerrawupdate's ~1000Hz ceiling — the
+// but on a fast flick Ã¢â‚¬â€ even at pointerrawupdate's ~1000Hz ceiling Ã¢â‚¬â€ the
 // pen can cover a lot of distance between samples, especially through a
 // curve, so straight segments chained together render as a series of
 // visible angular facets ("wavy/jittery") instead of one smooth arc. This
@@ -2603,15 +2770,15 @@ function _strokeSegment(ax,ay,bx,by,e,startPressure,endPressure){
 // rAF tuning fixes it, because the samples themselves are being connected
 // with straight lines.
 // Fix: use the standard quadratic-bezier midpoint technique (the same one
-// virtually every pro drawing app uses for freehand ink) — for three
+// virtually every pro drawing app uses for freehand ink) Ã¢â‚¬â€ for three
 // consecutive points A,B,C, draw the curve from mid(A,B) to mid(B,C) using
 // B as the control point. This turns every joint between samples into a
 // smooth arc instead of a corner, using ONLY points that already exist
-// (the current sample and the two before it) — no lookahead, no waiting
+// (the current sample and the two before it) Ã¢â‚¬â€ no lookahead, no waiting
 // for a future point, so it adds no catch-up delay. The only cost is that
 // the segment actually drawn on a given sample ends at mid(B,C) rather
-// than at C itself — half a sample-spacing behind the raw pen position at
-// full drawing speed, i.e. sub-millisecond at 1000Hz — which is flushed to
+// than at C itself Ã¢â‚¬â€ half a sample-spacing behind the raw pen position at
+// full drawing speed, i.e. sub-millisecond at 1000Hz Ã¢â‚¬â€ which is flushed to
 // the real endpoint at stroke-end (see _flushCurveTail) so the line always
 // still finishes exactly under the pen.
 function _quadPoint(x0,y0,cx,cy,x1,y1,t){
@@ -2638,7 +2805,7 @@ function _quadPoint(x0,y0,cx,cy,x1,y1,t){
 // _QUAD_FLATNESS_TOLERANCE is in canvas-space px (coordinates arriving here
 // are already canvas-space, so this is intentionally NOT scaled by zoom).
 const _QUAD_FLATNESS_TOLERANCE = 0.25;
-// Recursion-depth safety net only — not a length-based cap. Depth 12 allows
+// Recursion-depth safety net only Ã¢â‚¬â€ not a length-based cap. Depth 12 allows
 // up to ~4096 segments for a single curve in the extreme case where every
 // split fails the flatness test at every level, which does not happen for
 // any curve a real pen stroke produces; this exists purely to guarantee
@@ -2685,7 +2852,7 @@ function _quadArcTable(x0,y0,cx,cy,x1,y1){
     const mx=(m0x+m1x)/2, my=(m0y+m1y)/2;
     const tmid=(seg.t0+seg.t1)/2;
     // Push right half first, then left, so the stack (LIFO) pops left
-    // half first — keeps emitted table entries in increasing-t order.
+    // half first Ã¢â‚¬â€ keeps emitted table entries in increasing-t order.
     stack.push({x0:mx,y0:my,cx:m1x,cy:m1y,x1:seg.x1,y1:seg.y1,t0:tmid,t1:seg.t1,depth:seg.depth+1});
     stack.push({x0:seg.x0,y0:seg.y0,cx:m0x,cy:m0y,x1:mx,y1:my,t0:seg.t0,t1:tmid,depth:seg.depth+1});
   }
@@ -2725,11 +2892,11 @@ function _stampQuadCurve(x0,y0,cx,cy,x1,y1,e,startPressure,endPressure){
   return;
   if(len<0.1){
     // BUG FIX: this used to always call _stampDab() here regardless of
-    // Spacing. Heavily-smoothed slow strokes (see _smoothPoint's adaptive
-    // One Euro filter — it dampens hard at low speed) constantly produce
+    // Spacing. Stabilized slow strokes can produce many closely spaced
+    // One Euro filter Ã¢â‚¬â€ it dampens hard at low speed) constantly produce
     // curve segments under this 0.1px threshold, so a dab was stamped on
     // almost every single pointermove no matter what Spacing % was set
-    // to — which is exactly why slow strokes looked continuous while fast
+    // to Ã¢â‚¬â€ which is exactly why slow strokes looked continuous while fast
     // strokes (whose bigger segments actually ran the real spacing loop
     // below) showed correct gaps. We can't divide by this near-zero `len`
     // safely (that's why the early-out exists at all), so instead of
@@ -2765,42 +2932,56 @@ function _stampQuadCurve(x0,y0,cx,cy,x1,y1,e,startPressure,endPressure){
   _strokeSegCarryOver = Math.max(0, traveled - len);
   currentPressure = endPressure;
 }
-// Collinearity deadband for the quadratic curve fit below. A,B,C nearly
-// collinear -> B's sideways offset is almost certainly hand tremor, not
-// intent, and the quadratic fit turns even a tiny offset into a visible
-// bow (curvature ~ offset / segmentLength^2 -- see _curveAddPoint), which
-// is why it's most visible on slow strokes (short A->C segments). Real
-// curves/corners have a much larger offset relative to segment length, so
-// scoring the deviation as a RATIO of chord length (not a fixed pixel
-// value) keeps the same behavior across zoom, brush size and stroke speed,
-// and leaves intentional curvature completely alone.
-const _COLLINEAR_LOW_RATIO  = 0.015; // deviation below 1.5% of chord -> fully straighten
-const _COLLINEAR_HIGH_RATIO = 0.08;  // deviation above 8% of chord -> real curve, untouched
+// -- Deadband REMOVED (Phase 3 stroke-reconstruction fix) ---------------
+// The rolling-quadratic construction below (_curveAddPoint/_stampQuadCurve)
+// is C1-continuous BY CONSTRUCTION when the raw sample B is used directly
+// as the control point: segment N's endpoint is midpoint(B,C) and its
+// tangent there points along (C-B); segment N+1's start point is that same
+// midpoint(B,C) and its tangent there also points along (C-B) (since its
+// control point is C). The two arcs meet with matching tangents at every
+// single joint, with no special-casing required.
+//
+// The deadband that used to sit here broke that guarantee. It scored each
+// independent A,B,C triplet by perpendicular-deviation-of-B divided by
+// chord length (a RATIO, not a curvature), and fully or partially projected
+// B onto the A->C chord when that ratio was small, on the theory that a
+// small ratio meant "hand tremor, not intent."
+//
+// That reasoning doesn't hold: for a fixed real curve of radius R, the
+// sagitta of a 3-sample window scales as ~chord^2/R, so the ratio
+// (sagitta/chord) scales as ~chord/R -- i.e. it shrinks as sampling gets
+// denser, independent of whether the curve is genuine or not. Any broad,
+// gently-curving hand-drawn arc, sampled at typical tablet/mouse rates,
+// produces the same tiny ratio as real tremor does. The deadband couldn't
+// tell them apart, so it silently flattened arbitrary 3-point windows of
+// legitimate curves to straight chords. Because only SOME windows along a
+// stroke crossed the threshold, the result was a patchwork of true curved
+// arcs and force-straightened arcs stitched together -- and every stitch
+// point broke the tangent-matching guarantee above, producing a visible
+// kink. That is the source of the "polygonal/boxy" appearance reported at
+// Stabilization = 0 (which never touched this code path -- confirmed
+// _stabilizePoint() is a true bypass at amount 0).
+//
+// Simulated against synthetic strokes (large/small ellipses, spirals,
+// S-curves, slow diagonals, sharp L/V corners, at 0.25x-4x zoom, with
+// mouse-jitter amplitudes from 0.3px up to a deliberately heavy 2.0px):
+// removing this function entirely dropped the average inter-segment
+// tangent-angle deviation from ~8-9deg (with the old deadband, spiking to
+// 130-180deg at some joints -- visible kinks) down to ~0.1-1.0deg even
+// under heavy synthetic jitter, while genuine sharp corners still showed
+// up correctly as real angle changes (~5-6deg per micro-segment at the
+// corner apex, not smeared out). No unacceptable jitter was introduced, so
+// per the lowest-risk-first directive this fix stops here: full bypass,
+// no replacement blend. Left in place (unused) rather than deleted in case
+// a future pass wants to reintroduce a properly density-invariant version.
+const _COLLINEAR_LOW_RATIO  = 0.015; // no longer used by the hot path
+const _COLLINEAR_HIGH_RATIO = 0.08;  // no longer used by the hot path
 function _deadbandControlPoint(A,B,C){
-  const acx=C.x-A.x, acy=C.y-A.y;
-  const chordLenSq=acx*acx+acy*acy;
-  const chordLen=Math.sqrt(chordLenSq);
-  if(chordLen<1e-6) return B; // A and C nearly coincide (near-stationary); nothing to deadband
-  // Perpendicular distance of B from line A->C (standard point-to-line
-  // distance via the 2D cross product), then normalized by chord length so
-  // the result is a scale-independent ratio rather than an absolute pixel
-  // offset.
-  const cross=(B.x-A.x)*acy-(B.y-A.y)*acx;
-  const ratio=Math.abs(cross)/chordLen/chordLen;
-  if(ratio>=_COLLINEAR_HIGH_RATIO) return B; // clearly a real curve/corner: unchanged
-  // Smoothstep between the two ratio thresholds so the control point eases
-  // continuously from "on the chord" to "the real B" -- no snapping, no
-  // faceting, no discontinuity as a stroke transitions from straight to
-  // curved.
-  let t = ratio<=_COLLINEAR_LOW_RATIO ? 0 : (ratio-_COLLINEAR_LOW_RATIO)/(_COLLINEAR_HIGH_RATIO-_COLLINEAR_LOW_RATIO);
-  t = t*t*(3-2*t);
-  const proj=((B.x-A.x)*acx+(B.y-A.y)*acy)/chordLenSq;
-  const px=A.x+acx*proj, py=A.y+acy*proj; // B projected straight onto the chord
-  return { x: px+(B.x-px)*t, y: py+(B.y-py)*t };
+  return B; // bypassed -- see comment block above
 }
 // Rolling 3-point buffer feeding the curve above. Reset at stroke start so
 // the first two segments of a stroke (before 3 real points exist) fall
-// back to a straight stamp — there's no earlier geometry to curve through
+// back to a straight stamp Ã¢â‚¬â€ there's no earlier geometry to curve through
 // yet, and this matches the existing stroke-start taper behavior.
 let _curveP0=null,_curveP1=null,_curvePr0=0,_curvePr1=0;
 function _resetCurve(x,y,pressure){
@@ -2827,7 +3008,7 @@ function _curveAddPoint(x,y,pressure,e){
 
 // completed midpoint segment all the way out to the true last pen
 // position, so the stroke always ends exactly under the pen (no
-// perceptible "still catching up" tail — this is a one-time geometric
+// perceptible "still catching up" tail Ã¢â‚¬â€ this is a one-time geometric
 // closeout, not an ongoing lag).
 function _flushCurveTail(e){
   if(_curveP0===null||_curveP1===null) return;
@@ -2930,7 +3111,7 @@ function _buildLinePressureProfile(sx,sy,ex,ey){
 // Renders the Line tool's current drag (or its final committed state) into
 // _strokeCanvas from scratch: clears any previous stamp, then re-walks the
 // whole line so both live preview (called every pointermove) and the final
-// commit (called once at pointerup) share the exact same code path — the
+// commit (called once at pointerup) share the exact same code path Ã¢â‚¬â€ the
 // preview IS what gets committed, not an approximation of it. Reuses the
 // normal brush engine (_strokeSegment/_strokeSegmentProfile -> _stampDab)
 // so hardness, flow, opacity, AA, and brush tip all stay consistent with
@@ -3095,7 +3276,7 @@ function _renderLineDrag(ex,ey,e,phase){
 }
 
 // PERF FIX: recompositing flattens every layer/group (full-canvas
-// drawImage per layer, plus mask canvases) — that's fine to do once per
+// drawImage per layer, plus mask canvases) Ã¢â‚¬â€ that's fine to do once per
 // frame, but the old code called it synchronously on EVERY pointermove,
 // and pointermove can fire 100+ times/sec on a fast mouse or tablet.
 // That full-stack re-flatten on every single input event is the main
@@ -3166,8 +3347,8 @@ function _completePostStrokePresentation(layerIndex,frameIndex){
 // flag on a 'mouseup'/'mouseleave' fired ON THE CANVAS ITSELF. If you
 // switch browser tabs (or alt-tab) while the mouse button is still down,
 // that mouseup never reaches the canvas, so `drawing` stays stuck `true`.
-// The next time the pointer simply MOVES over the canvas — with no
-// button pressed at all — the old mousemove handler still saw
+// The next time the pointer simply MOVES over the canvas Ã¢â‚¬â€ with no
+// button pressed at all Ã¢â‚¬â€ the old mousemove handler still saw
 // drawing===true and kept calling _strokeSegment from wherever the
 // stroke last left off, painting/erasing a trail that followed the
 // cursor with no click. Fixes:
@@ -3178,7 +3359,7 @@ function _completePostStrokePresentation(layerIndex,frameIndex){
 //     the tab is hidden or the window loses focus, so a stray stroke
 //     can never survive a tab switch.
 //  3. Always verify the primary button is actually still down
-//     (e.buttons & 1) on every pointermove before drawing — if it isn't
+//     (e.buttons & 1) on every pointermove before drawing Ã¢â‚¬â€ if it isn't
 //     (e.g. the up-event was lost), stop the stroke instead of trusting
 //     the old `drawing` flag blindly.
 function _restoreSelectionScopePixels(){
@@ -3189,9 +3370,13 @@ function _isStyleLayeringColorErase(){
   return tool==='eraser'&&window.eraserMode==='color'&&layers[curLayer]&&layers[curLayer].renderMode==='style-layering';
 }
 function _endStroke(pointerId){
+  // Cancellation paths stop live stabilization, but lost pointer capture
+  // must not interrupt the short endpoint convergence started by pointerup.
+  if(_stabilizerActive&&!_stabilizerFinishing)_stabilizerCancel();
   if(_strokeCompletionStarted) return;
   if(pointerId!=null&&_activeStrokePointerId!=null&&pointerId!==_activeStrokePointerId) return;
   _strokeCompletionStarted=true;
+  _baselineConditionerFinish(true);
   _stopAirbrushSpray();
   _autoHardRoundPrevDab=null;
   if(drawing){drawing=false;_flushStrokeTail();if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();}
@@ -3243,7 +3428,7 @@ document.addEventListener('visibilitychange',()=>{
     // Some browsers silently discard a canvas's backing-store pixels
     // while its tab is backgrounded (memory pressure, GPU context loss).
     // If that happened, activeC would come back blank even though the
-    // saved key still has the real content — drawing on it now would
+    // saved key still has the real content Ã¢â‚¬â€ drawing on it now would
     // then overwrite the key with "blank + new stroke" on the next save,
     // destroying everything drawn before the tab switch. Reloading from
     // the saved key on return guarantees activeC always matches the
@@ -3255,11 +3440,11 @@ window.addEventListener('blur',_endStroke);
 
 //  Pressure tracking
 // Pressure state: updated per pointer event
-let currentPressure = 1.0; // 0–1 from pen digitizer; always 1.0 for mouse
+let currentPressure = 1.0; // 0Ã¢â‚¬â€œ1 from pen digitizer; always 1.0 for mouse
 let _lastKnownPressure = 1.0; // last non-zero pressure reading (preserves pressure through coalesced gaps)
 let _isDrawingWithPen = false; // true when the active stroke is from a pen/stylus
 
-// Exponential smoothing for pressure — reduces jitter without adding lag.
+// Exponential smoothing for pressure Ã¢â‚¬â€ reduces jitter without adding lag.
 // Alpha=0.25 is a good balance: smooth enough to avoid spiky dab-size
 // changes from noisy digitizers, still snappy enough to feel responsive.
 // 0=max smooth, 1=no smooth.
@@ -3274,13 +3459,13 @@ let _smoothedPressure = 1.0;
 // spikes that get capped). _prevRawPressure tracks the last accepted raw
 // reading so each new sample's jump can be limited.
 let _prevRawPressure = 1.0;
-const _MAX_PRESSURE_JUMP = 0.09; // max change allowed per raw sample — tightened from 0.15 so pressure can fall off fast enough during a flick lift without holding the dab size artificially high into the last few samples
-let _strokeFirstSample = true; // true for the very first sample of a stroke (no clamping — should snap immediately)
+const _MAX_PRESSURE_JUMP = 0.09; // max change allowed per raw sample Ã¢â‚¬â€ tightened from 0.15 so pressure can fall off fast enough during a flick lift without holding the dab size artificially high into the last few samples
+let _strokeFirstSample = true; // true for the very first sample of a stroke (no clamping Ã¢â‚¬â€ should snap immediately)
 
 function _getPressure(e){
   // e.pressure: 0 = pen hovering or just lifted (NOT zero pressure contact)
   //             0.5 = mouse or device with no pressure support
-  //             0–1 = real pen with pressure
+  //             0Ã¢â‚¬â€œ1 = real pen with pressure
   let p;
   if(e.pointerType === 'pen'){
     // Only trust a pressure reading > 0 while drawing (0 means hovering/lifted).
@@ -3313,7 +3498,7 @@ function _getPressure(e){
   return 1.0;
 }
 
-// Stroke velocity tracking (pixels per ms) — used only by the "flick tail"
+// Stroke velocity tracking (pixels per ms) Ã¢â‚¬â€ used only by the "flick tail"
 // buffering heuristic in _queueDab, not by any size/opacity dynamics control
 // (those support Pen Pressure only).
 let _strokeVelocity = 0;
@@ -3341,13 +3526,13 @@ let _strokeDabCount = 0;
 // calling document.getElementById() fresh on EVERY dab. Adaptive spacing
 // stamps many dabs per segment, and _computeEffectiveParams calls these
 // (via _resolveControl/_getMinSize/_getMinFlow) at least once per dab plus
-// once more per "peek" step in _strokeSegment/_stampQuadCurve — so a single
+// once more per "peek" step in _strokeSegment/_stampQuadCurve Ã¢â‚¬â€ so a single
 // fast pointermove with several coalesced samples could trigger hundreds of
 // DOM lookups synchronously on the input thread. That's real, measurable
 // per-dab overhead stacking up faster than frames can drain it, which is
 // exactly what shows up as the pen outrunning the rendered stroke and only
 // "catching up" once movement (and dab generation) stops. Fix: resolve each
-// element reference once and cache it — el.value is still read fresh every
+// element reference once and cache it Ã¢â‚¬â€ el.value is still read fresh every
 // call (so live slider changes still apply instantly), only the expensive
 // getElementById traversal is removed from the hot path.
 let _elSizeControl, _elFlowControl, _elOpacityControl, _elMinSize, _elMinFlow, _elTaperMode, _elStartTaper, _elEndTaper;
@@ -3361,18 +3546,18 @@ function _getStartTaper(){ if(_getTaperMode()!=='percentage') return 0; if(_elSt
 function _getEndTaper(){ if(_getTaperMode()!=='percentage') return 0; if(_elEndTaper===undefined) _elEndTaper=document.getElementById('ts-end-taper'); return _elEndTaper?(+_elEndTaper.value/100):0; }
 function _getPressureCurve(setting){ const el=document.getElementById('ts-'+setting+'-pressure-curve'); const mode=el?el.value:'linear'; if(mode==='custom'){const custom=window._tsCustomPressureCurves&&window._tsCustomPressureCurves[setting];return custom||'linear';} return mode; }
 
-// Pressure curve — the Tool Settings panel draws a Linear/Soft/Hard/S-curve preview
+// Pressure curve Ã¢â‚¬â€ the Tool Settings panel draws a Linear/Soft/Hard/S-curve preview
 // (see brush-presets.js) using these exact control points, in "plot space" where
 // x = input pressure (0..1) and y is canvas-style position: y=0 is the TOP of the
 // preview (= max size output) and y=1 is the BOTTOM (= min size output). Both files
 // share this same table so the curve you see is exactly the curve that's applied.
-//   linear — input maps straight through, no remapping.
-//   soft   — reaches near-full size quickly, then flattens (more size early).
-//   hard   — stays thin through most of the pressure range, only ramping up to
+//   linear Ã¢â‚¬â€ input maps straight through, no remapping.
+//   soft   Ã¢â‚¬â€ reaches near-full size quickly, then flattens (more size early).
+//   hard   Ã¢â‚¬â€ stays thin through most of the pressure range, only ramping up to
 //            full size near max pressure. THIS is what makes thin/light-pressure
 //            strokes reachable on devices whose lightest reported touch is still
 //            a fairly high raw pressure value.
-//   s      — gentle at both ends, steeper through the middle.
+//   s      Ã¢â‚¬â€ gentle at both ends, steeper through the middle.
 const PRESSURE_CURVES = {
   linear:[[0,1],[1,0]],
   soft:[[0,1],[0.3,0.55],[0.7,0.2],[1,0]],
@@ -3407,7 +3592,7 @@ function _evalPressureCurveY(curveKey, x){
   }
   return _bezierPointAt(pts,(lo+hi)/2)[1];
 }
-// Apply the user-selected pressure curve (Tool Settings → Pressure Curve).
+// Apply the user-selected pressure curve (Tool Settings Ã¢â€ â€™ Pressure Curve).
 // Falls back to true linear (identity) when none is selected, so default
 // behaviour for users who never touch this control is unchanged.
 function _applyPressureCurve(p,curveKey='linear'){
@@ -3426,7 +3611,7 @@ function _resolveControl(ctrl, e){
     case 'pressure': {
       // Apply exponential smoothing to reduce digitizer jitter.
       _smoothedPressure = _smoothedPressure*(1-_PRESSURE_SMOOTH) + currentPressure*_PRESSURE_SMOOTH;
-      // No artificial floor here — let true light pressure reach true low
+      // No artificial floor here Ã¢â‚¬â€ let true light pressure reach true low
       // influence; the final dab radius is still floored to a 1px-diameter
       // minimum further downstream, so the mark never fully disappears.
       return Math.max(0,Math.min(1,_smoothedPressure));
@@ -3437,13 +3622,13 @@ function _resolveControl(ctrl, e){
 
 // Return effective brush radius and alpha for the current dab, factoring in
 // Pen Pressure when the Tool Settings panel has it selected (the only
-// dynamics control supported — mouse/trackpad always have
+// dynamics control supported Ã¢â‚¬â€ mouse/trackpad always have
 // currentPressure===1.0, so they are unaffected).
-// Pure (no side effects) so callers can "peek" at the current radius — e.g.
+// Pure (no side effects) so callers can "peek" at the current radius Ã¢â‚¬â€ e.g.
 // to compute dab spacing.
 function _computeEffectiveParams(e){
   const baseSize=getBrushSize();
-  // Flow (brushFlow) controls per-dab alpha — how fast paint builds up within
+  // Flow (brushFlow) controls per-dab alpha Ã¢â‚¬â€ how fast paint builds up within
   // a stroke. brushOpacity is applied at the stroke level (see _commitStrokeCanvas).
   let baseAlpha=brushFlow;
   const isPenStroke = _isDrawingWithPen;
@@ -3459,7 +3644,7 @@ function _computeEffectiveParams(e){
   // (two separate calls into _resolveControl, each advancing the shared
   // pressure-smoothing EMA by its own step) made Opacity settle one extra
   // EMA step further toward the live reading than Size within the very
-  // same dab — a small but constant phase/lag mismatch between width and
+  // same dab Ã¢â‚¬â€ a small but constant phase/lag mismatch between width and
   // darkness. Once dabs overlap at tight spacing that mismatch shows up as
   // a periodic "twisted rope" / bead pattern along the stroke instead of a
   // smooth taper (this is the "visible circles" look vs. TVPaint's smooth
@@ -3503,7 +3688,7 @@ function _computeEffectiveParams(e){
     }
   }
 
-  // Opacity dynamics — applied per dab, in real time, exactly like Size
+  // Opacity dynamics Ã¢â‚¬â€ applied per dab, in real time, exactly like Size
   // above: each dab's alpha is scaled by its own instantaneous pressure
   // reading right now, so a light touch paints light immediately and a
   // hard press paints dark immediately, live, while the stroke is still
@@ -3520,12 +3705,12 @@ function _computeEffectiveParams(e){
   // Absolute visibility floor: percentage-based min-size dynamics (above)
   // can shrink r to near-zero for an already-thin base brush (e.g. a 1.2px
   // brush with the default 5% min-size + light pressure could compute
-  // r≈0.03px) — at that scale a dab is essentially invisible no matter the
+  // rÃ¢â€°Ë†0.03px) Ã¢â‚¬â€ at that scale a dab is essentially invisible no matter the
   // rendering mode, forcing users to mash full pressure just to see
   // anything. Floor the PRESSURE-DRIVEN radius at 0.5px (1px diameter) so a
   // thin brush stays visibly paintable across its whole pressure range.
   // The deliberate stroke-start taper below is applied AFTER this floor and
-  // is allowed to go thinner than it — that's the intentional tapered point
+  // is allowed to go thinner than it Ã¢â‚¬â€ that's the intentional tapered point
   // at the very tip of a stroke, not an accidental disappearance.
   // Absolute visibility floor -- LOWERED from 0.5px radius (1px diameter)
   // to 0.1px radius (0.2px diameter). The old 0.5px floor silently
@@ -3540,17 +3725,17 @@ function _computeEffectiveParams(e){
   // tip instead of being the thing that defines how thin "thin" can be.
   r=Math.max(0.1,r);
 
-  // Stroke-start taper: DISABLED per request — every dab now draws at its
+  // Stroke-start taper: DISABLED per request Ã¢â‚¬â€ every dab now draws at its
   // full computed width/alpha from the very first point of the stroke, no
   // ease-in from a point. (Previously this fixed-distance ramp kept making
   // large brushes look like they were "still growing" for a big chunk of
-  // any normal-length stroke — see taper history above.) _strokeTaperFactor
+  // any normal-length stroke Ã¢â‚¬â€ see taper history above.) _strokeTaperFactor
   // is left defined but unused, so this can be re-enabled by restoring the
   // line below if a tapered start is wanted again later.
 
   // Only ease ALPHA with the taper in AA mode. AA-off (pencil/pixelated)
   // mode is meant to be a flat, solid, hard-edged stamp with no partial
-  // alpha anywhere — fading opacity in at the tip would put in-between
+  // alpha anywhere Ã¢â‚¬â€ fading opacity in at the tip would put in-between
   // (non-solid) colors back in, exactly the gradient the pixelated mode is
   // supposed to avoid. In AA-off mode the taper is carried entirely by
   // width (r), same as a real pencil point narrowing rather than fading.
@@ -3560,7 +3745,7 @@ function _computeEffectiveParams(e){
   // opacity/flow and pressure dynamics above (applied last so it works
   // together with, not instead of, those). Each dab still composites with
   // normal source-over/destination-out alpha blending (see _dabAA*/
-  // _dabAliased), so lower density doesn't cap final coverage — it just
+  // _dabAliased), so lower density doesn't cap final coverage Ã¢â‚¬â€ it just
   // means more overlapping dabs/strokes are needed to reach solid paint,
   // which is what gives smooth, artifact-free accumulation rather than a
   // hard ceiling or banding.
@@ -3570,7 +3755,7 @@ function _computeEffectiveParams(e){
   // Airbrush-only: dabs are placed ~5x more densely than a normal brush
   // (see _AIRBRUSH_SPACING_FRAC in _strokeSegment/_stampQuadCurve), so each
   // individual dab needs to be proportionally fainter to keep the overall
-  // paint-buildup rate similar to before — otherwise the denser spacing
+  // paint-buildup rate similar to before Ã¢â‚¬â€ otherwise the denser spacing
   // alone would make the airbrush deposit color much faster than its
   // Flow/Opacity settings intend. This keeps user Flow/Opacity/pressure
   // behavior fully intact (it scales the already-computed alpha, doesn't
@@ -3588,7 +3773,7 @@ function _getEffectiveBrushParams(e){
 
 // Returns the pressure-scaled radius for spacing calculations ONLY.
 // Excludes taper and the visibility floor so the step size always tracks the
-// actual rendered dab size — matching CSP's behaviour where spacing is always
+// actual rendered dab size Ã¢â‚¬â€ matching CSP's behaviour where spacing is always
 // relative to the current effective brush diameter, not the base size.
 function _computeSpacingRadius(e, interpolatedPressure){
   const baseSize = getBrushSize();
@@ -3650,14 +3835,14 @@ window._setBrushTipShape=function(roundness,flipX,flipY){
   _stampCache.clear();
 };
 // Many exported tip images (including the morrowshore.com ABR-extractor's
-// PNGs) are plain OPAQUE grayscale pictures — a white shape on a black
-// background — with NO real transparency at all (every pixel's alpha is
+// PNGs) are plain OPAQUE grayscale pictures Ã¢â‚¬â€ a white shape on a black
+// background Ã¢â‚¬â€ with NO real transparency at all (every pixel's alpha is
 // 255). The GPU stamp path (_buildTipStamp) masks purely off the ALPHA
 // channel via destination-in, so a flat-alpha image like that produces no
 // masking whatsoever: every dab came out as a solid filled rectangle (the
 // tip's bounding box), not the tip's actual silhouette.
 // Fix: whenever a newly-set tip canvas has essentially no alpha variation,
-// synthesize real alpha from luminance instead — white pixels (the painted
+// synthesize real alpha from luminance instead Ã¢â‚¬â€ white pixels (the painted
 // shape) become opaque, black pixels (background) become transparent. This
 // matches the same "white = paint" convention _buildAAStamp's CPU path
 // already assumes for the luminance factor, so both renderers agree, and a
@@ -3669,12 +3854,12 @@ function _normalizeTipAlpha(canvas){
   const w=canvas.width, h=canvas.height;
   const normalizeStart=performance.now(),c2d=canvas.getContext('2d',{willReadFrequently:true}),readStart=performance.now();
   let id;
-  try{ id=c2d.getImageData(0,0,w,h);if(window.TipReadbackExperiment)window.TipReadbackExperiment.record('tip-normalization-read',{width:w,height:h,duration:performance.now()-readStart,totalDuration:performance.now()-normalizeStart}); }catch(e){ return canvas; } // tainted canvas (cross-origin) — leave as-is
+  try{ id=c2d.getImageData(0,0,w,h);if(window.TipReadbackExperiment)window.TipReadbackExperiment.record('tip-normalization-read',{width:w,height:h,duration:performance.now()-readStart,totalDuration:performance.now()-normalizeStart}); }catch(e){ return canvas; } // tainted canvas (cross-origin) Ã¢â‚¬â€ leave as-is
   const d=id.data;
   let minA=255,maxA=0;
   for(let i=3;i<d.length;i+=4){ const a=d[i]; if(a<minA)minA=a; if(a>maxA)maxA=a; }
   // Real transparency already present (e.g. a proper alpha-masked tip, or
-  // this function already having run on it) — leave it untouched.
+  // this function already having run on it) Ã¢â‚¬â€ leave it untouched.
   if(maxA-minA>4){_lastNormalizedTipPixels={data:new Uint8ClampedArray(d),w,h};return canvas;}
   for(let i=0;i<d.length;i+=4){
     const lum=(d[i]+d[i+1]+d[i+2])/3;
@@ -3722,12 +3907,12 @@ window.clearBrushTexture=function(){
 // Neither activeC nor canvasArea ever had CSS touch-action set, so every
 // pen/touch pointerdown/move had to pass through the browser's built-in
 // gesture-recognition delay (deciding "is this a scroll/pinch?") before
-// the event even reached these listeners — a real, measurable chunk of
+// the event even reached these listeners Ã¢â‚¬â€ a real, measurable chunk of
 // perceived latency stacked on top of anything JS-side, and worst on fast
 // strokes where every extra millisecond of dispatch delay widens the gap
 // between the pen tip and the rendered line. preventDefault() in the
 // handlers below stops the browser from ACTING on a gesture, but does
-// nothing about this up-front recognition delay — only the CSS property
+// nothing about this up-front recognition delay Ã¢â‚¬â€ only the CSS property
 // does. Setting it directly here (rather than requiring a CSS file edit)
 // guarantees the canvas always gets the fast, non-scrolling pointer
 // dispatch path regardless of how the surrounding page is styled.
@@ -3767,15 +3952,15 @@ function _sampleVisibleCanvasColor(e){
 // warm stabilizer/pressure/velocity state and a hard "snap-in" look.
 //
 // Fix: keep this exact handler (unchanged) bound to activeC for the
-// normal in-canvas case, but ALSO invoke it — via _brushPointerDownOutside
-// below — when the press lands on canvas-area outside activeC itself. The
+// normal in-canvas case, but ALSO invoke it Ã¢â‚¬â€ via _brushPointerDownOutside
+// below Ã¢â‚¬â€ when the press lands on canvas-area outside activeC itself. The
 // handler doesn't need to know which path it came from: getPos() maps
 // through canvas-area's rect using plain client coordinates with no
 // clamping, so it already produces correct (possibly negative / >CW,CH)
 // canvas-space coordinates for an outside point. activeC.setPointerCapture
 // is likewise valid to call even though the pointerdown event's target
-// wasn't activeC — capture only requires an active pointer, not that the
-// captor be the original target — and once captured, every subsequent
+// wasn't activeC Ã¢â‚¬â€ capture only requires an active pointer, not that the
+// captor be the original target Ã¢â‚¬â€ and once captured, every subsequent
 // pointermove/up/cancel event is redirected to activeC's own listeners
 // automatically, so no other code needs to change.
 //
@@ -3786,7 +3971,7 @@ function _sampleVisibleCanvasColor(e){
 // an out-of-bounds stamp is a guaranteed no-op rather than a visible mark
 // or an out-of-canvas raster write. As the pointer moves and eventually
 // crosses into the canvas, dab-walking naturally starts producing visible
-// pixels exactly where the stroke path enters the canvas — no special
+// pixels exactly where the stroke path enters the canvas Ã¢â‚¬â€ no special
 // "entry" case needed, no gap, no restart.
 function _brushPointerDown(e){
   const diagnosticPointerdownEntry=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
@@ -3842,7 +4027,8 @@ function _brushPointerDown(e){
   if(window.CustomFirstDabTrace){window.CustomFirstDabTrace.sample({source:'pointerdown',eventTime:e.timeStamp,x:p.x,y:p.y,pressure:currentPressure});window.CustomFirstDabTrace.event('first-pointer-sample-processed',{x:p.x,y:p.y});}
   diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
   _rotationPrevValid=false;
-  _resetSmoothing(p.x,p.y,e.timeStamp||performance.now());
+  _stabilizerAccelerateToCompletion();
+  _resetStabilization(p.x,p.y,e.timeStamp||performance.now());
   _updateVelocity(p.x, p.y, e.timeStamp);
   if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('pressureAndStateInitialization',diagnosticSetupStart);
   if(latencyProfiler)latencyProfiler.measure('pointer-and-dynamics-init',inputStateStart);
@@ -3899,6 +4085,7 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
   if(latencyProfiler)latencyProfiler.measure('selection-scope-setup',stageStart,{active:!!window.SelectionScope,captured:!!_selectionScopeBase,getImageData:!!_selectionScopeBase});
   diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
   drawing=true;lx=p.x;ly=p.y;
+  _baselineConditionerReset(_baselineSampleFromEvent(e,p,currentPressure));
   _autoHardRoundPrevDab=null;
   _resetCurve(p.x,p.y,currentPressure);
   if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.event('spacing-path-initialization-complete',{carryOver:_strokeSegCarryOver});
@@ -3933,13 +4120,13 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
 activeC.addEventListener('pointerdown',_brushPointerDown);
 // Lightweight outside-canvas entry point. Only brush/eraser strokes are
 // eligible to start off-canvas (fill/line/curve/eyedropper keep their
-// existing on-canvas-only behavior — nothing about them regresses since
+// existing on-canvas-only behavior Ã¢â‚¬â€ nothing about them regresses since
 // this listener simply never calls through for those tools). Interactive
 // controls that happen to live inside canvas-area (resize-canvas fields,
 // the camera-view activation button, etc.) are excluded so this never
-// hijacks a normal UI click; anything else in the viewport — empty
+// hijacks a normal UI click; anything else in the viewport Ã¢â‚¬â€ empty
 // panning margin, the guide/transform overlay canvases, canvas-area
-// itself — is treated as "outside the canvas" and handed to the exact
+// itself Ã¢â‚¬â€ is treated as "outside the canvas" and handed to the exact
 // same stroke-start logic used for an on-canvas press.
 canvasArea.addEventListener('pointerdown',e=>{
   if(e.target===activeC) return; // already handled by the listener above
@@ -4022,7 +4209,7 @@ function _commitCurveTool(e){
 window.cancelCurveTool=_cancelCurveTool;
 // _handleMoveEvent: shared by pointermove + pointerrawupdate.
 // pointerrawupdate fires at the full OS/Windows Ink sampling rate (up to 1000Hz)
-// before the browser throttles events to display refresh rate — giving every
+// before the browser throttles events to display refresh rate Ã¢â‚¬â€ giving every
 // real pressure value the tablet digitizer reports, not just the surviving ones.
 function _handleMoveEvent(e){
   if(tool==='curve'&&_curveToolGesture&&_curveToolGesture.phase==='bending'){
@@ -4056,23 +4243,20 @@ function _handleMoveEvent(e){
     const newPressure = _getPressure(ev);
     const raw=getPos(ev);
     if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.sample({source:e.type,eventTime:ev.timeStamp,x:raw.x,y:raw.y,pressure:newPressure,coalescedCount:events.length});
-    const t=ev.timeStamp || performance.now();
-    const p=_smoothPoint(raw.x,raw.y,t);
-    _updateVelocity(p.x, p.y, t);
-    if(window._brushAirbrush&&Math.hypot(p.x-lx,p.y-ly)>0.01)_airbrushLastMovementTime=performance.now();
-    // Curve (not straight-line) interpolation between samples — see
-    // _curveAddPoint/_stampQuadCurve above. Pressure is carried through via
-    // the rolling curve buffer's own midpoint averaging, same intent as the
-    // old per-segment pressure interpolation.
-    _curveAddPoint(p.x,p.y,newPressure,ev);
-    currentPressure = newPressure;
-    lx=p.x;ly=p.y;
-    _lastPointerEvent=ev;
+    const conditionedSamples=_baselineConditionerPush(_baselineSampleFromEvent(ev,raw,newPressure));
+    for(const conditioned of conditionedSamples){
+      _stabilizerSetSampleContext(conditioned.pressure,conditioned.event);
+      const p=_stabilizePoint(conditioned.x,conditioned.y,conditioned.time);
+      _updateVelocity(p.x,p.y,conditioned.time);
+      if(window._brushAirbrush&&Math.hypot(p.x-lx,p.y-ly)>0.01)_airbrushLastMovementTime=performance.now();
+      _curveAddPoint(p.x,p.y,conditioned.pressure,conditioned.event);
+      currentPressure=conditioned.pressure;lx=p.x;ly=p.y;_lastPointerEvent=conditioned.event;
+    }
   }
   _scheduleRecomposite();
 }
 // pointerrawupdate (Chromium 77+ / Windows Ink API) fires IN ADDITION TO
-// pointermove for the same physical pen movement — it does not replace it.
+// pointermove for the same physical pen movement Ã¢â‚¬â€ it does not replace it.
 // Wiring both to draw the same stroke caused every segment to be stamped
 // twice from two independent coordinate streams sampled at different times,
 // producing a visible forked/doubled line. Fix: when pointerrawupdate is
@@ -4121,12 +4305,35 @@ function _pointerEndStroke(e){
     if(_inStroke){_inStroke=false;_commitStrokeCanvas();}
     _cleanupErasedSmartOwnership();_clearLinePreviewCanvas(_strokeCanvas,_strokeCtx);_clearLinePreviewCanvas(_texturedStrokeCanvas,_texturedStrokeCtx);_clearLinePreviewCanvas(_strokePreviewCanvas,_strokePreviewCtx);lineStart=null;_lineDragging=false;_linePressureSamples=[];_lineGesture=null;_linePreviewBounds=null;_linePreviewPreviousEndpoint=null;saveActiveToKey();
   }else if(drawing){
+    const finalRaw=getPos(e);
+    const finalConditioned=_baselineConditionerPush(_baselineSampleFromEvent(e,finalRaw,currentPressure),{force:true});
+    if(_stabilizationAmount()>0&&_stabilizerActive){
+      drawing=false;
+      _stabilizerFinalize(finalRaw.x,finalRaw.y,_stabilizerTargetPressure,e,()=>{
+        _flushCurveTail(_lastPointerEvent||e);
+        _flushStrokeTail();
+        if(_inStroke){_inStroke=false;_commitStrokeCanvas();}
+        _restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();
+        _finalizePointerEndStroke(e);
+      });
+      return;
+    }
     drawing=false;
+    for(const conditioned of finalConditioned){
+      _stabilizerSetSampleContext(conditioned.pressure,e);
+      const finalPoint=_stabilizePoint(conditioned.x,conditioned.y,conditioned.time);
+      _updateVelocity(finalPoint.x,finalPoint.y,conditioned.time);
+      _curveAddPoint(finalPoint.x,finalPoint.y,conditioned.pressure,e);
+      currentPressure=conditioned.pressure;lx=finalPoint.x;ly=finalPoint.y;_lastPointerEvent=e;
+    }
     _flushCurveTail(e);
     _flushStrokeTail();
     if(_inStroke){_inStroke=false;_commitStrokeCanvas();}
     _restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();
   }
+  _finalizePointerEndStroke(e);
+}
+function _finalizePointerEndStroke(e){
   _endColorEraserStroke();
   _completePostStrokePresentation(_strokeOwnerLayer,_strokeOwnerFrame);
   const latencyProfiler=_brushPerf();if(latencyProfiler)latencyProfiler.finishStroke({tool,sourceLayer:_strokeOwnerLayer,sourceFrame:_strokeOwnerFrame});
@@ -4138,6 +4345,7 @@ function _pointerEndStroke(e){
   if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.endStroke();
   if(window.CustomTipCacheTrace)window.CustomTipCacheTrace.strokeEnd();
   if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.strokeComplete();
+  _baselineConditionerFinish(false);
   _pendingDabs.length=0;
   _curveP0=null;_curveP1=null;
   _strokeSegCarryOver=0;

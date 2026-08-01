@@ -177,6 +177,13 @@ function updateBlendModeUI(){
   }
   if(scatterEnabledEl) scatterEnabledEl.addEventListener('input',syncScatter);
   syncScatter();
+
+  // One 0-100 control drives the complete stabilization stage. Zero is an
+  // exact raw-input bypass; all internal response values are derived from
+  // this normalized amount by brush-engine.js.
+  bindRange('ts-stabilization','ts-stabilization-val','',v=>{window._tsStabilization=v/100;});
+  const stabilizationEl=document.getElementById('ts-stabilization');
+  window._tsStabilization=stabilizationEl?(+stabilizationEl.value/100):0;
   bindRange('ts-min-flow','ts-min-flow-val','%');
   function syncDynamicsMinimums(){
     const sizeControl=document.getElementById('ts-size-control');
@@ -628,7 +635,7 @@ function updateBlendModeUI(){
   const dockedSimpleSettings=document.getElementById('brush-tool-settings-content');
   const basicSettings=document.querySelector('#tool-settings-body .ts-ps-panel[data-panel="basic"] .ts-section-body');
   if(dockedSimpleSettings&&basicSettings){
-    ['blend-mode','eraser-mode','size','opacity','flow','hardness','spacing','aa'].forEach(key=>{
+    ['blend-mode','eraser-mode','size','opacity','flow','hardness','spacing','stabilization','aa'].forEach(key=>{
       const field=basicSettings.querySelector(`.ts-field[data-eye="${key}"]`);
       if(field)dockedSimpleSettings.appendChild(field);
     });
@@ -1315,7 +1322,7 @@ function updateBlendModeUI(){
 // Preset get/apply
 function getToolPreset(options){
   const includeImages=!options||options.includeImages!==false;
-  const ids=['ts-size','ts-opacity','ts-flow','ts-hardness','ts-spacing','ts-spacing-mode','ts-rotation-mode','ts-angle','ts-angle-jitter','ts-tip-roundness','ts-round-jitter','ts-tip-min-roundness','ts-tip-flip-x','ts-tip-flip-y','ts-scatter-enabled','ts-scatter-amount','ts-scatter-count','ts-airbrush','ts-airbrush-rate','ts-continuous-spraying',
+  const ids=['ts-size','ts-opacity','ts-flow','ts-hardness','ts-spacing','ts-spacing-mode','ts-rotation-mode','ts-angle','ts-angle-jitter','ts-tip-roundness','ts-round-jitter','ts-tip-min-roundness','ts-tip-flip-x','ts-tip-flip-y','ts-scatter-enabled','ts-scatter-amount','ts-scatter-count','ts-airbrush','ts-airbrush-rate','ts-continuous-spraying','ts-stabilization',
     'ts-min-size','ts-size-jitter','ts-taper-mode','ts-start-taper','ts-end-taper','ts-size-control','ts-size-pressure-curve','ts-flow-control','ts-flow-pressure-curve','ts-opacity-control','ts-opacity-pressure-curve','ts-min-flow',
     'ts-texture-scale','ts-texture-strength','ts-texture-buildup','ts-texture-brightness','ts-texture-contrast','ts-texture-invert','ts-texture-each','ts-texture-mode'];
   const out={};
@@ -1471,6 +1478,7 @@ function applyToolPreset(json){
     'ts-scatter-enabled':false,
     'ts-scatter-amount':0,
     'ts-scatter-count':1,
+    'ts-stabilization':0,
     'ts-aa':true,
     'ts-aa-mode':'medium',
     'ts-size-control':'pressure',
@@ -1535,6 +1543,10 @@ function applyToolPreset(json){
     delete normalized['ts-density'];
     const mode=normalized['ts-spacing-mode'];
     normalized['ts-spacing-mode']=(mode==='velocity'||mode==='pen-pressure')?mode:'fixed';
+    if('ts-stabilization' in normalized){
+      const stab=Number(normalized['ts-stabilization']);
+      normalized['ts-stabilization']=Number.isFinite(stab)?Math.max(0,Math.min(100,stab)):0;
+    }
     return normalized;
   }
   const builtinBrushSettings=overrides=>Object.assign({},DEFAULT_BUILTIN_BRUSH_SETTINGS,{'ts-pressure-curves':{}},normalizeBrushSettings(overrides));
@@ -2699,6 +2711,7 @@ function applyToolPreset(json){
     if(!('ts-scatter-enabled' in s)) s['ts-scatter-enabled']=false;
     if(!('ts-scatter-amount' in s)) s['ts-scatter-amount']=0;
     if(!('ts-scatter-count' in s)) s['ts-scatter-count']=1;
+    if(!('ts-stabilization' in s)) s['ts-stabilization']=0;
     window._tsScatterBothAxes=s['ts-scatter-both-axes']!==false;
     window.brushTipRoundness=Math.max(0.01,Math.min(1,(s['ts-tip-roundness']??100)/100));
     window.brushTipMinimumRoundness=Math.max(0,Math.min(1,(s['ts-tip-min-roundness']??0)/100));
