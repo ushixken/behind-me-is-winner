@@ -427,7 +427,7 @@ function applyTransform(){
   // TVPaint behaviour: nearest-neighbour (crisp) once zoomed in enough,
   // bilinear (soft) below that. At exact/high zoom this preserves the true
   // hard-edged pixels instead of applying a second display blur.
-  const useNN=zoom>=1;
+  const useNN=zoom>=1.5;
   const transformC=document.getElementById('transform-canvas');
   [displayC,onionC,activeC,transformC].forEach(c=>{
     c.style.imageRendering=useNN?'pixelated':'auto';
