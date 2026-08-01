@@ -427,12 +427,17 @@ function applyTransform(){
   // TVPaint behaviour: nearest-neighbour (crisp) once zoomed in enough,
   // bilinear (soft) below that. At exact/high zoom this preserves the true
   // hard-edged pixels instead of applying a second display blur.
-  const useNN=zoom>=2;
+  const useNN=zoom>=1;
   const transformC=document.getElementById('transform-canvas');
   [displayC,onionC,activeC,transformC].forEach(c=>{
     c.style.imageRendering=useNN?'pixelated':'auto';
   });
+  const previousDisplayBlur=_displayBlurPx;
   _updateDisplayBlur();
+  // The low-zoom prefilter is baked into displayC, not applied by CSS.
+  // Rebuild it as soon as zoom changes the required blur; otherwise the
+  // blurred 10% bitmap stays cached until another brush dab recomposites it.
+  if(Math.abs(previousDisplayBlur-_displayBlurPx)>1e-6)refreshDisplayComposite();
   _syncZoomStatus();
   window.dispatchEvent(new Event('canvas-view-transform-changed'));
 }
