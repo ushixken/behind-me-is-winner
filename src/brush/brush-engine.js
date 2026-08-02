@@ -2460,11 +2460,15 @@ function _stabilizerStep(now){
   if(!_stabilizerAdvance(dt,now))_stabilizerSchedule();
 }
 function _stabilizerFinalize(x,y,pressure,event,cb){
+  const ownerSession=_activeStrokeSession;
   _stabilizerTargetX=x;_stabilizerTargetY=y;
   _stabilizerTargetPressure=pressure;
   _stabilizerEvent=event||_stabilizerEvent;
   _stabilizerFinishing=true;
-  _stabilizerFinalizeCB=cb;
+  _stabilizerFinalizeCB=()=>{
+    if(ownerSession!==_activeStrokeSession){_traceStrokeLifecycle('stabilizer-finalize-rejected',{ownerSession,reason:'obsolete-session'});return;}
+    cb();
+  };
   _stabilizerLastAdvanceT=performance.now();
   _stabilizerSchedule();
 }
@@ -2479,7 +2483,16 @@ function _stabilizerAccelerateToCompletion(){
     if(_stabilizerAdvance(1/30,performance.now()))return;
     iterations++;
   }
-  _stabilizerCancel();
+  // A destructive edit or artwork switch is a synchronous ownership barrier.
+  // If convergence still has a sub-pixel remainder, finish at the true input
+  // endpoint and run the existing commit callback before that edit proceeds.
+  if(_stabilizerActive&&_stabilizerFinishing&&_stabilizerFinalizeCB){
+    _stabilizerX=_stabilizerTargetX;_stabilizerY=_stabilizerTargetY;
+    _stabilizerEmit(_stabilizerX,_stabilizerY,performance.now());
+    const cb=_stabilizerFinalizeCB;
+    _stabilizerFinalizeCB=null;_stabilizerFinishing=false;_stabilizerActive=false;
+    cb();
+  }
 }
 let _rotationPrevX=0,_rotationPrevY=0,_rotationPrevValid=false,_rotationDirection=0;
 function _resolveDabRotation(x,y){
@@ -3493,6 +3506,13 @@ function _endStroke(pointerId){
   _strokeOwnerLayer=-1;_strokeOwnerFrame=-1;
 }
 window.finishActiveDrawingBeforeArtworkChange=function(nextLayer,nextFrame){
+  // Pointer-up stabilization catch-up still owns an uncommitted stroke even
+  // though `drawing` is already false. Resolve that session synchronously so
+  // a following clear/switch cannot be followed by a delayed old commit.
+  if(_stabilizerFinishing&&_stabilizerFinalizeCB){
+    _traceStrokeLifecycle('artwork-change-finishes-stabilizer',{destinationLayer:nextLayer,destinationFrame:nextFrame});
+    _stabilizerAccelerateToCompletion();
+  }
   const active=drawing||_inStroke||lineStart||_colorEraserOwnership;
   if(!active){
     _recompGeneration++;if(_recompRAFHandle)cancelAnimationFrame(_recompRAFHandle);_recompRAFHandle=0;_recompRAF=false;_frameDirty=null;_strokeDirty=null;

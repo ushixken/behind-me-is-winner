@@ -14,9 +14,16 @@
   let mipPipeline=null,presentPipeline=null,sampler=null,uniformBuffer=null,presentBindGroup=null,presentBundle=null;
   const uniformValues=new Float32Array(12);
   let mipResources=[];
-  let resizeObserver=null,uploadRaf=0,renderPending=false,pendingRenderReason='camera',canvasConfigured=false;
-  let artworkRevision=0,uploadedArtworkRevision=0,uploadGeneration=0,lastRenderedUploadGeneration=-1;
-  const measurements={artworkInvalidations:0,coalescedArtworkInvalidations:0,uploads:0,uploadBytes:0,mipmapRegenerations:0,textureRecreations:0,pipelineRecreations:0,bindGroupRecreations:0,textureViewRecreations:0,renderBundleRecreations:0,renders:0,cameraOnlyRenders:0,totalUploadMs:0,totalRenderMs:0,totalCameraOnlyRenderMs:0,lastUploadMs:0,lastRenderMs:0,lastCameraOnlyRenderMs:0,lastError:''};
+  let resizeObserver=null,uploadRaf=0,renderPending=false,pendingRenderReason='camera',pendingRenderRevision=0,canvasConfigured=false;
+  let artworkRevision=0,uploadedArtworkRevision=0,presentedArtworkRevision=0,uploadGeneration=0,lastRenderedUploadGeneration=-1;
+  const measurements={artworkInvalidations:0,coalescedArtworkInvalidations:0,obsoleteUploadsRejected:0,obsoleteRendersRejected:0,uploads:0,uploadBytes:0,mipmapRegenerations:0,textureRecreations:0,pipelineRecreations:0,bindGroupRecreations:0,textureViewRecreations:0,renderBundleRecreations:0,renders:0,cameraOnlyRenders:0,totalUploadMs:0,totalRenderMs:0,totalCameraOnlyRenderMs:0,lastUploadMs:0,lastRenderMs:0,lastCameraOnlyRenderMs:0,lastError:''};
+
+  function traceRevision(event,detail){
+    if(!window.debugDisplayBackendRevisions)return;
+    const entry=Object.assign({event,time:performance.now(),artworkRevision,uploadedArtworkRevision,presentedArtworkRevision},detail||{});
+    const trace=window.__displayBackendRevisionTrace||(window.__displayBackendRevisionTrace=[]);
+    trace.push(entry);if(trace.length>500)trace.shift();console.debug('[DisplayBackend revision]',entry);
+  }
 
   const mipShader=`
     @group(0) @binding(0) var sourceSampler: sampler;
@@ -50,24 +57,27 @@
     }
   `;
 
-  function scheduleRender(reason='camera'){
+  function scheduleRender(reason='camera',revision=uploadedArtworkRevision){
     if(active!=='webgpu')return;
-    if(renderPending){if(reason==='artwork'||(reason==='resize'&&pendingRenderReason==='camera'))pendingRenderReason=reason;return;}
-    pendingRenderReason=reason;renderPending=true;
-    requestAnimationFrame(()=>{const nextReason=pendingRenderReason;renderPending=false;pendingRenderReason='camera';render(nextReason);});
+    if(renderPending){
+      if(reason==='artwork'||(reason==='resize'&&pendingRenderReason==='camera'))pendingRenderReason=reason;
+      pendingRenderRevision=Math.max(pendingRenderRevision,revision);return;
+    }
+    pendingRenderReason=reason;pendingRenderRevision=revision;renderPending=true;
+    requestAnimationFrame(()=>{const nextReason=pendingRenderReason,nextRevision=pendingRenderRevision;renderPending=false;pendingRenderReason='camera';pendingRenderRevision=0;render(nextReason,nextRevision);});
   }
   function flushArtworkUpload(){
     uploadRaf=0;
     if(active!=='webgpu'||uploadedArtworkRevision===artworkRevision)return;
     const revisionToUpload=artworkRevision;
-    uploadComposite(sourceCanvas);
-    uploadedArtworkRevision=revisionToUpload;
-    // An artwork mutation that arrives while this upload is being prepared
-    // must produce another upload instead of being lost behind a pending flag.
+    if(!uploadComposite(sourceCanvas,revisionToUpload)){
+      if(uploadedArtworkRevision!==artworkRevision)uploadRaf=requestAnimationFrame(flushArtworkUpload);
+      return;
+    }
     if(uploadedArtworkRevision!==artworkRevision)uploadRaf=requestAnimationFrame(flushArtworkUpload);
   }
   function scheduleUpload(){
-    artworkRevision++;measurements.artworkInvalidations++;
+    artworkRevision++;measurements.artworkInvalidations++;traceRevision('artwork-invalidated');
     if(active!=='webgpu')return;
     if(uploadRaf){measurements.coalescedArtworkInvalidations++;return;}
     uploadRaf=requestAnimationFrame(flushArtworkUpload);
@@ -144,12 +154,15 @@
     }
     device.queue.submit([encoder.finish()]);measurements.mipmapRegenerations++;
   }
-  function uploadComposite(canvas){
-    if(active!=='webgpu'||!device||!canvas||!canvas.width||!canvas.height)return;
+  function uploadComposite(canvas,revision=artworkRevision){
+    if(active!=='webgpu'||!device||!canvas||!canvas.width||!canvas.height)return false;
+    if(revision!==artworkRevision){measurements.obsoleteUploadsRejected++;traceRevision('upload-rejected',{revision});return false;}
     const start=performance.now();
     ensureSourceTexture(canvas.width,canvas.height);
+    if(revision!==artworkRevision){measurements.obsoleteUploadsRejected++;traceRevision('upload-rejected-before-copy',{revision});return false;}
     device.queue.copyExternalImageToTexture({source:canvas},{texture:sourceTexture,mipLevel:0,premultipliedAlpha:true},[canvas.width,canvas.height]);
-    generateMipmaps();uploadGeneration++;measurements.uploads++;measurements.uploadBytes+=canvas.width*canvas.height*4;measurements.lastUploadMs=performance.now()-start;measurements.totalUploadMs+=measurements.lastUploadMs;scheduleRender('artwork');
+    if(revision!==artworkRevision){measurements.obsoleteUploadsRejected++;traceRevision('upload-obsolete-after-copy',{revision});return false;}
+    generateMipmaps();uploadGeneration++;uploadedArtworkRevision=revision;measurements.uploads++;measurements.uploadBytes+=canvas.width*canvas.height*4;measurements.lastUploadMs=performance.now()-start;measurements.totalUploadMs+=measurements.lastUploadMs;traceRevision('upload-complete',{revision});scheduleRender('artwork',revision);return true;
   }
   function inverseViewMatrix(){
     const pivot=typeof getNavPivot==='function'?getNavPivot():{cx:0,cy:0};
@@ -158,8 +171,13 @@
     matrix.translateSelf(panX,panY);matrix.rotateSelf(rotation);matrix.scaleSelf(zoom,zoom);
     return matrix.inverse();
   }
-  function render(reason='camera'){
+  function render(reason='camera',revision=uploadedArtworkRevision){
     if(active!=='webgpu'||!device||!sourceTexture||!presentBindGroup)return;
+    if(uploadedArtworkRevision!==artworkRevision||revision!==uploadedArtworkRevision){
+      measurements.obsoleteRendersRejected++;traceRevision('render-rejected',{reason,revision});
+      if(uploadedArtworkRevision!==artworkRevision&&!uploadRaf)uploadRaf=requestAnimationFrame(flushArtworkUpload);
+      return;
+    }
     const start=performance.now(),cameraOnly=reason==='camera'&&uploadGeneration===lastRenderedUploadGeneration,inverse=inverseViewMatrix(),dpr=Math.max(1,window.devicePixelRatio||1);
     uniformValues[0]=inverse.a;uniformValues[1]=inverse.b;uniformValues[2]=inverse.c;uniformValues[3]=inverse.d;uniformValues[4]=inverse.e;uniformValues[5]=inverse.f;uniformValues[6]=gpuCanvas.width;uniformValues[7]=gpuCanvas.height;uniformValues[8]=sourceWidth;uniformValues[9]=sourceHeight;uniformValues[10]=dpr;uniformValues[11]=0;
     device.queue.writeBuffer(uniformBuffer,0,uniformValues);
@@ -170,7 +188,7 @@
     pass.executeBundles([presentBundle]);pass.end();device.queue.submit([encoder.finish()]);
     measurements.renders++;measurements.lastRenderMs=performance.now()-start;measurements.totalRenderMs+=measurements.lastRenderMs;
     if(cameraOnly){measurements.cameraOnlyRenders++;measurements.lastCameraOnlyRenderMs=measurements.lastRenderMs;measurements.totalCameraOnlyRenderMs+=measurements.lastRenderMs;}
-    lastRenderedUploadGeneration=uploadGeneration;
+    lastRenderedUploadGeneration=uploadGeneration;presentedArtworkRevision=revision;traceRevision('render-complete',{reason,revision});
   }
   function fallback(reason){
     requested='canvas2d';active='canvas2d';document.body.classList.remove('webgpu-presentation-active');gpuCanvas.hidden=true;
@@ -190,7 +208,7 @@
       if(requested!=='webgpu')return active;
       active='webgpu';gpuCanvas.hidden=false;document.body.classList.add('webgpu-presentation-active');
       if(window.ExperimentalDisplayBlur)window.ExperimentalDisplayBlur.set(false);
-      configureCanvas();artworkRevision++;measurements.artworkInvalidations++;uploadComposite(sourceCanvas);uploadedArtworkRevision=artworkRevision;return active;
+      configureCanvas();artworkRevision++;measurements.artworkInvalidations++;uploadComposite(sourceCanvas,artworkRevision);return active;
     }catch(error){fallback(error&&error.message||String(error));return active;}
   }
   function destroy(){
@@ -202,14 +220,14 @@
 
   function stats(){
     return Object.assign({
-      mode:active,supported:!!navigator.gpu,sourceWidth,sourceHeight,mipCount,dpr:window.devicePixelRatio||1,artworkRevision,uploadedArtworkRevision,
+      mode:active,supported:!!navigator.gpu,sourceWidth,sourceHeight,mipCount,dpr:window.devicePixelRatio||1,artworkRevision,uploadedArtworkRevision,presentedArtworkRevision,
       averageUploadTime:measurements.uploads?measurements.totalUploadMs/measurements.uploads:0,
       averageRenderTime:measurements.renders?measurements.totalRenderMs/measurements.renders:0,
       averageCameraOnlyRenderTime:measurements.cameraOnlyRenders?measurements.totalCameraOnlyRenderMs/measurements.cameraOnlyRenders:0
     },measurements);
   }
   function resetStats(){
-    Object.assign(measurements,{artworkInvalidations:0,coalescedArtworkInvalidations:0,uploads:0,uploadBytes:0,mipmapRegenerations:0,textureRecreations:0,pipelineRecreations:0,bindGroupRecreations:0,textureViewRecreations:0,renderBundleRecreations:0,renders:0,cameraOnlyRenders:0,totalUploadMs:0,totalRenderMs:0,totalCameraOnlyRenderMs:0,lastUploadMs:0,lastRenderMs:0,lastCameraOnlyRenderMs:0,lastError:''});
+    Object.assign(measurements,{artworkInvalidations:0,coalescedArtworkInvalidations:0,obsoleteUploadsRejected:0,obsoleteRendersRejected:0,uploads:0,uploadBytes:0,mipmapRegenerations:0,textureRecreations:0,pipelineRecreations:0,bindGroupRecreations:0,textureViewRecreations:0,renderBundleRecreations:0,renders:0,cameraOnlyRenders:0,totalUploadMs:0,totalRenderMs:0,totalCameraOnlyRenderMs:0,lastUploadMs:0,lastRenderMs:0,lastCameraOnlyRenderMs:0,lastError:''});
     return stats();
   }
   window.DisplayBackend={set:setBackend,get mode(){return active;},get requested(){return requested;},get supported(){return !!navigator.gpu;},initialize,resize:configureCanvas,uploadComposite,scheduleUpload,renderView(){scheduleRender('camera');},destroy,stats,resetStats};

@@ -588,7 +588,7 @@ document.getElementById('dd-cut').onclick=()=>{cutLayer(curLayer);closeAllDropdo
 document.getElementById('dd-copy').onclick=()=>{copyLayer(curLayer);closeAllDropdowns();};
 document.getElementById('dd-paste').onclick=()=>{pasteLayer(curLayer);closeAllDropdowns();};
 document.getElementById('dd-duplicate').onclick=()=>{duplicateLayer(curLayer);closeAllDropdowns();};
-function clearCurrentFrame(){if(window.CameraTimeline&&CameraTimeline.selected){CameraTimeline.handleShortcut('delete');return;}pushUndo();ensureKey();ctx.clearRect(0,0,CW,CH);if(typeof clearExtendedLayerFrame==='function')clearExtendedLayerFrame(curLayer,curFrame);if(typeof deleteStyleFrame==='function') deleteStyleFrame(curLayer,curFrame);saveActiveToKey();recomposite(curLayer,curFrame);}
+function clearCurrentFrame(){if(window.CameraTimeline&&CameraTimeline.selected){CameraTimeline.handleShortcut('delete');return;}if(typeof window.finishActiveDrawingBeforeArtworkChange==='function')window.finishActiveDrawingBeforeArtworkChange(curLayer,curFrame);pushUndo();ensureKey();ctx.clearRect(0,0,CW,CH);if(typeof clearExtendedLayerFrame==='function')clearExtendedLayerFrame(curLayer,curFrame);if(typeof deleteStyleFrame==='function') deleteStyleFrame(curLayer,curFrame);saveActiveToKey();recomposite(curLayer,curFrame);}
 document.getElementById('dd-clear').onclick=()=>{clearCurrentFrame();closeAllDropdowns();};
 
 // Window menu
