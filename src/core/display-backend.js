@@ -14,9 +14,9 @@
   let mipPipeline=null,presentPipeline=null,sampler=null,uniformBuffer=null,presentBindGroup=null,presentBundle=null;
   const uniformValues=new Float32Array(12);
   let mipResources=[];
-  let resizeObserver=null,uploadPending=false,renderPending=false,pendingRenderReason='camera',canvasConfigured=false;
-  let uploadGeneration=0,lastRenderedUploadGeneration=-1;
-  const measurements={uploads:0,uploadBytes:0,mipmapRegenerations:0,textureRecreations:0,pipelineRecreations:0,bindGroupRecreations:0,textureViewRecreations:0,renderBundleRecreations:0,renders:0,cameraOnlyRenders:0,totalUploadMs:0,totalRenderMs:0,totalCameraOnlyRenderMs:0,lastUploadMs:0,lastRenderMs:0,lastCameraOnlyRenderMs:0,lastError:''};
+  let resizeObserver=null,uploadRaf=0,renderPending=false,pendingRenderReason='camera',canvasConfigured=false;
+  let artworkRevision=0,uploadedArtworkRevision=0,uploadGeneration=0,lastRenderedUploadGeneration=-1;
+  const measurements={artworkInvalidations:0,coalescedArtworkInvalidations:0,uploads:0,uploadBytes:0,mipmapRegenerations:0,textureRecreations:0,pipelineRecreations:0,bindGroupRecreations:0,textureViewRecreations:0,renderBundleRecreations:0,renders:0,cameraOnlyRenders:0,totalUploadMs:0,totalRenderMs:0,totalCameraOnlyRenderMs:0,lastUploadMs:0,lastRenderMs:0,lastCameraOnlyRenderMs:0,lastError:''};
 
   const mipShader=`
     @group(0) @binding(0) var sourceSampler: sampler;
@@ -56,10 +56,21 @@
     pendingRenderReason=reason;renderPending=true;
     requestAnimationFrame(()=>{const nextReason=pendingRenderReason;renderPending=false;pendingRenderReason='camera';render(nextReason);});
   }
+  function flushArtworkUpload(){
+    uploadRaf=0;
+    if(active!=='webgpu'||uploadedArtworkRevision===artworkRevision)return;
+    const revisionToUpload=artworkRevision;
+    uploadComposite(sourceCanvas);
+    uploadedArtworkRevision=revisionToUpload;
+    // An artwork mutation that arrives while this upload is being prepared
+    // must produce another upload instead of being lost behind a pending flag.
+    if(uploadedArtworkRevision!==artworkRevision)uploadRaf=requestAnimationFrame(flushArtworkUpload);
+  }
   function scheduleUpload(){
-    if(active!=='webgpu'||uploadPending)return;
-    uploadPending=true;
-    requestAnimationFrame(()=>{uploadPending=false;uploadComposite(sourceCanvas);});
+    artworkRevision++;measurements.artworkInvalidations++;
+    if(active!=='webgpu')return;
+    if(uploadRaf){measurements.coalescedArtworkInvalidations++;return;}
+    uploadRaf=requestAnimationFrame(flushArtworkUpload);
   }
   function configureCanvas(){
     if(!device||!context)return;
@@ -179,25 +190,26 @@
       if(requested!=='webgpu')return active;
       active='webgpu';gpuCanvas.hidden=false;document.body.classList.add('webgpu-presentation-active');
       if(window.ExperimentalDisplayBlur)window.ExperimentalDisplayBlur.set(false);
-      configureCanvas();uploadComposite(sourceCanvas);return active;
+      configureCanvas();artworkRevision++;measurements.artworkInvalidations++;uploadComposite(sourceCanvas);uploadedArtworkRevision=artworkRevision;return active;
     }catch(error){fallback(error&&error.message||String(error));return active;}
   }
   function destroy(){
     fallback();if(resizeObserver)resizeObserver.disconnect();resizeObserver=null;
+    if(uploadRaf)cancelAnimationFrame(uploadRaf);uploadRaf=0;
     if(sourceTexture)sourceTexture.destroy();sourceTexture=null;sourceTextureView=null;presentBindGroup=null;presentBundle=null;mipResources=[];
     if(device)device.destroy();device=null;context=null;initPromise=null;canvasConfigured=false;
   }
 
   function stats(){
     return Object.assign({
-      mode:active,supported:!!navigator.gpu,sourceWidth,sourceHeight,mipCount,dpr:window.devicePixelRatio||1,
+      mode:active,supported:!!navigator.gpu,sourceWidth,sourceHeight,mipCount,dpr:window.devicePixelRatio||1,artworkRevision,uploadedArtworkRevision,
       averageUploadTime:measurements.uploads?measurements.totalUploadMs/measurements.uploads:0,
       averageRenderTime:measurements.renders?measurements.totalRenderMs/measurements.renders:0,
       averageCameraOnlyRenderTime:measurements.cameraOnlyRenders?measurements.totalCameraOnlyRenderMs/measurements.cameraOnlyRenders:0
     },measurements);
   }
   function resetStats(){
-    Object.assign(measurements,{uploads:0,uploadBytes:0,mipmapRegenerations:0,textureRecreations:0,pipelineRecreations:0,bindGroupRecreations:0,textureViewRecreations:0,renderBundleRecreations:0,renders:0,cameraOnlyRenders:0,totalUploadMs:0,totalRenderMs:0,totalCameraOnlyRenderMs:0,lastUploadMs:0,lastRenderMs:0,lastCameraOnlyRenderMs:0,lastError:''});
+    Object.assign(measurements,{artworkInvalidations:0,coalescedArtworkInvalidations:0,uploads:0,uploadBytes:0,mipmapRegenerations:0,textureRecreations:0,pipelineRecreations:0,bindGroupRecreations:0,textureViewRecreations:0,renderBundleRecreations:0,renders:0,cameraOnlyRenders:0,totalUploadMs:0,totalRenderMs:0,totalCameraOnlyRenderMs:0,lastUploadMs:0,lastRenderMs:0,lastCameraOnlyRenderMs:0,lastError:''});
     return stats();
   }
   window.DisplayBackend={set:setBackend,get mode(){return active;},get requested(){return requested;},get supported(){return !!navigator.gpu;},initialize,resize:configureCanvas,uploadComposite,scheduleUpload,renderView(){scheduleRender('camera');},destroy,stats,resetStats};
