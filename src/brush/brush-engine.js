@@ -324,7 +324,7 @@ function _traceStrokeLifecycle(event,detail){
   if(!window.debugStrokeLifecycle)return;
   const trace=window.__strokeLifecycleTrace||(window.__strokeLifecycleTrace=[]);
   trace.push(Object.assign({event,sessionId:_activeStrokeSession,time:performance.now(),activeLayer:curLayer,activeFrame:curFrame},detail||{}));
-  if(trace.length>100)trace.splice(0,trace.length-100);
+  if(trace.length>500)trace.splice(0,trace.length-500);
 }
 
 function _brushPerf(){return window.BrushLatencyProfiler&&window.BrushLatencyProfiler.enabled?window.BrushLatencyProfiler:null;}
@@ -452,6 +452,8 @@ function _drawBrushComposite(targetCtx,src){
 
 function _commitStrokeCanvas(){
   if(!_strokeCanvas) return;
+  const commitSession=_activeStrokeSession,commitLayer=curLayer,commitFrame=curFrame;
+  _traceStrokeLifecycle('commit-start',{sessionId:commitSession,sourceLayer:commitLayer,sourceFrame:commitFrame,dirtyRect:_strokeDirty?{minX:_strokeDirty.minX,minY:_strokeDirty.minY,maxX:_strokeDirty.maxX,maxY:_strokeDirty.maxY}:null});
   // forceFull=true: make sure the ENTIRE stroke is masked (not just whatever
   // region was still pending), so the committed result always matches what
   // the live preview was showing, even if a frame's mask pass got skipped.
@@ -470,9 +472,13 @@ function _commitStrokeCanvas(){
   _drawBrushComposite(ctx,src);
   ctx.restore();
   if(smartOwnership&&typeof commitSmartRasterBrush==='function'){
+    _traceStrokeLifecycle('smart-metadata-start',{sessionId:commitSession,sourceLayer:commitLayer,sourceFrame:commitFrame,dirtyRect:ownershipDirtyRect});
     commitSmartRasterBrush(src,styleId,brushOpacity,ownershipDirtyRect,ownershipBefore,brushBlendMode);
+    _traceStrokeLifecycle('smart-metadata-end',{sessionId:commitSession,sourceLayer:commitLayer,sourceFrame:commitFrame,dirtyRect:ownershipDirtyRect});
   }
   _strokeCtx.clearRect(0, 0, _strokeCanvas.width, _strokeCanvas.height);
+  _traceStrokeLifecycle('commit-end',{sessionId:commitSession,sourceLayer:commitLayer,sourceFrame:commitFrame,smartRaster:!!(layers[commitLayer]&&layers[commitLayer].type==='smart-raster')});
+  _traceStrokeLifecycle('temporary-stroke-cleared',{sessionId:commitSession,sourceLayer:commitLayer,sourceFrame:commitFrame});
 }
 
 //  Live stroke preview
@@ -3423,6 +3429,7 @@ function _scheduleRecomposite(options){
     if(scheduleProfiler){scheduleProfiler.point('recomposite-raf-callback-begin',{waitMs:wait,coalescedRequests:coalesced,framePhaseMs:callbackAt%16.67,estimatedMissedUpcomingDeadline:wait>estimatedNextDeadlineMs+1,anotherAppRafCallbackRanFirst:experiment?experiment.anotherRafRanFirst(rafState):null});scheduleProfiler.measure('raf-wakeup-wait',scheduledAt,{coalescedRequests:coalesced});}
     if(experiment)experiment.noteRafCallback({scheduledAt,callbackAt,waitMs:wait,coalescedRequests:coalesced,estimatedNextDeadlineMs,estimatedMissedUpcomingDeadline:wait>estimatedNextDeadlineMs+1,anotherAppRafCallbackRanFirst:experiment.anotherRafRanFirst(rafState)});
     if(generation!==_recompGeneration){_traceStrokeLifecycle('recomposite-rejected',{sessionId,reason:'generation',sourceLayer:layerIndex,sourceFrame:frameIndex});_flushDeferredKeyVisualRefreshAfterPresentation();return;}
+    if(sessionId!==_activeStrokeSession){_traceStrokeLifecycle('recomposite-rejected',{sessionId,reason:'obsolete-session',sourceLayer:layerIndex,sourceFrame:frameIndex});_flushDeferredKeyVisualRefreshAfterPresentation();return;}
     _recompRAF=false;_recompRAFHandle=0;_recompCoalescedRequests=0;
     if(curLayer!==layerIndex||curFrame!==frameIndex){_traceStrokeLifecycle('recomposite-rejected',{sessionId,reason:'artwork-changed',sourceLayer:layerIndex,sourceFrame:frameIndex});_flushDeferredKeyVisualRefreshAfterPresentation();return;}
     const rect=(drawing||_inStroke)?_consumeDirtyRect():null;
@@ -4097,6 +4104,17 @@ function _brushPointerDown(e){
   if(typeof isLayerLocked==='function'&&isLayerLocked(curLayer)) return;
   // Prevent browser from hijacking tablet/stylus events (scroll, pan, zoom)
   e.preventDefault();
+  // A new stroke must not reset shared scratch/dirty/pressure state while the
+  // prior stroke still owns a stabilization finalizer or an active session.
+  // Resolve the old session before any new-stroke initialization below.
+  if(_stabilizerFinishing&&_stabilizerFinalizeCB){
+    _traceStrokeLifecycle('next-pointerdown-finishes-previous',{nextPointerId:e.pointerId});
+    _stabilizerAccelerateToCompletion();
+  }
+  if(drawing||_inStroke||lineStart||_colorEraserOwnership){
+    _traceStrokeLifecycle('next-pointerdown-ends-previous',{nextPointerId:e.pointerId});
+    _endStroke(_activeStrokePointerId);
+  }
   if(tool==='curve'&&_curveToolGesture&&_curveToolGesture.phase==='bending'){_curveCommitPointerId=e.pointerId;_commitCurveTool(e);return;}
   if((tool==='brush'||tool==='eraser')&&window.FirstDabLatencyProbe){window.FirstDabLatencyProbe.begin({layerType:layers[curLayer]&&layers[curLayer].type,pointerdownAt:diagnosticPointerdownEntry});window.FirstDabLatencyProbe.setupMeasure('eventValidationAndPreventDefault',diagnosticPointerdownEntry);}
   let diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
@@ -4137,7 +4155,6 @@ function _brushPointerDown(e){
   if(window.CustomFirstDabTrace){window.CustomFirstDabTrace.sample({source:'pointerdown',eventTime:e.timeStamp,x:p.x,y:p.y,pressure:currentPressure});window.CustomFirstDabTrace.event('first-pointer-sample-processed',{x:p.x,y:p.y});}
   diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
   _rotationPrevValid=false;
-  _stabilizerAccelerateToCompletion();
   _resetStabilization(p.x,p.y,e.timeStamp||performance.now());
   _updateVelocity(p.x, p.y, e.timeStamp);
   if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('pressureAndStateInitialization',diagnosticSetupStart);
