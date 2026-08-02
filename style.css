@@ -192,6 +192,13 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;fon
   will-change:transform;
 }
 #composite-canvas,#onion-canvas,#active-canvas,#display-canvas,#transform-canvas{position:absolute;top:0;left:0;display:block;}
+#webgpu-presentation-canvas{position:absolute;inset:0;width:100%;height:100%;display:none;pointer-events:none;z-index:1;}
+body.webgpu-presentation-active #webgpu-presentation-canvas{display:block;}
+body.webgpu-presentation-active #composite-canvas,
+body.webgpu-presentation-active #display-canvas,
+body.webgpu-presentation-active #onion-canvas,
+body.webgpu-presentation-active #active-canvas{opacity:0!important;}
+body.webgpu-presentation-active #canvas-wrap{z-index:2;}
 #active-canvas{cursor:default;touch-action:none;-ms-touch-action:none;}
 #composite-canvas,#onion-canvas,#display-canvas{pointer-events:none;}
 #onion-canvas{visibility:hidden;}

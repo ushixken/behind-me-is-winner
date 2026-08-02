@@ -161,6 +161,7 @@
 <!-- ── MAIN AREA ───────────────────────────────────────────── -->
 <div id="main-area">
   <div id="canvas-area">
+    <canvas id="webgpu-presentation-canvas" aria-hidden="true" hidden></canvas>
     <div id="canvas-wrap">
       <canvas id="composite-canvas"></canvas>
       <!-- display-canvas: what's actually shown on screen. composite-canvas stays
@@ -1654,6 +1655,7 @@
 <!-- ── JavaScript Modules ───────────────────────────────────── -->
 <script src="src/ui/site-dialog.js"></script>
 <script src="src/core/core-state.js"></script>
+<script src="src/core/display-backend.js"></script>
 <script src="src/core/overlay-renderer.js"></script>
 <script src="src/debug/brush-latency-profiler.js"></script>
 <script src="src/ui/cursor-prefs.js"></script>

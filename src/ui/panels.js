@@ -492,6 +492,7 @@ function recomposite(li,fi,dirtyRect){
   displayCtx.drawImage(artworkCompositeC,0,0);
   const firstDabDisplayBlitDuration=firstDabDisplayBlitStart?performance.now()-firstDabDisplayBlitStart:0;
   displayCtx.filter='none';
+  if(window.DisplayBackend)window.DisplayBackend.scheduleUpload();
   if(presentationStart)latencyProfiler.point('display-upload-finishes');
   if(presentationStart){latencyProfiler.measure('canvas-display-upload',displayUploadStart,{width:CW,height:CH,blur:typeof _displayBlurPx==='number'?_displayBlurPx:null});latencyProfiler.presentationEnd(presentationStart,{dirty:!!clip});}
   if(firstDabDiagnosticStart&&window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.displayComplete(firstDabDiagnosticStart,firstDabDisplayBlitDuration);

@@ -253,6 +253,7 @@ function refreshDisplayComposite(){
   displayCtx.drawImage(onionC,0,0);
   displayCtx.drawImage(artworkCompositeC,0,0);
   displayCtx.filter='none';
+  if(window.DisplayBackend)window.DisplayBackend.scheduleUpload();
   if(window.CameraView)window.CameraView.invalidate();
 }
 // NOTE: deliberately NOT using {desynchronized:true} here. activeC is read
@@ -439,6 +440,7 @@ function applyTransform(){
   // blurred 10% bitmap stays cached until another brush dab recomposites it.
   if(Math.abs(previousDisplayBlur-_displayBlurPx)>1e-6)refreshDisplayComposite();
   _syncZoomStatus();
+  if(window.DisplayBackend)window.DisplayBackend.renderView();
   window.dispatchEvent(new Event('canvas-view-transform-changed'));
 }
 
@@ -467,10 +469,15 @@ function toggleFlipV(){
 // be doing; compC itself is never touched, so eyedropper/export/etc. stay
 // pixel-exact.
 let _displayBlurPx=0;
+let _displayBlurEnabled=true;
 const _ZOOM_BLUR_START=0.5; // zoom level below which the pre-blur starts (was ~1.0 — engaged almost immediately on any zoom-out)
 function _updateDisplayBlur(){
-  _displayBlurPx = zoom<_ZOOM_BLUR_START ? Math.min(6, (_ZOOM_BLUR_START/zoom - 1) * 0.8) : 0;
+  _displayBlurPx = _displayBlurEnabled&&zoom<_ZOOM_BLUR_START ? Math.min(6, (_ZOOM_BLUR_START/zoom - 1) * 0.8) : 0;
 }
+window.ExperimentalDisplayBlur={
+  set(enabled){const next=!!enabled;if(next===_displayBlurEnabled)return _displayBlurEnabled;_displayBlurEnabled=next;_updateDisplayBlur();refreshDisplayComposite();return _displayBlurEnabled;},
+  get enabled(){return _displayBlurEnabled;}
+};
 
 function _syncZoomStatus(){
   const status=document.getElementById('stat-zoom');
