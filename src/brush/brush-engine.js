@@ -2425,6 +2425,166 @@ function stabilizePointDispatch(x,y,t){
   }
   return _stabilizePoint(x,y,t);
 }
+
+// ---------------------------------------------------------------------
+// Stabilization Phase 1 — inert prototype-stabilizer port.
+//
+// This block is a faithful port of the *moving-average* position
+// stabilizer from docs/prototype/stabilizationtest.html (computeInternal
+// Stabilization / zoomStabilizationMinimum / zoomCompensationWeight /
+// movingAverageAmount / pushSmoothBuf, plus the stroke-start buffer
+// prefill pattern). It is completely additive and unused:
+//
+//   - USE_NEW_STABILIZER stays false.
+//   - stabilizePointDispatch() above is NOT modified and does not
+//     reference anything below.
+//   - No live call site (pointer move/down/up, _handleMoveEvent,
+//     _curveAddPoint, etc.) references this block.
+//
+// Prototype -> real-project adaptations made while porting (units only,
+// no algorithm changes):
+//   - The prototype's screenToCanvas() multiplies by SS, a backing-store
+//     supersample factor used only for its own canvas rendering. A plain
+//     positional moving average is invariant to that scale factor, so
+//     this port takes canvas-space float {x,y} directly (the same
+//     post-/zoom canvas-space convention _stabilizePoint already uses)
+//     and never multiplies by SS.
+//   - The prototype reads its 0-1 UI slider from a local `stabilization`
+//     variable; this port reads the real project's existing
+//     window._tsStabilization the same way the legacy stabilizer's
+//     _stabilizationAmount() does, but WITHOUT that function's "0 aliases
+//     to 1" quirk, since the prototype's computeInternalStabilization()/
+//     movingAverageAmount() already define their own (different) 0-amount
+//     behavior (movingAverageAmount() returns 1, i.e. a 1-sample window /
+//     true bypass). Resolving whether the real project should keep or
+//     replace that "0 aliases to 1" behavior is explicitly out of scope
+//     for this phase (see Migration Plan, Stabilization Phase 6).
+//   - `zoom` reads the real project's existing module-level `zoom` global,
+//     exactly as the legacy stabilizer does (e.g. _stabilizerMaxLagCanvas).
+//
+// Not ported (per phase scope): screenToCanvas/SS, feedPoint(),
+// pressure buffer/pushPressureBuf, hold/finish RAF and catch-up,
+// leash visualization, corner detection, velocity filtering, debug
+// logging, session ids — none of that is position stabilization.
+// ---------------------------------------------------------------------
+
+// Mirrors the prototype's ZOOM_COMP_* constants (stabilizationtest.html)
+// exactly; values are unitless (zoom ratios / UI-amount fractions), so no
+// adaptation was needed.
+const _PROTOTYPE_STABILIZER_ZOOM_COMP_MIN_ZOOM=0.05;
+const _PROTOTYPE_STABILIZER_ZOOM_COMP_ZERO_ZOOM=5.0;
+const _PROTOTYPE_STABILIZER_ZOOM_COMP_MAX_AMOUNT=0.15;
+const _PROTOTYPE_STABILIZER_ZOOM_COMP_FADE_UI_LIMIT=0.20;
+
+// Equivalent of the prototype's local `smoothBuf` array. Isolated from
+// every legacy `_stabilizer*` variable so it cannot collide with the
+// live pipeline's state.
+let _prototypeStabilizerSmoothBuf=[];
+
+// Equivalent of the prototype's local `stabilization` (0-1 UI value).
+// Reads the same settings source the legacy stabilizer reads
+// (window._tsStabilization), per the audit's documented "adapt/bridge"
+// seam decision, but intentionally does not reproduce
+// _stabilizationAmount()'s "0 aliases to 1" legacy quirk — see block
+// comment above.
+function _prototypeStabilizerAmount(){
+  const raw=Number(window._tsStabilization);
+  return Number.isFinite(raw)?Math.max(0,Math.min(1,raw)):0;
+}
+
+// Direct port of zoomStabilizationMinimum(z) from stabilizationtest.html.
+function _prototypeZoomStabilizationMinimum(z){
+  const clampedZoom=Math.min(Math.max(z,_PROTOTYPE_STABILIZER_ZOOM_COMP_MIN_ZOOM),_PROTOTYPE_STABILIZER_ZOOM_COMP_ZERO_ZOOM);
+  const logMin=Math.log(_PROTOTYPE_STABILIZER_ZOOM_COMP_MIN_ZOOM);
+  const logMax=Math.log(_PROTOTYPE_STABILIZER_ZOOM_COMP_ZERO_ZOOM);
+  const t=(Math.log(clampedZoom)-logMin)/(logMax-logMin);
+  return _PROTOTYPE_STABILIZER_ZOOM_COMP_MAX_AMOUNT*(1-t);
+}
+
+// Direct port of zoomCompensationWeight(userAmount) from
+// stabilizationtest.html.
+function _prototypeZoomCompensationWeight(userAmount){
+  const edge0=0,edge1=_PROTOTYPE_STABILIZER_ZOOM_COMP_FADE_UI_LIMIT;
+  const t=Math.min(Math.max((userAmount-edge0)/(edge1-edge0),0),1);
+  const smooth=t*t*(3-2*t);
+  return 1-smooth;
+}
+
+// Direct port of computeInternalStabilization() from
+// stabilizationtest.html. Reads zoom directly, as the legacy stabilizer
+// does elsewhere in this file (e.g. _stabilizerMaxLagCanvas).
+function _prototypeComputeInternalStabilization(){
+  const userAmount=_prototypeStabilizerAmount();
+  const zoomMinimum=_prototypeZoomStabilizationMinimum(zoom);
+  const compensationWeight=_prototypeZoomCompensationWeight(userAmount);
+  return Math.min(1,Math.max(0,userAmount+zoomMinimum*compensationWeight));
+}
+
+// Direct port of movingAverageAmount() from stabilizationtest.html.
+function _prototypeMovingAverageAmount(){
+  const internalAmount=_prototypeComputeInternalStabilization();
+  if(internalAmount<=0)return 1;
+  return Math.max(2,Math.round(internalAmount*100));
+}
+
+// Direct port of pushSmoothBuf(p) from stabilizationtest.html, operating
+// on the isolated _prototypeStabilizerSmoothBuf instead of the
+// prototype's module-level smoothBuf.
+function _prototypePushSmoothBuf(p){
+  const maxLen=_prototypeMovingAverageAmount();
+  _prototypeStabilizerSmoothBuf.push({x:p.x,y:p.y});
+  while(_prototypeStabilizerSmoothBuf.length>maxLen)_prototypeStabilizerSmoothBuf.shift();
+  if(maxLen===1)return{x:p.x,y:p.y};
+  let sx=0,sy=0;
+  for(const pt of _prototypeStabilizerSmoothBuf){sx+=pt.x;sy+=pt.y;}
+  return{x:sx/_prototypeStabilizerSmoothBuf.length,y:sy/_prototypeStabilizerSmoothBuf.length};
+}
+
+// Equivalent of the prototype's stroke-start smoothBuf prefill
+// (stabilizationtest.html, pointerdown handler: `smoothBuf =
+// Array.from({length: amount}, () => ({x: p.x, y: p.y}))`), which fills
+// the moving-average window with the start point so stabilization
+// strength is constant from the very first sample instead of ramping up.
+// Isolated reset function for the prototype port only — NOT the legacy
+// _resetStabilization(), and intentionally not called from anywhere yet.
+function _prototypeResetStabilizer(x,y){
+  const amount=_prototypeMovingAverageAmount();
+  _prototypeStabilizerSmoothBuf=Array.from({length:amount},()=>({x,y}));
+}
+
+// Accepts one canvas-space float point and returns one stabilized
+// canvas-space float point. This is the direct equivalent of the
+// prototype's per-sample `pushSmoothBuf(inputRaw)` call inside
+// feedPoint() — feedPoint() itself (curve/dab/rendering) is not ported,
+// only this position-stabilization step. `t` is accepted for interface
+// parity with stabilizePointDispatch()/_stabilizePoint() but is unused,
+// since the prototype's moving average is sample-count-based, not
+// time-based.
+function _prototypeStabilizePoint(x,y,t){
+  return _prototypePushSmoothBuf({x,y});
+}
+
+// Inert developer test helper. Does not run automatically, does not log,
+// does not touch any live/legacy stabilizer state, and exposes no UI.
+// Feeds a caller-supplied array of synthetic {x,y[,t]} samples through
+// the isolated prototype buffer (starting from a fresh reset at the
+// first sample) and returns the resulting stabilized points, for
+// exercising the port from a console or a future unit test harness.
+function _prototypeStabilizerDevTest(samples){
+  if(!Array.isArray(samples)||samples.length===0)return[];
+  const savedBuf=_prototypeStabilizerSmoothBuf;
+  _prototypeStabilizerSmoothBuf=[];
+  try{
+    _prototypeResetStabilizer(samples[0].x,samples[0].y);
+    return samples.map(s=>_prototypeStabilizePoint(s.x,s.y,s.t));
+  }finally{
+    _prototypeStabilizerSmoothBuf=savedBuf;
+  }
+}
+// ---------------------------------------------------------------------
+// End Stabilization Phase 1 inert prototype-stabilizer port.
+// ---------------------------------------------------------------------
+
 function _stabilizerSetSampleContext(pressure,event){
   _stabilizerTargetPressure=pressure;
   _stabilizerEvent=event;
