@@ -2276,7 +2276,7 @@ const _STABILIZER_SPEED_FILTER_TAU=0.016;
 // This flag and its routing helper (stabilizePointDispatch, below
 // _stabilizePoint) will be removed once the new stabilizer replaces the
 // legacy path.
-const USE_NEW_STABILIZER=true;
+const USE_NEW_STABILIZER=false;
 
 let _stabilizerActive=false;
 let _stabilizerX=0,_stabilizerY=0;
