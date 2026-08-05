@@ -2276,7 +2276,7 @@ const _STABILIZER_SPEED_FILTER_TAU=0.016;
 // This flag and its routing helper (stabilizePointDispatch, below
 // _stabilizePoint) will be removed once the new stabilizer replaces the
 // legacy path.
-const USE_NEW_STABILIZER=false;
+const USE_NEW_STABILIZER=true;
 
 let _stabilizerActive=false;
 let _stabilizerX=0,_stabilizerY=0;
@@ -2414,14 +2414,16 @@ window.BaselineStrokeConditionerDiagnostics={enabled:false,enable(v=true){this.e
   _stabilizerSchedule();
   return{x:nextX,y:nextY};
 }
-// Temporary ownership boundary for Stabilization Phase 0. USE_NEW_STABILIZER
-// is currently always false, and even if forced true, no new implementation
-// exists yet, so this always falls through to the legacy _stabilizePoint.
-// No behavior change. Remove this wrapper once the new stabilizer lands.
+// Stabilization Phase 2: single routing point for live pointer samples.
+// USE_NEW_STABILIZER selects between the legacy stabilizer and the
+// prototype moving-average stabilizer for live movement samples only.
+// Hold, pointer-up finalize, and all other stabilizer lifecycle
+// functions (_stabilizerFinalize/_stabilizerStep/_stabilizerAdvance/
+// _stabilizerSchedule/_stabilizerAccelerateToCompletion/_stabilizerCancel)
+// remain wired to the legacy implementation and are not touched here.
 function stabilizePointDispatch(x,y,t){
   if(USE_NEW_STABILIZER){
-    // Future new path — not implemented yet.
-    // Falls through to the legacy implementation below.
+    return _prototypeStabilizePoint(x,y,t);
   }
   return _stabilizePoint(x,y,t);
 }
@@ -4335,6 +4337,12 @@ function _brushPointerDown(e){
   diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
   _rotationPrevValid=false;
   _resetStabilization(p.x,p.y,e.timeStamp||performance.now());
+  // Stabilization Phase 2: also reset the prototype stabilizer's isolated
+  // state at stroke start when it is the active live-sample path. This is
+  // additive — the legacy reset above always runs, unchanged.
+  if(USE_NEW_STABILIZER){
+    _prototypeResetStabilizer(p.x,p.y);
+  }
   _updateVelocity(p.x, p.y, e.timeStamp);
   if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('pressureAndStateInitialization',diagnosticSetupStart);
   if(latencyProfiler)latencyProfiler.measure('pointer-and-dynamics-init',inputStateStart);
