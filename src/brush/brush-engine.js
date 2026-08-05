@@ -1,4 +1,4 @@
-//
+﻿//
 // DRAWING Ã¢â‚¬â€ getPos uses activeC's own getBoundingClientRect()
 // which accounts for the CSS transform, giving pixel-perfect coords
 //
@@ -2270,6 +2270,14 @@ const _STABILIZER_IDLE_DELAY_MS=18;
 const _STABILIZER_EPS_SCREEN_PX=0.30;
 const _STABILIZER_SPEED_FILTER_TAU=0.016;
 
+// Stabilization Phase 0: temporary internal routing flag for the upcoming
+// stabilizer migration. Must stay false — legacy stabilizer is the only
+// active implementation until the new stabilizer is actually implemented.
+// This flag and its routing helper (stabilizePointDispatch, below
+// _stabilizePoint) will be removed once the new stabilizer replaces the
+// legacy path.
+const USE_NEW_STABILIZER=false;
+
 let _stabilizerActive=false;
 let _stabilizerX=0,_stabilizerY=0;
 let _stabilizerRawX=0,_stabilizerRawY=0,_stabilizerSpeed=0;
@@ -2405,6 +2413,17 @@ window.BaselineStrokeConditionerDiagnostics={enabled:false,enable(v=true){this.e
   _stabilizerLastAdvanceT=performance.now();
   _stabilizerSchedule();
   return{x:nextX,y:nextY};
+}
+// Temporary ownership boundary for Stabilization Phase 0. USE_NEW_STABILIZER
+// is currently always false, and even if forced true, no new implementation
+// exists yet, so this always falls through to the legacy _stabilizePoint.
+// No behavior change. Remove this wrapper once the new stabilizer lands.
+function stabilizePointDispatch(x,y,t){
+  if(USE_NEW_STABILIZER){
+    // Future new path — not implemented yet.
+    // Falls through to the legacy implementation below.
+  }
+  return _stabilizePoint(x,y,t);
 }
 function _stabilizerSetSampleContext(pressure,event){
   _stabilizerTargetPressure=pressure;
@@ -4373,7 +4392,7 @@ function _handleMoveEvent(e){
     const conditionedSamples=_baselineConditionerPush(_baselineSampleFromEvent(ev,raw,newPressure));
     for(const conditioned of conditionedSamples){
       _stabilizerSetSampleContext(conditioned.pressure,conditioned.event);
-      const p=_stabilizePoint(conditioned.x,conditioned.y,conditioned.time);
+      const p=stabilizePointDispatch(conditioned.x,conditioned.y,conditioned.time);
       _updateVelocity(p.x,p.y,conditioned.time);
       if(window._brushAirbrush&&Math.hypot(p.x-lx,p.y-ly)>0.01)_airbrushLastMovementTime=performance.now();
       _curveAddPoint(p.x,p.y,conditioned.pressure,conditioned.event);
