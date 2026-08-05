@@ -2276,7 +2276,7 @@ const _STABILIZER_SPEED_FILTER_TAU=0.016;
 // This flag and its routing helper (stabilizePointDispatch, below
 // _stabilizePoint) will be removed once the new stabilizer replaces the
 // legacy path.
-const USE_NEW_STABILIZER=false;
+const USE_NEW_STABILIZER=true;
 
 let _stabilizerActive=false;
 let _stabilizerX=0,_stabilizerY=0;
@@ -2691,7 +2691,7 @@ function _prototypeResetFinalizationState(){
 // ---------------------------------------------------------------------
 
 // ---------------------------------------------------------------------
-// Stabilization Phase 3B: prototype finalization entry point.
+// Stabilization Phase 3C: prototype finalization loop.
 //
 // This is the pointer-up-side counterpart to stabilizePointDispatch()
 // (the live-sample routing point wired in an earlier phase): the single
@@ -2700,41 +2700,193 @@ function _prototypeResetFinalizationState(){
 // USE_NEW_STABILIZER selects which one runs; exactly one of the two
 // ever executes for a given stroke (see _pointerEndStroke below).
 //
-// _prototypeBeginFinalize() only initializes prototype finalization
-// state and schedules a completion step -- it intentionally does NOT
-// implement the prototype's actual finish loop yet (finishTick /
-// strokeHoldTick / flushPendingStrokeSamples / computeWasStoppedBeforeLift
-// are not ported in this phase). _prototypeFinalizeStep() is a
-// placeholder scheduled-but-not-draining step; completing the finish
-// loop (and therefore invoking the stored callback) is deferred to a
-// later phase. This is intentionally a no-op with respect to committing
-// the stroke while USE_NEW_STABILIZER stays at its default of false.
+// This completes the finish loop that Phase 3B left as a scheduled-but-
+// not-draining placeholder: it is a direct port of endStroke()/
+// finishTick() from stabilizationtest.html, reusing the Phase 1/3A
+// prototype helpers (_prototypePushSmoothBuf, _prototypePushPressureBuf,
+// _prototypeMovingAverageAmount, _prototypeSmoothstep01, _prototypeMix)
+// exactly as the prototype's own finish loop reuses pushSmoothBuf/
+// pushPressureBuf/movingAverageAmount/smoothstep01/mix.
+//
+// Three places intentionally read already-existing engine state instead
+// of reintroducing prototype-only bookkeeping, because the prototype's
+// equivalents are populated by its own coalesced/RAF-batched live-sample
+// architecture (pendingStrokeSamples, trackVelocity, delayedPressure/
+// pushPressureBuf-in-the-live-path), none of which this engine has, and
+// none of which this phase is permitted to add (that would mean touching
+// stabilizePointDispatch/_prototypeStabilizePoint/the live path -- out of
+// scope for a finalization-only phase):
+//   - "time of last real movement sample" -> _lastMoveTime. This engine
+//     already updates it on every stabilized sample regardless of
+//     USE_NEW_STABILIZER (via _updateVelocity, called right after
+//     stabilizePointDispatch in _handleMoveEvent), so it is exactly the
+//     prototype's lastMoveEventTime with no new instrumentation needed.
+//   - "recent unstabilized pointer speed" -> _strokeVelocity, which the
+//     same _updateVelocity call already maintains as a screen-px/ms EMA.
+//     This is read-only here; nothing about spacing/dynamics that
+//     consumes _strokeVelocity elsewhere is touched.
+//   - "last real pressure sample" -> currentPressure, updated for both
+//     finalize paths at the same call site as lx/ly.
+// The one piece with no existing analog -- the prototype's live-path
+// pressure moving average (delayedPressure) that Stationary Hold freezes
+// -- has no substitute available without instrumenting the live path, so
+// Stationary Hold here freezes currentPressure (the last raw real
+// pressure) instead of a smoothed delayed pressure. This is the one
+// documented behavioral approximation; see the comment at its use below.
 let _prototypeFinalizing=false;
 let _prototypeFinalizeCB=null;
 let _prototypeFinalizeRAF=0;
+let _prototypeFinalizeTargetX=0,_prototypeFinalizeTargetY=0;
+let _prototypeFinalizeEvent=null;
+let _prototypeFinalizeWasStoppedBeforeLift=false;
+let _prototypeFinalizeFinishPressure=0;
+let _prototypeFinalizeTailDrawn=false;
+let _prototypeFinalizeStartTime=0;
+let _prototypeFinalizeLastTickTime=0;
+let _prototypeFinalizeTargetDurationMs=0;
+let _prototypeFinalizeStartRatePerMs=0;
+let _prototypeFinalizeEndRatePerMs=0;
+
+// Direct port of endStroke()'s point/pressure emission (feedPoint(...)
+// followed by drawVertsIntoAcc(...) in the prototype). This engine has
+// no feedPoint/drawVertsIntoAcc -- its equivalent point-emission API is
+// _curveAddPoint + _scheduleRecomposite, which is exactly what the
+// legacy stabilizer's own _stabilizerEmit() already calls for the same
+// purpose. Reusing that same pair of calls here (rather than inventing a
+// new rendering entry point) is the "equivalent helper already exists"
+// case for point emission specifically.
+function _prototypeEmitFinalizePoint(x,y,pressure){
+  _updateVelocity(x,y,performance.now());
+  _curveAddPoint(x,y,pressure,_prototypeFinalizeEvent||_lastPointerEvent);
+  lx=x;ly=y;currentPressure=pressure;
+  _scheduleRecomposite();
+}
+
+// Single completion choke point: cancels any pending RAF, clears
+// finishing state, and invokes the stored callback exactly once. Mirrors
+// the ownership-guard pattern already established by _stabilizerFinalize
+// (obsolete-session calls are swallowed by the wrapper created in
+// _prototypeBeginFinalize, not here) and by _prototypeBeginFinalize
+// itself clearing _prototypeFinalizeCB before calling it, so a second
+// call can never re-invoke the same callback.
+function _prototypeCompleteFinalize(){
+  _prototypeFinalizing=false;
+  if(_prototypeFinalizeRAF){cancelAnimationFrame(_prototypeFinalizeRAF);_prototypeFinalizeRAF=0;}
+  const cb=_prototypeFinalizeCB;
+  _prototypeFinalizeCB=null;
+  if(cb)cb();
+}
 
 function _prototypeBeginFinalize(x,y,pressure,event,cb){
   const ownerSession=_activeStrokeSession;
   _prototypeResetFinalizationState();
-  _prototypeLastInputPressure=pressure;
-  _prototypeFinalizing=true;
+
+  // ---- Determine finish-pressure mode: direct port of endStroke's
+  // wasStoppedBeforeLift / finishPressure selection. See the block
+  // comment above this section for why lastMoveEventTime/lastInputPressure
+  // read existing engine globals instead of prototype-only bookkeeping.
+  const stationaryDurationMs=_lastMoveTime>0?performance.now()-_lastMoveTime:0;
+  const wasStoppedBeforeLift=_lastMoveTime>0&&stationaryDurationMs>=_PROTOTYPE_STABILIZER_HOLD_BEFORE_LIFT_MS;
+  _prototypeFinalizeWasStoppedBeforeLift=wasStoppedBeforeLift;
+  // Stationary Hold: freeze a pressure snapshot now, before anything else
+  // can run, exactly as the prototype snapshots delayedPressure before
+  // any flush. currentPressure is the documented approximation for the
+  // prototype's smoothed delayedPressure -- see block comment above.
+  // Moving Release: hold the last real input pressure as the constant
+  // boundary value fed into _prototypePushPressureBuf() every tick below.
+  _prototypeFinalizeFinishPressure=wasStoppedBeforeLift?currentPressure:(Number.isFinite(pressure)?pressure:currentPressure);
+
+  _prototypeFinalizeTargetX=x;
+  _prototypeFinalizeTargetY=y;
+  _prototypeFinalizeEvent=event;
+  _prototypeFinalizeTailDrawn=false;
   _prototypeFinalizeCB=()=>{
     if(ownerSession!==_activeStrokeSession)return;
     cb();
   };
+
+  const startDist=Math.hypot(x-lx,y-ly);
+
+  // ---- Early exit: nothing meaningful to catch up on. Direct port of
+  // endStroke's `!endpoint || startDist < 0.15` branch.
+  if(startDist<0.15){
+    const finalPressure=wasStoppedBeforeLift?_prototypeFinalizeFinishPressure:_prototypePushPressureBuf(_prototypeFinalizeFinishPressure);
+    _prototypeEmitFinalizePoint(x,y,finalPressure);
+    _prototypeCompleteFinalize();
+    return;
+  }
+
+  // ---- Finish-pacing setup: direct port of endStroke's
+  // targetDurationMs / totalTicksNeeded / avgTicksPerMs / startRatePerMs
+  // / endRatePerMs. recentSpeedPxMs -> _strokeVelocity, see block comment
+  // above. _strokeVelocity is screen-space px/ms (_updateVelocity
+  // multiplies by zoom for spacing's benefit), while the prototype's
+  // recentSpeedPxMs -- and startDist/gapNorm above -- are canvas-space,
+  // unconverted. Convert back to canvas-space here, at the read site
+  // only, using the same zoom-division pattern _stabilizerMaxLagCanvas
+  // already uses elsewhere in this file, so speedNorm is computed in the
+  // same units as gapNorm instead of drifting with zoom level.
+  const gapNorm=Math.max(0,Math.min(1,startDist/400));
+  const recentSpeedCanvasPxMs=(_strokeVelocity||0)/Math.max(0.05,zoom);
+  const speedNorm=Math.max(0.5,Math.min(3,0.6+recentSpeedCanvasPxMs*1.2));
+  let targetDurationMs=_prototypeMix(_PROTOTYPE_STABILIZER_MIN_FINISH_MS,_PROTOTYPE_STABILIZER_MAX_FINISH_MS,gapNorm)/speedNorm;
+  targetDurationMs=Math.max(_PROTOTYPE_STABILIZER_MIN_FINISH_MS,Math.min(_PROTOTYPE_STABILIZER_MAX_FINISH_MS,targetDurationMs));
+
+  const totalTicksNeeded=_prototypeMovingAverageAmount();
+  const avgTicksPerMs=totalTicksNeeded/targetDurationMs;
+  _prototypeFinalizeTargetDurationMs=targetDurationMs;
+  _prototypeFinalizeStartRatePerMs=avgTicksPerMs*0.6;
+  _prototypeFinalizeEndRatePerMs=avgTicksPerMs*1.6;
+  _prototypeFinalizeStartTime=performance.now();
+  _prototypeFinalizeLastTickTime=_prototypeFinalizeStartTime;
+
+  _prototypeFinalizing=true;
   if(_prototypeFinalizeRAF){cancelAnimationFrame(_prototypeFinalizeRAF);_prototypeFinalizeRAF=0;}
   _prototypeFinalizeRAF=requestAnimationFrame(_prototypeFinalizeStep);
 }
 
-function _prototypeFinalizeStep(){
+// Direct port of finishTick() from stabilizationtest.html: paces
+// _prototypePushSmoothBuf ticks between _prototypeFinalizeStartRatePerMs
+// and _prototypeFinalizeEndRatePerMs via smoothstep, feeding the frozen
+// endpoint into the position moving average and the mode-selected
+// pressure into the pressure moving average every tick, until the
+// position converges on the endpoint (or the smoothing buffer is empty).
+function _prototypeFinalizeStep(now){
   _prototypeFinalizeRAF=0;
-  // Phase 3B stops here by design: the completion step (the
-  // finishTick-equivalent position/pressure catch-up) is not
-  // implemented yet, so this step neither drains toward the endpoint
-  // nor invokes _prototypeFinalizeCB. That lands in a later phase.
+  if(!_prototypeFinalizing)return;
+  now=Number.isFinite(now)?now:performance.now();
+  const dt=Math.min(now-_prototypeFinalizeLastTickTime,60);
+  _prototypeFinalizeLastTickTime=now;
+
+  const remaining=Math.hypot(_prototypeFinalizeTargetX-lx,_prototypeFinalizeTargetY-ly);
+  if(remaining<=0.15||_prototypeStabilizerSmoothBuf.length===0){
+    if(!_prototypeFinalizeTailDrawn){
+      _prototypeFinalizeTailDrawn=true;
+      const finalPressure=_prototypeFinalizeWasStoppedBeforeLift?_prototypeFinalizeFinishPressure:_prototypePushPressureBuf(_prototypeFinalizeFinishPressure);
+      _prototypeEmitFinalizePoint(_prototypeFinalizeTargetX,_prototypeFinalizeTargetY,finalPressure);
+    }
+    _prototypeCompleteFinalize();
+    return;
+  }
+
+  const elapsed=now-_prototypeFinalizeStartTime;
+  const timeProgress=Math.max(0,Math.min(1,elapsed/_prototypeFinalizeTargetDurationMs));
+  const ticksPerMs=_prototypeMix(_prototypeFinalizeStartRatePerMs,_prototypeFinalizeEndRatePerMs,_prototypeSmoothstep01(timeProgress));
+  const maxTicks=_prototypeMovingAverageAmount();
+  const ticks=Math.max(1,Math.min(maxTicks,Math.round(dt*ticksPerMs)));
+
+  for(let i=0;i<ticks;i++){
+    const caught=_prototypePushSmoothBuf({x:_prototypeFinalizeTargetX,y:_prototypeFinalizeTargetY});
+    const stepDist=Math.hypot(caught.x-lx,caught.y-ly);
+    if(stepDist<=1e-4)break;
+    const emittedPressure=_prototypeFinalizeWasStoppedBeforeLift?_prototypeFinalizeFinishPressure:_prototypePushPressureBuf(_prototypeFinalizeFinishPressure);
+    _prototypeEmitFinalizePoint(caught.x,caught.y,emittedPressure);
+  }
+
+  _prototypeFinalizeRAF=requestAnimationFrame(_prototypeFinalizeStep);
 }
 // ---------------------------------------------------------------------
-// End Stabilization Phase 3B prototype finalization entry point.
+// End Stabilization Phase 3C prototype finalization loop.
 // ---------------------------------------------------------------------
 
 function _stabilizerSetSampleContext(pressure,event){
