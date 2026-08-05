@@ -1,4 +1,4 @@
-//
+﻿//
 // DRAWING Ã¢â‚¬â€ getPos uses activeC's own getBoundingClientRect()
 // which accounts for the CSS transform, giving pixel-perfect coords
 //
@@ -2244,12 +2244,40 @@ function _flushStrokeTail(){
 // Brush stabilization stage.
 // Input position is stabilized here, then continues unchanged through the
 // existing curve reconstruction, spacing, pressure interpolation, and
-// stamping pipeline. Zero intentionally aliases the strongest stabilizer so
-// the 0% preset uses the same proven motion path as 100%.
+// stamping pipeline. Zero is a true bypass: it returns 0 unmodified so the
+// amount<=0 branches in _stabilizePoint/_stabilizerAdvance are reachable and
+// no filtering is ever applied at the 0% preset, at any zoom.
+// --- TEMPORARY PLACEHOLDER ---------------------------------------------
+// Product decision (not a bug): until the new, stronger stabilization tier
+// (currently a working prototype) is merged into main, the entire 0-100%
+// slider is intentionally collapsed to today's strongest setting, so no
+// preset feels "raw" in the meantime.
+//
+// This deliberately reproduces the *visible behavior* of the old 0%/100%
+// aliasing bug (see the fix earlier in this function's history), but unlike
+// that bug it is:
+//   - applied at this single source-of-truth function, so every call site
+//     that reads the stabilization amount (bypass checks, strength curve,
+//     tau/lag calculations) is covered consistently — nothing needs to be
+//     hunted down and patched individually,
+//   - documented here rather than silent,
+//   - gated by one flag that reverts the whole thing instantly,
+//   - intended to be temporary, expiring when the stronger tier ships.
+//
+// The raw UI/slider value (window._tsStabilization) itself is left
+// completely untouched by this — only what this function *reports* to the
+// rest of the pipeline is forced to max. So UI state, presets, and any
+// persisted values remain meaningful once this flag flips back off.
+//
+// TO REVERT: set _STABILIZER_FORCE_MAX_PLACEHOLDER to false, then delete
+// this comment block. Do this as soon as the stronger tier lands.
+const _STABILIZER_FORCE_MAX_PLACEHOLDER=true;
+// -------------------------------------------------------------------------
 function _stabilizationAmount(){
   const raw=Number(window._tsStabilization);
-  const amount=Number.isFinite(raw)?Math.max(0,Math.min(1,raw)):0;
-  return amount<=0?1:amount;
+  const clamped=Number.isFinite(raw)?Math.max(0,Math.min(1,raw)):0;
+  if(_STABILIZER_FORCE_MAX_PLACEHOLDER) return 1;
+  return clamped;
 }
 
 // Normal stabilization: a synchronous low-pass with a strict screen-space
@@ -2368,7 +2396,14 @@ window.BaselineStrokeConditionerDiagnostics={enabled:false,enable(v=true){this.e
   const amount=_stabilizationAmount();
   if(amount<=0){
     // A true bypass: exact input coordinates, with no hidden filtering.
+    // Raw-position and speed tracking are kept current here too (even
+    // though bypass mode doesn't consume them) so that if the amount rises
+    // above 0 mid-stroke, the first filtered sample computes speed from the
+    // true previous position instead of a stale one left over from before
+    // bypass mode began.
     _stabilizerX=x;_stabilizerY=y;
+    _stabilizerRawX=x;_stabilizerRawY=y;
+    _stabilizerSpeed=0;
     _stabilizerTargetX=x;_stabilizerTargetY=y;
     _stabilizerLastSampleT=t;
     _stabilizerLastInputWallT=performance.now();
