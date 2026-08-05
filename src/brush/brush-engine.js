@@ -2247,37 +2247,15 @@ function _flushStrokeTail(){
 // stamping pipeline. Zero is a true bypass: it returns 0 unmodified so the
 // amount<=0 branches in _stabilizePoint/_stabilizerAdvance are reachable and
 // no filtering is ever applied at the 0% preset, at any zoom.
-// --- TEMPORARY PLACEHOLDER ---------------------------------------------
-// Product decision (not a bug): until the new, stronger stabilization tier
-// (currently a working prototype) is merged into main, the entire 0-100%
-// slider is intentionally collapsed to today's strongest setting, so no
-// preset feels "raw" in the meantime.
 //
-// This deliberately reproduces the *visible behavior* of the old 0%/100%
-// aliasing bug (see the fix earlier in this function's history), but unlike
-// that bug it is:
-//   - applied at this single source-of-truth function, so every call site
-//     that reads the stabilization amount (bypass checks, strength curve,
-//     tau/lag calculations) is covered consistently — nothing needs to be
-//     hunted down and patched individually,
-//   - documented here rather than silent,
-//   - gated by one flag that reverts the whole thing instantly,
-//   - intended to be temporary, expiring when the stronger tier ships.
-//
-// The raw UI/slider value (window._tsStabilization) itself is left
-// completely untouched by this — only what this function *reports* to the
-// rest of the pipeline is forced to max. So UI state, presets, and any
-// persisted values remain meaningful once this flag flips back off.
-//
-// TO REVERT: set _STABILIZER_FORCE_MAX_PLACEHOLDER to false, then delete
-// this comment block. Do this as soon as the stronger tier lands.
-const _STABILIZER_FORCE_MAX_PLACEHOLDER=true;
-// -------------------------------------------------------------------------
+// The temporary "flatten 0-100% to max" placeholder that lived here has
+// been removed: the full slider range is live again, matching the intended
+// behavior from the original 0%/100% aliasing fix. See git history for the
+// placeholder implementation if it's ever needed again before the stronger
+// stabilization tier ships as its own feature.
 function _stabilizationAmount(){
   const raw=Number(window._tsStabilization);
-  const clamped=Number.isFinite(raw)?Math.max(0,Math.min(1,raw)):0;
-  if(_STABILIZER_FORCE_MAX_PLACEHOLDER) return 1;
-  return clamped;
+  return Number.isFinite(raw)?Math.max(0,Math.min(1,raw)):0;
 }
 
 // Normal stabilization: a synchronous low-pass with a strict screen-space
@@ -2352,54 +2330,6 @@ function _stabilizerCancel(){
   _stabilizerFinishing=false;
   _stabilizerFinalizeCB=null;
   if(_stabilizerRAF){cancelAnimationFrame(_stabilizerRAF);_stabilizerRAF=0;}
-  _hideStabilizerLeash();
-}
-
-// ---- Stabilizer leash overlay ------------------------------------------
-// Dashed indicator from the raw pointer (anchor) to the stabilized brush
-// tip, so the amount of lag the filter is introducing is visible in real
-// time instead of being an invisible internal buffer. Uses the same
-// EditorOverlayRenderer other tool guides (e.g. the curve tool) already
-// use, so it correctly tracks pan/zoom/rotate/flip for free instead of
-// needing its own transform math (unlike the prototype's bespoke stabViz
-// canvas, which only had to handle pan+zoom).
-// Controlled by window._tsLeashEnabled, wired to the Leash checkbox in the
-// Stabilization mini-settings popover. Defaults to on.
-let _stabilizerLeashOverlay=null;
-function _ensureStabilizerLeash(){
-  if(_stabilizerLeashOverlay||!window.EditorOverlayRenderer)return;
-  _stabilizerLeashOverlay=EditorOverlayRenderer.create('stabilizer-leash',{zIndex:5,draw:function(g,geometry){
-    if(!_stabilizerActive||!drawing)return;
-    const anchor=geometry.worldToScreen({x:_stabilizerTargetX,y:_stabilizerTargetY});
-    const tip=geometry.worldToScreen({x:_stabilizerX,y:_stabilizerY});
-    const dist=Math.hypot(anchor.x-tip.x,anchor.y-tip.y);
-    if(dist<1)return; // anchor and tip coincide -- nothing meaningful to show
-    g.save();
-    g.lineCap='round';
-    g.beginPath();g.moveTo(anchor.x,anchor.y);g.lineTo(tip.x,tip.y);
-    g.setLineDash([5,5]);g.lineWidth=1.25;g.strokeStyle='rgba(20,20,20,0.55)';g.stroke();
-    g.setLineDash([]);
-    g.beginPath();g.arc(anchor.x,anchor.y,4,0,Math.PI*2);g.fillStyle='#141414';g.fill();
-    g.lineWidth=1.5;g.strokeStyle='#ffffff';g.stroke();
-    g.beginPath();g.arc(tip.x,tip.y,3,0,Math.PI*2);g.fillStyle='#5aa9ff';g.fill();
-    g.lineWidth=1.25;g.strokeStyle='#ffffff';g.stroke();
-    g.restore();
-  }});
-}
-function _hideStabilizerLeash(){if(_stabilizerLeashOverlay)_stabilizerLeashOverlay.setVisible(false);}
-function _updateStabilizerLeash(){
-  _ensureStabilizerLeash();if(!_stabilizerLeashOverlay)return;
-  // Deliberately reads the raw slider value (window._tsStabilization),
-  // not _stabilizationAmount() -- the latter is forced to max while
-  // _STABILIZER_FORCE_MAX_PLACEHOLDER is on (see above), which would make
-  // the leash show at every slider position instead of just where the
-  // user actually put it. The leash is a display of user intent, so it
-  // should track the UI value even when the engine is temporarily
-  // ignoring that value for the actual filtering.
-  const rawAmount=Number(window._tsStabilization);
-  const uiAmount=Number.isFinite(rawAmount)?Math.max(0,Math.min(1,rawAmount)):0;
-  const visible=window._tsLeashEnabled!==false&&_stabilizerActive&&drawing&&uiAmount>0;
-  _stabilizerLeashOverlay.setVisible(visible);if(visible)_stabilizerLeashOverlay.invalidate();
 }
 function _stabilizerSchedule(){
   if(_stabilizerActive&&!_stabilizerRAF)_stabilizerRAF=requestAnimationFrame(_stabilizerStep);
@@ -2456,7 +2386,6 @@ window.BaselineStrokeConditionerDiagnostics={enabled:false,enable(v=true){this.e
     _stabilizerLastSampleT=t;
     _stabilizerLastInputWallT=performance.now();
     if(_stabilizerRAF){cancelAnimationFrame(_stabilizerRAF);_stabilizerRAF=0;}
-    _hideStabilizerLeash();
     return{x,y};
   }
   if(!_stabilizerActive)_resetStabilization(x,y,t);
@@ -2488,7 +2417,6 @@ window.BaselineStrokeConditionerDiagnostics={enabled:false,enable(v=true){this.e
   _stabilizerX=nextX;_stabilizerY=nextY;
   _stabilizerLastAdvanceT=performance.now();
   _stabilizerSchedule();
-  _updateStabilizerLeash();
   return{x:nextX,y:nextY};
 }
 function _stabilizerSetSampleContext(pressure,event){
@@ -2518,7 +2446,6 @@ function _stabilizerAdvance(dt,now){
     _stabilizerY+=(_stabilizerTargetY-_stabilizerY)*alpha;
   }
   _stabilizerEmit(_stabilizerX,_stabilizerY,now);
-  _updateStabilizerLeash();
 
   const gapCanvas=_stabilizerGapCanvas();
   const converged=gapCanvas*Math.max(0.05,zoom)<_STABILIZER_EPS_SCREEN_PX&&gapCanvas<0.4;
@@ -2534,7 +2461,6 @@ function _stabilizerAdvance(dt,now){
       _stabilizerFinalizeCB=null;
       _stabilizerFinishing=false;
       _stabilizerActive=false;
-      _hideStabilizerLeash();
       if(cb)cb();
     }
     return true;
