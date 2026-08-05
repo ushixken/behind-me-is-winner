@@ -2587,6 +2587,109 @@ function _prototypeStabilizerDevTest(samples){
 // End Stabilization Phase 1 inert prototype-stabilizer port.
 // ---------------------------------------------------------------------
 
+// ---------------------------------------------------------------------
+// Stabilization Phase 3A: inert prototype-finalization state/helper port.
+//
+// Ports only the STATE and PURE HELPER FUNCTIONS behind the prototype's
+// pointer-up finalization (stabilizationtest.html: endStroke/finishTick/
+// strokeHoldTick), following the same isolation pattern as the Phase 1
+// port above: every symbol is prefixed _prototype*, none of it touches
+// any legacy `_stabilizer*` variable, and NOTHING here is called from
+// anywhere yet — not from stabilizePointDispatch, not from
+// _brushPointerUp/_brushPointerDown, not from any RAF loop.
+//
+// Deliberately NOT ported in this phase: computeWasStoppedBeforeLift(),
+// flushPendingStrokeSamples(), strokeHoldTick(), and endStroke()/
+// finishTick() themselves. Those are orchestration, not helpers — they
+// call the prototype's own screenToCanvas()/zoomSmoothingFactor()
+// (coordinate-transform utilities that don't exist in this file) and
+// feedPoint()/drawVertsIntoAcc()/processStrokeBatch() (rendering-pipeline
+// entry points). Porting them now would mean inventing new coordinate
+// utilities or touching rendering, both out of scope for "state and
+// helper functions only." That remains for a later phase.
+// ---------------------------------------------------------------------
+
+// Mirrors the prototype's HOLD_BEFORE_LIFT_MS / CONTACT_PRESSURE_FLOOR /
+// MIN_FINISH_MS / MAX_FINISH_MS constants exactly (stabilizationtest.html).
+const _PROTOTYPE_STABILIZER_HOLD_BEFORE_LIFT_MS=120;
+const _PROTOTYPE_STABILIZER_CONTACT_PRESSURE_FLOOR=0.02;
+const _PROTOTYPE_STABILIZER_MIN_FINISH_MS=80;
+const _PROTOTYPE_STABILIZER_MAX_FINISH_MS=260;
+
+// Equivalent of the prototype's local `pressureBuf` / `delayedPressure`
+// / `lastInputPressure` / `lastContactPressure` / `recentSpeedPxMs` /
+// `lastMoveEventTime` / `releaseTailClassifierActive` /
+// `releaseTailLastPressure`. Isolated from every legacy `_stabilizer*`
+// variable, same as `_prototypeStabilizerSmoothBuf` above.
+let _prototypePressureBuf=[];
+let _prototypeDelayedPressure=0;
+let _prototypeLastInputPressure=0;
+let _prototypeLastContactPressure=0;
+let _prototypeRecentSpeedPxMs=0;
+let _prototypeLastMoveEventTime=0;
+let _prototypeReleaseTailClassifierActive=false;
+let _prototypeReleaseTailLastPressure=Infinity;
+
+// Direct port of pushPressureBuf(p) from stabilizationtest.html, operating
+// on the isolated _prototypePressureBuf instead of the prototype's
+// module-level pressureBuf. Reuses _prototypeMovingAverageAmount() (Phase
+// 1) for window length, exactly as the prototype reuses
+// movingAverageAmount().
+function _prototypePushPressureBuf(p){
+  const maxLen=_prototypeMovingAverageAmount();
+  _prototypePressureBuf.push(p);
+  while(_prototypePressureBuf.length>maxLen)_prototypePressureBuf.shift();
+  if(maxLen===1)return p;
+  let s=0;
+  for(const v of _prototypePressureBuf)s+=v;
+  return s/_prototypePressureBuf.length;
+}
+
+// Direct port of isReleaseTailSample(...) from stabilizationtest.html.
+// Pure classifier: given sample metadata, decides whether it looks like
+// a pen lift-off artifact rather than real drawing input. Does not read
+// or write any state itself.
+function _prototypeIsReleaseTailSample({pointerType,idleGapMs,screenDistance,pressure,previousContactPressure,continuing,previousTailPressure}){
+  if(pointerType!=='pen'||idleGapMs<=250||screenDistance>1.25)return false;
+  if(!Number.isFinite(pressure)||pressure>0.20)return false;
+  const sharplyLower=previousContactPressure>_PROTOTYPE_STABILIZER_CONTACT_PRESSURE_FLOOR&&
+    pressure<=previousContactPressure*0.75;
+  const stillFalling=continuing&&pressure<=previousTailPressure;
+  return sharplyLower||stillFalling;
+}
+
+// Direct ports of the small smoothstep01(x)/mix(a,b,t) helpers used by
+// the prototype's finish-pacing math (endStroke). Pure functions, no
+// state.
+function _prototypeSmoothstep01(x){
+  const t=Math.max(0,Math.min(1,x));
+  return t*t*(3-2*t);
+}
+function _prototypeMix(a,b,t){
+  return a+(b-a)*t;
+}
+
+// Equivalent of the prototype's resetStrokeState() insofar as it
+// concerns finalization state (pressureBuf, lastInputPressure,
+// lastContactPressure, recentSpeedPxMs, lastMoveEventTime, release-tail
+// classifier fields). Isolated reset function for the prototype port
+// only — NOT the legacy stabilizer's reset, and intentionally not
+// called from anywhere yet, same as _prototypeResetStabilizer above.
+function _prototypeResetFinalizationState(){
+  _prototypePressureBuf=[];
+  _prototypeDelayedPressure=0;
+  _prototypeLastInputPressure=0;
+  _prototypeLastContactPressure=0;
+  _prototypeRecentSpeedPxMs=0;
+  _prototypeLastMoveEventTime=0;
+  _prototypeReleaseTailClassifierActive=false;
+  _prototypeReleaseTailLastPressure=Infinity;
+}
+// ---------------------------------------------------------------------
+// End Stabilization Phase 3A inert prototype-finalization state/helper
+// port.
+// ---------------------------------------------------------------------
+
 function _stabilizerSetSampleContext(pressure,event){
   _stabilizerTargetPressure=pressure;
   _stabilizerEvent=event;
