@@ -1,4 +1,4 @@
-//  TOOL SETTINGS PANEL  wiring
+﻿//  TOOL SETTINGS PANEL  wiring
 (function(){
   // Helper: range + display
   function bindRange(id,dispId,suffix,onchange){
@@ -184,6 +184,14 @@ function updateBlendModeUI(){
   bindRange('ts-stabilization','ts-stabilization-val','',v=>{window._tsStabilization=v/100;});
   const stabilizationEl=document.getElementById('ts-stabilization');
   window._tsStabilization=stabilizationEl?(+stabilizationEl.value/100):0;
+
+  // Leash: purely a visual indicator (dashed anchor->tip line, see
+  // _updateStabilizerLeash in brush-engine.js), has no effect on the
+  // stroke itself. Defaults on, matching the checked attribute on the
+  // canonical checkbox in index.html.
+  const leashEl=document.getElementById('ts-leash-toggle');
+  window._tsLeashEnabled=leashEl?leashEl.checked:true;
+  if(leashEl) leashEl.addEventListener('input',()=>{window._tsLeashEnabled=leashEl.checked;});
   bindRange('ts-min-flow','ts-min-flow-val','%');
   function syncDynamicsMinimums(){
     const sizeControl=document.getElementById('ts-size-control');
@@ -835,7 +843,8 @@ function updateBlendModeUI(){
     const configs={
       size:{title:'Size Settings',controls:[['Control','ts-size-control'],['Minimum Size','ts-min-size'],['Pressure Curve','ts-size-pressure-curve']]},
       flow:{title:'Flow Settings',controls:[['Control','ts-flow-control'],['Minimum Flow','ts-min-flow'],['Pressure Curve','ts-flow-pressure-curve']]},
-      opacity:{title:'Opacity Settings',controls:[['Control','ts-opacity-control'],['Pressure Curve','ts-opacity-pressure-curve']]}
+      opacity:{title:'Opacity Settings',controls:[['Control','ts-opacity-control'],['Pressure Curve','ts-opacity-pressure-curve']]},
+      stabilization:{title:'Stabilization Settings',controls:[['Leash','ts-leash-toggle']]}
     };
     function closePopup(){
       popup.classList.remove('open');popup.setAttribute('aria-hidden','true');
@@ -845,8 +854,18 @@ function updateBlendModeUI(){
       const source=document.getElementById(sourceId);
       if(!source) return;
       const row=document.createElement('div');row.className='ts-row';
+      const isCheckbox=source.type==='checkbox';
       const label=document.createElement('span');label.className='ts-label';label.textContent=labelText;
-      const control=source.cloneNode(true);control.removeAttribute('id');
+      const control=source.cloneNode(true);control.removeAttribute('id');control.removeAttribute('style');control.removeAttribute('aria-hidden');
+      if(isCheckbox){
+        control.checked=source.checked;
+        control.addEventListener('input',()=>{source.checked=control.checked;source.dispatchEvent(new Event('input',{bubbles:true}));});
+        // Checkbox rows read left-to-right as "[checkbox] Label", unlike
+        // the slider rows below which put the label first.
+        row.append(control,label);
+        popup.appendChild(row);
+        return;
+      }
       control.value=source.value;
       control.addEventListener('input',()=>{source.value=control.value;source.dispatchEvent(new Event('input',{bubbles:true}));});
       row.append(label,control);

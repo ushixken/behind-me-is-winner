@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
@@ -994,7 +994,13 @@
                     <span class="ts-label">Stabilization</span>
                     <input type="range" class="ts-range" id="ts-stabilization" min="0" max="100" value="0"/>
                     <span class="ts-val ts-value-edit" data-value-target="ts-stabilization" tabindex="0" id="ts-stabilization-val">0</span>
+                    <button type="button" class="ts-simple-settings-btn ts-simple-only" data-simple-settings="stabilization" title="Stabilization settings">⚙</button>
                   </div>
+                  <!-- Canonical Leash state. Not shown directly -- the gear
+                       popup clones this into a visible checkbox and mirrors
+                       input events back here, same pattern as the Size /
+                       Flow / Opacity control sources above. -->
+                  <input type="checkbox" id="ts-leash-toggle" checked style="display:none" aria-hidden="true"/>
                 </div>
                 <div class="ts-field tool-aa-controls" data-eye="aa">
                   <div class="ts-divider" style="margin:6px 0;"></div>
