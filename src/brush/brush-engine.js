@@ -2690,6 +2690,53 @@ function _prototypeResetFinalizationState(){
 // port.
 // ---------------------------------------------------------------------
 
+// ---------------------------------------------------------------------
+// Stabilization Phase 3B: prototype finalization entry point.
+//
+// This is the pointer-up-side counterpart to stabilizePointDispatch()
+// (the live-sample routing point wired in an earlier phase): the single
+// place pointer-up branches between the legacy finalize
+// (_stabilizerFinalize) and the new prototype finalization path.
+// USE_NEW_STABILIZER selects which one runs; exactly one of the two
+// ever executes for a given stroke (see _pointerEndStroke below).
+//
+// _prototypeBeginFinalize() only initializes prototype finalization
+// state and schedules a completion step -- it intentionally does NOT
+// implement the prototype's actual finish loop yet (finishTick /
+// strokeHoldTick / flushPendingStrokeSamples / computeWasStoppedBeforeLift
+// are not ported in this phase). _prototypeFinalizeStep() is a
+// placeholder scheduled-but-not-draining step; completing the finish
+// loop (and therefore invoking the stored callback) is deferred to a
+// later phase. This is intentionally a no-op with respect to committing
+// the stroke while USE_NEW_STABILIZER stays at its default of false.
+let _prototypeFinalizing=false;
+let _prototypeFinalizeCB=null;
+let _prototypeFinalizeRAF=0;
+
+function _prototypeBeginFinalize(x,y,pressure,event,cb){
+  const ownerSession=_activeStrokeSession;
+  _prototypeResetFinalizationState();
+  _prototypeLastInputPressure=pressure;
+  _prototypeFinalizing=true;
+  _prototypeFinalizeCB=()=>{
+    if(ownerSession!==_activeStrokeSession)return;
+    cb();
+  };
+  if(_prototypeFinalizeRAF){cancelAnimationFrame(_prototypeFinalizeRAF);_prototypeFinalizeRAF=0;}
+  _prototypeFinalizeRAF=requestAnimationFrame(_prototypeFinalizeStep);
+}
+
+function _prototypeFinalizeStep(){
+  _prototypeFinalizeRAF=0;
+  // Phase 3B stops here by design: the completion step (the
+  // finishTick-equivalent position/pressure catch-up) is not
+  // implemented yet, so this step neither drains toward the endpoint
+  // nor invokes _prototypeFinalizeCB. That lands in a later phase.
+}
+// ---------------------------------------------------------------------
+// End Stabilization Phase 3B prototype finalization entry point.
+// ---------------------------------------------------------------------
+
 function _stabilizerSetSampleContext(pressure,event){
   _stabilizerTargetPressure=pressure;
   _stabilizerEvent=event;
@@ -4726,13 +4773,21 @@ function _pointerEndStroke(e){
     const finalConditioned=_baselineConditionerPush(_baselineSampleFromEvent(e,finalRaw,currentPressure),{force:true});
     if(_stabilizationAmount()>0&&_stabilizerActive){
       drawing=false;
-      _stabilizerFinalize(finalRaw.x,finalRaw.y,_stabilizerTargetPressure,e,()=>{
+      const _stabilizerFinalizeCompletion=()=>{
         _flushCurveTail(_lastPointerEvent||e);
         _flushStrokeTail();
         if(_inStroke){_inStroke=false;_commitStrokeCanvas();}
         _restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();
         _finalizePointerEndStroke(e);
-      });
+      };
+      // Stabilization Phase 3B: single routing point for pointer-up
+      // finalize, mirroring stabilizePointDispatch()'s routing for live
+      // samples. Exactly one of the two finalize paths runs.
+      if(USE_NEW_STABILIZER){
+        _prototypeBeginFinalize(finalRaw.x,finalRaw.y,_stabilizerTargetPressure,e,_stabilizerFinalizeCompletion);
+      }else{
+        _stabilizerFinalize(finalRaw.x,finalRaw.y,_stabilizerTargetPressure,e,_stabilizerFinalizeCompletion);
+      }
       return;
     }
     drawing=false;
