@@ -2275,7 +2275,7 @@ function _stabilizationAmount(){
 function _stabilizerWindowLen(amount){
   const a=Math.max(0,Math.min(1,amount));
   if(a<=0)return 1; // true bypass, matching prototype's maxLen=1 at 0%
-  return Math.max(2,Math.round(a*200));
+  return Math.max(2,Math.round(a*800));
 }
 // While the pointer is idle mid-stroke (paused, or after lift), synthetic
 // samples of the held target position keep getting pushed into the window
