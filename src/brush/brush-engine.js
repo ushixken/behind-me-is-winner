@@ -1353,11 +1353,11 @@ function _dabDirtyRadii(d){
   if(window.brushTipCanvas){
     const tipW=window.brushTipCanvas.width||1,tipH=window.brushTipCanvas.height||1;
     const reference=Math.max(tipW,tipH);
-    const roundness=Math.max(window.brushTipMinimumRoundness||0,Math.min(1,_activeDabRoundness==null?(window.brushTipRoundness==null?1:window.brushTipRoundness):_activeDabRoundness));
+    const roundness=Math.max(window.brushTipMinimumRoundness||0,Math.min(1,d.roundness==null?(window.brushTipRoundness==null?1:window.brushTipRoundness):d.roundness));
     const compressWidth=tipW<tipH;
     const width=tipW*((d.r*2)/reference)*(compressWidth?roundness:1);
     const height=tipH*((d.r*2)/reference)*(compressWidth?1:roundness);
-    const cosine=Math.abs(Math.cos(_activeDabRotation)),sine=Math.abs(Math.sin(_activeDabRotation));
+    const cosine=Math.abs(Math.cos(d.rotation||0)),sine=Math.abs(Math.sin(d.rotation||0));
     x=(width*cosine+height*sine)/2;
     y=(width*sine+height*cosine)/2;
   }
