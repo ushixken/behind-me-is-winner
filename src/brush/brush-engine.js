@@ -294,9 +294,7 @@ function _persistLineAA(){
   try{localStorage.setItem(LINE_AA_STORE_KEY,JSON.stringify({enabled:_lineAAEnabled,quality:_lineAAQuality}));}catch(_){}
 }
 function _clearLineAACaches(){
-  if(typeof _aaDabCache!=='undefined')_aaDabCache.clear();
-  if(typeof _stampCache!=='undefined')_stampCache.clear();
-  if(typeof _tipDabCache!=='undefined')_tipDabCache.clear();
+  if(typeof BrushRenderer!=='undefined')BrushRenderer.invalidateCaches({aa:true,stamp:true,tip:true});
 }
 function getLineAASettings(){return{enabled:_lineAAEnabled,quality:_lineAAQuality};}
 function setLineAAEnabled(enabled){_lineAAEnabled=!!enabled;_persistLineAA();_clearLineAACaches();}
@@ -629,7 +627,7 @@ function _getLiveStrokePreview(){
 }
 window._getLiveStrokePreview = _getLiveStrokePreview;
 window.addEventListener('project-loaded',()=>{
-  _aaDabCache.clear();_softRoundMaskCache.clear();_tipDabCache.clear();_stampCache.clear();
+  BrushRenderer.invalidateCaches();
   if(typeof window._invalidateTextureCache==='function')window._invalidateTextureCache();
   _pendingDabs.length=0;_frameDirty=null;_strokeDirty=null;
 });
@@ -3712,8 +3710,7 @@ window._setBrushTipShape=function(roundness,flipX,flipY){
   window.brushTipRoundness=Math.max(0.01,Math.min(1,Number(roundness)||1));
   window.brushTipFlipX=!!flipX;
   window.brushTipFlipY=!!flipY;
-  _tipDabCache.clear();
-  _stampCache.clear();
+  BrushRenderer.invalidateCaches({tip:true,stamp:true});
 };
 // Many exported tip images (including the morrowshore.com ABR-extractor's
 // PNGs) are plain OPAQUE grayscale pictures Ã¢â‚¬â€ a white shape on a black
@@ -3758,9 +3755,7 @@ window.setBrushTip=function(canvas,referenceDiameter,invalidationReason){
   window.brushTipReferenceDiameter=canvas&&Number.isFinite(Number(referenceDiameter))&&Number(referenceDiameter)>0?Number(referenceDiameter):null;
   window.brushTipVersion=(window.brushTipVersion||0)+1;
   _tipAlphaSeedPixels=window.TipReadbackExperiment&&window.TipReadbackExperiment.mode==='D'&&_lastNormalizedTipPixels?{data:_lastNormalizedTipPixels.data,w:_lastNormalizedTipPixels.w,h:_lastNormalizedTipPixels.h,version:window.brushTipVersion}:null;
-  _tipDabCache.clear();
-  _aaDabCache.clear();
-  _stampCache.clear();
+  BrushRenderer.invalidateCaches({tip:true,aa:true,stamp:true});
   _tipAlphaInvalidationReason=invalidationReason||'setBrushTip-call';
   if(trace)trace.invalidated({reason:_tipAlphaInvalidationReason,previousVersion,tipVersion:window.brushTipVersion,previousTipCanvasId:trace.objectId(previousCanvas,'tip-canvas'),tipCanvasId:trace.objectId(window.brushTipCanvas,'tip-canvas'),sameCanvas:previousCanvas===window.brushTipCanvas,alphaBufferId:trace.objectId(previousAlphaBuffer,'alpha-buffer'),stack:(new Error()).stack});
   if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.tipChanged();
@@ -3886,7 +3881,7 @@ function _brushPointerDown(e){
   if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('pendingPrewarmCancellation',diagnosticSetupStart);
   diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
   const latencyProfiler=_brushPerf();
-  if(latencyProfiler)latencyProfiler.startStroke({tool,pointerType:e.pointerType,presetId:window._activeBrushPresetId||null,size:getBrushSize(),flow:brushFlow,opacity:brushOpacity,hardness:brushHardness,tip:!!window.brushTipCanvas,texture:!!window.brushTextureEnabled,airbrush:!!window._brushAirbrush,layerType:layers[curLayer]&&layers[curLayer].type,caches:{analytic:_aaDabCache.size,softRound:_softRoundMaskCache.size,tip:_tipDabCache.size},buffers:{stroke:!!_strokeCanvas,preview:!!_strokePreviewCanvas}});
+  if(latencyProfiler)latencyProfiler.startStroke({tool,pointerType:e.pointerType,presetId:window._activeBrushPresetId||null,size:getBrushSize(),flow:brushFlow,opacity:brushOpacity,hardness:brushHardness,tip:!!window.brushTipCanvas,texture:!!window.brushTextureEnabled,airbrush:!!window._brushAirbrush,layerType:layers[curLayer]&&layers[curLayer].type,caches:BrushRenderer.getCacheStats(),buffers:{stroke:!!_strokeCanvas,preview:!!_strokePreviewCanvas}});
   if(window.TipReadbackExperiment)window.TipReadbackExperiment.strokeStart();
   if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.beginStroke({entryAt:customTraceEntry,tip:!!window.brushTipCanvas,presetId:window._activeBrushPresetId||null,settings:{size:getBrushSize(),spacing:window.brushSpacing,hardness:brushHardness,opacity:brushOpacity,flow:brushFlow,pressureSize:window._brushPressureSize,pressureOpacity:window._brushPressureOpacity,zoom:typeof zoom==='number'?zoom:null}});
   if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.event('stroke-state-initialization-begins');

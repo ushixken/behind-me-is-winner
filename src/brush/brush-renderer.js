@@ -931,6 +931,27 @@ const CpuBrushRenderer = {
   // cannot change observable behavior.
   beginStroke(){},
   endStroke(){},
+  // Phase 1F-B: cache ownership API. brush-engine.js previously reached
+  // into this file's Map caches directly (_aaDabCache.clear(), etc.) —
+  // these two methods give it an API surface instead, so the renderer's
+  // cache internals stay private to this file. `which` lets a call site
+  // clear only the subset of caches it used to clear directly; omitting
+  // it clears everything, matching every full-clear call site that used
+  // to list all four caches explicitly.
+  invalidateCaches(which){
+    const all=!which;
+    if(all||which.aa) _aaDabCache.clear();
+    if(all||which.stamp) _stampCache.clear();
+    if(all||which.tip) _tipDabCache.clear();
+    if(all||which.softRound) _softRoundMaskCache.clear();
+  },
+  getCacheStats(){
+    return {
+      analytic: _aaDabCache.size,
+      softRound: _softRoundMaskCache.size,
+      tip: _tipDabCache.size
+    };
+  },
 };
 
 const BrushRenderer = {
@@ -941,6 +962,8 @@ const BrushRenderer = {
   drawDab(d){ return this.active.drawDab(d); },
   beginStroke(){ return this.active.beginStroke(); },
   endStroke(){ return this.active.endStroke(); },
+  invalidateCaches(which){ return this.active.invalidateCaches(which); },
+  getCacheStats(){ return this.active.getCacheStats(); },
 };
 
 window.CpuBrushRenderer = CpuBrushRenderer;
