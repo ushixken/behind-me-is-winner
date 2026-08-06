@@ -2336,13 +2336,25 @@ function _resetStabilization(x,y,t){
   _stabilizerX=x;_stabilizerY=y;
   _stabilizerRawX=x;_stabilizerRawY=y;
   _stabilizerTargetX=x;_stabilizerTargetY=y;
-  _stabilizerBuf=[{x,y,t:performance.now()}];
   _stabilizerLastSampleT=t||performance.now();
   _stabilizerLastAdvanceT=performance.now();
   _stabilizerLastInputWallT=_stabilizerLastAdvanceT;
   _stabilizerTargetPressure=currentPressure;
   _stabilizerSmoothedPressure=currentPressure;
-  _stabilizerPressureBuf=[currentPressure];
+  // Prefill both buffers to the full moving-average window length at
+  // pointer-down, instead of starting from a single sample. Without this,
+  // the first N samples of a stroke get averaged over a buffer that is
+  // still filling up (1 sample, then 2, then 3, ... up to windowLen), so
+  // stabilization strength ramps from "off" to "full" over the first N
+  // points instead of being constant from the very first move — this is
+  // what produces the localized kink/bump early in a curving stroke.
+  // Ported from prototype/prototype.html's beginStroke() (see its comment
+  // at the smoothBuf/pressureBuf prefill). Each entry is its own object
+  // literal so later in-place mutation of one buffer slot can't alias
+  // another.
+  const _resetWindowLen=_stabilizerWindowLen(_stabilizationAmount());
+  _stabilizerBuf=Array.from({length:_resetWindowLen},()=>({x,y,t:performance.now()}));
+  _stabilizerPressureBuf=Array.from({length:_resetWindowLen},()=>currentPressure);
   _stabilizerEvent=null;
   _stabilizerActive=true;
   _stabilizerFinishing=false;
@@ -2446,6 +2458,24 @@ function _baselineSameSample(a,b){return!!a&&Math.abs(a.x-b.x)<=1e-12&&Math.abs(
 function _baselineLerpSample(a,b,t){const l=(x,y)=>x+(y-x)*t;return{x:l(a.x,b.x),y:l(a.y,b.y),screenX:l(a.screenX,b.screenX),screenY:l(a.screenY,b.screenY),pressure:l(a.pressure,b.pressure),tiltX:l(a.tiltX,b.tiltX),tiltY:l(a.tiltY,b.tiltY),twist:l(a.twist,b.twist),time:l(a.time,b.time),pointerId:b.pointerId,event:b.event};}
 function _baselineEmit(s,sample,out,reason){if(_baselineSameSample(s.lastForwarded,sample))return;if(s.lastForwarded){const d=Math.hypot(sample.screenX-s.lastForwarded.screenX,sample.screenY-s.lastForwarded.screenY),dt=Math.max(0,sample.time-s.lastForwarded.time),ds=s.stats.screenDistance,ts=s.stats.dt;ds.sum+=d;ds.min=Math.min(ds.min,d);ds.max=Math.max(ds.max,d);ds.count++;ts.sum+=dt;ts.min=Math.min(ts.min,dt);ts.max=Math.max(ts.max,dt);ts.count++;}s.lastForwarded=sample;s.stats.forwardedSampleCount++;if(reason==='time')s.stats.timeGapEmissions++;else if(reason==='attribute')s.stats.attributeChangeEmissions++;else if(reason==='corner')s.stats.cornerEmissions++;out.push(sample);}
 function _baselineConditionerReset(sample){_baselineConditionerState={previousRaw:null,lastRaw:sample,lastForwarded:null,distanceCarry:0,stats:_baselineNewStats()};_baselineConditionerState.stats.rawSampleCount=1;const out=[];_baselineEmit(_baselineConditionerState,sample,out,'initial');return out;}
+// Updates the conditioner's reference point (lastRaw/previousRaw/lastForwarded)
+// to match a catch-up/finalize glide sample WITHOUT running distance-stepping
+// or emitting anything -- see the call site in _stabilizerEmit for why this
+// exists. Catch-up points must never be pushed through the real
+// _baselineConditionerPush: that function treats its input as raw, unpaced
+// pointer hardware samples and re-interpolates any two consecutive samples
+// as a STRAIGHT chord (_baselineLerpSample), which flattens the moving-
+// average glide's actual curved convergence path into a straight line. The
+// glide is already finely and evenly paced (see _stabilizerAdvance's
+// per-tick emission), so it needs none of the conditioner's resampling --
+// only its bookkeeping needs to stay current, so that when real pointer
+// samples resume after a hold, the conditioner's corner/distance
+// calculations start from the position the curve actually converged to,
+// not a stale pre-hold reference (see the hold+redirect hook fix above).
+function _baselineConditionerSync(sample){
+  const s=_baselineConditionerState;if(!s)return;
+  s.previousRaw=s.lastRaw;s.lastRaw=sample;s.lastForwarded=sample;s.distanceCarry=0;
+}
 function _baselineIsCorner(a,b,c){if(!a||!b)return false;const abx=b.screenX-a.screenX,aby=b.screenY-a.screenY,bcx=c.screenX-b.screenX,bcy=c.screenY-b.screenY,ab=Math.hypot(abx,aby),bc=Math.hypot(bcx,bcy);if(ab<0.25||bc<0.25)return false;const cosine=Math.max(-1,Math.min(1,(abx*bcx+aby*bcy)/(ab*bc)));return Math.acos(cosine)>=_BASELINE_CORNER_ANGLE_RAD;}
 function _baselineConditionerPush(sample,options={}){
   const s=_baselineConditionerState;if(!s)return[sample];const n=s.stats,out=[];n.rawSampleCount++;
@@ -2525,7 +2555,17 @@ function _stabilizerEmit(x,y,now){
   // flat at the raw target pressure. This is what lets width keep
   // converging/tapering during the catch-up glide instead of painting a
   // uniform-width thread at whatever pressure happened to be last recorded.
-  _curveAddPoint(x,y,_stabilizerSmoothedPressure,_stabilizerEvent||_lastPointerEvent);
+  //
+  // Feeds the curve DIRECTLY, same as before the hold+redirect hook fix --
+  // routing this through _baselineConditionerPush was tried and reverted
+  // (see _baselineConditionerSync's comment): that function re-interpolates
+  // consecutive samples as straight chords, which flattened the glide's
+  // actual curved convergence into a visible straight line cutting across
+  // the stroke on a quick flick-then-release. Only the conditioner's
+  // reference state is kept in sync (below), not its resampling.
+  const e=_stabilizerEvent||_lastPointerEvent;
+  _curveAddPoint(x,y,_stabilizerSmoothedPressure,e);
+  _baselineConditionerSync(_baselineSampleFromStabilizedPoint(e,{x,y,pressure:_stabilizerSmoothedPressure},now));
   lx=x;ly=y;currentPressure=_stabilizerSmoothedPressure;
   _scheduleRecomposite();
   _updateStabilizerLeash();
@@ -2614,22 +2654,42 @@ function _stabilizerAdvance(dt,now){
   // _stabilizerCatchupTicks).
   const dtMs=Math.max(0,dt*1000);
   const ticks=_stabilizerCatchupTicks(dtMs,windowLen,now);
+  // Feed the curve constructor on EVERY tick, not just the last one this
+  // frame -- matching prototype/prototype.html's strokeHoldTick, which
+  // calls feedPoint() inside its per-tick loop rather than once per RAF.
+  // The stroke curve is a rolling 3-point (A,B,C) C1 quadratic (see
+  // _curveAddReconstructedPoint); feeding it one coarse jump per frame
+  // instead of many fine per-tick steps means each new sample can be a
+  // large leap from the last drawn point. Right after a curving stroke
+  // stops, the moving average is converging back toward the held anchor
+  // from the trailing/outer side of that curve -- a single big jump
+  // captured as the new sample point, paired with an equally stale
+  // control point, makes the quadratic overshoot past the true
+  // convergence path before bending back onto it, which is exactly the
+  // hook/loop artifact. Emitting every intermediate tick keeps the curve
+  // densely sampled through the bend so it converges smoothly instead.
+  // This also explains the rarer kink mid-stroke: any single frame where
+  // a coalesced-event gap briefly exceeds the idle threshold hits this
+  // same coarse-jump path for one frame.
   for(let i=0;i<ticks;i++){
     _stabilizerBuf.push({x:_stabilizerTargetX,y:_stabilizerTargetY,t:now});
     _stabilizerPressureBuf.push(_stabilizerTargetPressure);
     _stabilizerTrimBuf(windowLen);
     const step=_stabilizerBufAverage();
     _stabilizerSmoothedPressure=_stabilizerPressureAverage();
-    if(Math.hypot(step.x-_stabilizerX,step.y-_stabilizerY)<=1e-4){_stabilizerX=step.x;_stabilizerY=step.y;break;}
+    const moved=Math.hypot(step.x-_stabilizerX,step.y-_stabilizerY)>1e-4;
     _stabilizerX=step.x;_stabilizerY=step.y;
+    if(!moved)break;
+    // Same low-end floor blend as _stabilizePoint (see
+    // _applyOldStabilizerFloor) -- keeps the idle-hold/finish glide
+    // consistent with live drawing at very low Stabilization settings.
+    // No-op (weight 0) at/above the fade limit, so this never touches
+    // mid-to-high settings, including 100%. Applied per-tick now so the
+    // floor blend doesn't itself reintroduce a coarse per-frame jump.
+    const floored=_applyOldStabilizerFloor(_stabilizerX,_stabilizerY,amount,now);
+    _stabilizerX=floored.x;_stabilizerY=floored.y;
+    _stabilizerEmit(_stabilizerX,_stabilizerY,now);
   }
-  // Same low-end floor blend as _stabilizePoint (see _applyOldStabilizerFloor)
-  // -- keeps the idle-hold/finish glide consistent with live drawing at very
-  // low Stabilization settings. No-op (weight 0) at/above the fade limit,
-  // so this never touches mid-to-high settings, including 100%.
-  const floored=_applyOldStabilizerFloor(_stabilizerX,_stabilizerY,amount,now);
-  _stabilizerX=floored.x;_stabilizerY=floored.y;
-  _stabilizerEmit(_stabilizerX,_stabilizerY,now);
 
   // Convergence must require BOTH position and pressure to have actually
   // reached their targets. Pressure's boxcar average is a LINEAR ramp — it
