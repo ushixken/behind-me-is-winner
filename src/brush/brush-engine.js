@@ -2246,45 +2246,64 @@ function _flushStrokeTail(){
 // existing curve reconstruction, spacing, pressure interpolation, and
 // stamping pipeline.
 //
-// Range remapped: the old 0-100% range (true bypass -> a fairly light
-// filter) has been replaced. The old 100% strength (TAU/LAG max below) is
-// now the FLOOR at the new 0% — there is no more true bypass, the slider's
-// bottom end is what used to be its top end. The new 100% reaches a much
-// stronger filter, matching the feel of prototype/prototype.html's heavier
-// stabilization. See git history for the previous 0.001-0.050s / 0.20-16px
-// range and the true-bypass branch if either is ever needed again.
+// This is a time-windowed moving average (boxcar filter): the output point
+// is the average of every raw sample received in the last N milliseconds,
+// where N scales with the Stabilization slider. This intentionally matches
+// TVPaint's "Average (Points)" line-smoothing mode rather than a clamped
+// exponential low-pass — there is no hard maximum-lag clamp here, so a
+// fast sweeping stroke can genuinely pull the brush tip far behind the
+// pointer, the same way it does in TVPaint/prototype. A window in TIME
+// (not raw sample count) keeps this zoom-invariant by construction, unlike
+// prototype's fixed-sample-count average, which needed a separate
+// zoom-compensation hack to stay effective when zoomed out — see the
+// zoom-compensation discussion earlier for why that approach was avoided.
+//
+// Range remap carried over from the previous exponential design: the old
+// 100% strength is now the 0% floor (a light, fast-converging window),
+// there is no more true bypass, and 100% reaches a much heavier window.
 function _stabilizationAmount(){
   const raw=Number(window._tsStabilization);
   return Number.isFinite(raw)?Math.max(0,Math.min(1,raw)):0;
 }
-
-// Normal stabilization: a synchronous low-pass with a strict screen-space
-// lag bound.  Unlike a pursuit/lazy-brush loop, every real pointer sample
-// advances the brush immediately.  The time response removes high-frequency
-// hand jitter while the spatial bound prevents fast strokes from opening a
-// large cursor-to-brush gap.  There is no velocity/inertia term, so the
-// result cannot overshoot or oscillate.  The idle-delay catch-up loop below
-// (_STABILIZER_IDLE_DELAY_MS / _stabilizerStep / _stabilizerAdvance) already
-// gives this a pursuit-style "settle after the pen stops" behavior, which is
-// why widening the range is enough to reach prototype's stronger feel
-// without porting a second algorithm.
-//
-// Both internal values are derived from the one Stabilization slider.
-// smoothstep keeps the low end fine-grained while still reaching a strong,
-// controllable maximum.
-const _STABILIZER_TAU_MIN=0.050;
-const _STABILIZER_TAU_MAX=0.320;
-const _STABILIZER_LAG_MIN_SCREEN_PX=16;
-const _STABILIZER_LAG_MAX_SCREEN_PX=90;
+// Point-count window, matching prototype/prototype.html's movingAverageAmount()
+// exactly: the window is a fixed number of retained SAMPLES, not a span of
+// wall-clock time. This is what "Average (Points)" actually names — TVPaint
+// counts points, not milliseconds. A time-window trim (the previous design
+// here) silently changes effective smoothing strength with drawing speed,
+// since a fixed ms span holds more or fewer points depending on how fast
+// samples are arriving; a point-count window doesn't have that drift.
+function _stabilizerWindowLen(amount){
+  const a=Math.max(0,Math.min(1,amount));
+  if(a<=0)return 1; // true bypass, matching prototype's maxLen=1 at 0%
+  return Math.max(2,Math.round(a*100));
+}
+// While the pointer is idle mid-stroke (paused, or after lift), synthetic
+// samples of the held target position keep getting pushed into the window
+// at roughly this cadence, so the average keeps gliding toward the target
+// instead of freezing — this is the "Catch Up" glide TVPaint's Average
+// (Points) mode shows after you stop moving or release the pen.
 const _STABILIZER_IDLE_DELAY_MS=18;
 const _STABILIZER_EPS_SCREEN_PX=0.30;
-const _STABILIZER_SPEED_FILTER_TAU=0.016;
+// Pressure is 0-1, so this needs its own small epsilon rather than reusing
+// the screen-pixel one above — see the convergence gate in _stabilizerAdvance.
+const _STABILIZER_PRESSURE_EPS=0.002;
 
 let _stabilizerActive=false;
 let _stabilizerX=0,_stabilizerY=0;
-let _stabilizerRawX=0,_stabilizerRawY=0,_stabilizerSpeed=0;
+let _stabilizerSmoothedPressure=1;
+let _stabilizerRawX=0,_stabilizerRawY=0;
 let _stabilizerTargetX=0,_stabilizerTargetY=0;
 let _stabilizerTargetPressure=1;
+let _stabilizerBuf=[]; // {x,y,t} samples (t in performance.now() ms), oldest first
+// Pressure moving-average buffer, kept in lockstep with _stabilizerBuf (same
+// push/trim calls, same windowLen, every tick). Pressure used to be held flat
+// at _stabilizerTargetPressure for the whole catch-up/finish glide, which
+// painted a uniform-width thread all the way to the anchor instead of
+// continuing the taper the live stroke was already doing. Running it through
+// the same point-count average as position — matching prototype's
+// pushPressureBuf exactly — lets width keep converging as position converges,
+// so a taper that was already narrowing keeps narrowing instead of freezing.
+let _stabilizerPressureBuf=[];
 let _stabilizerLastSampleT=0;
 let _stabilizerLastAdvanceT=0;
 let _stabilizerLastInputWallT=0;
@@ -2293,36 +2312,37 @@ let _stabilizerRAF=0;
 let _stabilizerFinishing=false;
 let _stabilizerFinalizeCB=null;
 
-function _stabilizerStrength(amount){
-  const a=Math.max(0,Math.min(1,amount));
-  return a*a*(3-2*a);
+function _stabilizerTrimBuf(maxLen){
+  const buf=_stabilizerBuf;
+  while(buf.length>maxLen)buf.shift();
+  const pbuf=_stabilizerPressureBuf;
+  while(pbuf.length>maxLen)pbuf.shift();
 }
-function _stabilizerTau(amount){
-  const s=_stabilizerStrength(amount);
-  return _STABILIZER_TAU_MIN+s*(_STABILIZER_TAU_MAX-_STABILIZER_TAU_MIN);
+function _stabilizerBufAverage(){
+  const buf=_stabilizerBuf;
+  if(!buf.length)return{x:_stabilizerX,y:_stabilizerY};
+  let sx=0,sy=0;
+  for(let i=0;i<buf.length;i++){sx+=buf[i].x;sy+=buf[i].y;}
+  return{x:sx/buf.length,y:sy/buf.length};
 }
-function _stabilizerEffectiveTau(amount){
-  const baseTau=_stabilizerTau(amount);
-  const maxLagScreen=_STABILIZER_LAG_MIN_SCREEN_PX+
-    _stabilizerStrength(amount)*(_STABILIZER_LAG_MAX_SCREEN_PX-_STABILIZER_LAG_MIN_SCREEN_PX);
-  // A first-order filter's expected steady lag is speed * tau. When that
-  // expected lag approaches the allowed spatial separation, shorten tau.
-  // This preserves fast loops and reversals instead of pulling them inward.
-  const expectedLagRatio=(_stabilizerSpeed*baseTau)/Math.max(0.01,maxLagScreen);
-  return baseTau/(1+Math.max(0,expectedLagRatio));
-}
-function _stabilizerMaxLagCanvas(amount){
-  const s=_stabilizerStrength(amount);
-  const screenPx=_STABILIZER_LAG_MIN_SCREEN_PX+s*(_STABILIZER_LAG_MAX_SCREEN_PX-_STABILIZER_LAG_MIN_SCREEN_PX);
-  return screenPx/Math.max(0.05,zoom);
+function _stabilizerPressureAverage(){
+  const pbuf=_stabilizerPressureBuf;
+  if(!pbuf.length)return _stabilizerSmoothedPressure;
+  let sp=0;
+  for(let i=0;i<pbuf.length;i++)sp+=pbuf[i];
+  return sp/pbuf.length;
 }
 function _resetStabilization(x,y,t){
   _stabilizerX=x;_stabilizerY=y;
+  _stabilizerRawX=x;_stabilizerRawY=y;
   _stabilizerTargetX=x;_stabilizerTargetY=y;
+  _stabilizerBuf=[{x,y,t:performance.now()}];
   _stabilizerLastSampleT=t||performance.now();
   _stabilizerLastAdvanceT=performance.now();
   _stabilizerLastInputWallT=_stabilizerLastAdvanceT;
   _stabilizerTargetPressure=currentPressure;
+  _stabilizerSmoothedPressure=currentPressure;
+  _stabilizerPressureBuf=[currentPressure];
   _stabilizerEvent=null;
   _stabilizerActive=true;
   _stabilizerFinishing=false;
@@ -2333,6 +2353,8 @@ function _stabilizerCancel(){
   _stabilizerActive=false;
   _stabilizerFinishing=false;
   _stabilizerFinalizeCB=null;
+  _stabilizerBuf=[];
+  _stabilizerPressureBuf=[];
   if(_stabilizerRAF){cancelAnimationFrame(_stabilizerRAF);_stabilizerRAF=0;}
   _hideStabilizerLeash();
 }
@@ -2378,52 +2400,39 @@ function _baselineConditionerFinish(cancelled=false){const s=_baselineConditione
 window.BaselineStrokeConditionerDiagnostics={enabled:false,enable(v=true){this.enabled=!!v;return this.enabled;},results(){return JSON.parse(JSON.stringify(_baselineConditionerReports));},latest(){const a=this.results();return a.length?a[a.length-1]:null;},clear(){_baselineConditionerReports.length=0;}};let _stabilizerDebugLastLogT=0;
 function _stabilizePoint(x,y,t){
   const amount=_stabilizationAmount();
-  // No true bypass anymore: amount<=0 still runs the filter below, just at
-  // floor strength (_STABILIZER_TAU_MIN / _STABILIZER_LAG_MIN_SCREEN_PX),
-  // which is what 100% used to be. See the range remap note above.
+  // No true bypass: amount<=0 still runs the window below, just at its
+  // shortest (fastest-converging) duration, which is what 100% used to be.
   if(!_stabilizerActive)_resetStabilization(x,y,t);
 
-  const dt=Math.max(0.00025,Math.min(0.05,(t-_stabilizerLastSampleT)/1000));
   _stabilizerLastSampleT=t;
-  const instantSpeed=Math.hypot(x-_stabilizerRawX,y-_stabilizerRawY)*Math.max(0.05,zoom)/dt;
-  const speedAlpha=1-Math.exp(-dt/_STABILIZER_SPEED_FILTER_TAU);
-  _stabilizerSpeed+=speedAlpha*(instantSpeed-_stabilizerSpeed);
   _stabilizerRawX=x;_stabilizerRawY=y;
   _stabilizerTargetX=x;_stabilizerTargetY=y;
   _stabilizerLastInputWallT=performance.now();
 
-  const alpha=1-Math.exp(-dt/_stabilizerEffectiveTau(amount));
-  let nextX=_stabilizerX+(x-_stabilizerX)*alpha;
-  let nextY=_stabilizerY+(y-_stabilizerY)*alpha;
+  _stabilizerBuf.push({x,y,t:_stabilizerLastInputWallT});
+  _stabilizerPressureBuf.push(_stabilizerTargetPressure);
+  const windowLen=_stabilizerWindowLen(amount);
+  _stabilizerTrimBuf(windowLen);
+  const avg=_stabilizerBufAverage();
+  _stabilizerX=avg.x;_stabilizerY=avg.y;
+  _stabilizerSmoothedPressure=_stabilizerPressureAverage();
 
-  // Spatial leash is a limit, not the motion model: it only prevents the
-  // temporal filter from ever falling dramatically behind on fast input.
-  const dx=x-nextX,dy=y-nextY;
-  const distance=Math.hypot(dx,dy);
-  const maxLag=_stabilizerMaxLagCanvas(amount);
   if(t-_stabilizerDebugLastLogT>500){
     _stabilizerDebugLastLogT=t;
     console.log('[stabilizer debug]',{
       sliderPercent:Math.round(amount*100),
       amount,
-      tau:_stabilizerTau(amount).toFixed(4)+'s',
-      effectiveTau:_stabilizerEffectiveTau(amount).toFixed(4)+'s',
-      maxLagScreenPx:(maxLag*Math.max(0.05,zoom)).toFixed(2),
-      maxLagCanvasPx:maxLag.toFixed(2),
+      windowLen,
+      bufferedSamples:_stabilizerBuf.length,
+      lagScreenPx:(Math.hypot(_stabilizerRawX-avg.x,_stabilizerRawY-avg.y)*Math.max(0.05,zoom)).toFixed(2),
       zoom
     });
   }
-  if(distance>maxLag){
-    const scale=maxLag/distance;
-    nextX=x-dx*scale;
-    nextY=y-dy*scale;
-  }
 
-  _stabilizerX=nextX;_stabilizerY=nextY;
   _stabilizerLastAdvanceT=performance.now();
   _stabilizerSchedule();
   _updateStabilizerLeash();
-  return{x:nextX,y:nextY};
+  return{x:avg.x,y:avg.y,pressure:_stabilizerSmoothedPressure};
 }
 function _stabilizerSetSampleContext(pressure,event){
   _stabilizerTargetPressure=pressure;
@@ -2435,10 +2444,13 @@ function _stabilizerGapCanvas(){
 function _stabilizerEmit(x,y,now){
   _updateVelocity(x,y,now);
   if(window._brushAirbrush&&Math.hypot(x-lx,y-ly)>0.01)_airbrushLastMovementTime=performance.now();
-  // Stabilization owns position only. Pressure remains the raw pressure
-  // already used by the normal reconstruction/interpolation pipeline.
-  _curveAddPoint(x,y,_stabilizerTargetPressure,_stabilizerEvent||_lastPointerEvent);
-  lx=x;ly=y;currentPressure=_stabilizerTargetPressure;
+  // Pressure is the smoothed/delayed value from the same point-count moving
+  // average buffer position uses (see _stabilizerPressureBuf) — NOT held
+  // flat at the raw target pressure. This is what lets width keep
+  // converging/tapering during the catch-up glide instead of painting a
+  // uniform-width thread at whatever pressure happened to be last recorded.
+  _curveAddPoint(x,y,_stabilizerSmoothedPressure,_stabilizerEvent||_lastPointerEvent);
+  lx=x;ly=y;currentPressure=_stabilizerSmoothedPressure;
   _scheduleRecomposite();
   _updateStabilizerLeash();
 }
@@ -2480,21 +2492,87 @@ function _updateStabilizerLeash(){
   if(visible)_stabilizerLeashOverlay.invalidate();
 }
 function _hideStabilizerLeash(){if(_stabilizerLeashOverlay)_stabilizerLeashOverlay.setVisible(false);}
+// Fixed real-world convergence time for the idle/catch-up glide, matching
+// prototype/prototype.html's strokeHoldTick: however many points are in the
+// window (2 at low stabilization, 100 at max), the catch-up always drains
+// it in about this many milliseconds. Without this, catch-up speed is tied
+// to window length — a heavier stabilization setting would make the brush
+// tip visibly crawl toward the pen after you stop, which is the "so slow
+// after I stroke" symptom this constant exists to prevent.
+const _STABILIZER_CATCHUP_MS=350;
+// Finish-line (pointer-up) pacing — deliberately faster and range-bound
+// compared to the idle-hold constant above, matching prototype's endStroke.
+const _STABILIZER_FINISH_MIN_MS=80;
+const _STABILIZER_FINISH_MAX_MS=260;
+let _stabilizerFinishStartT=0;
+let _stabilizerFinishTargetMs=_STABILIZER_FINISH_MIN_MS;
+function _stabilizerCatchupTicks(dtMs,windowLen,now){
+  if(_stabilizerFinishing){
+    // Ramp from 0.6x to 1.6x the average rate across the finish window, so
+    // the tip visibly accelerates into the endpoint rather than crawling at
+    // a flat rate the whole time.
+    const elapsed=Math.max(0,now-_stabilizerFinishStartT);
+    const timeProgress=Math.max(0,Math.min(1,elapsed/_stabilizerFinishTargetMs));
+    const s=timeProgress*timeProgress*(3-2*timeProgress); // smoothstep
+    const avgTicksPerMs=windowLen/_stabilizerFinishTargetMs;
+    const ticksPerMs=avgTicksPerMs*0.6+(avgTicksPerMs*1.6-avgTicksPerMs*0.6)*s;
+    return Math.max(1,Math.min(windowLen,Math.round(dtMs*ticksPerMs)));
+  }
+  const ticksPerMs=windowLen/_STABILIZER_CATCHUP_MS;
+  return Math.max(1,Math.min(windowLen,Math.round(dtMs*ticksPerMs)));
+}
 function _stabilizerAdvance(dt,now){
   if(!_stabilizerActive)return true;
   const amount=_stabilizationAmount();
-  const alpha=1-Math.exp(-Math.max(0.00025,dt)/_stabilizerTau(amount));
-  _stabilizerX+=(_stabilizerTargetX-_stabilizerX)*alpha;
-  _stabilizerY+=(_stabilizerTargetY-_stabilizerY)*alpha;
+  const windowLen=_stabilizerWindowLen(amount);
+  // Pointer isn't producing new real samples right now (paused, or the
+  // stroke is finishing). Keep pushing the held target position into the
+  // window at the same cadence real samples would arrive, so the average
+  // keeps gliding toward it instead of freezing mid-lag — this is the
+  // visible "catch up" glide, matching TVPaint's Catch Up option for
+  // Average (Points) mode. Multiple ticks are pushed per call (scaled by
+  // dt and window length) so a large window still converges in a fixed
+  // real-world time instead of one point-per-frame — and finishing uses a
+  // faster, accelerating rate than a mid-stroke idle hold (see
+  // _stabilizerCatchupTicks).
+  const dtMs=Math.max(0,dt*1000);
+  const ticks=_stabilizerCatchupTicks(dtMs,windowLen,now);
+  for(let i=0;i<ticks;i++){
+    _stabilizerBuf.push({x:_stabilizerTargetX,y:_stabilizerTargetY,t:now});
+    _stabilizerPressureBuf.push(_stabilizerTargetPressure);
+    _stabilizerTrimBuf(windowLen);
+    const step=_stabilizerBufAverage();
+    _stabilizerSmoothedPressure=_stabilizerPressureAverage();
+    if(Math.hypot(step.x-_stabilizerX,step.y-_stabilizerY)<=1e-4){_stabilizerX=step.x;_stabilizerY=step.y;break;}
+    _stabilizerX=step.x;_stabilizerY=step.y;
+  }
   _stabilizerEmit(_stabilizerX,_stabilizerY,now);
 
+  // Convergence must require BOTH position and pressure to have actually
+  // reached their targets. Pressure's boxcar average is a LINEAR ramp — it
+  // only becomes exactly the target once all `windowLen` old samples have
+  // been evicted, which at 100% (windowLen=100) can take far longer than
+  // position needs. Position often has very little left to travel at
+  // lift-off (most people slow down before lifting), so its loose 0.3px
+  // epsilon used to get satisfied after just a few ticks — ending the whole
+  // glide, and the finish callback, while pressure was still mid-ramp. That
+  // locked in a partially-converged (thin but nonzero) pressure value for
+  // the rest of the stroke: a flat, faint thread instead of a continuing
+  // taper. Gating on pressure too makes position simply hold still (target
+  // minus target is zero motion) while pressure keeps ramping the
+  // remaining ticks, which is exactly the visible "still narrowing while
+  // planted at the anchor" look a real taper needs.
   const gapCanvas=_stabilizerGapCanvas();
-  const converged=gapCanvas*Math.max(0.05,zoom)<_STABILIZER_EPS_SCREEN_PX&&gapCanvas<0.4;
+  const pressureGap=Math.abs(_stabilizerSmoothedPressure-_stabilizerTargetPressure);
+  const positionConverged=gapCanvas*Math.max(0.05,zoom)<_STABILIZER_EPS_SCREEN_PX&&gapCanvas<0.4;
+  const pressureConverged=pressureGap<=_STABILIZER_PRESSURE_EPS;
+  const converged=positionConverged&&pressureConverged;
   if(converged){
-    // End on the true input point. The remaining segment is sub-pixel and
-    // keeps endpoint behavior exact without a visible snap.
-    if(gapCanvas>0.001){
+    // End on the true input point/pressure. The remaining segment is
+    // sub-pixel and keeps endpoint behavior exact without a visible snap.
+    if(gapCanvas>0.001||pressureGap>0){
       _stabilizerX=_stabilizerTargetX;_stabilizerY=_stabilizerTargetY;
+      _stabilizerSmoothedPressure=_stabilizerTargetPressure;
       _stabilizerEmit(_stabilizerX,_stabilizerY,now);
     }
     if(_stabilizerFinishing){
@@ -2502,6 +2580,8 @@ function _stabilizerAdvance(dt,now){
       _stabilizerFinalizeCB=null;
       _stabilizerFinishing=false;
       _stabilizerActive=false;
+      _stabilizerBuf=[];
+      _stabilizerPressureBuf=[];
       _hideStabilizerLeash();
       if(cb)cb();
     }
@@ -2526,6 +2606,19 @@ function _stabilizerFinalize(x,y,pressure,event,cb){
   _stabilizerTargetPressure=pressure;
   _stabilizerEvent=event||_stabilizerEvent;
   _stabilizerFinishing=true;
+  // Finish-line pacing: a small remaining gap gets a short, gentle finish;
+  // a large flick gets a faster one, and either is quickened further by how
+  // fast the pen was actually moving at lift-off. This mirrors prototype's
+  // finish loop, which is why pointer-up needs to be visibly snappier than
+  // the mid-stroke idle-hold glide (_STABILIZER_CATCHUP_MS) — that constant
+  // is tuned for a still-held pen, not for release.
+  const startDist=Math.hypot(x-_stabilizerX,y-_stabilizerY);
+  const gapNorm=Math.max(0,Math.min(1,startDist/400));
+  const speedNorm=Math.max(0.5,Math.min(3,0.6+(_strokeVelocity||0)*1.2));
+  let targetMs=(_STABILIZER_FINISH_MIN_MS+gapNorm*(_STABILIZER_FINISH_MAX_MS-_STABILIZER_FINISH_MIN_MS))/speedNorm;
+  targetMs=Math.max(_STABILIZER_FINISH_MIN_MS,Math.min(_STABILIZER_FINISH_MAX_MS,targetMs));
+  _stabilizerFinishStartT=performance.now();
+  _stabilizerFinishTargetMs=targetMs;
   _stabilizerFinalizeCB=()=>{
     if(ownerSession!==_activeStrokeSession){_traceStrokeLifecycle('stabilizer-finalize-rejected',{ownerSession,reason:'obsolete-session'});return;}
     cb();
@@ -2549,6 +2642,7 @@ function _stabilizerAccelerateToCompletion(){
   // endpoint and run the existing commit callback before that edit proceeds.
   if(_stabilizerActive&&_stabilizerFinishing&&_stabilizerFinalizeCB){
     _stabilizerX=_stabilizerTargetX;_stabilizerY=_stabilizerTargetY;
+    _stabilizerSmoothedPressure=_stabilizerTargetPressure;
     _stabilizerEmit(_stabilizerX,_stabilizerY,performance.now());
     const cb=_stabilizerFinalizeCB;
     _stabilizerFinalizeCB=null;_stabilizerFinishing=false;_stabilizerActive=false;
@@ -3674,6 +3768,34 @@ function _getPressure(e){
 // buffering heuristic in _queueDab, not by any size/opacity dynamics control
 // (those support Pen Pressure only).
 let _strokeVelocity = 0;
+// Contact-pressure floor: some pen/tablet stacks emit trailing pointermove
+// samples with pressure decaying toward 0 as the tip physically leaves the
+// surface, arriving BEFORE pointerup fires. Left unfiltered, one of these
+// release-artifact samples becomes _stabilizerTargetPressure/currentPressure
+// right as the stroke ends, so the entire finish glide paints at near-zero
+// width — a hairline reaching the anchor instead of a natural taper. This
+// mirrors prototype/prototype.html's lastContactPressure/CONTACT_PRESSURE_FLOOR
+// guard: a sample is treated as a release artifact (and the last genuine
+// contact pressure is reused instead) only when it's low, dropped sharply
+// from the last real contact pressure, AND barely moved — genuine light
+// strokes that actually move don't get held back.
+const _CONTACT_PRESSURE_FLOOR=0.02;
+const _RELEASE_TAIL_PRESSURE_MAX=0.20;
+const _RELEASE_TAIL_DROP_RATIO=0.75;
+const _RELEASE_TAIL_MAX_SCREEN_PX=1.25;
+let _lastContactPressure=0;
+function _contactFilteredPressure(pressure,x,y,pointerType){
+  const distScreenPx=Math.hypot(x-lx,y-ly)*Math.max(0.05,zoom);
+  const isReleaseArtifact=pointerType==='pen'&&
+    _lastContactPressure>_CONTACT_PRESSURE_FLOOR&&
+    Number.isFinite(pressure)&&
+    pressure<=_RELEASE_TAIL_PRESSURE_MAX&&
+    pressure<=_lastContactPressure*_RELEASE_TAIL_DROP_RATIO&&
+    distScreenPx<=_RELEASE_TAIL_MAX_SCREEN_PX;
+  if(isReleaseArtifact)return _lastContactPressure;
+  if(Number.isFinite(pressure)&&pressure>_CONTACT_PRESSURE_FLOOR)_lastContactPressure=pressure;
+  return pressure;
+}
 let _lastMoveTime = 0;
 let _lastMoveX = 0, _lastMoveY = 0;
 function _updateVelocity(x, y, t){
@@ -4200,6 +4322,7 @@ function _brushPointerDown(e){
   _frameDirty = null; // discard any stale accumulation from a previous/aborted stroke
   _strokeDirty = null; // begin affected-pixel tracking for this complete stroke
   _strokeVelocity = 0; // reset velocity
+  _lastContactPressure = 0; // reset release-artifact contact-pressure guard
   _lastMoveTime = 0;
   if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('pressureAndStateInitialization',diagnosticSetupStart);
   if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.event('pressure-input-initialization-complete',{pressure:currentPressure,pointerType:e.pointerType});
@@ -4427,12 +4550,13 @@ function _handleMoveEvent(e){
     if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.sample({source:e.type,eventTime:ev.timeStamp,x:raw.x,y:raw.y,pressure:newPressure,coalescedCount:events.length});
     const conditionedSamples=_baselineConditionerPush(_baselineSampleFromEvent(ev,raw,newPressure));
     for(const conditioned of conditionedSamples){
-      _stabilizerSetSampleContext(conditioned.pressure,conditioned.event);
+      const effPressure=_contactFilteredPressure(conditioned.pressure,conditioned.x,conditioned.y,ev.pointerType);
+      _stabilizerSetSampleContext(effPressure,conditioned.event);
       const p=_stabilizePoint(conditioned.x,conditioned.y,conditioned.time);
       _updateVelocity(p.x,p.y,conditioned.time);
       if(window._brushAirbrush&&Math.hypot(p.x-lx,p.y-ly)>0.01)_airbrushLastMovementTime=performance.now();
-      _curveAddPoint(p.x,p.y,conditioned.pressure,conditioned.event);
-      currentPressure=conditioned.pressure;lx=p.x;ly=p.y;_lastPointerEvent=conditioned.event;
+      _curveAddPoint(p.x,p.y,p.pressure,conditioned.event);
+      currentPressure=p.pressure;lx=p.x;ly=p.y;_lastPointerEvent=conditioned.event;
     }
   }
   _scheduleRecomposite();
@@ -4505,8 +4629,8 @@ function _pointerEndStroke(e){
       _stabilizerSetSampleContext(conditioned.pressure,e);
       const finalPoint=_stabilizePoint(conditioned.x,conditioned.y,conditioned.time);
       _updateVelocity(finalPoint.x,finalPoint.y,conditioned.time);
-      _curveAddPoint(finalPoint.x,finalPoint.y,conditioned.pressure,e);
-      currentPressure=conditioned.pressure;lx=finalPoint.x;ly=finalPoint.y;_lastPointerEvent=e;
+      _curveAddPoint(finalPoint.x,finalPoint.y,finalPoint.pressure,e);
+      currentPressure=finalPoint.pressure;lx=finalPoint.x;ly=finalPoint.y;_lastPointerEvent=e;
     }
     _flushCurveTail(e);
     _flushStrokeTail();
