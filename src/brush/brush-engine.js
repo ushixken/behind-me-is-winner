@@ -2284,6 +2284,10 @@ function _stabilizerWindowLen(amount){
 // (Points) mode shows after you stop moving or release the pen.
 const _STABILIZER_IDLE_DELAY_MS=18;
 const _STABILIZER_EPS_SCREEN_PX=0.30;
+// Mid-stroke catch-up uses hysteresis so a large gap can drain while small
+// incoming corrections continue to refine the target.
+const _STABILIZER_CATCHUP_ENTER_SCREEN_PX=12;
+const _STABILIZER_CATCHUP_EXIT_SCREEN_PX=4;
 // Pressure is 0-1, so this needs its own small epsilon rather than reusing
 // the screen-pixel one above — see the convergence gate in _stabilizerAdvance.
 const _STABILIZER_PRESSURE_EPS=0.002;
@@ -2310,6 +2314,7 @@ let _stabilizerLastInputWallT=0;
 let _stabilizerEvent=null;
 let _stabilizerRAF=0;
 let _stabilizerFinishing=false;
+let _stabilizerCatchupActive=false;
 let _stabilizerFinalizeCB=null;
 
 function _stabilizerTrimBuf(maxLen){
@@ -2358,6 +2363,7 @@ function _resetStabilization(x,y,t){
   _stabilizerEvent=null;
   _stabilizerActive=true;
   _stabilizerFinishing=false;
+  _stabilizerCatchupActive=false;
   _stabilizerFinalizeCB=null;
   if(_stabilizerRAF){cancelAnimationFrame(_stabilizerRAF);_stabilizerRAF=0;}
   _oldStabilizerReset(x,y);
@@ -2365,6 +2371,7 @@ function _resetStabilization(x,y,t){
 function _stabilizerCancel(){
   _stabilizerActive=false;
   _stabilizerFinishing=false;
+  _stabilizerCatchupActive=false;
   _stabilizerFinalizeCB=null;
   _stabilizerBuf=[];
   _stabilizerPressureBuf=[];
@@ -2374,6 +2381,15 @@ function _stabilizerCancel(){
 }
 function _stabilizerSchedule(){
   if(_stabilizerActive&&!_stabilizerRAF)_stabilizerRAF=requestAnimationFrame(_stabilizerStep);
+}
+function _stabilizerUpdateCatchupState(){
+  const gapScreenPx=_stabilizerGapCanvas()*Math.max(0.05,zoom);
+  if(_stabilizerCatchupActive){
+    if(gapScreenPx<=_STABILIZER_CATCHUP_EXIT_SCREEN_PX)_stabilizerCatchupActive=false;
+  }else if(gapScreenPx>=_STABILIZER_CATCHUP_ENTER_SCREEN_PX){
+    _stabilizerCatchupActive=true;
+  }
+  return _stabilizerCatchupActive;
 }
 
 // ---------------------------------------------------------------------
@@ -2537,6 +2553,7 @@ function _stabilizePoint(x,y,t){
   _stabilizerSchedule();
   const floored=_applyOldStabilizerFloor(avg.x,avg.y,amount,_stabilizerLastAdvanceT);
   _stabilizerX=floored.x;_stabilizerY=floored.y;
+  _stabilizerUpdateCatchupState();
   _updateStabilizerLeash();
   return{x:_stabilizerX,y:_stabilizerY,pressure:_stabilizerSmoothedPressure};
 }
@@ -2711,6 +2728,7 @@ function _stabilizerAdvance(dt,now){
   const pressureConverged=pressureGap<=_STABILIZER_PRESSURE_EPS;
   const converged=positionConverged&&pressureConverged;
   if(converged){
+    _stabilizerCatchupActive=false;
     // End on the true input point/pressure. The remaining segment is
     // sub-pixel and keeps endpoint behavior exact without a visible snap.
     if(gapCanvas>0.001||pressureGap>0){
@@ -2735,7 +2753,10 @@ function _stabilizerAdvance(dt,now){
 function _stabilizerStep(now){
   _stabilizerRAF=0;
   if(!_stabilizerActive)return;
-  if(!_stabilizerFinishing&&now-_stabilizerLastInputWallT<_STABILIZER_IDLE_DELAY_MS){
+  // Normal following keeps the idle delay. Once a large gap is active,
+  // fresh low-amplitude samples refine the target without pausing catch-up.
+  const shouldCatchUp=_stabilizerFinishing||_stabilizerUpdateCatchupState();
+  if(!shouldCatchUp&&now-_stabilizerLastInputWallT<_STABILIZER_IDLE_DELAY_MS){
     _stabilizerSchedule();
     return;
   }
