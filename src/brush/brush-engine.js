@@ -2275,7 +2275,7 @@ function _stabilizationAmount(){
 function _stabilizerWindowLen(amount){
   const a=Math.max(0,Math.min(1,amount));
   if(a<=0)return 1; // true bypass, matching prototype's maxLen=1 at 0%
-  return Math.max(2,Math.round(a*100));
+  return Math.max(2,Math.round(a*200));
 }
 // While the pointer is idle mid-stroke (paused, or after lift), synthetic
 // samples of the held target position keep getting pushed into the window
@@ -2323,6 +2323,20 @@ let _stabilizerRecoveryActive=false;
 let _stabilizerRawSpeed=0,_stabilizerRawPeakSpeed=0;
 let _stabilizerRawLastX=0,_stabilizerRawLastY=0,_stabilizerRawLastT=0;
 let _stabilizerRecoveryStartT=0,_stabilizerRecoveryLastT=0,_stabilizerRecoveryTickCarry=0;
+// Fractional tick carry for the idle-hold/finish catch-up path, mirroring
+// the recovery carry above. Ticks-per-ms is often well under 1 (small
+// windowLen / long _STABILIZER_CATCHUP_MS), so rounding a fresh
+// dtMs*ticksPerMs to an integer every frame -- with a Math.max(1,...)
+// floor -- forced at least one full boxcar push per frame regardless of
+// the true continuous rate. That manufactured a velocity floor: the tip
+// advanced in same-size bursts every frame instead of a continuously
+// scaled amount, which is the "slow -> slightly faster -> slow" stepping
+// TVPaint doesn't show. Accumulating a persistent fractional carry (and
+// only emitting a whole tick once it crosses 1) lets sub-1-tick/frame
+// rates actually skip frames instead of being rounded up, so the
+// long-run average speed stays correct while the instantaneous velocity
+// stops being quantized.
+let _stabilizerCatchupLastT=0,_stabilizerCatchupTickCarry=0;
 let _stabilizerFinalizeCB=null;
 
 function _stabilizerTrimBuf(maxLen){
@@ -2357,6 +2371,7 @@ function _resetStabilization(x,y,t){
   _stabilizerRawSpeed=0;_stabilizerRawPeakSpeed=0;
   _stabilizerRawLastX=x;_stabilizerRawLastY=y;_stabilizerRawLastT=_stabilizerLastSampleT;
   _stabilizerRecoveryActive=false;_stabilizerRecoveryStartT=_stabilizerLastAdvanceT;_stabilizerRecoveryLastT=_stabilizerLastAdvanceT;_stabilizerRecoveryTickCarry=0;
+  _stabilizerCatchupLastT=_stabilizerLastAdvanceT;_stabilizerCatchupTickCarry=0;
   // Prefill both buffers to the full moving-average window length at
   // pointer-down, instead of starting from a single sample. Without this,
   // the first N samples of a stroke get averaged over a buffer that is
@@ -2378,6 +2393,7 @@ function _resetStabilization(x,y,t){
   _stabilizerFinalizeCB=null;
   if(_stabilizerRAF){cancelAnimationFrame(_stabilizerRAF);_stabilizerRAF=0;}
   _oldStabilizerReset(x,y);
+  _tipDisplayReset(x,y,performance.now());
 }
 function _stabilizerCancel(){
   _stabilizerActive=false;
@@ -2385,11 +2401,13 @@ function _stabilizerCancel(){
   _stabilizerCatchupActive=false;
   _stabilizerRecoveryActive=false;
   _stabilizerRecoveryTickCarry=0;
+  _stabilizerCatchupTickCarry=0;
   _stabilizerFinalizeCB=null;
   _stabilizerBuf=[];
   _stabilizerPressureBuf=[];
   if(_stabilizerRAF){cancelAnimationFrame(_stabilizerRAF);_stabilizerRAF=0;}
   _hideStabilizerLeash();
+  _tipDisplayCancel();
   _oldStabilizerCancel();
 }
 function _stabilizerSchedule(){
@@ -2423,6 +2441,12 @@ function _stabilizerUpdateRecoveryState(now){
       _stabilizerRawSpeed>_stabilizerRawPeakSpeed*_STABILIZER_RECOVERY_RESUME_RATIO){
       _stabilizerRecoveryActive=false;
       _stabilizerRecoveryTickCarry=0;
+      // Falling back to the plain catch-up path after recovery ends --
+      // reseed its clock so the next _stabilizerCatchupTicks call measures
+      // elapsed time from now, not from whenever catch-up ticks last ran
+      // before recovery took over (which would otherwise dump a large
+      // burst of carried-up ticks in one frame).
+      _stabilizerCatchupLastT=now;_stabilizerCatchupTickCarry=0;
     }
   }else if(gapScreenPx>=_STABILIZER_CATCHUP_ENTER_SCREEN_PX&&decelerating){
     _stabilizerRecoveryActive=true;
@@ -2628,6 +2652,7 @@ function _stabilizerEmit(x,y,now){
   _baselineConditionerSync(_baselineSampleFromStabilizedPoint(e,{x,y,pressure:_stabilizerSmoothedPressure},now));
   lx=x;ly=y;currentPressure=_stabilizerSmoothedPressure;
   _scheduleRecomposite();
+  _tipDisplayRecordAuthoritative(x,y,now);
   _updateStabilizerLeash();
 }
 
@@ -2639,12 +2664,101 @@ function _stabilizerEmit(x,y,now){
 // rather than a dedicated canvas, so it participates in the normal
 // resize/view-transform invalidation the other overlays get for free.
 let _stabilizerLeashOverlay=null;
+// ---------------------------------------------------------------------
+// Render-only brush-tip / leash interpolation.
+//
+// Purely cosmetic. This block never reads back into, and never writes,
+// any stabilization state: _stabilizerX/_stabilizerY, _stabilizerBuf,
+// _stabilizerTargetX/Y, _stabilizerRAF, or any of the catch-up/recovery
+// timing constants are untouched. It does not call _curveAddPoint. It
+// exists solely to decide WHERE the leash overlay draws its tip dot on
+// a given animation frame -- the authoritative stabilizer tick cadence
+// (and everything downstream of it: dabs, spacing, pressure, the
+// committed stroke) is completely unaffected by anything here.
+//
+// Mechanism: every time an authoritative stabilized point is produced
+// (a real pointer-driven update in _handleMoveEvent, or a catch-up/
+// recovery/finish tick in _stabilizerEmit, or the final lift-off point),
+// _tipDisplayRecordAuthoritative() is called with that real point. It
+// re-anchors a short glide FROM wherever the dot is currently showing
+// TO that new authoritative point, over a duration matched to how much
+// time actually elapsed since the previous authoritative update. The
+// overlay's draw() call reads the eased position along that segment at
+// its own current paint time -- never past the authoritative endpoint,
+// never predicting anything beyond it.
+// ---------------------------------------------------------------------
+let _tipDisplayFromX=0,_tipDisplayFromY=0,_tipDisplayFromT=0;
+let _tipDisplayToX=0,_tipDisplayToY=0,_tipDisplayToT=0;
+let _tipDisplayLastEmitT=0;
+let _tipDisplayRAF=0;
+const _TIP_DISPLAY_MIN_SPAN_MS=1;   // guard divide-by-zero on same-instant updates
+const _TIP_DISPLAY_MAX_SPAN_MS=40;  // cap so a long gap doesn't read as a slow crawl-in
+
+// Position of the displayed dot at time `now`, eased along the current
+// from->to segment. Never extrapolates past `_tipDisplayToX/Y` -- once
+// t>=1 the dot simply sits at the last known authoritative point until
+// the next real update re-anchors the segment.
+function _tipDisplayCurrent(now){
+  if(_tipDisplayToT<=_tipDisplayFromT)return{x:_tipDisplayToX,y:_tipDisplayToY};
+  const t=Math.max(0,Math.min(1,(now-_tipDisplayFromT)/(_tipDisplayToT-_tipDisplayFromT)));
+  const eased=t*t*(3-2*t); // smoothstep -- same easing shape already used elsewhere in this file
+  return{
+    x:_tipDisplayFromX+(_tipDisplayToX-_tipDisplayFromX)*eased,
+    y:_tipDisplayFromY+(_tipDisplayToY-_tipDisplayFromY)*eased
+  };
+}
+
+// Called with a REAL authoritative stabilized point (never a guess).
+// Re-anchors from the dot's current on-screen position (not from the
+// previous authoritative target) so a mid-glide update never snaps --
+// this is what satisfies "immediately re-anchor / discard any previous
+// interpolation target / continue smoothly toward the newest position."
+function _tipDisplayRecordAuthoritative(x,y,now){
+  const cur=_tipDisplayCurrent(now);
+  const span=_tipDisplayLastEmitT
+    ?Math.max(_TIP_DISPLAY_MIN_SPAN_MS,Math.min(_TIP_DISPLAY_MAX_SPAN_MS,now-_tipDisplayLastEmitT))
+    :_TIP_DISPLAY_MIN_SPAN_MS;
+  _tipDisplayFromX=cur.x;_tipDisplayFromY=cur.y;_tipDisplayFromT=now;
+  _tipDisplayToX=x;_tipDisplayToY=y;_tipDisplayToT=now+span;
+  _tipDisplayLastEmitT=now;
+  _tipDisplayScheduleRepaint();
+}
+
+// Hard reset at stroke start / cancel -- no glide-in from a stale
+// previous-stroke position.
+function _tipDisplayReset(x,y,now){
+  _tipDisplayFromX=_tipDisplayToX=x;
+  _tipDisplayFromY=_tipDisplayToY=y;
+  _tipDisplayFromT=_tipDisplayToT=now;
+  _tipDisplayLastEmitT=0;
+}
+
+// A SEPARATE rAF loop from _stabilizerRAF/_stabilizerSchedule. This one
+// only ever calls _updateStabilizerLeash() (an existing, already-safe
+// invalidate-the-overlay call) -- it never calls _stabilizerStep or
+// _stabilizerAdvance, so stabilization timing (_STABILIZER_IDLE_DELAY_MS,
+// _stabilizerLastAdvanceT, tick counts, etc.) is not touched by this loop
+// existing or running at a different cadence than tick updates do.
+function _tipDisplayScheduleRepaint(){
+  if(_tipDisplayRAF)return;
+  _tipDisplayRAF=requestAnimationFrame(_tipDisplayRepaintTick);
+}
+function _tipDisplayRepaintTick(now){
+  _tipDisplayRAF=0;
+  if(!_stabilizerActive)return; // nothing to glide toward; overlay hides itself
+  _updateStabilizerLeash();
+  if(now<_tipDisplayToT||_stabilizerActive)_tipDisplayScheduleRepaint();
+}
+function _tipDisplayCancel(){
+  if(_tipDisplayRAF){cancelAnimationFrame(_tipDisplayRAF);_tipDisplayRAF=0;}
+}
 function _ensureStabilizerLeash(){
   if(_stabilizerLeashOverlay||!window.EditorOverlayRenderer)return;
   _stabilizerLeashOverlay=EditorOverlayRenderer.create('stabilizer-leash',{zIndex:6,draw:function(g,geometry){
     if(!_stabilizerActive)return;
     const anchor=geometry.worldToScreen({x:_stabilizerRawX,y:_stabilizerRawY});
-    const tip=geometry.worldToScreen({x:_stabilizerX,y:_stabilizerY});
+    const tipWorld=_tipDisplayCurrent(performance.now());
+    const tip=geometry.worldToScreen(tipWorld);
     const dist=Math.hypot(anchor.x-tip.x,anchor.y-tip.y);
     if(dist<1)return;
     g.save();g.lineCap='round';
@@ -2723,6 +2837,18 @@ function _stabilizerRecoveryTicks(windowLen,now){
   return ticks;
 }
 function _stabilizerCatchupTicks(dtMs,windowLen,now){
+  // Carry-based accumulation (see _stabilizerCatchupTickCarry above): the
+  // instantaneous ticks-per-ms rate below is unchanged from before, but
+  // instead of converting dtMs*ticksPerMs to an integer in isolation every
+  // frame (which a Math.max(1,...) floor then rounded up to a same-size
+  // burst any time the true rate was under 1 tick/frame), the fractional
+  // remainder now persists across frames. A frame that computes 0.4 ticks
+  // simply carries 0.4 forward and emits nothing; the following frame
+  // emits once the accumulated carry crosses 1. Same long-run average
+  // rate, continuous instantaneous velocity.
+  const elapsedMs=Math.max(0,now-_stabilizerCatchupLastT);
+  _stabilizerCatchupLastT=now;
+  let ticksPerMs;
   if(_stabilizerFinishing){
     // Ramp from 0.6x to 1.6x the average rate across the finish window, so
     // the tip visibly accelerates into the endpoint rather than crawling at
@@ -2731,11 +2857,14 @@ function _stabilizerCatchupTicks(dtMs,windowLen,now){
     const timeProgress=Math.max(0,Math.min(1,elapsed/_stabilizerFinishTargetMs));
     const s=timeProgress*timeProgress*(3-2*timeProgress); // smoothstep
     const avgTicksPerMs=windowLen/_stabilizerFinishTargetMs;
-    const ticksPerMs=avgTicksPerMs*0.6+(avgTicksPerMs*1.6-avgTicksPerMs*0.6)*s;
-    return Math.max(1,Math.min(windowLen,Math.round(dtMs*ticksPerMs)));
+    ticksPerMs=avgTicksPerMs*0.6+(avgTicksPerMs*1.6-avgTicksPerMs*0.6)*s;
+  }else{
+    ticksPerMs=(windowLen/_STABILIZER_CATCHUP_MS)*_stabilizerNearTargetRateMultiplier();
   }
-  const ticksPerMs=(windowLen/_STABILIZER_CATCHUP_MS)*_stabilizerNearTargetRateMultiplier();
-  return Math.max(1,Math.min(windowLen,Math.round(dtMs*ticksPerMs)));
+  _stabilizerCatchupTickCarry+=elapsedMs*ticksPerMs;
+  const ticks=Math.max(0,Math.min(windowLen,Math.floor(_stabilizerCatchupTickCarry)));
+  _stabilizerCatchupTickCarry-=ticks;
+  return ticks;
 }
 function _stabilizerAdvance(dt,now){
   if(!_stabilizerActive)return true;
@@ -2857,6 +2986,8 @@ function _stabilizerFinalize(x,y,pressure,event,cb){
   _stabilizerFinishing=true;
   _stabilizerRecoveryActive=false;
   _stabilizerRecoveryTickCarry=0;
+  _stabilizerCatchupTickCarry=0;
+  _stabilizerCatchupLastT=performance.now();
   // Finish-line pacing: a small remaining gap gets a short, gentle finish;
   // a large flick gets a faster one, and either is quickened further by how
   // fast the pen was actually moving at lift-off. This mirrors prototype's
@@ -4818,6 +4949,7 @@ function _handleMoveEvent(e){
     _stabilizerSetSampleContext(effPressure,ev);
     const evTime=Number.isFinite(ev.timeStamp)&&ev.timeStamp>0?ev.timeStamp:performance.now();
     const p=_stabilizePoint(raw.x,raw.y,evTime);
+    _tipDisplayRecordAuthoritative(p.x,p.y,performance.now());
     _updateVelocity(p.x,p.y,evTime);
     if(window._brushAirbrush&&Math.hypot(p.x-lx,p.y-ly)>0.01)_airbrushLastMovementTime=performance.now();
     const conditionedSamples=_baselineConditionerPush(_baselineSampleFromStabilizedPoint(ev,p,evTime));
@@ -4897,6 +5029,7 @@ function _pointerEndStroke(e){
       const finalPoint=_stabilizePoint(conditioned.x,conditioned.y,conditioned.time);
       _updateVelocity(finalPoint.x,finalPoint.y,conditioned.time);
       _curveAddPoint(finalPoint.x,finalPoint.y,finalPoint.pressure,e);
+      _tipDisplayRecordAuthoritative(finalPoint.x,finalPoint.y,performance.now());
       currentPressure=finalPoint.pressure;lx=finalPoint.x;ly=finalPoint.y;_lastPointerEvent=e;
     }
     _flushCurveTail(e);
