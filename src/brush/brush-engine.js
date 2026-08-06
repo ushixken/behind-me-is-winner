@@ -2288,6 +2288,10 @@ const _STABILIZER_EPS_SCREEN_PX=0.30;
 // incoming corrections continue to refine the target.
 const _STABILIZER_CATCHUP_ENTER_SCREEN_PX=12;
 const _STABILIZER_CATCHUP_EXIT_SCREEN_PX=4;
+const _STABILIZER_RECOVERY_PEAK_MIN_SCREEN_PX_PER_MS=0.20;
+const _STABILIZER_RECOVERY_DECEL_RATIO=0.45;
+const _STABILIZER_RECOVERY_RESUME_RATIO=0.80;
+const _STABILIZER_RECOVERY_PEAK_DECAY_MS=280;
 // Pressure is 0-1, so this needs its own small epsilon rather than reusing
 // the screen-pixel one above — see the convergence gate in _stabilizerAdvance.
 const _STABILIZER_PRESSURE_EPS=0.002;
@@ -2315,6 +2319,10 @@ let _stabilizerEvent=null;
 let _stabilizerRAF=0;
 let _stabilizerFinishing=false;
 let _stabilizerCatchupActive=false;
+let _stabilizerRecoveryActive=false;
+let _stabilizerRawSpeed=0,_stabilizerRawPeakSpeed=0;
+let _stabilizerRawLastX=0,_stabilizerRawLastY=0,_stabilizerRawLastT=0;
+let _stabilizerRecoveryStartT=0,_stabilizerRecoveryLastT=0,_stabilizerRecoveryTickCarry=0;
 let _stabilizerFinalizeCB=null;
 
 function _stabilizerTrimBuf(maxLen){
@@ -2346,6 +2354,9 @@ function _resetStabilization(x,y,t){
   _stabilizerLastInputWallT=_stabilizerLastAdvanceT;
   _stabilizerTargetPressure=currentPressure;
   _stabilizerSmoothedPressure=currentPressure;
+  _stabilizerRawSpeed=0;_stabilizerRawPeakSpeed=0;
+  _stabilizerRawLastX=x;_stabilizerRawLastY=y;_stabilizerRawLastT=_stabilizerLastSampleT;
+  _stabilizerRecoveryActive=false;_stabilizerRecoveryStartT=_stabilizerLastAdvanceT;_stabilizerRecoveryLastT=_stabilizerLastAdvanceT;_stabilizerRecoveryTickCarry=0;
   // Prefill both buffers to the full moving-average window length at
   // pointer-down, instead of starting from a single sample. Without this,
   // the first N samples of a stroke get averaged over a buffer that is
@@ -2372,6 +2383,8 @@ function _stabilizerCancel(){
   _stabilizerActive=false;
   _stabilizerFinishing=false;
   _stabilizerCatchupActive=false;
+  _stabilizerRecoveryActive=false;
+  _stabilizerRecoveryTickCarry=0;
   _stabilizerFinalizeCB=null;
   _stabilizerBuf=[];
   _stabilizerPressureBuf=[];
@@ -2390,6 +2403,34 @@ function _stabilizerUpdateCatchupState(){
     _stabilizerCatchupActive=true;
   }
   return _stabilizerCatchupActive;
+}
+function _stabilizerUpdateRawVelocity(x,y,t){
+  const sampleT=Number.isFinite(t)&&t>0?t:performance.now();
+  const dt=Math.max(1,sampleT-_stabilizerRawLastT);
+  const distanceScreenPx=Math.hypot(x-_stabilizerRawLastX,y-_stabilizerRawLastY)*Math.max(0.05,zoom);
+  const instantSpeed=distanceScreenPx/dt;
+  _stabilizerRawSpeed=_stabilizerRawSpeed*0.65+instantSpeed*0.35;
+  const peakDecay=Math.exp(-dt/_STABILIZER_RECOVERY_PEAK_DECAY_MS);
+  _stabilizerRawPeakSpeed=Math.max(_stabilizerRawSpeed,_stabilizerRawPeakSpeed*peakDecay);
+  _stabilizerRawLastX=x;_stabilizerRawLastY=y;_stabilizerRawLastT=sampleT;
+}
+function _stabilizerUpdateRecoveryState(now){
+  const gapScreenPx=_stabilizerGapCanvas()*Math.max(0.05,zoom);
+  const decelerating=_stabilizerRawPeakSpeed>=_STABILIZER_RECOVERY_PEAK_MIN_SCREEN_PX_PER_MS&&
+    _stabilizerRawSpeed<=_stabilizerRawPeakSpeed*_STABILIZER_RECOVERY_DECEL_RATIO;
+  if(_stabilizerRecoveryActive){
+    if(gapScreenPx<=_STABILIZER_CATCHUP_EXIT_SCREEN_PX||
+      _stabilizerRawSpeed>_stabilizerRawPeakSpeed*_STABILIZER_RECOVERY_RESUME_RATIO){
+      _stabilizerRecoveryActive=false;
+      _stabilizerRecoveryTickCarry=0;
+    }
+  }else if(gapScreenPx>=_STABILIZER_CATCHUP_ENTER_SCREEN_PX&&decelerating){
+    _stabilizerRecoveryActive=true;
+    _stabilizerRecoveryStartT=now;
+    _stabilizerRecoveryLastT=now;
+    _stabilizerRecoveryTickCarry=0;
+  }
+  return _stabilizerRecoveryActive;
 }
 
 // ---------------------------------------------------------------------
@@ -2524,6 +2565,7 @@ function _stabilizePoint(x,y,t){
   // keeps 0% from looking raw/jittery, not this engine.
   if(!_stabilizerActive)_resetStabilization(x,y,t);
 
+  _stabilizerUpdateRawVelocity(x,y,t);
   _stabilizerLastSampleT=t;
   _stabilizerRawX=x;_stabilizerRawY=y;
   _stabilizerTargetX=x;_stabilizerTargetY=y;
@@ -2554,6 +2596,7 @@ function _stabilizePoint(x,y,t){
   const floored=_applyOldStabilizerFloor(avg.x,avg.y,amount,_stabilizerLastAdvanceT);
   _stabilizerX=floored.x;_stabilizerY=floored.y;
   _stabilizerUpdateCatchupState();
+  _stabilizerUpdateRecoveryState(_stabilizerLastInputWallT);
   _updateStabilizerLeash();
   return{x:_stabilizerX,y:_stabilizerY,pressure:_stabilizerSmoothedPressure};
 }
@@ -2634,12 +2677,51 @@ function _hideStabilizerLeash(){if(_stabilizerLeashOverlay)_stabilizerLeashOverl
 // tip visibly crawl toward the pen after you stop, which is the "so slow
 // after I stroke" symptom this constant exists to prevent.
 const _STABILIZER_CATCHUP_MS=350;
+const _STABILIZER_RECOVERY_RAMP_MS=180;
+const _STABILIZER_RECOVERY_MAX_RATE=2.1;
+const _STABILIZER_RECOVERY_ERROR_FULL_SCREEN_PX=96;
+// Keep the main catch-up rate unchanged while the tip is far behind, then
+// drain the last part of an active mid-stroke catch-up more decisively.
+// This only applies after the large-gap state has engaged, so slow strokes
+// retain their existing moving-average feel.
+const _STABILIZER_NEAR_TARGET_SCREEN_PX=24;
+const _STABILIZER_NEAR_TARGET_RATE_MAX=2.4;
 // Finish-line (pointer-up) pacing — deliberately faster and range-bound
 // compared to the idle-hold constant above, matching prototype's endStroke.
 const _STABILIZER_FINISH_MIN_MS=80;
 const _STABILIZER_FINISH_MAX_MS=260;
 let _stabilizerFinishStartT=0;
 let _stabilizerFinishTargetMs=_STABILIZER_FINISH_MIN_MS;
+function _stabilizerNearTargetRateMultiplier(){
+  if(!_stabilizerCatchupActive)return 1;
+  const gapScreenPx=_stabilizerGapCanvas()*Math.max(0.05,zoom);
+  const near=Math.max(0,Math.min(1,1-gapScreenPx/_STABILIZER_NEAR_TARGET_SCREEN_PX));
+  const eased=near*near*(3-2*near);
+  return 1+(_STABILIZER_NEAR_TARGET_RATE_MAX-1)*eased;
+}
+function _stabilizerRecoveryRateMultiplier(now){
+  const gapScreenPx=_stabilizerGapCanvas()*Math.max(0.05,zoom);
+  const errorStrength=Math.max(0,Math.min(1,
+    (gapScreenPx-_STABILIZER_CATCHUP_EXIT_SCREEN_PX)/
+    (_STABILIZER_RECOVERY_ERROR_FULL_SCREEN_PX-_STABILIZER_CATCHUP_EXIT_SCREEN_PX)));
+  const speedRatio=_stabilizerRawPeakSpeed>0?_stabilizerRawSpeed/_stabilizerRawPeakSpeed:1;
+  const decelerationStrength=Math.max(0,Math.min(1,
+    (_STABILIZER_RECOVERY_RESUME_RATIO-speedRatio)/_STABILIZER_RECOVERY_RESUME_RATIO));
+  const ramp=Math.max(0,Math.min(1,(now-_stabilizerRecoveryStartT)/_STABILIZER_RECOVERY_RAMP_MS));
+  const rampStrength=ramp*ramp*(3-2*ramp);
+  const strength=errorStrength*decelerationStrength*rampStrength;
+  return 1+(_STABILIZER_RECOVERY_MAX_RATE-1)*strength;
+}
+function _stabilizerRecoveryTicks(windowLen,now){
+  if(!_stabilizerRecoveryActive)return null;
+  const elapsedMs=Math.max(0,now-_stabilizerRecoveryLastT);
+  _stabilizerRecoveryLastT=now;
+  _stabilizerRecoveryTickCarry+=elapsedMs*windowLen/_STABILIZER_CATCHUP_MS*
+    _stabilizerRecoveryRateMultiplier(now);
+  const ticks=Math.min(windowLen,Math.floor(_stabilizerRecoveryTickCarry));
+  _stabilizerRecoveryTickCarry-=ticks;
+  return ticks;
+}
 function _stabilizerCatchupTicks(dtMs,windowLen,now){
   if(_stabilizerFinishing){
     // Ramp from 0.6x to 1.6x the average rate across the finish window, so
@@ -2652,7 +2734,7 @@ function _stabilizerCatchupTicks(dtMs,windowLen,now){
     const ticksPerMs=avgTicksPerMs*0.6+(avgTicksPerMs*1.6-avgTicksPerMs*0.6)*s;
     return Math.max(1,Math.min(windowLen,Math.round(dtMs*ticksPerMs)));
   }
-  const ticksPerMs=windowLen/_STABILIZER_CATCHUP_MS;
+  const ticksPerMs=(windowLen/_STABILIZER_CATCHUP_MS)*_stabilizerNearTargetRateMultiplier();
   return Math.max(1,Math.min(windowLen,Math.round(dtMs*ticksPerMs)));
 }
 function _stabilizerAdvance(dt,now){
@@ -2670,7 +2752,8 @@ function _stabilizerAdvance(dt,now){
   // faster, accelerating rate than a mid-stroke idle hold (see
   // _stabilizerCatchupTicks).
   const dtMs=Math.max(0,dt*1000);
-  const ticks=_stabilizerCatchupTicks(dtMs,windowLen,now);
+  const recoveryTicks=!_stabilizerFinishing?_stabilizerRecoveryTicks(windowLen,now):null;
+  const ticks=recoveryTicks===null?_stabilizerCatchupTicks(dtMs,windowLen,now):recoveryTicks;
   // Feed the curve constructor on EVERY tick, not just the last one this
   // frame -- matching prototype/prototype.html's strokeHoldTick, which
   // calls feedPoint() inside its per-tick loop rather than once per RAF.
@@ -2729,6 +2812,8 @@ function _stabilizerAdvance(dt,now){
   const converged=positionConverged&&pressureConverged;
   if(converged){
     _stabilizerCatchupActive=false;
+    _stabilizerRecoveryActive=false;
+    _stabilizerRecoveryTickCarry=0;
     // End on the true input point/pressure. The remaining segment is
     // sub-pixel and keeps endpoint behavior exact without a visible snap.
     if(gapCanvas>0.001||pressureGap>0){
@@ -2755,7 +2840,7 @@ function _stabilizerStep(now){
   if(!_stabilizerActive)return;
   // Normal following keeps the idle delay. Once a large gap is active,
   // fresh low-amplitude samples refine the target without pausing catch-up.
-  const shouldCatchUp=_stabilizerFinishing||_stabilizerUpdateCatchupState();
+  const shouldCatchUp=_stabilizerFinishing||_stabilizerUpdateCatchupState()||_stabilizerUpdateRecoveryState(now);
   if(!shouldCatchUp&&now-_stabilizerLastInputWallT<_STABILIZER_IDLE_DELAY_MS){
     _stabilizerSchedule();
     return;
@@ -2770,6 +2855,8 @@ function _stabilizerFinalize(x,y,pressure,event,cb){
   _stabilizerTargetPressure=pressure;
   _stabilizerEvent=event||_stabilizerEvent;
   _stabilizerFinishing=true;
+  _stabilizerRecoveryActive=false;
+  _stabilizerRecoveryTickCarry=0;
   // Finish-line pacing: a small remaining gap gets a short, gentle finish;
   // a large flick gets a faster one, and either is quickened further by how
   // fast the pen was actually moving at lift-off. This mirrors prototype's
