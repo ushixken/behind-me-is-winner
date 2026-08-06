@@ -2348,6 +2348,7 @@ function _resetStabilization(x,y,t){
   _stabilizerFinishing=false;
   _stabilizerFinalizeCB=null;
   if(_stabilizerRAF){cancelAnimationFrame(_stabilizerRAF);_stabilizerRAF=0;}
+  _oldStabilizerReset(x,y);
 }
 function _stabilizerCancel(){
   _stabilizerActive=false;
@@ -2357,12 +2358,72 @@ function _stabilizerCancel(){
   _stabilizerPressureBuf=[];
   if(_stabilizerRAF){cancelAnimationFrame(_stabilizerRAF);_stabilizerRAF=0;}
   _hideStabilizerLeash();
+  _oldStabilizerCancel();
 }
 function _stabilizerSchedule(){
   if(_stabilizerActive&&!_stabilizerRAF)_stabilizerRAF=requestAnimationFrame(_stabilizerStep);
 }
 
-// Canonical sample generation. Device-rate samples become a stable stream at
+// ---------------------------------------------------------------------
+// Legacy exponential-low-pass floor, ported from brush-engineold.js. That
+// file forced its whole Stabilization slider to behave like its strongest
+// setting (see its _STABILIZER_FORCE_MAX_PLACEHOLDER), which is why its 0%
+// never looked raw/jittery -- 0% wasn't really 0% there. The point-count
+// moving-average engine above this comment is the real, correct 0-100%
+// engine (a true bypass at 0%, so raw sensor/hand jitter is genuinely
+// visible there, same as e.g. Krita/Clip Studio's stabilizer at 0). Per
+// product decision, 0% should still not look raw -- so this old engine is
+// reintroduced ONLY as a fade-in floor that blends in near the very bottom
+// of the slider and fades OUT completely by _OLD_STABILIZER_FLOOR_FADE_LIMIT.
+// Every setting from there up to 100% -- including 100% itself -- is
+// untouched: the floor's blend weight is exactly 0, so the point-count
+// engine's output passes through unmodified, bit-identical to before this
+// change.
+const _OLD_STABILIZER_TAU_MAX=0.050;           // brush-engineold.js's TAU_MAX ("fully on" old engine)
+const _OLD_STABILIZER_LAG_MAX_SCREEN_PX=16;    // brush-engineold.js's LAG_MAX_SCREEN_PX
+const _OLD_STABILIZER_FLOOR_FADE_LIMIT=0.12;   // UI amount (0-1) above which the floor contributes 0
+let _oldStabX=0,_oldStabY=0,_oldStabSpeed=0,_oldStabLastT=0;
+function _oldStabilizerFloorWeight(amount){
+  const t=Math.min(Math.max(amount/_OLD_STABILIZER_FLOOR_FADE_LIMIT,0),1);
+  const smooth=t*t*(3-2*t); // smoothstep
+  return 1-smooth; // 1 at UI 0, 0 at/after the fade limit
+}
+function _oldStabilizerReset(x,y){
+  _oldStabX=x;_oldStabY=y;_oldStabSpeed=0;_oldStabLastT=performance.now();
+}
+function _oldStabilizerCancel(){_oldStabSpeed=0;}
+// Advances the old engine's exponential filter toward (targetX,targetY) and
+// returns its smoothed position. Mirrors brush-engineold.js's
+// _stabilizerEffectiveTau: a speed-adaptive tau so a fast stroke shortens
+// the time constant instead of opening an ever-growing gap (that file's
+// filter, unlike the point-count engine above, is not meant to rubberband --
+// it exists purely to eat jitter at the low end).
+function _oldStabilizerAdvance(targetX,targetY,now){
+  const dt=Math.max(0.00025,Math.min(0.05,(now-(_oldStabLastT||now))/1000));
+  _oldStabLastT=now;
+  const dist=Math.hypot(targetX-_oldStabX,targetY-_oldStabY);
+  const instSpeed=dist/dt;
+  _oldStabSpeed=_oldStabSpeed*0.7+instSpeed*0.3;
+  const maxLagCanvas=_OLD_STABILIZER_LAG_MAX_SCREEN_PX/Math.max(0.05,zoom);
+  const expectedLagRatio=(_oldStabSpeed*_OLD_STABILIZER_TAU_MAX)/Math.max(0.01,maxLagCanvas);
+  const tau=_OLD_STABILIZER_TAU_MAX/(1+Math.max(0,expectedLagRatio));
+  const alpha=tau>0?1-Math.exp(-dt/tau):1;
+  _oldStabX+=(targetX-_oldStabX)*alpha;
+  _oldStabY+=(targetY-_oldStabY)*alpha;
+  return{x:_oldStabX,y:_oldStabY};
+}
+// Blends the point-count engine's output with the old engine's output by
+// the fade weight above. Returns {x,y} unchanged (zero extra cost) once the
+// weight reaches 0, i.e. for every UI setting at/above the fade limit.
+function _applyOldStabilizerFloor(x,y,amount,now){
+  const weight=_oldStabilizerFloorWeight(amount);
+  if(weight<=0)return{x,y};
+  const old=_oldStabilizerAdvance(_stabilizerTargetX,_stabilizerTargetY,now);
+  return{x:x+(old.x-x)*weight,y:y+(old.y-y)*weight};
+}
+// ---------------------------------------------------------------------
+
+
 // uniform screen-space arc-length intervals. Coordinates and pen attributes
 // are interpolated together; no averaging filter or intentional trailing.
 const _BASELINE_CANONICAL_STEP_MIN_SCREEN_PX=0.5;
@@ -2396,12 +2457,25 @@ function _baselineConditionerPush(sample,options={}){
   if(options.force){_baselineEmit(s,sample,out,'forced');s.distanceCarry=0;}
   s.previousRaw=a;s.lastRaw=sample;return out;
 }
+// Builds a conditioner sample from an ALREADY-STABILIZED point rather than
+// a raw event. screenX/screenY intentionally do NOT read e.clientX/clientY
+// (the raw pointer's screen position) -- they're derived from the
+// stabilized world coordinates instead, because once stabilization runs
+// first (see _handleMoveEvent), the canonical-arc-length resampler needs to
+// walk the SAME path the stroke is actually being drawn along, not the raw
+// pointer path it lagged behind. See _handleMoveEvent for why stabilization
+// now runs before conditioning instead of after.
+function _baselineSampleFromStabilizedPoint(e,p,time){
+  const s=Math.max(0.05,Number(zoom)||1);
+  return{x:p.x,y:p.y,screenX:p.x*s,screenY:p.y*s,pressure:Number.isFinite(p.pressure)?p.pressure:0,tiltX:Number.isFinite(e.tiltX)?e.tiltX:0,tiltY:Number.isFinite(e.tiltY)?e.tiltY:0,twist:Number.isFinite(e.twist)?e.twist:(Number.isFinite(e.rotationAngle)?e.rotationAngle:0),time:Number.isFinite(time)&&time>0?time:performance.now(),pointerId:e.pointerId,event:e};
+}
 function _baselineConditionerFinish(cancelled=false){const s=_baselineConditionerState;if(!s)return;if(window.BaselineStrokeConditionerDiagnostics?.enabled){const n=s.stats,f=v=>({average:v.count?v.sum/v.count:0,min:v.count?v.min:0,max:v.count?v.max:0});_baselineConditionerReports.push({cancelled,rawSampleCount:n.rawSampleCount,forwardedSampleCount:n.forwardedSampleCount,exactDuplicatesRejected:n.exactDuplicatesRejected,tinyMovementsConsolidated:n.tinyMovementsConsolidated,timeGapEmissions:n.timeGapEmissions,attributeChangeEmissions:n.attributeChangeEmissions,cornerEmissions:n.cornerEmissions,screenDistance:f(n.screenDistance),dt:f(n.dt)});if(_baselineConditionerReports.length>100)_baselineConditionerReports.shift();}_baselineConditionerState=null;}
 window.BaselineStrokeConditionerDiagnostics={enabled:false,enable(v=true){this.enabled=!!v;return this.enabled;},results(){return JSON.parse(JSON.stringify(_baselineConditionerReports));},latest(){const a=this.results();return a.length?a[a.length-1]:null;},clear(){_baselineConditionerReports.length=0;}};let _stabilizerDebugLastLogT=0;
 function _stabilizePoint(x,y,t){
   const amount=_stabilizationAmount();
-  // No true bypass: amount<=0 still runs the window below, just at its
-  // shortest (fastest-converging) duration, which is what 100% used to be.
+  // True bypass at 0% for the point-count engine itself (windowLen=1, see
+  // _stabilizerWindowLen) -- _applyOldStabilizerFloor below is what actually
+  // keeps 0% from looking raw/jittery, not this engine.
   if(!_stabilizerActive)_resetStabilization(x,y,t);
 
   _stabilizerLastSampleT=t;
@@ -2431,8 +2505,10 @@ function _stabilizePoint(x,y,t){
 
   _stabilizerLastAdvanceT=performance.now();
   _stabilizerSchedule();
+  const floored=_applyOldStabilizerFloor(avg.x,avg.y,amount,_stabilizerLastAdvanceT);
+  _stabilizerX=floored.x;_stabilizerY=floored.y;
   _updateStabilizerLeash();
-  return{x:avg.x,y:avg.y,pressure:_stabilizerSmoothedPressure};
+  return{x:_stabilizerX,y:_stabilizerY,pressure:_stabilizerSmoothedPressure};
 }
 function _stabilizerSetSampleContext(pressure,event){
   _stabilizerTargetPressure=pressure;
@@ -2475,8 +2551,9 @@ function _ensureStabilizerLeash(){
     g.beginPath();g.moveTo(anchor.x,anchor.y);g.lineTo(tip.x,tip.y);
     g.setLineDash([5,5]);g.lineDashOffset=0;g.lineWidth=1.25;g.strokeStyle='rgba(20,20,20,0.55)';g.stroke();
     g.setLineDash([]);
-    g.beginPath();g.arc(anchor.x,anchor.y,4,0,Math.PI*2);g.fillStyle='#141414';g.fill();
-    g.lineWidth=1.5;g.strokeStyle='#ffffff';g.stroke();
+    // Anchor dot (raw pointer position) intentionally not drawn -- the
+    // native OS cursor already marks that spot, so a second solid dot
+    // there was redundant. Only the stabilized brush-tip dot is drawn.
     g.beginPath();g.arc(tip.x,tip.y,3,0,Math.PI*2);g.fillStyle='#5aa9ff';g.fill();
     g.lineWidth=1.25;g.strokeStyle='#ffffff';g.stroke();
     g.restore();
@@ -2546,6 +2623,12 @@ function _stabilizerAdvance(dt,now){
     if(Math.hypot(step.x-_stabilizerX,step.y-_stabilizerY)<=1e-4){_stabilizerX=step.x;_stabilizerY=step.y;break;}
     _stabilizerX=step.x;_stabilizerY=step.y;
   }
+  // Same low-end floor blend as _stabilizePoint (see _applyOldStabilizerFloor)
+  // -- keeps the idle-hold/finish glide consistent with live drawing at very
+  // low Stabilization settings. No-op (weight 0) at/above the fade limit,
+  // so this never touches mid-to-high settings, including 100%.
+  const floored=_applyOldStabilizerFloor(_stabilizerX,_stabilizerY,amount,now);
+  _stabilizerX=floored.x;_stabilizerY=floored.y;
   _stabilizerEmit(_stabilizerX,_stabilizerY,now);
 
   // Convergence must require BOTH position and pressure to have actually
@@ -4544,19 +4627,35 @@ function _handleMoveEvent(e){
     return;
   }
   for(const ev of events){
-    const prevPressure = currentPressure;
     const newPressure = _getPressure(ev);
     const raw=getPos(ev);
     if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.sample({source:e.type,eventTime:ev.timeStamp,x:raw.x,y:raw.y,pressure:newPressure,coalescedCount:events.length});
-    const conditionedSamples=_baselineConditionerPush(_baselineSampleFromEvent(ev,raw,newPressure));
+    // Stabilization now consumes the RAW per-event sample directly -- one
+    // _stabilizePoint call per real hardware/coalesced event, matching
+    // prototype/prototype.html's pushSmoothBuf (which also runs on raw
+    // events, before any resampling). Previously this ran on the output of
+    // _baselineConditionerPush below, which resamples the raw path into
+    // fixed SCREEN-DISTANCE steps (~0.5-2px apart) regardless of how fast
+    // the pointer is moving. Since the stabilizer's window is a fixed
+    // SAMPLE COUNT, feeding it distance-resampled points made the window
+    // span a roughly constant screen distance no matter the stroke speed --
+    // a fixed-length lag ("pulling a string"). Feeding it raw, time-paced
+    // events instead lets the window's screen-space span grow with speed
+    // (more raw samples arrive over a wider path when moving fast) and
+    // collapse quickly once the pointer slows or stops -- the rubberband
+    // feel. The arc-length conditioner still runs (see below), just after
+    // stabilization now, so curve tessellation/texture spacing keeps its
+    // even canonical density along the STABILIZED path.
+    const effPressure=_contactFilteredPressure(newPressure,raw.x,raw.y,ev.pointerType);
+    _stabilizerSetSampleContext(effPressure,ev);
+    const evTime=Number.isFinite(ev.timeStamp)&&ev.timeStamp>0?ev.timeStamp:performance.now();
+    const p=_stabilizePoint(raw.x,raw.y,evTime);
+    _updateVelocity(p.x,p.y,evTime);
+    if(window._brushAirbrush&&Math.hypot(p.x-lx,p.y-ly)>0.01)_airbrushLastMovementTime=performance.now();
+    const conditionedSamples=_baselineConditionerPush(_baselineSampleFromStabilizedPoint(ev,p,evTime));
     for(const conditioned of conditionedSamples){
-      const effPressure=_contactFilteredPressure(conditioned.pressure,conditioned.x,conditioned.y,ev.pointerType);
-      _stabilizerSetSampleContext(effPressure,conditioned.event);
-      const p=_stabilizePoint(conditioned.x,conditioned.y,conditioned.time);
-      _updateVelocity(p.x,p.y,conditioned.time);
-      if(window._brushAirbrush&&Math.hypot(p.x-lx,p.y-ly)>0.01)_airbrushLastMovementTime=performance.now();
-      _curveAddPoint(p.x,p.y,p.pressure,conditioned.event);
-      currentPressure=p.pressure;lx=p.x;ly=p.y;_lastPointerEvent=conditioned.event;
+      _curveAddPoint(conditioned.x,conditioned.y,conditioned.pressure,conditioned.event);
+      currentPressure=conditioned.pressure;lx=conditioned.x;ly=conditioned.y;_lastPointerEvent=conditioned.event;
     }
   }
   _scheduleRecomposite();
