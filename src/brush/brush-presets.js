@@ -178,9 +178,10 @@ function updateBlendModeUI(){
   if(scatterEnabledEl) scatterEnabledEl.addEventListener('input',syncScatter);
   syncScatter();
 
-  // One 0-100 control drives the complete stabilization stage. Zero is an
-  // exact raw-input bypass; all internal response values are derived from
-  // this normalized amount by brush-engine.js.
+  // One 0-100 control drives the complete stabilization stage. Zero is no
+  // longer a raw-input bypass — it's the old 100% strength, now the floor.
+  // All internal response values are derived from this normalized amount
+  // by brush-engine.js (see the range-remap note above _stabilizationAmount).
   bindRange('ts-stabilization','ts-stabilization-val','',v=>{window._tsStabilization=v/100;});
   const stabilizationEl=document.getElementById('ts-stabilization');
   window._tsStabilization=stabilizationEl?(+stabilizationEl.value/100):0;
@@ -3307,7 +3308,8 @@ function applyToolPreset(json){
 })();
 
 
-document.getElementById('onion-chk').onchange=updateOnion;
+const _onionChk=document.getElementById('onion-chk');
+if(_onionChk) _onionChk.onchange=updateOnion;
 
 //
 // ABR FEATURE DETECTION — best-effort compatibility scan

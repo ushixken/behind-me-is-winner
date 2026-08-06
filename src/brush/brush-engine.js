@@ -2244,15 +2244,15 @@ function _flushStrokeTail(){
 // Brush stabilization stage.
 // Input position is stabilized here, then continues unchanged through the
 // existing curve reconstruction, spacing, pressure interpolation, and
-// stamping pipeline. Zero is a true bypass: it returns 0 unmodified so the
-// amount<=0 branches in _stabilizePoint/_stabilizerAdvance are reachable and
-// no filtering is ever applied at the 0% preset, at any zoom.
+// stamping pipeline.
 //
-// The temporary "flatten 0-100% to max" placeholder that lived here has
-// been removed: the full slider range is live again, matching the intended
-// behavior from the original 0%/100% aliasing fix. See git history for the
-// placeholder implementation if it's ever needed again before the stronger
-// stabilization tier ships as its own feature.
+// Range remapped: the old 0-100% range (true bypass -> a fairly light
+// filter) has been replaced. The old 100% strength (TAU/LAG max below) is
+// now the FLOOR at the new 0% — there is no more true bypass, the slider's
+// bottom end is what used to be its top end. The new 100% reaches a much
+// stronger filter, matching the feel of prototype/prototype.html's heavier
+// stabilization. See git history for the previous 0.001-0.050s / 0.20-16px
+// range and the true-bypass branch if either is ever needed again.
 function _stabilizationAmount(){
   const raw=Number(window._tsStabilization);
   return Number.isFinite(raw)?Math.max(0,Math.min(1,raw)):0;
@@ -2263,15 +2263,19 @@ function _stabilizationAmount(){
 // advances the brush immediately.  The time response removes high-frequency
 // hand jitter while the spatial bound prevents fast strokes from opening a
 // large cursor-to-brush gap.  There is no velocity/inertia term, so the
-// result cannot overshoot or oscillate.
+// result cannot overshoot or oscillate.  The idle-delay catch-up loop below
+// (_STABILIZER_IDLE_DELAY_MS / _stabilizerStep / _stabilizerAdvance) already
+// gives this a pursuit-style "settle after the pen stops" behavior, which is
+// why widening the range is enough to reach prototype's stronger feel
+// without porting a second algorithm.
 //
 // Both internal values are derived from the one Stabilization slider.
 // smoothstep keeps the low end fine-grained while still reaching a strong,
 // controllable maximum.
-const _STABILIZER_TAU_MIN=0.001;
-const _STABILIZER_TAU_MAX=0.050;
-const _STABILIZER_LAG_MIN_SCREEN_PX=0.20;
-const _STABILIZER_LAG_MAX_SCREEN_PX=16;
+const _STABILIZER_TAU_MIN=0.050;
+const _STABILIZER_TAU_MAX=0.320;
+const _STABILIZER_LAG_MIN_SCREEN_PX=16;
+const _STABILIZER_LAG_MAX_SCREEN_PX=90;
 const _STABILIZER_IDLE_DELAY_MS=18;
 const _STABILIZER_EPS_SCREEN_PX=0.30;
 const _STABILIZER_SPEED_FILTER_TAU=0.016;
@@ -2330,6 +2334,7 @@ function _stabilizerCancel(){
   _stabilizerFinishing=false;
   _stabilizerFinalizeCB=null;
   if(_stabilizerRAF){cancelAnimationFrame(_stabilizerRAF);_stabilizerRAF=0;}
+  _hideStabilizerLeash();
 }
 function _stabilizerSchedule(){
   if(_stabilizerActive&&!_stabilizerRAF)_stabilizerRAF=requestAnimationFrame(_stabilizerStep);
@@ -2370,24 +2375,12 @@ function _baselineConditionerPush(sample,options={}){
   s.previousRaw=a;s.lastRaw=sample;return out;
 }
 function _baselineConditionerFinish(cancelled=false){const s=_baselineConditionerState;if(!s)return;if(window.BaselineStrokeConditionerDiagnostics?.enabled){const n=s.stats,f=v=>({average:v.count?v.sum/v.count:0,min:v.count?v.min:0,max:v.count?v.max:0});_baselineConditionerReports.push({cancelled,rawSampleCount:n.rawSampleCount,forwardedSampleCount:n.forwardedSampleCount,exactDuplicatesRejected:n.exactDuplicatesRejected,tinyMovementsConsolidated:n.tinyMovementsConsolidated,timeGapEmissions:n.timeGapEmissions,attributeChangeEmissions:n.attributeChangeEmissions,cornerEmissions:n.cornerEmissions,screenDistance:f(n.screenDistance),dt:f(n.dt)});if(_baselineConditionerReports.length>100)_baselineConditionerReports.shift();}_baselineConditionerState=null;}
-window.BaselineStrokeConditionerDiagnostics={enabled:false,enable(v=true){this.enabled=!!v;return this.enabled;},results(){return JSON.parse(JSON.stringify(_baselineConditionerReports));},latest(){const a=this.results();return a.length?a[a.length-1]:null;},clear(){_baselineConditionerReports.length=0;}};function _stabilizePoint(x,y,t){
+window.BaselineStrokeConditionerDiagnostics={enabled:false,enable(v=true){this.enabled=!!v;return this.enabled;},results(){return JSON.parse(JSON.stringify(_baselineConditionerReports));},latest(){const a=this.results();return a.length?a[a.length-1]:null;},clear(){_baselineConditionerReports.length=0;}};let _stabilizerDebugLastLogT=0;
+function _stabilizePoint(x,y,t){
   const amount=_stabilizationAmount();
-  if(amount<=0){
-    // A true bypass: exact input coordinates, with no hidden filtering.
-    // Raw-position and speed tracking are kept current here too (even
-    // though bypass mode doesn't consume them) so that if the amount rises
-    // above 0 mid-stroke, the first filtered sample computes speed from the
-    // true previous position instead of a stale one left over from before
-    // bypass mode began.
-    _stabilizerX=x;_stabilizerY=y;
-    _stabilizerRawX=x;_stabilizerRawY=y;
-    _stabilizerSpeed=0;
-    _stabilizerTargetX=x;_stabilizerTargetY=y;
-    _stabilizerLastSampleT=t;
-    _stabilizerLastInputWallT=performance.now();
-    if(_stabilizerRAF){cancelAnimationFrame(_stabilizerRAF);_stabilizerRAF=0;}
-    return{x,y};
-  }
+  // No true bypass anymore: amount<=0 still runs the filter below, just at
+  // floor strength (_STABILIZER_TAU_MIN / _STABILIZER_LAG_MIN_SCREEN_PX),
+  // which is what 100% used to be. See the range remap note above.
   if(!_stabilizerActive)_resetStabilization(x,y,t);
 
   const dt=Math.max(0.00025,Math.min(0.05,(t-_stabilizerLastSampleT)/1000));
@@ -2408,6 +2401,18 @@ window.BaselineStrokeConditionerDiagnostics={enabled:false,enable(v=true){this.e
   const dx=x-nextX,dy=y-nextY;
   const distance=Math.hypot(dx,dy);
   const maxLag=_stabilizerMaxLagCanvas(amount);
+  if(t-_stabilizerDebugLastLogT>500){
+    _stabilizerDebugLastLogT=t;
+    console.log('[stabilizer debug]',{
+      sliderPercent:Math.round(amount*100),
+      amount,
+      tau:_stabilizerTau(amount).toFixed(4)+'s',
+      effectiveTau:_stabilizerEffectiveTau(amount).toFixed(4)+'s',
+      maxLagScreenPx:(maxLag*Math.max(0.05,zoom)).toFixed(2),
+      maxLagCanvasPx:maxLag.toFixed(2),
+      zoom
+    });
+  }
   if(distance>maxLag){
     const scale=maxLag/distance;
     nextX=x-dx*scale;
@@ -2417,6 +2422,7 @@ window.BaselineStrokeConditionerDiagnostics={enabled:false,enable(v=true){this.e
   _stabilizerX=nextX;_stabilizerY=nextY;
   _stabilizerLastAdvanceT=performance.now();
   _stabilizerSchedule();
+  _updateStabilizerLeash();
   return{x:nextX,y:nextY};
 }
 function _stabilizerSetSampleContext(pressure,event){
@@ -2434,17 +2440,52 @@ function _stabilizerEmit(x,y,now){
   _curveAddPoint(x,y,_stabilizerTargetPressure,_stabilizerEvent||_lastPointerEvent);
   lx=x;ly=y;currentPressure=_stabilizerTargetPressure;
   _scheduleRecomposite();
+  _updateStabilizerLeash();
 }
+
+// Stabilizer leash indicator: a dashed line from the raw pointer position
+// (anchor) to the stabilized brush position currently being painted (tip),
+// matching the lazybrush.dulnan.net-style visualization in
+// prototype/prototype.html's drawStabilizerLeash. Uses the same
+// EditorOverlayRenderer other tools (curve guide, selection previews) use,
+// rather than a dedicated canvas, so it participates in the normal
+// resize/view-transform invalidation the other overlays get for free.
+let _stabilizerLeashOverlay=null;
+function _ensureStabilizerLeash(){
+  if(_stabilizerLeashOverlay||!window.EditorOverlayRenderer)return;
+  _stabilizerLeashOverlay=EditorOverlayRenderer.create('stabilizer-leash',{zIndex:6,draw:function(g,geometry){
+    if(!_stabilizerActive)return;
+    const anchor=geometry.worldToScreen({x:_stabilizerRawX,y:_stabilizerRawY});
+    const tip=geometry.worldToScreen({x:_stabilizerX,y:_stabilizerY});
+    const dist=Math.hypot(anchor.x-tip.x,anchor.y-tip.y);
+    if(dist<1)return;
+    g.save();g.lineCap='round';
+    g.beginPath();g.moveTo(anchor.x,anchor.y);g.lineTo(tip.x,tip.y);
+    g.setLineDash([5,5]);g.lineDashOffset=0;g.lineWidth=1.25;g.strokeStyle='rgba(20,20,20,0.55)';g.stroke();
+    g.setLineDash([]);
+    g.beginPath();g.arc(anchor.x,anchor.y,4,0,Math.PI*2);g.fillStyle='#141414';g.fill();
+    g.lineWidth=1.5;g.strokeStyle='#ffffff';g.stroke();
+    g.beginPath();g.arc(tip.x,tip.y,3,0,Math.PI*2);g.fillStyle='#5aa9ff';g.fill();
+    g.lineWidth=1.25;g.strokeStyle='#ffffff';g.stroke();
+    g.restore();
+  }});
+}
+function _updateStabilizerLeash(){
+  _ensureStabilizerLeash();if(!_stabilizerLeashOverlay)return;
+  const enabled=window._tsLeashEnabled!==false;
+  const atFloor=_stabilizationAmount()<=0;
+  const dist=Math.hypot(_stabilizerRawX-_stabilizerX,_stabilizerRawY-_stabilizerY);
+  const visible=enabled&&!atFloor&&_stabilizerActive&&dist>0.15/Math.max(0.05,zoom);
+  _stabilizerLeashOverlay.setVisible(visible);
+  if(visible)_stabilizerLeashOverlay.invalidate();
+}
+function _hideStabilizerLeash(){if(_stabilizerLeashOverlay)_stabilizerLeashOverlay.setVisible(false);}
 function _stabilizerAdvance(dt,now){
   if(!_stabilizerActive)return true;
   const amount=_stabilizationAmount();
-  if(amount<=0){
-    _stabilizerX=_stabilizerTargetX;_stabilizerY=_stabilizerTargetY;
-  }else{
-    const alpha=1-Math.exp(-Math.max(0.00025,dt)/_stabilizerTau(amount));
-    _stabilizerX+=(_stabilizerTargetX-_stabilizerX)*alpha;
-    _stabilizerY+=(_stabilizerTargetY-_stabilizerY)*alpha;
-  }
+  const alpha=1-Math.exp(-Math.max(0.00025,dt)/_stabilizerTau(amount));
+  _stabilizerX+=(_stabilizerTargetX-_stabilizerX)*alpha;
+  _stabilizerY+=(_stabilizerTargetY-_stabilizerY)*alpha;
   _stabilizerEmit(_stabilizerX,_stabilizerY,now);
 
   const gapCanvas=_stabilizerGapCanvas();
@@ -2461,6 +2502,7 @@ function _stabilizerAdvance(dt,now){
       _stabilizerFinalizeCB=null;
       _stabilizerFinishing=false;
       _stabilizerActive=false;
+      _hideStabilizerLeash();
       if(cb)cb();
     }
     return true;
