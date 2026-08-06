@@ -403,6 +403,12 @@ function _ensureStrokeCanvas(){
   }
   if(typeof _resetTexturedStrokeCanvas==='function') _resetTexturedStrokeCanvas();
   if(perf)perf.measure('scratch-canvas-preparation',started,perf.canvasDetail(_strokeCanvas,_strokeCtx,{allocatedOrResized,willReadFrequently:true,getImageData:false}));
+  // Phase 1B: notify the active renderer that a stroke's rendering surface
+  // is ready. CpuBrushRenderer.beginStroke() is a no-op today — the stroke
+  // scratch canvas itself is still owned and allocated right here, exactly
+  // as before. This hook exists only so a future renderer can react to
+  // stroke start without brush-engine.js needing to change again.
+  if(window.BrushRenderer) BrushRenderer.beginStroke();
 }
 
 // Composite the stroke scratch canvas onto activeC with stroke-level opacity,
@@ -479,6 +485,11 @@ function _commitStrokeCanvas(){
   _strokeCtx.clearRect(0, 0, _strokeCanvas.width, _strokeCanvas.height);
   _traceStrokeLifecycle('commit-end',{sessionId:commitSession,sourceLayer:commitLayer,sourceFrame:commitFrame,smartRaster:!!(layers[commitLayer]&&layers[commitLayer].type==='smart-raster')});
   _traceStrokeLifecycle('temporary-stroke-cleared',{sessionId:commitSession,sourceLayer:commitLayer,sourceFrame:commitFrame});
+  // Phase 1B: symmetric no-op notification to the active renderer that the
+  // stroke has been committed to activeC. The actual commit (globalAlpha +
+  // _drawBrushComposite onto ctx, above) is still performed right here,
+  // exactly as before.
+  if(window.BrushRenderer) BrushRenderer.endStroke();
 }
 
 //  Live stroke preview
@@ -2176,10 +2187,15 @@ function _drawDabNow(d){
   const colorEraserBefore=_captureColorEraserDab(d.x,d.y,dirtyRadius.x,dirtyRadius.y);
   // Track current dab color so _applyTextureToDabDirect can use it for alpha-only masking.
   _lastDabRGB=d.rgb;
-  if(!_drawAutoHardRoundSegment(d)){
-    if(_currentAAMode()!=='none') _dabAA(d.x,d.y,d.r,d.rgb,d.alpha,d.composite);
-    else _dabAliased(d.x,d.y,d.r,d.rgb,d.alpha,d.composite);
-  }
+  // Phase 1B: the actual Canvas2D rasterization (previously inlined here as
+  // `if(!_drawAutoHardRoundSegment(d)){ _dabAA(...) or _dabAliased(...) }`)
+  // now lives in CpuBrushRenderer.drawDab(), reached via this dispatcher.
+  // Same functions, same arguments, same order, same guard — see
+  // src/brush/brush-renderer.js for the moved code. Everything else in this
+  // function (dirty-rect tracking, texture masking, color-eraser filtering,
+  // trace/perf hooks) is brush-engine bookkeeping, not rendering, and stays
+  // here unchanged.
+  BrushRenderer.drawDab(d);
   _activeDabRotation=0;
   _activeDabRoundness=null;
   // Texture is NO LONGER masked per-dab here. Masking every dab individually
