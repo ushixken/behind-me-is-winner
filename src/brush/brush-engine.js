@@ -1382,7 +1382,16 @@ function _drawDabNow(d){
   // function (dirty-rect tracking, texture masking, color-eraser filtering,
   // trace/perf hooks) is brush-engine bookkeeping, not rendering, and stays
   // here unchanged.
-  BrushRenderer.drawDab(d);
+  const rendererContext={
+    ctx,
+    strokeCtx:_strokeCtx,
+    inStroke:_inStroke,
+    flipX,
+    flipY,
+    tool,
+    brushHardness
+  };
+  BrushRenderer.drawDab(d,rendererContext);
   _activeDabRotation=0;
   _activeDabRoundness=null;
   // Texture is NO LONGER masked per-dab here. Masking every dab individually

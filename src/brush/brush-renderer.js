@@ -105,7 +105,7 @@ const _TIP_DAB_CACHE_MAX=32;
 
 // Build a stamp canvas pre-shaped by the current brushTipCanvas.
 // Returns {canvas,w,h} Ã¢â‚¬â€ same contract as _buildAAStamp.
-function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw,rotation,roundness){
+function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw,rotation,roundness,rendererContext){
   const latencyProbe=window.FirstDabLatencyProbe,latencyBuildStart=latencyProbe&&latencyProbe.enabled?performance.now():0;
   const trace=window.CustomFirstDabTrace,lookupStart=trace&&trace.enabled?performance.now():0,generationStart=lookupStart;
   const tipC=window.brushTipCanvas;
@@ -132,7 +132,7 @@ function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw,rotation,roundne
             hardness.toFixed(2)+'|t'+tipV+'|'+(softAlpha?'s':'h')+'|'+tipMode+'|rd'+tipRoundness.toFixed(3);
   const hit=_tipDabCache.get(key);
   if(latencyProbe&&latencyProbe.enabled)latencyProbe.cache({key,hit:!!hit,sizeBeforeLookup:_tipDabCache.size});
-  if(trace&&trace.enabled){trace.stage('custom-tip-cache-lookup',lookupStart,{tipId:trace.objectId(tipC),tipVersion:tipV,invalidationReason:hit?null:(_tipAlphaInvalidationReason||'stamp-key-miss')});trace.instant('stamp-cache-lookup',{hit:!!hit,key,scaleBucket:r.toFixed(2),rotationBucket:Math.round(_viewAdjustedTipRotation(rotation)*180/Math.PI),roundnessBucket:tipRoundness.toFixed(3)});}
+  if(trace&&trace.enabled){trace.stage('custom-tip-cache-lookup',lookupStart,{tipId:trace.objectId(tipC),tipVersion:tipV,invalidationReason:hit?null:(_tipAlphaInvalidationReason||'stamp-key-miss')});trace.instant('stamp-cache-lookup',{hit:!!hit,key,scaleBucket:r.toFixed(2),rotationBucket:Math.round(_viewAdjustedTipRotation(rotation,rendererContext)*180/Math.PI),roundnessBucket:tipRoundness.toFixed(3)});}
   const tipPerf=_brushPerf();if(tipPerf)tipPerf.point(hit?'tip-stamp-cache-hit':'tip-stamp-cache-miss',{key});
   if(hit){if(latencyProbe&&latencyProbe.enabled){latencyProbe.renderer('custom-stamp',{effectiveRadius:r,stampWidth:hit.w,stampHeight:hit.h});latencyProbe.measure('buildTipStamp',latencyBuildStart);}return hit;}
 
@@ -246,7 +246,7 @@ function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw,rotation,roundne
   if(_tipDabCache.size>=_TIP_DAB_CACHE_MAX) _tipDabCache.delete(_tipDabCache.keys().next().value);
   _tipDabCache.set(key,stamp);
   if(latencyProbe&&latencyProbe.enabled){latencyProbe.renderer('custom-stamp',{effectiveRadius:r,stampWidth:w,stampHeight:h});latencyProbe.measure('buildTipStamp',latencyBuildStart);}
-  if(trace&&trace.enabled)trace.stage('stamp-generation',generationStart,{key,stampWidth:w,stampHeight:h,scaleBucket:r.toFixed(2),rotationBucket:Math.round(_viewAdjustedTipRotation(rotation)*180/Math.PI)});
+  if(trace&&trace.enabled)trace.stage('stamp-generation',generationStart,{key,stampWidth:w,stampHeight:h,scaleBucket:r.toFixed(2),rotationBucket:Math.round(_viewAdjustedTipRotation(rotation,rendererContext)*180/Math.PI)});
   return stamp;
 }
 
@@ -333,13 +333,13 @@ function _buildAAStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
 const _softRoundMaskCache=new Map();
 const _SOFT_ROUND_MASK_CACHE_MAX=64;
 let _softRoundTintCanvas=null;
-function _isStandardProceduralSoftRound(){
-  return tool==='brush' && window._activeBrushPresetId==='soft-round' && !window._brushAirbrush && !window.brushTipCanvas;
+function _isStandardProceduralSoftRound(rendererContext){
+  return rendererContext.tool==='brush' && window._activeBrushPresetId==='soft-round' && !window._brushAirbrush && !window.brushTipCanvas;
 }
-function _buildSoftRoundMask(rRaw){
+function _buildSoftRoundMask(rRaw,rendererContext){
   const diameter=Math.max(1,Math.round(Math.max(0.05,rRaw)*2*4)/4);
   const radius=diameter/2;
-  const hardness=Math.round(Math.max(0,Math.min(1,brushHardness))*1000)/1000;
+  const hardness=Math.round(Math.max(0,Math.min(1,rendererContext.brushHardness))*1000)/1000;
   const aaMode=_currentAAMode();
   const key=diameter.toFixed(2)+'|'+hardness.toFixed(3)+'|aa'+aaMode;
   const cached=_softRoundMaskCache.get(key);
@@ -365,8 +365,8 @@ function _buildSoftRoundMask(rRaw){
   _softRoundMaskCache.set(key,stamp);
   return stamp;
 }
-function _drawSoftRoundMask(x,y,r,rgb,alpha,composite){
-  const stamp=_buildSoftRoundMask(r);
+function _drawSoftRoundMask(x,y,r,rgb,alpha,composite,rendererContext){
+  const stamp=_buildSoftRoundMask(r,rendererContext);
   if(!_softRoundTintCanvas) _softRoundTintCanvas=document.createElement('canvas');
   const tint=_softRoundTintCanvas;
   if(tint.width!==stamp.w||tint.height!==stamp.h){tint.width=stamp.w;tint.height=stamp.h;}
@@ -377,26 +377,26 @@ function _drawSoftRoundMask(x,y,r,rgb,alpha,composite){
   tc.fillRect(0,0,tint.width,tint.height);
   tc.globalCompositeOperation='destination-in'; tc.drawImage(stamp.canvas,0,0);
   tc.globalCompositeOperation='source-over';
-  const dc=(_inStroke&&composite!=='erase')?_strokeCtx:ctx;
+  const dc=(rendererContext.inStroke&&composite!=='erase')?rendererContext.strokeCtx:rendererContext.ctx;
   dc.save();
   dc.globalCompositeOperation=_strokeDabComposite(composite);
   dc.globalAlpha=Math.max(0,Math.min(1,alpha));
-  dc.imageSmoothingEnabled=brushHardness<0.999;
+  dc.imageSmoothingEnabled=rendererContext.brushHardness<0.999;
   if(dc.imageSmoothingEnabled) dc.imageSmoothingQuality='high';
   dc.drawImage(tint,x-stamp.w/2,y-stamp.h/2);
   dc.restore();
 }
 // Software fallback retained for internal diagnostics. Normal drawing always
 // uses the Canvas 2D accelerated path below.
-function _dabAATinyCoverage(x,y,r,rgb,alpha,composite){
-  const dc=(_inStroke&&composite!=='erase')?_strokeCtx:ctx;
+function _dabAATinyCoverage(x,y,r,rgb,alpha,composite,rendererContext){
+  const dc=(rendererContext.inStroke&&composite!=='erase')?rendererContext.strokeCtx:rendererContext.ctx;
   const rr=Math.max(0.05,r),pad=1;
   const sx=Math.max(0,Math.floor(x-rr-pad)),sy=Math.max(0,Math.floor(y-rr-pad));
   const ex=Math.min(dc.canvas.width,Math.ceil(x+rr+pad)),ey=Math.min(dc.canvas.height,Math.ceil(y+rr+pad));
   const width=ex-sx,height=ey-sy;
   if(width<=0||height<=0) return;
   const image=dc.getImageData(sx,sy,width,height),data=image.data;
-  const inner=_effectiveInnerFrac(rr,brushHardness,_currentAAMode());
+  const inner=_effectiveInnerFrac(rr,rendererContext.brushHardness,_currentAAMode());
   const samples=4,invSamples=1/(samples*samples);
   for(let py=0;py<height;py++){
     for(let px=0;px<width;px++){
@@ -406,7 +406,7 @@ function _dabAATinyCoverage(x,y,r,rgb,alpha,composite){
           const wx=sx+px+(sampleX+0.5)/samples;
           const wy=sy+py+(sampleY+0.5)/samples;
           const t=Math.hypot(wx-x,wy-y)/rr;
-          coverage+=_roundBrushFalloff(t,inner,brushHardness);
+          coverage+=_roundBrushFalloff(t,inner,rendererContext.brushHardness);
         }
       }
       const sourceAlpha=Math.max(0,Math.min(1,alpha*coverage*invSamples));
@@ -485,11 +485,11 @@ function _sampleTipAlphaBilinear(buf,w,h,u,v){
   const top=a00+(a10-a00)*fx, bot=a01+(a11-a01)*fx;
   return top+(bot-top)*fy;
 }
-function _dabTipTinyCoverage(x,y,r,rgb,alpha,composite,rotationParam,roundnessParam){
+function _dabTipTinyCoverage(x,y,r,rgb,alpha,composite,rotationParam,roundnessParam,rendererContext){
   if(window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled)window.FirstDabLatencyProbe.renderer('tiny-custom-tip',{effectiveRadius:r});
   const tipInfo=_getTipAlphaBuffer();
-  if(!tipInfo){_dabAATinyCoverage(x,y,r,rgb,alpha,composite);return;}
-  const dc=(_inStroke&&composite!=='erase')?_strokeCtx:ctx;
+  if(!tipInfo){_dabAATinyCoverage(x,y,r,rgb,alpha,composite,rendererContext);return;}
+  const dc=(rendererContext.inStroke&&composite!=='erase')?rendererContext.strokeCtx:rendererContext.ctx;
   const rr=Math.max(0.05,r);
   const softAlpha=!!window.brushTipSoftAlpha;
   const tipMode=window.brushTipMode||'multiply';
@@ -503,7 +503,7 @@ function _dabTipTinyCoverage(x,y,r,rgb,alpha,composite,rotationParam,roundnessPa
   const dabW=Math.max(0.02,tipNativeW*tipScale*(compressWidth?tipRoundness:1));
   const dabH=Math.max(0.02,tipNativeH*tipScale*(compressWidth?1:tipRoundness));
   const semiW=dabW/2, semiH=dabH/2;
-  const rotation=_viewAdjustedTipRotation(rotationParam);
+  const rotation=_viewAdjustedTipRotation(rotationParam,rendererContext);
   const cosR=Math.cos(-rotation), sinR=Math.sin(-rotation); // world -> tip-local
   const flipXsign=window.brushTipFlipX?-1:1, flipYsign=window.brushTipFlipY?-1:1;
 
@@ -517,7 +517,7 @@ function _dabTipTinyCoverage(x,y,r,rgb,alpha,composite,rotationParam,roundnessPa
 
   const aaMode=_currentAAMode();
   const applyFalloff=softAlpha&&tipMode!=='replace';
-  const inner=applyFalloff?_effectiveInnerFrac(rr,brushHardness,aaMode):1;
+  const inner=applyFalloff?_effectiveInnerFrac(rr,rendererContext.brushHardness,aaMode):1;
   const samples=4,invSamples=1/(samples*samples);
   const cr=composite==='erase'?0:rgb[0],cg=composite==='erase'?0:rgb[1],cb=composite==='erase'?0:rgb[2];
   const tipBuf=tipInfo.data;
@@ -541,7 +541,7 @@ function _dabTipTinyCoverage(x,y,r,rgb,alpha,composite,rotationParam,roundnessPa
           if(tipA<=0) continue;
           if(applyFalloff){
             const t=Math.sqrt((rx/Math.max(0.02,semiW))**2+(ry/Math.max(0.02,semiH))**2);
-            coverage+=tipA*_roundBrushFalloff(t,inner,brushHardness);
+            coverage+=tipA*_roundBrushFalloff(t,inner,rendererContext.brushHardness);
           } else {
             coverage+=tipA;
           }
@@ -564,9 +564,9 @@ function _dabTipTinyCoverage(x,y,r,rgb,alpha,composite,rotationParam,roundnessPa
   }
   dc.putImageData(image,sx,sy);
 }
-function _viewAdjustedTipRotation(rotation){
+function _viewAdjustedTipRotation(rotation,rendererContext){
   const effectiveRotation=(rotation!=null)?rotation:_activeDabRotation;
-  const reflected=(!!flipX)!=(!!flipY);
+  const reflected=(!!rendererContext.flipX)!=(!!rendererContext.flipY);
   return reflected?-effectiveRotation:effectiveRotation;
 }
 // TVPaint-style dab compositing within a stroke:
@@ -581,17 +581,17 @@ function _strokeDabComposite(composite){
   if(composite==='erase') return 'destination-out';
   return 'source-over';
 }
-function _drawUnifiedTipStamp(x,y,r,rgb,alpha,composite,rotation,roundness){
+function _drawUnifiedTipStamp(x,y,r,rgb,alpha,composite,rotation,roundness,rendererContext){
   const trace=window.CustomFirstDabTrace,identityStart=trace&&trace.enabled?performance.now():0;
-  const dc=(_inStroke && composite!=='erase')?_strokeCtx:ctx;
+  const dc=(rendererContext.inStroke && composite!=='erase')?rendererContext.strokeCtx:rendererContext.ctx;
   if(trace&&trace.enabled)trace.stage('custom-tip-identity-lookup',identityStart,{tipId:trace.objectId(window.brushTipCanvas),tipVersion:window.brushTipVersion||0});
-  const stamp=_buildTipStamp(r,rgb,alpha,composite,brushHardness,rotation,roundness);
+  const stamp=_buildTipStamp(r,rgb,alpha,composite,rendererContext.brushHardness,rotation,roundness,rendererContext);
   const transformStart=trace&&trace.enabled?performance.now():0;
   dc.save();
   dc.globalCompositeOperation=_strokeDabComposite(composite);
   dc.imageSmoothingEnabled=true;
   dc.translate(x,y);
-  const adjustedRotation=_viewAdjustedTipRotation(rotation);
+  const adjustedRotation=_viewAdjustedTipRotation(rotation,rendererContext);
   if(adjustedRotation) dc.rotate(adjustedRotation);
   if(window.brushTipFlipX||window.brushTipFlipY) dc.scale(window.brushTipFlipX?-1:1,window.brushTipFlipY?-1:1);
   if(trace&&trace.enabled)trace.stage('transformed-tip-generation',transformStart,{rotation:adjustedRotation,rotationBucket:Math.round(adjustedRotation*180/Math.PI),stampWidth:stamp.w,stampHeight:stamp.h});
@@ -601,17 +601,17 @@ function _drawUnifiedTipStamp(x,y,r,rgb,alpha,composite,rotation,roundness){
   if(trace&&trace.enabled)trace.stage('blend-dab-into-stroke-canvas',blendStart,{operation:'drawImage',stampWidth:stamp.w,stampHeight:stamp.h});
   dc.restore();
 }
-function _dabAAGpu(x,y,r,rgb,alpha,composite,rotation,roundness){
+function _dabAAGpu(x,y,r,rgb,alpha,composite,rotation,roundness,rendererContext){
   if(window.brushTipCanvas){
-    _drawUnifiedTipStamp(x,y,r,rgb,alpha,composite,rotation,roundness);
+    _drawUnifiedTipStamp(x,y,r,rgb,alpha,composite,rotation,roundness,rendererContext);
     return;
   }
   // When a custom tip image is loaded, build a pre-shaped stamp (cached)
   // and blit it Ã¢â‚¬â€ no gradient is drawn. Falls back to the radial gradient
   // path below when no tip is set, preserving existing behaviour exactly.
   if(window.brushTipCanvas){
-    const dc=(_inStroke && composite!=='erase')?_strokeCtx:ctx;
-    const stamp=_buildTipStamp(r,rgb,alpha,composite,brushHardness,rotation,roundness);
+    const dc=(rendererContext.inStroke && composite!=='erase')?rendererContext.strokeCtx:rendererContext.ctx;
+    const stamp=_buildTipStamp(r,rgb,alpha,composite,rendererContext.brushHardness,rotation,roundness,rendererContext);
     if(stamp){
       const x0=x-(stamp.w/2), y0=y-(stamp.h/2);
       dc.save();
@@ -625,13 +625,13 @@ function _dabAAGpu(x,y,r,rgb,alpha,composite,rotation,roundness){
   // brushOpacity can be applied as a stroke-level composite at the end.
   // Eraser dabs must always go directly to activeC (they cut through the
   // real layer pixels, not the scratch).
-  const dc = (_inStroke && composite !== 'erase') ? _strokeCtx : ctx;
+  const dc = (rendererContext.inStroke && composite !== 'erase') ? rendererContext.strokeCtx : rendererContext.ctx;
   const rr=Math.max(0.05,r);
   const isProceduralAirbrush=typeof window!=='undefined'&&!!window._brushAirbrush&&!window.brushTipCanvas;
   // Only procedural Airbrush uses the analytic cached mask. Ordinary round
   // brushes retain their original radial-gradient GPU renderer exactly.
   if(isProceduralAirbrush){
-    const stamp=_buildAAStamp(r,rgb,alpha,composite,brushHardness);
+    const stamp=_buildAAStamp(r,rgb,alpha,composite,rendererContext.brushHardness);
     if(stamp){
       dc.save();
       dc.globalCompositeOperation=_strokeDabComposite(composite);
@@ -660,7 +660,7 @@ function _dabAAGpu(x,y,r,rgb,alpha,composite,rotation,roundness){
     // Fix: pin two stops at t=0 and t=inner (both full alpha, solid core),
     // then place STOPS densely within [inner, 1.0] to faithfully represent
     // the narrow falloff curve at whatever pixel width it actually spans.
-    const inner=_effectiveInnerFrac(rr,brushHardness,aaMode);
+    const inner=_effectiveInnerFrac(rr,rendererContext.brushHardness,aaMode);
     const STOPS=Math.max(8,_AA_MODE_STOPS[aaMode]||14);
     // Solid core: two anchors so the browser never interpolates across it.
     grad.addColorStop(0,`rgba(${c0[0]},${c0[1]},${c0[2]},${alpha})`);
@@ -670,7 +670,7 @@ function _dabAAGpu(x,y,r,rgb,alpha,composite,rotation,roundness){
     // Feather zone: dense stops from inner to 1.0.
     for(let i=1;i<=STOPS;i++){
       const t=inner+(1-inner)*(i/STOPS);
-      const a=alpha*_roundBrushFalloff(t,inner,brushHardness);
+      const a=alpha*_roundBrushFalloff(t,inner,rendererContext.brushHardness);
       grad.addColorStop(Math.min(1,t),`rgba(${c0[0]},${c0[1]},${c0[2]},${Math.max(0,a)})`);
     }
   }
@@ -700,9 +700,9 @@ function _dabAAGpu(x,y,r,rgb,alpha,composite,rotation,roundness){
 // renderer's stroke quality, pressure response and edge softness exactly;
 // only the rasterization backend differs (hand-written per-pixel math vs.
 // the browser's hardware gradient/fill).
-function _dabAACpu(x,y,r,rgb,alpha,composite){
+function _dabAACpu(x,y,r,rgb,alpha,composite,rendererContext){
   if(window.brushTipCanvas){
-    _drawUnifiedTipStamp(x,y,r,rgb,alpha,composite);
+    _drawUnifiedTipStamp(x,y,r,rgb,alpha,composite,undefined,undefined,rendererContext);
     return;
   }
   // When a custom tip image is loaded, use the exact same pre-shaped tip
@@ -711,8 +711,8 @@ function _dabAACpu(x,y,r,rgb,alpha,composite){
   // silently ignored brushTipCanvas entirely and always drew a procedural
   // circle, even with an ABR tip imported.
   if(window.brushTipCanvas){
-    const dc0=(_inStroke && composite!=='erase')?_strokeCtx:ctx;
-    const stamp=_buildTipStamp(r,rgb,alpha,composite,brushHardness);
+    const dc0=(rendererContext.inStroke && composite!=='erase')?rendererContext.strokeCtx:rendererContext.ctx;
+    const stamp=_buildTipStamp(r,rgb,alpha,composite,rendererContext.brushHardness,undefined,undefined,rendererContext);
     if(stamp){
       const x0=x-(stamp.w/2), y0=y-(stamp.h/2);
       dc0.save();
@@ -722,11 +722,11 @@ function _dabAACpu(x,y,r,rgb,alpha,composite){
       return;
     }
   }
-  const dc = (_inStroke && composite !== 'erase') ? _strokeCtx : ctx;
+  const dc = (rendererContext.inStroke && composite !== 'erase') ? rendererContext.strokeCtx : rendererContext.ctx;
   const rr=Math.max(0.05,r);
   const isAirbrush=typeof window!=='undefined'&&!!window._brushAirbrush;
   const aaModeCpu=_currentAAMode();
-  const inner=_effectiveInnerFrac(rr,brushHardness,aaModeCpu);
+  const inner=_effectiveInnerFrac(rr,rendererContext.brushHardness,aaModeCpu);
   const cw=dc.canvas.width, ch=dc.canvas.height;
   // Pad enough to cover the widest possible edge band for the active AA
   // mode (Strong can extend several px past r) so the falloff tail isn't
@@ -748,7 +748,7 @@ function _dabAACpu(x,y,r,rgb,alpha,composite){
       const dx=wx-x, dy=wy-y;
       const t=Math.sqrt(dx*dx+dy*dy)/rr;
       if(t>=1) continue;
-      let a=alpha*_proceduralBrushFalloff(t,brushHardness,rr,aaModeCpu,isAirbrush);
+      let a=alpha*_proceduralBrushFalloff(t,rendererContext.brushHardness,rr,aaModeCpu,isAirbrush);
       a=Math.min(1,Math.max(0,a));
       if(a<=0) continue;
       if(composite==='erase'){
@@ -771,23 +771,23 @@ function _dabAACpu(x,y,r,rgb,alpha,composite){
   }
   dc.putImageData(imgData,sx,sy);
 }
-function _dabAA(x,y,r,rgb,alpha,composite,rotation,roundness){
+function _dabAA(x,y,r,rgb,alpha,composite,rotation,roundness,rendererContext){
   // AA mode 'none' is fully pixel-snapped/binary (Requirement 2), so it uses
   // the exact same aliased/quantized stamp path as the legacy AA-off toggle
   // -- no partial-alpha edge pixels at all, regardless of hardness.
-  if(_currentAAMode()==='none'){_dabAliased(x,y,r,rgb,alpha,composite,rotation,roundness);return;}
-  const tinyGeneratedHardRound=r<=1&&!window._brushAirbrush&&!window.brushTipCanvas&&brushHardness>=0.995;
-  if(tinyGeneratedHardRound){_dabAATinyCoverage(x,y,r,rgb,alpha,composite);return;}
+  if(_currentAAMode()==='none'){_dabAliased(x,y,r,rgb,alpha,composite,rotation,roundness,rendererContext);return;}
+  const tinyGeneratedHardRound=r<=1&&!window._brushAirbrush&&!window.brushTipCanvas&&rendererContext.brushHardness>=0.995;
+  if(tinyGeneratedHardRound){_dabAATinyCoverage(x,y,r,rgb,alpha,composite,rendererContext);return;}
   // Same cutoff (r<=1) as Hard Round above, so custom tips remain visible
   // down to approximately the same minimum size Hard Round hits, via the
   // same class of genuine supersampled-coverage rendering.
   const tinyTipDab=r<=1&&!window._brushAirbrush&&!!window.brushTipCanvas;
-  if(tinyTipDab){_dabTipTinyCoverage(x,y,r,rgb,alpha,composite,rotation,roundness);return;}
-  if(_isStandardProceduralSoftRound()){
-    _drawSoftRoundMask(x,y,r,rgb,alpha,composite);
+  if(tinyTipDab){_dabTipTinyCoverage(x,y,r,rgb,alpha,composite,rotation,roundness,rendererContext);return;}
+  if(_isStandardProceduralSoftRound(rendererContext)){
+    _drawSoftRoundMask(x,y,r,rgb,alpha,composite,rendererContext);
     return;
   }
-  _dabAAGpu(x,y,r,rgb,alpha,composite,rotation,roundness);
+  _dabAAGpu(x,y,r,rgb,alpha,composite,rotation,roundness,rendererContext);
 }
 // Ã¢â€â‚¬Ã¢â€â‚¬ Aliased dab: solid circle, quantised edge pixels to full on/off.
 // Mirrors TVPaint Pencil and Clip Studio pixel pen behaviour exactly.
@@ -849,9 +849,9 @@ function _getAliasedStamp(rRaw,rgb,alphaRaw,composite){
   _stampCache.set(key,stamp);
   return stamp;
 }
-function _dabAliased(x,y,r,rgb,alpha,composite,rotation,roundness){
-  const dc = (_inStroke && composite !== 'erase') ? _strokeCtx : ctx;
-  const stamp=window.brushTipCanvas?_buildTipStamp(r,rgb,alpha,composite,brushHardness,rotation,roundness):_getAliasedStamp(r,rgb,alpha,composite);
+function _dabAliased(x,y,r,rgb,alpha,composite,rotation,roundness,rendererContext){
+  const dc = (rendererContext.inStroke && composite !== 'erase') ? rendererContext.strokeCtx : rendererContext.ctx;
+  const stamp=window.brushTipCanvas?_buildTipStamp(r,rgb,alpha,composite,rendererContext.brushHardness,rotation,roundness,rendererContext):_getAliasedStamp(r,rgb,alpha,composite);
   // drawImage() defaults to imageSmoothingEnabled=true, so even a
   // perfectly hard-edged, fully-on/off-alpha stamp gets bilinearly resampled
   // (blurred) on the way into the destination canvas. Turning smoothing OFF
@@ -863,7 +863,7 @@ function _dabAliased(x,y,r,rgb,alpha,composite,rotation,roundness){
   dc.save();
   dc.imageSmoothingEnabled=false;
   dc.globalCompositeOperation=_strokeDabComposite(composite);
-  const adjustedRotation=window.brushTipCanvas?_viewAdjustedTipRotation(rotation):0;
+  const adjustedRotation=window.brushTipCanvas?_viewAdjustedTipRotation(rotation,rendererContext):0;
   if(window.brushTipCanvas&&(adjustedRotation||window.brushTipFlipX||window.brushTipFlipY)){
     dc.translate(x,y);
     if(adjustedRotation) dc.rotate(adjustedRotation);
@@ -879,12 +879,12 @@ function _dabAliased(x,y,r,rgb,alpha,composite,rotation,roundness){
   dc.restore();
 }
 let _autoHardRoundPrevDab=null;
-function _drawAutoHardRoundSegment(d){
+function _drawAutoHardRoundSegment(d,rendererContext){
   const eligible=d.composite==='paint'&&_usesAutoHardRoundRaster(d.r);
   if(!eligible){_autoHardRoundPrevDab=null;return false;}
   const previous=_autoHardRoundPrevDab;
   _autoHardRoundPrevDab={x:d.x,y:d.y,r:d.r,rgb:d.rgb.slice(),alpha:d.alpha};
-  const dc=_inStroke?_strokeCtx:ctx;
+  const dc=rendererContext.inStroke?rendererContext.strokeCtx:rendererContext.ctx;
   let x0=previous?Math.round(previous.x):Math.round(d.x);
   let y0=previous?Math.round(previous.y):Math.round(d.y);
   const x1=Math.round(d.x),y1=Math.round(d.y);
@@ -920,10 +920,10 @@ const CpuBrushRenderer = {
   // here because brush-engine.js and this file share the same
   // classic-script global scope (no bundler/module boundary exists in this
   // codebase today).
-  drawDab(d){
-    if(_drawAutoHardRoundSegment(d)) return true;
-    if(_currentAAMode()!=='none') _dabAA(d.x,d.y,d.r,d.rgb,d.alpha,d.composite,d.rotation,d.roundness);
-    else _dabAliased(d.x,d.y,d.r,d.rgb,d.alpha,d.composite,d.rotation,d.roundness);
+  drawDab(d,rendererContext){
+    if(_drawAutoHardRoundSegment(d,rendererContext)) return true;
+    if(_currentAAMode()!=='none') _dabAA(d.x,d.y,d.r,d.rgb,d.alpha,d.composite,d.rotation,d.roundness,rendererContext);
+    else _dabAliased(d.x,d.y,d.r,d.rgb,d.alpha,d.composite,d.rotation,d.roundness,rendererContext);
     return false;
   },
   // No-ops in this phase — see file header. Intentionally do nothing so
@@ -959,7 +959,7 @@ const BrushRenderer = {
   // this indirection exists purely so a future renderer can be swapped in
   // without touching any call site in brush-engine.js.
   active: CpuBrushRenderer,
-  drawDab(d){ return this.active.drawDab(d); },
+  drawDab(d,rendererContext){ return this.active.drawDab(d,rendererContext); },
   beginStroke(){ return this.active.beginStroke(); },
   endStroke(){ return this.active.endStroke(); },
   invalidateCaches(which){ return this.active.invalidateCaches(which); },
