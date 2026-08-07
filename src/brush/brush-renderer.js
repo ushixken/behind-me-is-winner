@@ -1136,6 +1136,8 @@ const _gpuState = {
   context: null,
   canvasFormat: null,
   configured: false,
+  commandEncoder: null,
+  commandBuffer: null,
 };
 
 // Phase 2C: GpuBrushRenderer skeleton. Implements the exact same public
@@ -1278,6 +1280,36 @@ const GpuBrushRenderer = {
       _gpuState.initialized=false;
       return false;
     }
+  },
+  // Phase 3D: minimal command-submission skeleton. Neither method is
+  // called anywhere yet — they exist only as infrastructure for a future
+  // rendering phase. No shader, pipeline, bind group, texture, buffer,
+  // render pass, or compute pass is created by either method.
+  //
+  // Creates a fresh command encoder from the initialized device and
+  // stores it in _gpuState.commandEncoder. Clears any stale
+  // commandBuffer left over from a prior submitCommands() call. Returns
+  // false (no-op) if the GPU renderer isn't initialized or has no
+  // device; returns true after the encoder is created and stored.
+  createCommandEncoder(){
+    if(!_gpuState.initialized) return false;
+    if(!_gpuState.device) return false;
+    _gpuState.commandEncoder=_gpuState.device.createCommandEncoder();
+    _gpuState.commandBuffer=null;
+    return true;
+  },
+  // Finishes the current command encoder into a single command buffer,
+  // submits that one buffer to the queue, stores it temporarily in
+  // _gpuState.commandBuffer, and clears _gpuState.commandEncoder back to
+  // null. Returns false (no-op) if there is no command encoder to
+  // finish; returns true after submission.
+  submitCommands(){
+    if(!_gpuState.commandEncoder) return false;
+    const commandBuffer=_gpuState.commandEncoder.finish();
+    _gpuState.queue.submit([commandBuffer]);
+    _gpuState.commandBuffer=commandBuffer;
+    _gpuState.commandEncoder=null;
+    return true;
   },
 };
 
