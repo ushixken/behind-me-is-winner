@@ -1801,7 +1801,7 @@ function _baselineSampleFromStabilizedPoint(e,p,time){
   return{x:p.x,y:p.y,screenX:p.x*s,screenY:p.y*s,pressure:Number.isFinite(p.pressure)?p.pressure:0,tiltX:Number.isFinite(e.tiltX)?e.tiltX:0,tiltY:Number.isFinite(e.tiltY)?e.tiltY:0,twist:Number.isFinite(e.twist)?e.twist:(Number.isFinite(e.rotationAngle)?e.rotationAngle:0),time:Number.isFinite(time)&&time>0?time:performance.now(),pointerId:e.pointerId,event:e};
 }
 function _baselineConditionerFinish(cancelled=false){const s=_baselineConditionerState;if(!s)return;if(window.BaselineStrokeConditionerDiagnostics?.enabled){const n=s.stats,f=v=>({average:v.count?v.sum/v.count:0,min:v.count?v.min:0,max:v.count?v.max:0});_baselineConditionerReports.push({cancelled,rawSampleCount:n.rawSampleCount,forwardedSampleCount:n.forwardedSampleCount,exactDuplicatesRejected:n.exactDuplicatesRejected,tinyMovementsConsolidated:n.tinyMovementsConsolidated,timeGapEmissions:n.timeGapEmissions,attributeChangeEmissions:n.attributeChangeEmissions,cornerEmissions:n.cornerEmissions,screenDistance:f(n.screenDistance),dt:f(n.dt)});if(_baselineConditionerReports.length>100)_baselineConditionerReports.shift();}_baselineConditionerState=null;}
-window.BaselineStrokeConditionerDiagnostics={enabled:false,enable(v=true){this.enabled=!!v;return this.enabled;},results(){return JSON.parse(JSON.stringify(_baselineConditionerReports));},latest(){const a=this.results();return a.length?a[a.length-1]:null;},clear(){_baselineConditionerReports.length=0;}};let _stabilizerDebugLastLogT=0;
+window.BaselineStrokeConditionerDiagnostics={enabled:false,enable(v=true){this.enabled=!!v;return this.enabled;},results(){return JSON.parse(JSON.stringify(_baselineConditionerReports));},latest(){const a=this.results();return a.length?a[a.length-1]:null;},clear(){_baselineConditionerReports.length=0;}};
 function _stabilizePoint(x,y,t){
   const amount=_stabilizationAmount();
   // True bypass at 0% for the point-count engine itself (windowLen=1, see
@@ -1822,18 +1822,6 @@ function _stabilizePoint(x,y,t){
   const avg=_stabilizerBufAverage();
   _stabilizerX=avg.x;_stabilizerY=avg.y;
   _stabilizerSmoothedPressure=_stabilizerPressureAverage();
-
-  if(t-_stabilizerDebugLastLogT>500){
-    _stabilizerDebugLastLogT=t;
-    console.log('[stabilizer debug]',{
-      sliderPercent:Math.round(amount*100),
-      amount,
-      windowLen,
-      bufferedSamples:_stabilizerBuf.length,
-      lagScreenPx:(Math.hypot(_stabilizerRawX-avg.x,_stabilizerRawY-avg.y)*Math.max(0.05,zoom)).toFixed(2),
-      zoom
-    });
-  }
 
   _stabilizerLastAdvanceT=performance.now();
   _stabilizerSchedule();
