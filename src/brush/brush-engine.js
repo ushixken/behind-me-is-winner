@@ -488,6 +488,14 @@ function _commitStrokeCanvas(){
   // _drawBrushComposite onto ctx, above) is still performed right here,
   // exactly as before.
   if(window.BrushRenderer) BrushRenderer.endStroke();
+  // Phase 5M: after the stroke has been ended via the existing
+  // BrushRenderer.endStroke() call above (unchanged, unmoved), flush any
+  // GPU work the active renderer queued during the stroke, via the
+  // dispatcher-level BrushRenderer.flushActiveRenderer() API only — no
+  // renderer switching, no direct queue/batch access, no change to
+  // brush appearance/stabilization/spacing/pressure/taper/texture/
+  // opacity/hardness.
+  if(window.BrushRenderer) BrushRenderer.flushActiveRenderer();
 }
 
 //  Live stroke preview
