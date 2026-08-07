@@ -1871,6 +1871,13 @@ const _gpuState = {
   dabPipeline: null,
   dabShaderModule: null,
   dabPipelineLayout: null,
+  dabBindGroupLayout: null,
+  dabSampler: null,
+  dabTipTexture: null,
+  dabTipTextureWidth: 0,
+  dabTipTextureHeight: 0,
+  dabTipVersion: -1,
+  dabBindGroup: null,
   dabVertexBuffer: null,
   // Diagnostics only: counts actual submitted GPU dab draw calls, as
   // opposed to dabsReceived (Phase 5A), which counts every drawDab()
@@ -2110,11 +2117,20 @@ const GpuBrushRenderer = {
     const innerFrac=aaMode==='none'
       ? 1
       : _effectiveInnerFrac(d&&d.r,hardness,aaMode);
-    return this._enqueueDab(Object.assign({},d,{gpuInnerFrac:innerFrac}));
+    const tip=typeof window!=='undefined'?window.brushTipCanvas:null;
+    const tipW=tip&&tip.width||1,tipH=tip&&tip.height||1,tipReference=Math.max(tipW,tipH);
+    const tipMode=tip?(window.brushTipMode==='replace'?2:1):0;
+    return this._enqueueDab(Object.assign({},d,{
+      gpuInnerFrac:innerFrac,
+      gpuTipMode:tipMode,
+      gpuTipScaleX:tipW/tipReference,
+      gpuTipScaleY:tipH/tipReference
+    }));
   },
   // Phase 5C: smallest possible GPU-side dab representation — a single
-  // flat-color quad (2 triangles, 6 vertices, no indices), no bind
-  // group, no uniforms, no texture/sampler. Idempotent: returns true
+  // flat-color quad (2 triangles, 6 vertices, no indices). Phase 6I
+  // adds the custom-tip texture/sampler bind group described below.
+  // Idempotent: returns true
   // immediately once created. Entirely separate from createPipeline()
   // (Phase 3H), which remains untouched and still used by
   // renderFrame()/submitEmptyFrame()/selfTest().
@@ -2149,6 +2165,42 @@ const GpuBrushRenderer = {
   // literal hard-edged square, whereas CpuBrushRenderer always draws a
   // round dab (see e.g. _dabAA/_dabAliased's circular falloff). Color,
   // blending, and batching from Phase 6E are otherwise untouched.
+  // Phase 6I: upload the CPU-resolved custom-tip alpha mask once per tip
+  // version. Procedural brushes bind a 1x1 white fallback so they retain
+  // their existing circular hardness coverage through the same pipeline.
+  _ensureDabTipTexture(){
+    if(!_gpuState.device||!_gpuState.queue||!_gpuState.dabBindGroupLayout) return false;
+    const tip=typeof window!=='undefined'?window.brushTipCanvas:null;
+    const version=tip?(window.brushTipVersion||0):-1;
+    const width=tip&&tip.width||1,height=tip&&tip.height||1;
+    if(_gpuState.dabTipTexture&&_gpuState.dabTipVersion===version&&_gpuState.dabTipTextureWidth===width&&_gpuState.dabTipTextureHeight===height&&_gpuState.dabBindGroup) return true;
+    if(_gpuState.dabTipTexture)_gpuState.dabTipTexture.destroy();
+    _gpuState.dabTipTexture=_gpuState.device.createTexture({
+      size:{width,height},
+      format:'r8unorm',
+      usage:GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_DST,
+    });
+    if(tip){
+      const resolvedTip=_getTipAlphaBuffer();
+      const pixels=new Uint8Array(width*height);
+      for(let i=0;i<pixels.length;i++) pixels[i]=Math.round(Math.max(0,Math.min(1,resolvedTip.data[i]))*255);
+      _gpuState.queue.writeTexture({texture:_gpuState.dabTipTexture},pixels,{bytesPerRow:width},{width,height});
+    }else{
+      _gpuState.queue.writeTexture({texture:_gpuState.dabTipTexture},new Uint8Array([255]),{bytesPerRow:1},{width:1,height:1});
+    }
+    if(!_gpuState.dabSampler)_gpuState.dabSampler=_gpuState.device.createSampler({magFilter:'linear',minFilter:'linear'});
+    _gpuState.dabBindGroup=_gpuState.device.createBindGroup({
+      layout:_gpuState.dabBindGroupLayout,
+      entries:[
+        {binding:0,resource:_gpuState.dabSampler},
+        {binding:1,resource:_gpuState.dabTipTexture.createView()},
+      ],
+    });
+    _gpuState.dabTipVersion=version;
+    _gpuState.dabTipTextureWidth=width;
+    _gpuState.dabTipTextureHeight=height;
+    return true;
+  },
   createDabPipeline(){
     if(_gpuState.dabPipeline) return true;
 
@@ -2161,18 +2213,22 @@ const GpuBrushRenderer = {
         @location(0) color: vec4<f32>,
         @location(1) uv: vec2<f32>,
         @location(2) inner_frac: f32,
+        @location(3) tip_mode: f32,
       };
 
       @vertex
-      fn vs_main(@location(0) pos: vec2<f32>, @location(1) color: vec4<f32>, @location(2) uv: vec2<f32>, @location(3) inner_frac: f32) -> VertexOut {
+      fn vs_main(@location(0) pos: vec2<f32>, @location(1) color: vec4<f32>, @location(2) uv: vec2<f32>, @location(3) inner_frac: f32, @location(4) tip_mode: f32) -> VertexOut {
         var out: VertexOut;
         out.position = vec4<f32>(pos, 0.0, 1.0);
         out.color = color;
         out.uv = uv;
         out.inner_frac = inner_frac;
+        out.tip_mode = tip_mode;
         return out;
       }
 
+      @group(0) @binding(0) var tip_sampler: sampler;
+      @group(0) @binding(1) var tip_texture: texture_2d<f32>;
       @fragment
       fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         // Phase 6F: mask the quad down to a circle. dist is the
@@ -2189,6 +2245,9 @@ const GpuBrushRenderer = {
         } else {
           coverage = 1.0 - smoothstep(in.inner_frac, 1.0, dist);
         }
+        let tip_alpha = textureSample(tip_texture,tip_sampler,(in.uv+vec2<f32>(1.0))*0.5).r;
+        let tip_coverage = select(coverage*tip_alpha,tip_alpha,in.tip_mode > 1.5);
+        coverage = select(coverage,tip_coverage,in.tip_mode > 0.5);
         if (coverage <= 0.0) {
           discard;
         }
@@ -2201,7 +2260,11 @@ const GpuBrushRenderer = {
     `;
 
     const shaderModule=device.createShaderModule({code:shaderCode});
-    const pipelineLayout=device.createPipelineLayout({bindGroupLayouts:[]});
+    const bindGroupLayout=device.createBindGroupLayout({entries:[
+      {binding:0,visibility:GPUShaderStage.FRAGMENT,sampler:{type:'filtering'}},
+      {binding:1,visibility:GPUShaderStage.FRAGMENT,texture:{sampleType:'float'}},
+    ]});
+    const pipelineLayout=device.createPipelineLayout({bindGroupLayouts:[bindGroupLayout]});
 
     const pipeline=device.createRenderPipeline({
       layout:pipelineLayout,
@@ -2209,12 +2272,13 @@ const GpuBrushRenderer = {
         module:shaderModule,
         entryPoint:'vs_main',
         buffers:[{
-          arrayStride: 9*4,
+          arrayStride: 10*4,
           attributes:[
             {shaderLocation:0, offset:0, format:'float32x2'},
             {shaderLocation:1, offset:2*4, format:'float32x4'},
             {shaderLocation:2, offset:6*4, format:'float32x2'},
             {shaderLocation:3, offset:8*4, format:'float32'},
+            {shaderLocation:4, offset:9*4, format:'float32'},
           ],
         }],
       },
@@ -2240,6 +2304,7 @@ const GpuBrushRenderer = {
     // than it currently has.
     _gpuState.dabShaderModule=shaderModule;
     _gpuState.dabPipelineLayout=pipelineLayout;
+    _gpuState.dabBindGroupLayout=bindGroupLayout;
     _gpuState.dabPipeline=pipeline;
     // Phase 5S: diagnostics only — mirrors the resources just created
     // above; does not change what was created.
@@ -2273,7 +2338,7 @@ const GpuBrushRenderer = {
       // vertices/dab, just a wider per-vertex stride to carry color.
       // Phase 6F: widened again to 8 floats/vertex (+2 for UV) to mask
       // the quad into a circle — see createDabPipeline().
-      size: capacity*6*9*4,
+      size: capacity*6*10*4,
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
     });
     // Phase 5S: diagnostics only — records the createBuffer() above.
@@ -2646,21 +2711,25 @@ const GpuBrushRenderer = {
     const cg=Math.max(0,Math.min(1,(rgb[1]||0)/255));
     const cb=Math.max(0,Math.min(1,(rgb[2]||0)/255));
     const ca=(d&&typeof d.alpha==='number')?Math.max(0,Math.min(1,d.alpha)):1;
+    const tipMode=(d&&typeof d.gpuTipMode==='number')?d.gpuTipMode:0;
+    const rx=r*((d&&typeof d.gpuTipScaleX==='number')?d.gpuTipScaleX:1);
+    const ry=r*((d&&typeof d.gpuTipScaleY==='number')?d.gpuTipScaleY:1);
 
     const toNdc=(px,py)=>[ (px/w)*2-1, 1-(py/h)*2 ];
 
-    const [x0,y0]=toNdc(cx-r, cy-r);
-    const [x1,y1]=toNdc(cx+r, cy-r);
-    const [x2,y2]=toNdc(cx+r, cy+r);
-    const [x3,y3]=toNdc(cx-r, cy+r);
+    const [x0,y0]=toNdc(cx-rx, cy-ry);
+    const [x1,y1]=toNdc(cx+rx, cy-ry);
+    const [x2,y2]=toNdc(cx+rx, cy+ry);
+    const [x3,y3]=toNdc(cx-rx, cy+ry);
 
     const innerFrac=(d&&typeof d.gpuInnerFrac==='number')?Math.max(0,Math.min(1,d.gpuInnerFrac)):1;
-    const stride=9;
+    const stride=10;
     const writeVertex=(base,x,y,u,v)=>{
       arr[base+0]=x; arr[base+1]=y;
       arr[base+2]=cr; arr[base+3]=cg; arr[base+4]=cb; arr[base+5]=ca;
       arr[base+6]=u; arr[base+7]=v;
       arr[base+8]=innerFrac;
+      arr[base+9]=tipMode;
     };
     writeVertex(offset+0*stride, x0,y0, -1,-1);
     writeVertex(offset+1*stride, x1,y1,  1,-1);
@@ -2770,7 +2839,7 @@ const GpuBrushRenderer = {
         this._recordFlush(flushReason,false);
         return false;
       }
-      if(!this.createDabPipeline()){
+      if(!this.createDabPipeline()||!this._ensureDabTipTexture()){
         _gpuState.failedBatches+=1;
         _gpuState.failedDabs+=dabCount;
         this._recordFlush(flushReason,false);
@@ -2800,13 +2869,12 @@ const GpuBrushRenderer = {
       // matches _writeDabQuadInto()'s new per-vertex stride and
       // createDabPipeline()'s buffer layout. Batch-per-draw-call
       // structure is unchanged.
-      // Phase 6F: 48 floats/dab now (6 vertices * 8 floats: 2 position +
-      // 4 rgba + 2 uv), up from 36 — matches _writeDabQuadInto()'s new
-      // per-vertex stride and createDabPipeline()'s buffer layout.
+      // Phase 6I: 60 floats/dab (6 vertices * 10 floats) carries the
+      // existing position/color/UV/hardness data plus custom-tip mode.
       // Batch-per-draw-call structure is unchanged.
-      const verts=new Float32Array(dabCount*54);
+      const verts=new Float32Array(dabCount*60);
       for(let i=0;i<dabCount;i++){
-        this._writeDabQuadInto(verts,i*54,_gpuState.dabQueue[i],canvas.width,canvas.height);
+        this._writeDabQuadInto(verts,i*60,_gpuState.dabQueue[i],canvas.width,canvas.height);
       }
       _gpuState.queue.writeBuffer(_gpuState.dabVertexBuffer,0,verts);
 
@@ -2840,6 +2908,7 @@ const GpuBrushRenderer = {
         }],
       });
       pass.setPipeline(_gpuState.dabPipeline);
+      pass.setBindGroup(0,_gpuState.dabBindGroup);
       pass.setVertexBuffer(0,_gpuState.dabVertexBuffer);
       // Single draw call for the entire batch: 6 vertices per dab,
       // dabCount dabs, no indices, no instancing.
@@ -3560,6 +3629,14 @@ const GpuBrushRenderer = {
     _gpuState.dabPipeline=null;
     _gpuState.dabShaderModule=null;
     _gpuState.dabPipelineLayout=null;
+    _gpuState.dabBindGroupLayout=null;
+    _gpuState.dabSampler=null;
+    if(_gpuState.dabTipTexture)_gpuState.dabTipTexture.destroy();
+    _gpuState.dabTipTexture=null;
+    _gpuState.dabTipTextureWidth=0;
+    _gpuState.dabTipTextureHeight=0;
+    _gpuState.dabTipVersion=-1;
+    _gpuState.dabBindGroup=null;
     _gpuState.dabVertexBuffer=null;
     // Phase 5F: the batch buffer's capacity tracking must reset
     // alongside the buffer itself, so the next flush after a fresh
