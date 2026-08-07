@@ -60,6 +60,15 @@ document.getElementById('pref-cursor-brush-shape').onchange=e=>{ if(e.target.che
   const listEl=document.getElementById('pref-renderer-list');
   if(!listEl || typeof window.BrushRenderer==='undefined') return;
 
+  // Phase 4K: status block lives right under the option list. Created
+  // once here (not recreated every render) and reused by renderStatus()
+  // below, matching the same "query once, update in place" approach
+  // used by the rest of this panel.
+  const statusEl=document.createElement('div');
+  statusEl.id='pref-renderer-status';
+  statusEl.style.cssText='margin-top:10px;padding:8px;border-radius:8px;border:1px solid var(--border2);font-size:11px;color:var(--text2);line-height:1.6;';
+  listEl.insertAdjacentElement('afterend',statusEl);
+
   function renderList(){
     if(typeof window.BrushRenderer.getRendererOptions!=='function') return;
     const options=window.BrushRenderer.getRendererOptions();
@@ -100,26 +109,77 @@ document.getElementById('pref-cursor-brush-shape').onchange=e=>{ if(e.target.che
     });
   }
 
+  // Phase 4K: pure status readout — active renderer, preferred
+  // renderer, and a plain-language availability line, sourced only
+  // from getRendererStatus()/getPreferredRenderer()/getActiveRenderer().
+  // Preferred and active are always shown as two separate lines so a
+  // mismatch (e.g. preferred "gpu" while active is still "cpu" because
+  // GPU init failed) is never hidden or merged into one line.
+  function renderStatus(){
+    if(typeof window.BrushRenderer.getRendererStatus!=='function'){
+      statusEl.textContent='';
+      return;
+    }
+    const status=window.BrushRenderer.getRendererStatus();
+    const preferred=(typeof window.BrushRenderer.getPreferredRenderer==='function'
+      ?window.BrushRenderer.getPreferredRenderer()
+      :status.active)||'';
+    const active=(typeof window.BrushRenderer.getActiveRenderer==='function'
+      ?window.BrushRenderer.getActiveRenderer()
+      :status.active)||'';
+
+    statusEl.innerHTML='';
+    const preferredLine=document.createElement('div');
+    preferredLine.innerHTML='<b style="color:var(--text);">Preferred:</b> '+(preferred?preferred.toUpperCase():'—');
+    const activeLine=document.createElement('div');
+    activeLine.innerHTML='<b style="color:var(--text);">Active:</b> '+(active?active.toUpperCase():'—');
+    statusEl.appendChild(preferredLine);
+    statusEl.appendChild(activeLine);
+
+    // Plain-language status line. Only compares names/init flags already
+    // exposed by getRendererStatus() — no _gpuState/adapter/device access.
+    const statusLine=document.createElement('div');
+    let statusText;
+    if(preferred && active && preferred!==active){
+      const initialized=status.initialized && status.initialized[preferred];
+      statusText=preferred.toUpperCase()+' unavailable';
+      if(initialized===false) statusText+=' (not initialized)';
+    }else if(active){
+      statusText=active.toUpperCase()+' active';
+    }else{
+      statusText='Unknown';
+    }
+    statusLine.innerHTML='<b style="color:var(--text);">Status:</b> '+statusText;
+    statusEl.appendChild(statusLine);
+  }
+
+  function renderAll(){
+    renderList();
+    renderStatus();
+  }
+
   // Lets the Preferences-open handler above refresh the list so it always
   // reflects the current stored preference when the modal is opened.
-  window._renderRendererPreference=renderList;
+  window._renderRendererPreference=renderAll;
 
   // Keep the UI in sync if something elsewhere in the app changes the
   // preference (e.g. another panel, or a future settings-sync feature).
   // #modal-preferences is a static overlay (index.html) that's toggled
   // via the .visible class and never removed/recreated, so there's no
-  // unmount point to tie a removal call to today. The listener is still
-  // kept as a named, stored reference — matching the removable-listener
-  // pattern used elsewhere in this codebase (e.g. site-dialog.js) — so
+  // unmount point to tie a removal call to today — cleanup is therefore
+  // not required under the existing architecture, and none is faked
+  // here. The listener is still kept as a named, stored reference —
+  // matching the removable-listener pattern used elsewhere in this
+  // codebase (e.g. site-dialog.js) — so
   // BrushRenderer.removePreferenceChanged(_prefRendererListener) is a
   // trivial one-liner if a teardown path is ever introduced.
-  function _prefRendererListener(){ renderList(); }
+  function _prefRendererListener(){ renderAll(); }
   window._prefRendererListener=_prefRendererListener;
   if(typeof window.BrushRenderer.onPreferenceChanged==='function'){
     window.BrushRenderer.onPreferenceChanged(_prefRendererListener);
   }
 
-  renderList();
+  renderAll();
 })();
 document.getElementById('modal-preferences-close').onclick=()=>{
   document.getElementById('modal-preferences').classList.remove('visible');
