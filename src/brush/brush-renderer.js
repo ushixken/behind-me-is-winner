@@ -1184,7 +1184,8 @@ const BrushRenderer = {
         gpu: _gpuState.initialized
       },
       errors,
-      capabilities: this.getRendererCapabilities()
+      capabilities: this.getRendererCapabilities(),
+      health: this.getRendererHealth()
     };
   },
   // Phase 4T: read-only capability metadata, built dynamically from
@@ -1381,6 +1382,56 @@ const BrushRenderer = {
       out[name]=record
         ? {...record}
         : {state:'idle',updatedAt:null,error:null};
+    }
+    return out;
+  },
+  // Phase 4U: returns a copy of the newest apply-history entry whose
+  // `preferred` field matches `name`, or null if none exists. Never
+  // exposes the internal _applyHistory array itself.
+  getRendererLastApply(name){
+    for(let i=this._applyHistory.length-1;i>=0;i--){
+      const entry=this._applyHistory[i];
+      if(entry && entry.preferred===name) return {...entry};
+    }
+    return null;
+  },
+  // Phase 4U: read-only health snapshot, built dynamically from every
+  // registered renderer name (never hardcoded to "cpu"/"gpu"). Combines
+  // lifecycle state, capability metadata, current initialized flag, and
+  // the latest apply-history entry for that renderer into a single
+  // "healthy" boolean per the following rules:
+  //   healthy = true  if lifecycle.state === "active"
+  //             OR (name === "cpu" AND renderer is registered/available)
+  //   healthy = false if lifecycle.state === "failed"
+  //             OR the latest apply attempt for this renderer failed
+  // Does not activate, switch, or initialize anything.
+  getRendererHealth(){
+    const lifecycleAll=this.getRendererLifecycleStatus();
+    const capabilitiesAll=this.getRendererCapabilities();
+    const out={};
+    for(const name of Object.keys(this._renderers)){
+      const lifecycle=lifecycleAll[name]||{state:'idle',updatedAt:null,error:null};
+      const capabilities=capabilitiesAll[name]||{};
+      const lastApply=this.getRendererLastApply(name);
+      const initialized=(name==='cpu')?true:!!(capabilities && capabilities.initialized);
+
+      let healthy;
+      if(lifecycle.state==='failed' || (lastApply && lastApply.result===false)){
+        healthy=false;
+      }else if(lifecycle.state==='active' || name==='cpu'){
+        healthy=true;
+      }else{
+        healthy=false;
+      }
+
+      out[name]={
+        available: true,
+        lifecycle,
+        capabilities,
+        initialized,
+        lastApply,
+        healthy
+      };
     }
     return out;
   },

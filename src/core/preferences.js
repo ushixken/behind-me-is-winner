@@ -141,6 +141,14 @@ document.getElementById('pref-cursor-brush-shape').onchange=e=>{ if(e.target.che
   capabilitiesEl.style.cssText='margin-top:10px;padding:8px;border-radius:8px;border:1px solid var(--border2);font-size:11px;color:var(--text2);line-height:1.6;';
   lifecycleEl.insertAdjacentElement('afterend',capabilitiesEl);
 
+  // Phase 4U: read-only Renderer Health section, below capabilities.
+  // Sourced only from BrushRenderer.getRendererHealth() — no
+  // _gpuState/GPU internal access.
+  const healthEl=document.createElement('div');
+  healthEl.id='pref-renderer-health';
+  healthEl.style.cssText='margin-top:10px;padding:8px;border-radius:8px;border:1px solid var(--border2);font-size:11px;color:var(--text2);line-height:1.6;';
+  capabilitiesEl.insertAdjacentElement('afterend',healthEl);
+
   function renderList(){
     if(typeof window.BrushRenderer.getRendererOptions!=='function') return;
     const options=window.BrushRenderer.getRendererOptions();
@@ -478,6 +486,70 @@ document.getElementById('pref-cursor-brush-shape').onchange=e=>{ if(e.target.che
     });
   }
 
+  // Phase 4U: read-only readout of per-renderer health, sourced solely
+  // from BrushRenderer.getRendererHealth(). Renderer names/order come
+  // from the returned object's own keys — never hardcoded. No
+  // _gpuState access.
+  function renderHealth(){
+    if(typeof window.BrushRenderer.getRendererHealth!=='function'){
+      healthEl.textContent='';
+      return;
+    }
+    const health=window.BrushRenderer.getRendererHealth();
+
+    healthEl.innerHTML='';
+
+    const heading=document.createElement('div');
+    heading.style.cssText='font-weight:600;color:var(--text);';
+    heading.textContent='Renderer Health';
+    healthEl.appendChild(heading);
+
+    const names=Object.keys(health);
+    if(names.length===0){
+      const emptyLine=document.createElement('div');
+      emptyLine.textContent='No renderers registered.';
+      healthEl.appendChild(emptyLine);
+      return;
+    }
+
+    function yesNo(value){
+      return value?'Yes':'No';
+    }
+
+    names.forEach(name=>{
+      const record=health[name]||{};
+      const lifecycle=record.lifecycle||{};
+      const entry=document.createElement('div');
+      entry.style.cssText='margin-top:6px;padding-top:6px;border-top:1px solid var(--border2);';
+
+      const nameLine=document.createElement('div');
+      nameLine.innerHTML='<b style="color:var(--text);">Renderer: '+String(name).toUpperCase()+'</b>';
+      entry.appendChild(nameLine);
+
+      const availableLine=document.createElement('div');
+      availableLine.textContent='Available: '+yesNo(record.available);
+      entry.appendChild(availableLine);
+
+      const healthyLine=document.createElement('div');
+      healthyLine.textContent='Healthy: '+yesNo(record.healthy);
+      entry.appendChild(healthyLine);
+
+      const stateLine=document.createElement('div');
+      const state=lifecycle.state||'idle';
+      stateLine.textContent='State: '+state.charAt(0).toUpperCase()+state.slice(1);
+      entry.appendChild(stateLine);
+
+      const lastError=lifecycle.error||(record.lastApply && record.lastApply.error)||null;
+      if(lastError){
+        const errorLine=document.createElement('div');
+        errorLine.textContent='Last error: '+lastError;
+        entry.appendChild(errorLine);
+      }
+
+      healthEl.appendChild(entry);
+    });
+  }
+
   function renderAll(){
     renderList();
     renderStatus();
@@ -485,6 +557,7 @@ document.getElementById('pref-cursor-brush-shape').onchange=e=>{ if(e.target.che
     renderHistory();
     renderLifecycle();
     renderCapabilities();
+    renderHealth();
   }
 
   // Phase 4L: guards against duplicate simultaneous apply requests and
