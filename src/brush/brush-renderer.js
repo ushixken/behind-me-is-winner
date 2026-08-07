@@ -1207,6 +1207,20 @@ const BrushRenderer = {
     }
     return null;
   },
+  // Phase 5R: dispatcher-level renderer-performance diagnostics
+  // accessor. Pure forwarder — calls the active renderer's
+  // getPerformanceDiagnostics() only if it implements one
+  // (GpuBrushRenderer does, as of Phase 5R; CpuBrushRenderer does not
+  // and is left unmodified), and never reassigns `this.active`. No
+  // setActiveRenderer()/activateRenderer()/applyPreferredRenderer()
+  // call, no renderer switching of any kind. Returns null when
+  // unavailable, matching getRendererSessionDiagnostics() above.
+  getRendererPerformanceDiagnostics(){
+    if(this.active && typeof this.active.getPerformanceDiagnostics==='function'){
+      return this.active.getPerformanceDiagnostics();
+    }
+    return null;
+  },
   // Phase 5I: dispatcher-level frame lifecycle forwarding. Pure
   // forwarders — each calls the corresponding method on the active
   // renderer only if it implements one (GpuBrushRenderer does;
@@ -1791,6 +1805,21 @@ const _gpuState = {
   sessionLastActivity: null,
   sessionStrokeCount: 0,
   sessionFrameCount: 0,
+  // Phase 5R: renderer performance timing diagnostics — plain
+  // numbers only. lastXDuration/totalXTime are in milliseconds
+  // (performance.now()-based, falling back to Date.now() if
+  // performance is unavailable). Counts/totals are cumulative history,
+  // matching every other counter in this object; averages are derived
+  // on demand in getPerformanceDiagnostics() rather than stored.
+  lastFlushDuration: 0,
+  lastFrameDuration: 0,
+  lastPresentDuration: 0,
+  totalFlushTime: 0,
+  totalFrameTime: 0,
+  totalPresentTime: 0,
+  flushCount: 0,
+  frameCount: 0,
+  presentCount: 0,
 };
 
 // Phase 2C: GpuBrushRenderer skeleton. Implements the exact same public
@@ -1806,6 +1835,16 @@ const _gpuState = {
 // it is GPU-renderer-specific lifecycle setup that must be called
 // explicitly and does not affect the active renderer.
 const GpuBrushRenderer = {
+  // Phase 5R: timing helper only — no GPU work, no rendering. Uses
+  // performance.now() when available (sub-millisecond, monotonic),
+  // falling back to Date.now() otherwise. Used solely to measure
+  // flushDabQueue()/endFrame()/presentFrame() durations for
+  // diagnostics.
+  _now(){
+    return (typeof performance!=='undefined' && typeof performance.now==='function')
+      ? performance.now()
+      : Date.now();
+  },
   // Phase 5A: minimal lifecycle receive-tracking only. Receives the
   // exact same calls CpuBrushRenderer gets via the unchanged
   // BrushRenderer dispatcher (this.active.beginStroke/drawDab/
@@ -2043,7 +2082,24 @@ const GpuBrushRenderer = {
   // before returning, via the shared _recordFlush() helper, so the
   // most recent flush attempt is always inspectable regardless of
   // outcome or trigger.
+  // Phase 5R: flushDabQueue() is measured for performance diagnostics.
+  // The implementation itself (every check, early return, and the
+  // try/catch around the actual GPU submission) is renamed to
+  // _flushDabQueueImplTimed verbatim and unchanged; this wrapper only
+  // records elapsed time around it and accumulates the result — no
+  // rendering/batching logic added, removed, or reordered.
   flushDabQueue(reason){
+    const __t0=this._now();
+    try{
+      return this._flushDabQueueImplTimed(reason);
+    }finally{
+      const __duration=this._now()-__t0;
+      _gpuState.lastFlushDuration=__duration;
+      _gpuState.totalFlushTime+=__duration;
+      _gpuState.flushCount+=1;
+    }
+  },
+  _flushDabQueueImplTimed(reason){
     const flushReason=reason||'unspecified';
     const dabCount=_gpuState.dabQueue.length;
     if(dabCount===0){
@@ -2209,6 +2265,7 @@ const GpuBrushRenderer = {
   // work beyond what flushDabQueue() already does, and it never
   // switches the active renderer.
   endFrame(){
+    const __t0=this._now();
     const result=this.flushDabQueue('frame-end');
     _gpuState.framesEnded+=1;
     _gpuState.lastFrameEndTime=Date.now();
@@ -2218,6 +2275,15 @@ const GpuBrushRenderer = {
     // path and no change to the flush result computed above.
     _gpuState.sessionFrameCount+=1;
     _gpuState.sessionLastActivity=Date.now();
+    // Phase 5R: performance timing diagnostics — measures this whole
+    // endFrame() call (including the flushDabQueue() it wires in
+    // above, which is separately measured/accumulated by
+    // flushDabQueue() itself). Plain elapsed-time bookkeeping only, no
+    // rendering/behavior change.
+    const __duration=this._now()-__t0;
+    _gpuState.lastFrameDuration=__duration;
+    _gpuState.totalFrameTime+=__duration;
+    _gpuState.frameCount+=1;
     return result;
   },
   // Phase 5I: read-only frame lifecycle diagnostics. Exposes only
@@ -2239,8 +2305,16 @@ const GpuBrushRenderer = {
   // shader, buffer, or texture. It only increments a diagnostics
   // counter and records a timestamp, then returns true.
   presentFrame(){
+    const __t0=this._now();
     _gpuState.presentedFrames+=1;
     _gpuState.lastPresentTime=Date.now();
+    // Phase 5R: performance timing diagnostics — measures this
+    // presentFrame() call itself. Still no GPU submission, flush, or
+    // resource work; plain elapsed-time bookkeeping only.
+    const __duration=this._now()-__t0;
+    _gpuState.lastPresentDuration=__duration;
+    _gpuState.totalPresentTime+=__duration;
+    _gpuState.presentCount+=1;
     return true;
   },
   // Phase 5O: read-only presentation diagnostics. Exposes only plain
@@ -2249,6 +2323,25 @@ const GpuBrushRenderer = {
     return {
       presentedFrames: _gpuState.presentedFrames,
       lastPresentTime: _gpuState.lastPresentTime
+    };
+  },
+  // Phase 5R: read-only performance timing diagnostics. Exposes only
+  // plain numbers — never any GPU resource/object, and never the raw
+  // cumulative totals (totalFlushTime/totalFrameTime/totalPresentTime
+  // stay internal to _gpuState); averages are computed on demand here
+  // from the totals/counts rather than stored.
+  getPerformanceDiagnostics(){
+    const avg=(total,count)=>count>0?total/count:0;
+    return {
+      lastFlushDuration: _gpuState.lastFlushDuration,
+      lastFrameDuration: _gpuState.lastFrameDuration,
+      lastPresentDuration: _gpuState.lastPresentDuration,
+      averageFlushDuration: avg(_gpuState.totalFlushTime,_gpuState.flushCount),
+      averageFrameDuration: avg(_gpuState.totalFrameTime,_gpuState.frameCount),
+      averagePresentDuration: avg(_gpuState.totalPresentTime,_gpuState.presentCount),
+      flushCount: _gpuState.flushCount,
+      frameCount: _gpuState.frameCount,
+      presentCount: _gpuState.presentCount
     };
   },
   // Phase 5P: dispatcher-level renderer-idle notification lives on
