@@ -1073,6 +1073,13 @@ const BrushRenderer = {
   _preferredName: 'cpu',
   _preferenceListeners: [],
   active: null,
+  // Phase 4O: startup diagnostics only. These record the outcome of the
+  // most recent applyPreferredRenderer() call (result, failure reason,
+  // and timestamp) purely for status reporting — no GPU resources
+  // (adapter/device/queue/pipeline/etc.) are ever stored here.
+  _lastApplyResult: null,
+  _lastApplyError: null,
+  _lastApplyTime: null,
   // Registers a renderer implementation under `name`. Does not activate it.
   registerRenderer(name,renderer){
     this._renderers[name]=renderer;
@@ -1242,7 +1249,38 @@ const BrushRenderer = {
   // still has no effect until this is explicitly invoked elsewhere.
   async applyPreferredRenderer(){
     const preferred=this.getPreferredRenderer();
-    return this.activateRenderer(preferred);
+    let result=false;
+    let error=null;
+    try{
+      result=await this.activateRenderer(preferred);
+      if(!result){
+        const renderer=this._renderers[preferred];
+        error=(renderer && typeof renderer.getInitError==='function')
+          ?renderer.getInitError()
+          :'renderer activation failed';
+        if(!error) error='renderer activation failed';
+      }
+    }catch(e){
+      result=false;
+      error=(e && e.message)?e.message:String(e);
+    }
+    this._lastApplyResult=result;
+    this._lastApplyError=error;
+    this._lastApplyTime=Date.now();
+    return result;
+  },
+  // Phase 4O: read-only status snapshot of the last applyPreferredRenderer()
+  // call. Diagnostics only — no GPU resources are exposed here, only the
+  // recorded boolean result, error string (if any), timestamp, and the
+  // current preferred/active renderer names.
+  getRendererApplyStatus(){
+    return {
+      result: this._lastApplyResult,
+      error: this._lastApplyError,
+      time: this._lastApplyTime,
+      preferred: this.getPreferredRenderer(),
+      active: this.getActiveRenderer()
+    };
   },
 };
 
