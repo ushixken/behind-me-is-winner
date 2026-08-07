@@ -3013,6 +3013,17 @@ function _clearLinePreviewCanvas(canvas,context){
 }
 function _renderLineDrag(ex,ey,e,phase){
   if(!lineStart) return;
+  // Phase 5L: route this function's full stroke execution (the entire
+  // line/curve replay below — every dab from start to end of the current
+  // stroke) through BrushRenderer.withStrokeFrame(). This wraps the whole
+  // batched stroke exactly once per call; it does not touch, reorder, or
+  // duplicate any individual beginStroke()/drawDab()/endStroke() call
+  // inside the wrapped code — those still happen exactly as before, via
+  // _ensureStrokeCanvas()/_stampDab()/_queueDab()/_drawDabNow(), in the
+  // same order. withStrokeFrame() only brackets this existing work with
+  // the renderer's begin/end-frame lifecycle; it never selects or
+  // switches renderers.
+  return BrushRenderer.withStrokeFrame(()=>{
   const curveBending=tool==='curve'&&_curveToolGesture&&_curveToolGesture.phase==='bending';
   const curveControl=curveBending?{x:ex,y:ey}:null;
   if(curveBending){ex=_curveToolGesture.end.x;ey=_curveToolGesture.end.y;_curveToolGesture.control=curveControl;}
@@ -3125,6 +3136,7 @@ function _renderLineDrag(ex,ey,e,phase){
     const matrix=transformBeforeClear?{a:transformBeforeClear.a,b:transformBeforeClear.b,c:transformBeforeClear.c,d:transformBeforeClear.d,e:transformBeforeClear.e,f:transformBeforeClear.f}:null;
     console.debug('[LinePreview]',{previewFrameId,pointermoveSequence:_linePreviewMoveSequence,generation:_linePreviewGeneration,canvasWidth:_strokeCanvas&&_strokeCanvas.width||0,canvasHeight:_strokeCanvas&&_strokeCanvas.height||0,transformBeforeClear:matrix,clearRectangle:{x:0,y:0,width:_strokeCanvas&&_strokeCanvas.width||0,height:_strokeCanvas&&_strokeCanvas.height||0},previousEndpoint,currentEndpoint:{x:ex,y:ey},brushTipDiameter:getBrushSize(),stampCount:_strokeDabCount-dabsBefore,stalePreviewDiscarded:false,previousBounds,currentBounds:_linePreviewBounds});
   }
+  });
 }
 
 // PERF FIX: recompositing flattens every layer/group (full-canvas
