@@ -1142,6 +1142,18 @@ const BrushRenderer = {
     }
     return true;
   },
+  // Phase 5H: dispatcher-level manual flush support — mirrors
+  // flushActiveRenderer() above, but forwards to manualFlush() so the
+  // resulting flush metadata is explicitly tagged reason:'manual'
+  // rather than being conflated with a per-frame/stroke-end flush.
+  // Never reassigns `this.active` — no renderer switching/fallback.
+  // A renderer with no manualFlush() (e.g. CPU) is a no-op success.
+  manualFlushActiveRenderer(){
+    if(this.active && typeof this.active.manualFlush==='function'){
+      return this.active.manualFlush();
+    }
+    return true;
+  },
   invalidateCaches(which){ return this.active.invalidateCaches(which); },
   getCacheStats(){ return this.active.getCacheStats(); },
   getLineContinuity(){ return this.active.getLineContinuity(); },
@@ -1604,6 +1616,17 @@ const _gpuState = {
   dabBatchCapacity: 0,
   batchesSubmitted: 0,
   failedBatches: 0,
+  // Phase 5H: flush metadata — plain diagnostic data only (a string
+  // reason, a boolean result, a timestamp), never any GPU
+  // resource/object. Updated by every flush attempt regardless of
+  // where it was triggered from (stroke-end, an optional per-frame
+  // flushPendingDabs() call, or an explicit manual flush), so a caller
+  // can always tell what the most recent flush attempt was, what
+  // triggered it, and whether it succeeded — without exposing the
+  // encoder/pipeline/buffer/device internals that produced that result.
+  lastFlushReason: null,
+  lastFlushResult: null,
+  lastFlushTime: null,
 };
 
 // Phase 2C: GpuBrushRenderer skeleton. Implements the exact same public
@@ -1848,26 +1871,47 @@ const GpuBrushRenderer = {
   // call with an empty queue (a true no-op — no GPU work, no counters
   // touched) or when the GPU isn't initialized (also a no-op, since
   // there is nothing to submit against).
-  flushDabQueue(){
+  // Phase 5H: reason is a plain diagnostic string identifying what
+  // triggered this flush ('stroke-end', 'frame', 'manual', etc.) —
+  // purely informational, it does not change how the flush behaves.
+  // Every call, including the empty-queue no-op and every failure
+  // path, records {lastFlushReason, lastFlushResult, lastFlushTime}
+  // before returning, via the shared _recordFlush() helper, so the
+  // most recent flush attempt is always inspectable regardless of
+  // outcome or trigger.
+  flushDabQueue(reason){
+    const flushReason=reason||'unspecified';
     const dabCount=_gpuState.dabQueue.length;
-    if(dabCount===0) return true;
+    if(dabCount===0){
+      this._recordFlush(flushReason,true);
+      return true;
+    }
     try{
-      if(!_gpuState.initialized) return false;
-      if(!_gpuState.device || !_gpuState.context || !_gpuState.canvas) return false;
+      if(!_gpuState.initialized){
+        this._recordFlush(flushReason,false);
+        return false;
+      }
+      if(!_gpuState.device || !_gpuState.context || !_gpuState.canvas){
+        this._recordFlush(flushReason,false);
+        return false;
+      }
       const canvas=_gpuState.canvas;
       if(!canvas.width || !canvas.height){
         _gpuState.failedBatches+=1;
         _gpuState.failedDabs+=dabCount;
+        this._recordFlush(flushReason,false);
         return false;
       }
       if(!this.createDabPipeline()){
         _gpuState.failedBatches+=1;
         _gpuState.failedDabs+=dabCount;
+        this._recordFlush(flushReason,false);
         return false;
       }
       if(!this._ensureDabBatchCapacity(dabCount)){
         _gpuState.failedBatches+=1;
         _gpuState.failedDabs+=dabCount;
+        this._recordFlush(flushReason,false);
         return false;
       }
 
@@ -1883,6 +1927,7 @@ const GpuBrushRenderer = {
       if(!this.createCommandEncoder()){
         _gpuState.failedBatches+=1;
         _gpuState.failedDabs+=dabCount;
+        this._recordFlush(flushReason,false);
         return false;
       }
       const currentTexture=_gpuState.context.getCurrentTexture();
@@ -1890,6 +1935,7 @@ const GpuBrushRenderer = {
         _gpuState.commandEncoder=null;
         _gpuState.failedBatches+=1;
         _gpuState.failedDabs+=dabCount;
+        this._recordFlush(flushReason,false);
         return false;
       }
       const view=currentTexture.createView();
@@ -1913,6 +1959,7 @@ const GpuBrushRenderer = {
       if(!this.submitCommands()){
         _gpuState.failedBatches+=1;
         _gpuState.failedDabs+=dabCount;
+        this._recordFlush(flushReason,false);
         return false;
       }
 
@@ -1923,6 +1970,7 @@ const GpuBrushRenderer = {
       _gpuState.lastBatchTime=Date.now();
       _gpuState.dabQueue.length=0;
       _gpuState.queuedDabs=0;
+      this._recordFlush(flushReason,true);
       return true;
     }catch(err){
       // Any GPU-side failure (e.g. device lost, validation error) lands
@@ -1932,8 +1980,30 @@ const GpuBrushRenderer = {
       _gpuState.failedBatches+=1;
       _gpuState.failedDabs+=dabCount;
       _gpuState.commandEncoder=null;
+      this._recordFlush(flushReason,false);
       return false;
     }
+  },
+  // Phase 5H: shared helper — records plain diagnostic flush metadata
+  // only (string reason, boolean result, timestamp). Never touches any
+  // GPU resource/object and never touches counters (those are updated
+  // by flushDabQueue() itself, right next to the GPU work they
+  // describe).
+  _recordFlush(reason,result){
+    _gpuState.lastFlushReason=reason;
+    _gpuState.lastFlushResult=result;
+    _gpuState.lastFlushTime=Date.now();
+  },
+  // Phase 5H: explicit manual flush entry point. Purely a named,
+  // intentional way for external code (dev tools, tests, an explicit
+  // "flush now" UI action) to trigger the exact same flushDabQueue()
+  // path already used by endStroke()/flushPendingDabs() — no
+  // duplicate/parallel submission logic, no new pipeline, and it is
+  // never called automatically from anywhere in this file. Tags the
+  // flush metadata with reason 'manual' so it's distinguishable from
+  // stroke-end/frame flushes in diagnostics.
+  manualFlush(){
+    return this.flushDabQueue('manual');
   },
   // Phase 5E/5F: read-only queue diagnostics. Exposes only plain
   // numbers/timestamps, never the queued dab objects or any GPU
@@ -1946,6 +2016,15 @@ const GpuBrushRenderer = {
       batchesSubmitted: _gpuState.batchesSubmitted,
       failedBatches: _gpuState.failedBatches,
       lastBatchTime: _gpuState.lastBatchTime
+    };
+  },
+  // Phase 5H: read-only flush metadata diagnostics. Exposes only plain
+  // strings/booleans/timestamps — never any GPU resource/object.
+  getFlushDiagnostics(){
+    return {
+      lastFlushReason: _gpuState.lastFlushReason,
+      lastFlushResult: _gpuState.lastFlushResult,
+      lastFlushTime: _gpuState.lastFlushTime
     };
   },
   // Phase 5G: stroke lifecycle integration. beginStroke() clears any
@@ -1973,7 +2052,7 @@ const GpuBrushRenderer = {
   // complete. Returns flushDabQueue()'s own success/failure boolean.
   endStroke(){
     _gpuState.inStroke=false;
-    return this.flushDabQueue();
+    return this.flushDabQueue('stroke-end');
   },
   // Phase 5G: optional frame-lifecycle helper. Flushes the queue only
   // if there's actually something queued ("flush queued dabs only when
@@ -1982,7 +2061,7 @@ const GpuBrushRenderer = {
   // (Phase 5F) rather than creating a second/duplicate submission path.
   flushPendingDabs(){
     if(_gpuState.dabQueue.length===0) return true;
-    return this.flushDabQueue();
+    return this.flushDabQueue('frame');
   },
   invalidateCaches(which){
     // intentionally empty
