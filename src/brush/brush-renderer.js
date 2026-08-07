@@ -1103,6 +1103,13 @@ const BrushRenderer = {
 // initialized, initError). These are populated only by initialize()
 // below and are never touched by drawDab/beginStroke/endStroke/etc. in
 // this phase — no rendering work reads or writes them yet.
+//
+// Phase 3B: adds GPU capability-discovery fields (adapterFeatures,
+// adapterLimits, deviceFeatures, deviceLimits, preferredCanvasFormat).
+// These are populated only by initialize() by reading information the
+// adapter/device already expose — no optional features are requested,
+// no optional limits are enabled, and no canvas/texture/buffer/shader/
+// pipeline resources are created.
 const _gpuState = {
   lineContinuity: null,
   tipAlphaBuffer: null,
@@ -1113,6 +1120,11 @@ const _gpuState = {
   queue: null,
   initialized: false,
   initError: null,
+  adapterFeatures: null,
+  adapterLimits: null,
+  deviceFeatures: null,
+  deviceLimits: null,
+  preferredCanvasFormat: null,
 };
 
 // Phase 2C: GpuBrushRenderer skeleton. Implements the exact same public
@@ -1191,6 +1203,15 @@ const GpuBrushRenderer = {
       _gpuState.adapter=adapter;
       _gpuState.device=device;
       _gpuState.queue=device.queue;
+      // Phase 3B: capability discovery only — reads information the
+      // adapter/device already expose via their `features`/`limits`
+      // properties and GPU.getPreferredCanvasFormat(). Does not request
+      // any optional feature and does not enable any optional limit.
+      _gpuState.adapterFeatures=adapter.features?Array.from(adapter.features):null;
+      _gpuState.adapterLimits=adapter.limits?{...adapter.limits}:null;
+      _gpuState.deviceFeatures=device.features?Array.from(device.features):null;
+      _gpuState.deviceLimits=device.limits?{...device.limits}:null;
+      _gpuState.preferredCanvasFormat=(typeof navigator.gpu.getPreferredCanvasFormat==='function')?navigator.gpu.getPreferredCanvasFormat():null;
       _gpuState.initialized=true;
       _gpuState.initError=null;
       return true;
@@ -1199,6 +1220,11 @@ const GpuBrushRenderer = {
       _gpuState.adapter=null;
       _gpuState.device=null;
       _gpuState.queue=null;
+      _gpuState.adapterFeatures=null;
+      _gpuState.adapterLimits=null;
+      _gpuState.deviceFeatures=null;
+      _gpuState.deviceLimits=null;
+      _gpuState.preferredCanvasFormat=null;
       _gpuState.initialized=false;
       return false;
     }
