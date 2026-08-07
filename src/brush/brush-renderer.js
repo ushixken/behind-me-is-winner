@@ -1833,6 +1833,7 @@ const _gpuState = {
   strokesReceived: 0,
   dabsReceived: 0,
   inStroke: false,
+  strokeComposite: 'paint',
   // Phase 5B: frame submission counter only. No new GPU resources —
   // plain numbers for diagnostics of the existing command-submission
   // flow (createCommandEncoder/beginRenderPass/endRenderPass/
@@ -1924,6 +1925,7 @@ const _gpuState = {
   layerTextureWidth: 0,
   layerTextureHeight: 0,
   composePipeline: null,
+  composeErasePipeline: null,
   composePipelineLayout: null,
   composeShaderModule: null,
   composeBindGroupLayout: null,
@@ -2098,6 +2100,9 @@ const GpuBrushRenderer = {
   // received, unmodified.
   drawDab(d,rendererContext){
     _gpuState.dabsReceived+=1;
+    // A stroke has one tool/composite mode. Preserve that existing dab
+    // classification for the live and commit composition passes.
+    _gpuState.strokeComposite=d&&d.composite==='erase'?'erase':'paint';
     const aaMode=_currentAAMode();
     const hardness=rendererContext&&typeof rendererContext.brushHardness==='number'
       ? rendererContext.brushHardness
@@ -2417,10 +2422,11 @@ const GpuBrushRenderer = {
   // uniform opacity, matching brush-engine.js's
   // ctx.globalAlpha=brushOpacity CPU-side step, but performed as a GPU
   // render pass instead of a canvas-to-canvas 2D drawImage. The blend
-  // state mirrors the dab pipeline's premultiplied source-over blend so
-  // stacking here matches stacking there.
+  // paint pipeline mirrors the dab pipeline's premultiplied source-over
+  // blend. Phase 6H adds a destination-out variant using the same shader,
+  // bindings, opacity, and full-screen compose pass for eraser strokes.
   createComposePipeline(){
-    if(_gpuState.composePipeline) return true;
+    if(_gpuState.composePipeline&&_gpuState.composeErasePipeline) return true;
     if(!_gpuState.device || !_gpuState.canvasFormat) return false;
     const device=_gpuState.device;
     const shaderCode=`
@@ -2461,7 +2467,7 @@ const GpuBrushRenderer = {
       ],
     });
     const pipelineLayout=device.createPipelineLayout({bindGroupLayouts:[bindGroupLayout]});
-    const pipeline=device.createRenderPipeline({
+    const pipelineDescriptor={
       layout:pipelineLayout,
       vertex:{module:shaderModule,entryPoint:'vs_main'},
       fragment:{
@@ -2476,15 +2482,26 @@ const GpuBrushRenderer = {
         }],
       },
       primitive:{topology:'triangle-list'},
-    });
+    };
+    const pipeline=device.createRenderPipeline(pipelineDescriptor);
+    const erasePipeline=device.createRenderPipeline(Object.assign({},pipelineDescriptor,{
+      fragment:Object.assign({},pipelineDescriptor.fragment,{targets:[{
+        format:_gpuState.canvasFormat,
+        blend:{
+          color:{srcFactor:'zero',dstFactor:'one-minus-src-alpha',operation:'add'},
+          alpha:{srcFactor:'zero',dstFactor:'one-minus-src-alpha',operation:'add'},
+        },
+      }]})
+    }));
     _gpuState.composeShaderModule=shaderModule;
     _gpuState.composePipelineLayout=pipelineLayout;
     _gpuState.composeBindGroupLayout=bindGroupLayout;
     _gpuState.composePipeline=pipeline;
+    _gpuState.composeErasePipeline=erasePipeline;
     _gpuState.composeSampler=device.createSampler({magFilter:'linear',minFilter:'linear'});
     _gpuState.composeUniformBuffer=device.createBuffer({size:16,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});
     _gpuState.shaderModulesCreated++;
-    _gpuState.pipelinesCreated++;
+    _gpuState.pipelinesCreated+=2;
     return true;
   },
   // Revised GPU integration: runs the compose pass described above,
@@ -2492,8 +2509,9 @@ const GpuBrushRenderer = {
   // stroke, or layerTexture itself for the live-preview base) and
   // writing into `targetView` at the given opacity. loadOp is 'load'
   // when compositing onto existing content (the normal case) so
-  // whatever is already in the target is preserved underneath.
-  _runComposePass(srcTexture,targetView,opacity,loadOp){
+  // whatever is already in the target is preserved underneath. The
+  // composite argument selects source-over paint or destination-out erase.
+  _runComposePass(srcTexture,targetView,opacity,loadOp,composite){
     if(!this.createComposePipeline()) return false;
     const device=_gpuState.device;
     device.queue.writeBuffer(_gpuState.composeUniformBuffer,0,new Float32Array([Math.max(0,Math.min(1,opacity)),0,0,0]));
@@ -2509,7 +2527,7 @@ const GpuBrushRenderer = {
     const pass=encoder.beginRenderPass({
       colorAttachments:[{view:targetView,loadOp:loadOp||'load',storeOp:'store'}],
     });
-    pass.setPipeline(_gpuState.composePipeline);
+    pass.setPipeline(composite==='erase'?_gpuState.composeErasePipeline:_gpuState.composePipeline);
     pass.setBindGroup(0,bindGroup);
     pass.draw(6);
     pass.end();
@@ -2530,7 +2548,7 @@ const GpuBrushRenderer = {
     if(!w||!h) return false;
     if(!this._ensureLayerTexture(w,h)) return false;
     if(!_gpuState.accumTexture||!_gpuState.layerTexture) return false;
-    return this._runComposePass(_gpuState.accumTexture,_gpuState.layerTexture.createView(),opacity,'load');
+    return this._runComposePass(_gpuState.accumTexture,_gpuState.layerTexture.createView(),opacity,'load',_gpuState.strokeComposite);
   },
   // Revised GPU integration: refreshes the swapchain canvas (gpu-canvas)
   // so it always shows layerTexture's committed content, optionally
@@ -2548,7 +2566,7 @@ const GpuBrushRenderer = {
     encoder.copyTextureToTexture({texture:_gpuState.layerTexture},{texture:currentTexture},{width:w,height:h});
     _gpuState.queue.submit([encoder.finish()]);
     if(includeLiveStroke && _gpuState.accumTexture){
-      this._runComposePass(_gpuState.accumTexture,currentTexture.createView(),liveOpacity,'load');
+      this._runComposePass(_gpuState.accumTexture,currentTexture.createView(),liveOpacity,'load',_gpuState.strokeComposite);
     }
     return true;
   },
@@ -3061,6 +3079,7 @@ const GpuBrushRenderer = {
   // failedBatches, failedDabs all untouched).
   beginStroke(){
     _gpuState.inStroke=true;
+    _gpuState.strokeComposite='paint';
     _gpuState.strokesReceived+=1;
     if(_gpuState.dabQueue.length>0){
       _gpuState.dabQueue.length=0;
@@ -3576,6 +3595,7 @@ const GpuBrushRenderer = {
     _gpuState.layerTextureWidth=0;
     _gpuState.layerTextureHeight=0;
     _gpuState.composePipeline=null;
+    _gpuState.composeErasePipeline=null;
     _gpuState.composePipelineLayout=null;
     _gpuState.composeShaderModule=null;
     _gpuState.composeBindGroupLayout=null;
@@ -3590,6 +3610,7 @@ const GpuBrushRenderer = {
     // pattern used for every other counter in this object.
     _gpuState.dabQueue.length=0;
     _gpuState.queuedDabs=0;
+    _gpuState.strokeComposite='paint';
     // Phase 5A/5C/5D: reset does not clear receive/draw/failure
     // counters — those are a cumulative diagnostic history, not
     // initialization state. Resetting GPU init state must not hide how
