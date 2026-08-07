@@ -2204,6 +2204,17 @@ const GpuBrushRenderer = {
   // dabQueueMaxSize so an app that never calls flushDabQueue() can't
   // grow this unboundedly; anything past the cap is dropped and
   // counted, never silently discarded without a trace.
+  // Phase 6D: this is also where stabilization parity with the CPU
+  // renderer lives — or rather, doesn't need to, because there's
+  // nothing GPU-specific to add. d.x/d.y arrive here already fully
+  // resolved by brush-engine.js's stabilizer/arc-length-conditioner
+  // pipeline (_stabilizePoint -> _baselineConditionerPush ->
+  // _curveAddPoint -> _stampDab), the exact same pipeline that
+  // produces the x/y CpuBrushRenderer.drawDab() draws with — this
+  // method (and this file generally) never reads a PointerEvent, never
+  // calls getPos()/_stabilizePoint(), and pushes the object reference
+  // it's given unmodified. Verified by inspection; no functional
+  // change was required.
   _enqueueDab(d){
     if(_gpuState.dabQueue.length>=_gpuState.dabQueueMaxSize){
       _gpuState.droppedDabs+=1;
