@@ -207,6 +207,14 @@ body.webgpu-presentation-active #onion-canvas,
 body.webgpu-presentation-active #active-canvas{opacity:0!important;}
 body.webgpu-presentation-active #canvas-wrap{z-index:2;}
 #active-canvas{cursor:default;touch-action:none;-ms-touch-action:none;}
+/* Phase 5W: presentation-layer toggle only, set via
+   setGpuPresentationActive() in core-state.js whenever
+   BrushRenderer.setActiveRenderer() switches renderers. visibility:hidden
+   (not display:none) so active-canvas's layout box/size/position are
+   completely unaffected — it just stops being painted while gpu-canvas
+   (its sibling in #canvas-wrap, sharing the same CSS position/transform)
+   is shown instead. */
+#active-canvas.gpu-presentation-active{visibility:hidden;}
 #composite-canvas,#onion-canvas,#display-canvas{pointer-events:none;}
 #onion-canvas{visibility:hidden;}
 #transform-canvas{pointer-events:none;touch-action:none;-ms-touch-action:none;}

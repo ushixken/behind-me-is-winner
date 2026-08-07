@@ -237,6 +237,13 @@ const compC=document.getElementById('composite-canvas');
 const displayC=document.getElementById('display-canvas');
 const onionC=document.getElementById('onion-canvas');
 const activeC=document.getElementById('active-canvas');
+// Phase 5W: reference to the dedicated WebGPU presentation canvas added in
+// Phase 5V (index.html). Only used here for presentation-layer sizing/
+// visibility sync (see initCanvas() and setGpuPresentationActive() below) —
+// never given a 2D context, never drawn into, never read from. Guarded
+// with `||null` even though the element always exists in index.html, so
+// this file never throws if it's ever missing.
+const gpuC=document.getElementById('gpu-canvas')||null;
 // Transparent current-frame composite used only for display ordering. compC
 // remains the exact background + artwork composite used by export and sampling.
 const artworkCompositeC=document.createElement('canvas');
@@ -286,10 +293,40 @@ const fpsVal=document.getElementById('fps-val');
 function initCanvas(){
   const transformC=document.getElementById('transform-canvas');
   [compC,displayC,onionC,activeC,transformC,artworkCompositeC].forEach(c=>{c.width=CW;c.height=CH;});
+  // Phase 5W: keep gpu-canvas's pixel buffer in lockstep with
+  // active-canvas by reusing this SAME existing resize path (initCanvas()
+  // already runs on every canvas resize / project load / undo-restore /
+  // resize-canvas-tool commit — see call sites in ui-controls.js,
+  // resize-canvas-tool.js, layers.js, project-io.js). No new resize
+  // system — just one more element sized alongside the others above.
+  if(gpuC){gpuC.width=CW;gpuC.height=CH;}
   wrap.style.width=CW+'px';wrap.style.height=CH+'px';
   drawBg();
   document.getElementById('stat-canvas').textContent=CW+'×'+CH;
 }
+
+// Phase 5W: presentation-layer toggle only — no rendering, no brush
+// logic, no renderer activation/selection decision. Called from
+// BrushRenderer.setActiveRenderer() (brush-renderer.js) every time the
+// active renderer changes, so this is the single place gpu-canvas's
+// visibility and active-canvas's visibility are kept in sync with
+// whichever renderer is actually active. When switching TO gpu, also
+// re-syncs gpu-canvas's pixel size via the same width/height assignment
+// initCanvas() already uses, in case CW/CH changed while gpu was not the
+// active renderer (initCanvas() only sizes gpu-canvas when it happens to
+// run, not continuously). Uses visibility:hidden (via the
+// gpu-presentation-active class in style.css), not display:none, on
+// active-canvas so its layout box/size is completely unaffected — CSS
+// position and the parent #canvas-wrap transform are unchanged either
+// way, since both canvases are siblings inside the same transformed
+// #canvas-wrap.
+function setGpuPresentationActive(isGpuActive){
+  if(!gpuC) return;
+  gpuC.hidden=!isGpuActive;
+  activeC.classList.toggle('gpu-presentation-active',!!isGpuActive);
+  if(isGpuActive){gpuC.width=CW;gpuC.height=CH;}
+}
+window.setGpuPresentationActive=setGpuPresentationActive;
 
 // PERF FIX: drawBg() runs on EVERY animation frame while a stroke is in
 // progress (recomposite() is RAF-scheduled from every pointermove). For a

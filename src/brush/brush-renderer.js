@@ -1132,6 +1132,14 @@ const BrushRenderer = {
     if(!renderer) throw new Error('BrushRenderer: no renderer registered under "'+name+'"');
     this._activeName=name;
     this.active=renderer;
+    // Phase 5W: presentation-layer sync only — does not affect which
+    // renderer is chosen/activated (that decision is entirely the
+    // assignment above, unchanged). Calls the existing
+    // setGpuPresentationActive() helper (core-state.js) so gpu-canvas/
+    // active-canvas visibility always matches whichever renderer just
+    // became active, no matter which caller reached this method
+    // (activateRenderer(), or the two hardcoded calls at module init).
+    if(typeof setGpuPresentationActive==='function') setGpuPresentationActive(name==='gpu');
   },
   getActiveRenderer(){
     return this._activeName;
