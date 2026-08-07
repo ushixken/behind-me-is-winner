@@ -297,9 +297,20 @@ function ensureKey(options){
   if(profiler)profiler.measure('ensure-key-noop-total',totalStart,{created:false});
   return false;
 }
-function saveActiveToKey(){
-  if(typeof isDrawingFrameHidden==='function'&&isDrawingFrameHidden(curLayer,curFrame))return;
-  const layer=layers[curLayer],kf=layer.frames[curFrame];if(!kf)return;
+// Phase 6F.8: targetLayer/targetFrame are optional explicit overrides for
+// curLayer/curFrame. saveActiveToKeyAsync() (below) needs these because it
+// awaits BrushRenderer.waitForGPU() before reading, and by the time that
+// await resolves a caller's `finally` block (see brush-engine.js's
+// finishActiveDrawingBeforeArtworkChange()) may already have changed
+// curLayer/curFrame to the destination of a layer/frame switch that
+// happened right after the stroke commit -- reading the globals at resume
+// time would silently save the stroke into the WRONG frame. Callers that
+// go through the async path must snapshot curLayer/curFrame at call time
+// (ordinary synchronous argument evaluation) and pass them in explicitly.
+function _saveActiveToKeyNow(targetLayer,targetFrame){
+  const li=(targetLayer==null)?curLayer:targetLayer,fi=(targetFrame==null)?curFrame:targetFrame;
+  if(typeof isDrawingFrameHidden==='function'&&isDrawingFrameHidden(li,fi))return;
+  const layer=layers[li],kf=layer.frames[fi];if(!kf)return;
   // Revised GPU integration: read through BrushRenderer.getActiveSurface()
   // instead of hardcoded activeC, so undo/history/keyframe storage picks
   // up whichever renderer is actually active (CpuBrushRenderer's activeC,
@@ -308,15 +319,43 @@ function saveActiveToKey(){
   // committed (never mid-stroke), so this is always the renderer's
   // committed-only surface, never a live in-progress blend.
   const activeSurface=(window.BrushRenderer&&typeof BrushRenderer.getActiveSurface==='function')?BrushRenderer.getActiveSurface():activeC;
-  const extended=getExtendedLayerFrame(curLayer,curFrame);
+  const extended=getExtendedLayerFrame(li,fi);
   if(extended){
     const minX=Math.min(extended.x,0),minY=Math.min(extended.y,0),maxX=Math.max(extended.x+extended.canvas.width,CW),maxY=Math.max(extended.y+extended.canvas.height,CH);
     const full=document.createElement('canvas');full.width=maxX-minX;full.height=maxY-minY;const fullContext=full.getContext('2d');
     fullContext.drawImage(extended.canvas,extended.x-minX,extended.y-minY);fullContext.clearRect(-minX,-minY,CW,CH);fullContext.drawImage(activeSurface,-minX,-minY);
-    setExtendedLayerFrame(curLayer,curFrame,full,minX,minY);return;
+    setExtendedLayerFrame(li,fi,full,minX,minY);return;
   }
   const kctx=kf.getContext('2d');kctx.clearRect(0,0,CW,CH);kctx.drawImage(activeSurface,0,0);
 }
+// Phase 6F.8: GPU synchronization at the CPU readback point.
+// saveActiveToKey() reads the active renderer's surface synchronously via
+// drawImage (_saveActiveToKeyNow() above). When GpuBrushRenderer is active,
+// the stroke's GPU commands (submitted by endStroke()/flushActiveRenderer()
+// just before this is called) may not have finished executing yet — a
+// same-tick drawImage can capture gpu-canvas mid-flight and silently save a
+// stale frame, which is what made earlier strokes appear to vanish once a
+// later stroke was saved over them. saveActiveToKeyAsync() waits for
+// BrushRenderer.waitForGPU() (a no-op on CPU, so this is unchanged
+// behavior there) before doing the readback, and always writes into the
+// (targetLayer,targetFrame) snapshot taken by the caller rather than
+// re-reading curLayer/curFrame after the await -- see the comment above
+// _saveActiveToKeyNow(). This is currently wired into brush-engine.js's
+// stroke-completion call sites (the ones that immediately follow
+// _commitStrokeCanvas()/BrushRenderer.endStroke()); the ~25 other existing
+// saveActiveToKey() callers (timeline scrubbing, layer switching, undo,
+// etc.) are unchanged for now -- see Phase 6F.9 follow-up note.
+async function saveActiveToKeyAsync(targetLayer,targetFrame){
+  const li=(targetLayer==null)?curLayer:targetLayer,fi=(targetFrame==null)?curFrame:targetFrame;
+  if(window.BrushRenderer&&typeof BrushRenderer.waitForGPU==='function'){
+    await BrushRenderer.waitForGPU();
+  }
+  _saveActiveToKeyNow(li,fi);
+}
+function saveActiveToKey(){
+  _saveActiveToKeyNow();
+}
+window.saveActiveToKeyAsync=saveActiveToKeyAsync;
 
 function loadFrame(li,fi){
   if(typeof window.prepareTransformForArtworkChange==='function')window.prepareTransformForArtworkChange(li,fi);
@@ -783,7 +822,17 @@ const KeyframeLatencyExperiment=(function(){
 window.KeyframeLatencyExperiment=KeyframeLatencyExperiment;
 function goToFrame(f,addSel,noSel,selectionOnly){
   if(typeof window.prepareTransformForArtworkChange==='function')window.prepareTransformForArtworkChange(curLayer,f);
-  saveActiveToKey();curFrame=Math.max(0,Math.min(TOTAL-1,f));
+  // Phase 6F.8 audit (frame switching): snapshot the OLD layer/frame now,
+  // synchronously, and fire the GPU-synchronized save at it without
+  // awaiting -- curFrame/loadFrame() below still happen in the exact same
+  // synchronous order as before (no caller of goToFrame() needs to change),
+  // but the save that lands in layers[curLayer].frames[oldFrame] will now
+  // contain the fully GPU-completed stroke instead of whatever drawImage
+  // could grab synchronously, which is what let a just-drawn stroke vanish
+  // when the user immediately scrubbed to another frame.
+  const _saveLayer=curLayer,_saveFrame=curFrame;
+  if(typeof window.saveActiveToKeyAsync==='function')window.saveActiveToKeyAsync(_saveLayer,_saveFrame);else saveActiveToKey();
+  curFrame=Math.max(0,Math.min(TOTAL-1,f));
   window.TimelineScrubController?.reset(curFrame);
   if(!noSel){if(!addSel) selectedFrames.clear();selectedFrames.add(curFrame);}
   loadFrame(curLayer,curFrame);
@@ -794,7 +843,14 @@ function goToFrame(f,addSel,noSel,selectionOnly){
 function switchLayer(li,options){
   options=options||{};
   if(typeof window.prepareTransformForArtworkChange==='function')window.prepareTransformForArtworkChange(li,curFrame);
-  saveActiveToKey();curLayer=li;activeGroupId=null;selectedGroupIds.clear();layerShiftAnchor=li;groupShiftAnchor=null;
+  // Phase 6F.8 audit (layer switching): same snapshot-then-fire-without-
+  // awaiting pattern as goToFrame() above, and for the same reason --
+  // curLayer/loadFrame() below must stay synchronous for switchLayer()'s
+  // ~12 existing callers, but the save itself must not read GPU pixels
+  // before GPU has actually finished the last stroke.
+  const _saveLayer=curLayer,_saveFrame=curFrame;
+  if(typeof window.saveActiveToKeyAsync==='function')window.saveActiveToKeyAsync(_saveLayer,_saveFrame);else saveActiveToKey();
+  curLayer=li;activeGroupId=null;selectedGroupIds.clear();layerShiftAnchor=li;groupShiftAnchor=null;
   if(typeof window.clearCameraTimelineSelection==='function')window.clearCameraTimelineSelection();
   if(!options.preserveTimelineSelection&&typeof syncTimelineSelectionToActiveLayer==='function')syncTimelineSelectionToActiveLayer();
   if(!options.skipLoadFrame)loadFrame(curLayer,curFrame);

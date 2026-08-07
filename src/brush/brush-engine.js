@@ -3338,7 +3338,14 @@ function _endStroke(pointerId){
   _baselineConditionerFinish(true);
   _stopAirbrushSpray();
   BrushRenderer.setLineContinuity(null);
-  if(drawing){drawing=false;_flushStrokeTail();if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();}
+  // Phase 6F.8: use the GPU-synchronized save here and snapshot
+  // curLayer/curFrame as arguments *now* -- finishActiveDrawingBeforeArtworkChange()'s
+  // `finally` block (below in this file) can reassign curLayer/curFrame to
+  // the destination of a layer/frame switch immediately after _endStroke()
+  // returns, before the awaited GPU-idle signal resolves. Passing the
+  // snapshot explicitly means the save still lands on the frame the stroke
+  // was actually drawn on, not wherever curLayer/curFrame ends up next.
+  if(drawing){drawing=false;_flushStrokeTail();if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_restoreSelectionScopePixels();_cleanupErasedSmartOwnership();if(typeof window.saveActiveToKeyAsync==='function')window.saveActiveToKeyAsync(curLayer,curFrame);else saveActiveToKey();}
   if(lineStart&&(_lineDragging||_curveToolGesture)){
     // Line drag aborted mid-gesture (pointercancel, tab blur, etc.) -- undo
     // was never pushed and the layer was never touched, so just discard the
@@ -4209,7 +4216,7 @@ function _commitCurveTool(e){
   if(!_curveToolGesture||_curveToolGesture.phase!=='bending')return false;
   _cancelLinePreview();pushUndo();ensureKey();if(!_strokeCanvas||!_inStroke){_ensureStrokeCanvas();_inStroke=true;}
   _renderLineDrag(_curveToolGesture.control.x,_curveToolGesture.control.y,e||_lastPointerEvent||{pointerType:'mouse',pressure:.5},'commit');
-  if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_cleanupErasedSmartOwnership();saveActiveToKey();
+  if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_cleanupErasedSmartOwnership();if(typeof window.saveActiveToKeyAsync==='function')window.saveActiveToKeyAsync(curLayer,curFrame);else saveActiveToKey();
   const layer=_strokeOwnerLayer,frame=_strokeOwnerFrame;_resetCurveToolGesture();_completePostStrokePresentation(layer,frame);_strokeOwnerLayer=-1;_strokeOwnerFrame=-1;return true;
 }
 window.cancelCurveTool=_cancelCurveTool;
@@ -4336,7 +4343,7 @@ function _pointerEndStroke(e){
     // pointerup position, never a stale queued endpoint.
     _renderLineDrag(p.x,p.y,e,'commit');
     if(_inStroke){_inStroke=false;_commitStrokeCanvas();}
-    _cleanupErasedSmartOwnership();_clearLinePreviewCanvas(_strokeCanvas,_strokeCtx);_clearLinePreviewCanvas(_texturedStrokeCanvas,_texturedStrokeCtx);_clearLinePreviewCanvas(_strokePreviewCanvas,_strokePreviewCtx);lineStart=null;_lineDragging=false;_linePressureSamples=[];_lineGesture=null;_linePreviewBounds=null;_linePreviewPreviousEndpoint=null;saveActiveToKey();
+    _cleanupErasedSmartOwnership();_clearLinePreviewCanvas(_strokeCanvas,_strokeCtx);_clearLinePreviewCanvas(_texturedStrokeCanvas,_texturedStrokeCtx);_clearLinePreviewCanvas(_strokePreviewCanvas,_strokePreviewCtx);lineStart=null;_lineDragging=false;_linePressureSamples=[];_lineGesture=null;_linePreviewBounds=null;_linePreviewPreviousEndpoint=null;if(typeof window.saveActiveToKeyAsync==='function')window.saveActiveToKeyAsync(curLayer,curFrame);else saveActiveToKey();
   }else if(drawing){
     const finalRaw=getPos(e);
     const finalConditioned=_baselineConditionerPush(_baselineSampleFromEvent(e,finalRaw,currentPressure),{force:true});
@@ -4346,7 +4353,7 @@ function _pointerEndStroke(e){
         _flushCurveTail(_lastPointerEvent||e);
         _flushStrokeTail();
         if(_inStroke){_inStroke=false;_commitStrokeCanvas();}
-        _restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();
+        _restoreSelectionScopePixels();_cleanupErasedSmartOwnership();if(typeof window.saveActiveToKeyAsync==='function')window.saveActiveToKeyAsync(curLayer,curFrame);else saveActiveToKey();
         _finalizePointerEndStroke(e);
       });
       return;
@@ -4363,7 +4370,7 @@ function _pointerEndStroke(e){
     _flushCurveTail(e);
     _flushStrokeTail();
     if(_inStroke){_inStroke=false;_commitStrokeCanvas();}
-    _restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();
+    _restoreSelectionScopePixels();_cleanupErasedSmartOwnership();if(typeof window.saveActiveToKeyAsync==='function')window.saveActiveToKeyAsync(curLayer,curFrame);else saveActiveToKey();
   }
   _finalizePointerEndStroke(e);
 }

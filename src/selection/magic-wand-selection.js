@@ -23,7 +23,16 @@
   function normalizeSettings(){settings.tolerance=clampNumber(settings.tolerance,0,255,0);settings.edgeExpansion=clampNumber(settings.edgeExpansion,-20,20,0);settings.gapWidth=clampNumber(settings.gapWidth,1,10,1);settings.sample=settings.sample==='all'?'all':'current';if(['add','replace','subtract','intersect'].indexOf(settings.combine)<0)settings.combine='add';}
   function persist(){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(settings));}catch(_){}}
   function update(values){Object.assign(settings,values||{});normalizeSettings();persist();window.dispatchEvent(new CustomEvent('magic-wand-settings-changed'));}
-  function sampleImage(){
+  // Phase 6F.8 audit: this is a one-off, user-triggered readback (magic-wand
+  // click), not a per-frame/per-dab path, so it's safe to wait for GPU
+  // completion here -- BrushRenderer.waitForGPU() is a no-op when CPU is
+  // active. Without this, clicking magic-wand right after a GPU stroke
+  // could sample gpu-canvas before that stroke's compose pass finished,
+  // selecting based on stale/partial pixels.
+  async function sampleImage(){
+    if(window.BrushRenderer&&typeof BrushRenderer.waitForGPU==='function'){
+      await BrushRenderer.waitForGPU();
+    }
     if(settings.sample==='all'){recomposite(curLayer,curFrame);return compCtx.getImageData(0,0,CW,CH);}
     // Revised GPU integration: "current layer only" sampling reads
     // through BrushRenderer.getActiveSurface() instead of hardcoded
@@ -111,14 +120,20 @@
     var point=getPos(event),x=Math.floor(point.x),y=Math.floor(point.y);if(x<0||y<0||x>=CW||y>=CH)return;
     event.preventDefault();event.stopImmediatePropagation();
     var modified=event.shiftKey||event.altKey,mode=modified&&window.PixelSelection?PixelSelection.modeFromEvent(event):settings.combine;
-    var image=sampleImage(),token=++operationToken,layerIndex=curLayer,frameIndex=curFrame;
-    function calculate(){
-      if(token!==operationToken||tool!=='magic-wand'||curLayer!==layerIndex||curFrame!==frameIndex){if(typeof _refreshActiveCursor==='function')_refreshActiveCursor();return;}
-      var mask=buildMask(image,x,y);
-      if(token===operationToken&&window.PixelSelection)PixelSelection.applyMask(mask,CW,CH,mode,'magic-wand');
-      if(typeof _refreshActiveCursor==='function')_refreshActiveCursor();
-    }
-    if(CW*CH>=1000000){activeC.style.cursor='wait';requestAnimationFrame(calculate);}else calculate();
+    var token=++operationToken,layerIndex=curLayer,frameIndex=curFrame;
+    // Phase 6F.8: sampleImage() is now async (awaits GPU completion when
+    // GPU is active) -- keep the same token/layer/frame staleness guard
+    // calculate() already had, so a tool switch or layer/frame change
+    // that happens while we're waiting is handled exactly as before.
+    sampleImage().then(function(image){
+      function calculate(){
+        if(token!==operationToken||tool!=='magic-wand'||curLayer!==layerIndex||curFrame!==frameIndex){if(typeof _refreshActiveCursor==='function')_refreshActiveCursor();return;}
+        var mask=buildMask(image,x,y);
+        if(token===operationToken&&window.PixelSelection)PixelSelection.applyMask(mask,CW,CH,mode,'magic-wand');
+        if(typeof _refreshActiveCursor==='function')_refreshActiveCursor();
+      }
+      if(CW*CH>=1000000){activeC.style.cursor='wait';requestAnimationFrame(calculate);}else calculate();
+    });
   }
   document.addEventListener('keydown',function(event){if(event.key==='Escape'&&tool==='magic-wand'){operationToken++;if(typeof _refreshActiveCursor==='function')_refreshActiveCursor();}},true);
   window.addEventListener('tool-changed',function(event){if(!event.detail||event.detail.tool!=='magic-wand')operationToken++;});

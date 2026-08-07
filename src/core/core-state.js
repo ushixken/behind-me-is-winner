@@ -295,7 +295,7 @@ const fpsVal=document.getElementById('fps-val');
 // ════════════════════════════════════════════════════════════════
 function initCanvas(){
   const transformC=document.getElementById('transform-canvas');
-  [compC,displayC,onionC,activeC,transformC,artworkCompositeC].forEach(c=>{c.width=CW;c.height=CH;});
+  [compC,displayC,onionC,activeC,transformC,artworkCompositeC,gpuC].forEach(c=>{if(c){c.width=CW;c.height=CH;}});
   // Keep gpu-canvas's pixel buffer in lockstep with active-canvas by
   // reusing this SAME existing resize path (initCanvas() already runs on
   // every canvas resize / project load / undo-restore / resize-canvas-tool

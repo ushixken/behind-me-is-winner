@@ -931,6 +931,11 @@ const CpuBrushRenderer = {
   // cannot change observable behavior.
   beginStroke(){},
   endStroke(){},
+  // Phase 6F.8: CPU readback (ctx.drawImage from activeC) is already
+  // synchronous with drawing here, so there is nothing to wait on. Exists
+  // purely so dispatcher-level callers (BrushRenderer.waitForGPU()) can
+  // call this unconditionally on whichever renderer is active.
+  async onGPUIdle(){ return true; },
   // Revised GPU integration: this renderer's authoritative drawing
   // surface is activeC itself — dabs are composited onto it directly by
   // brush-engine.js's _commitStrokeCanvas() (mid-stroke, dabs live on
@@ -1172,6 +1177,19 @@ const BrushRenderer = {
   drawDab(d,rendererContext){ return this.active.drawDab(d,rendererContext); },
   beginStroke(){ return this.active.beginStroke(); },
   endStroke(){ return this.active.endStroke(); },
+  // Phase 6F.8: the single choke point CPU-readback call sites should
+  // await before reading the active renderer's surface (getActiveSurface())
+  // into a 2D canvas/undo snapshot/etc. Forwards to whichever renderer is
+  // active's onGPUIdle() — GpuBrushRenderer's genuinely waits on
+  // device.queue.onSubmittedWorkDone(); CpuBrushRenderer's resolves
+  // immediately since its surface is already CPU-side. Callers that
+  // can't be made async yet are unaffected — this is purely additive.
+  async waitForGPU(){
+    if(this.active && typeof this.active.onGPUIdle==='function'){
+      return this.active.onGPUIdle();
+    }
+    return true;
+  },
   // Revised GPU integration: the single choke point every downstream
   // consumer (recomposite, saveActiveToKey/undo-history, export,
   // sampling, transforms, ...) should call instead of reading the
@@ -3075,6 +3093,31 @@ const GpuBrushRenderer = {
     this._composeStrokeOntoLayer(opacity);
     this._presentLayerToCanvas(false,0);
     return flushed;
+  },
+  // Phase 6F.8: GPU synchronization for CPU readback points.
+  // Every queue.submit() above (flushDabQueue's batch submit,
+  // _composeStrokeOntoLayer's compose pass, _presentLayerToCanvas's copy)
+  // only enqueues work — it returns before the GPU has actually finished
+  // executing it. A CPU-side readback that runs right after (e.g.
+  // saveActiveToKey()'s ctx.drawImage(activeSurface,...)) can therefore
+  // capture gpu-canvas mid-flight, before the just-submitted commands have
+  // landed, silently reading a stale/partial frame — this is the
+  // "previous stroke disappears" bug. onGPUIdle() resolves once every
+  // command submitted so far has completed, via the standard WebGPU
+  // completion signal. It deliberately does NOT wait per-dab (that would
+  // reintroduce a stall on every brush dab) — callers must only await this
+  // at explicit CPU-readback sites, never inside the dab-drawing loop.
+  // No shader, pipeline, or per-dab timing is touched.
+  async onGPUIdle(){
+    const device=_gpuState.device;
+    if(!device||!device.queue||typeof device.queue.onSubmittedWorkDone!=='function') return true;
+    try{
+      await device.queue.onSubmittedWorkDone();
+      return true;
+    }catch(e){
+      console.warn('[GpuBrushRenderer] onSubmittedWorkDone failed:',e);
+      return false;
+    }
   },
   // Phase 5G: optional frame-lifecycle helper. Flushes the queue only
   // if there's actually something queued ("flush queued dabs only when

@@ -311,7 +311,7 @@
     }
     ctx.putImageData(image,0,0);saveActiveToKey();recomposite(curLayer,curFrame);renderTimeline();clearSelection();return true;
   }
-  function replaceSelectedWithStyle(styleId,rgba){
+  async function replaceSelectedWithStyle(styleId,rgba){
     var state=window.pixelSelectionState,layer=layers[curLayer];
     if(!selectionActive||!selectionMask||!state||state.layerIndex!==curLayer||!layer||layer.type!=='smart-raster'||!styleId||!Array.isArray(rgba))return false;
     var frameIndex=state.frameIndex,frame=layer.smartStyleFrames&&layer.smartStyleFrames[frameIndex];
@@ -343,6 +343,17 @@
     // of silently diverging from activeC.
     if(window.BrushRenderer&&typeof BrushRenderer.loadActiveSurface==='function'&&BrushRenderer.getActiveRenderer()==='gpu'){
       BrushRenderer.loadActiveSurface(activeC);
+    }
+    // Phase 6F.8 audit: loadActiveSurface() above uploads activeC onto
+    // GpuBrushRenderer's layerTexture (a queued GPU copy, not immediate),
+    // and the code below immediately reads it back via
+    // getActiveSurface()+drawImage into `stored`. Without waiting, that
+    // readback could run before the upload actually lands, capturing
+    // whatever layerTexture held a moment ago instead of the just-written
+    // recolor. This is a one-off menu action (Replace Selected With This
+    // Style), not a per-frame/per-dab path, so waiting here is safe.
+    if(window.BrushRenderer&&typeof BrushRenderer.waitForGPU==='function'){
+      await BrushRenderer.waitForGPU();
     }
     var stored=layer.frames&&layer.frames[frameIndex];
     if(stored){
