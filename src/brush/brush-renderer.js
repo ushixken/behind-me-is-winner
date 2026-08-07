@@ -982,6 +982,15 @@ const CpuBrushRenderer = {
   reset(){
     return true;
   },
+  // Phase 4T: metadata only — CPU renderer is fully implemented and
+  // rendering today. Does not change rendering behavior.
+  getCapabilities(){
+    return {
+      rendering: true,
+      initialized: true,
+      experimental: false
+    };
+  },
 };
 
 // Phase 2E: Renderer interface freeze. The methods below constitute the
@@ -1174,8 +1183,23 @@ const BrushRenderer = {
         cpu: true,
         gpu: _gpuState.initialized
       },
-      errors
+      errors,
+      capabilities: this.getRendererCapabilities()
     };
+  },
+  // Phase 4T: read-only capability metadata, built dynamically from
+  // every registered renderer name (never hardcoded to "cpu"/"gpu").
+  // Renderers without a getCapabilities() method contribute an empty
+  // object, matching the spec's "else return {}" behavior per-renderer.
+  getRendererCapabilities(){
+    const out={};
+    for(const name of Object.keys(this._renderers)){
+      const renderer=this._renderers[name];
+      out[name]=(renderer && typeof renderer.getCapabilities==='function')
+        ?renderer.getCapabilities()
+        :{};
+    }
+    return out;
   },
   // Phase 4N: generic self-test dispatcher. Looks the renderer up by
   // name in the registry and, if it exposes a selfTest() method, awaits
@@ -1781,6 +1805,17 @@ const GpuBrushRenderer = {
     _gpuState.bindGroupLayout=null;
     _gpuState.bindGroup=null;
     return true;
+  },
+  // Phase 4T: metadata only — GPU renderer does not draw yet, so
+  // rendering must stay false regardless of initialization state.
+  // Exposes only booleans, never adapter/device/queue/pipeline/shader/
+  // texture/buffer objects from _gpuState.
+  getCapabilities(){
+    return {
+      rendering: false,
+      initialized: _gpuState.initialized,
+      experimental: true
+    };
   },
 };
 

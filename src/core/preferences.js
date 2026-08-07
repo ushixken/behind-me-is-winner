@@ -133,6 +133,14 @@ document.getElementById('pref-cursor-brush-shape').onchange=e=>{ if(e.target.che
   lifecycleEl.style.cssText='margin-top:10px;padding:8px;border-radius:8px;border:1px solid var(--border2);font-size:11px;color:var(--text2);line-height:1.6;';
   historyEl.insertAdjacentElement('afterend',lifecycleEl);
 
+  // Phase 4T: read-only Renderer Capabilities section, below lifecycle.
+  // Sourced only from BrushRenderer.getRendererCapabilities() — no
+  // _gpuState/GPU internal access.
+  const capabilitiesEl=document.createElement('div');
+  capabilitiesEl.id='pref-renderer-capabilities';
+  capabilitiesEl.style.cssText='margin-top:10px;padding:8px;border-radius:8px;border:1px solid var(--border2);font-size:11px;color:var(--text2);line-height:1.6;';
+  lifecycleEl.insertAdjacentElement('afterend',capabilitiesEl);
+
   function renderList(){
     if(typeof window.BrushRenderer.getRendererOptions!=='function') return;
     const options=window.BrushRenderer.getRendererOptions();
@@ -415,12 +423,68 @@ document.getElementById('pref-cursor-brush-shape').onchange=e=>{ if(e.target.che
     });
   }
 
+  // Phase 4T: read-only readout of per-renderer capability metadata,
+  // sourced solely from BrushRenderer.getRendererCapabilities().
+  // Renderer names/order come from the returned object's own keys —
+  // never hardcoded to "cpu"/"gpu". No _gpuState access.
+  function renderCapabilities(){
+    if(typeof window.BrushRenderer.getRendererCapabilities!=='function'){
+      capabilitiesEl.textContent='';
+      return;
+    }
+    const capabilities=window.BrushRenderer.getRendererCapabilities();
+
+    capabilitiesEl.innerHTML='';
+
+    const heading=document.createElement('div');
+    heading.style.cssText='font-weight:600;color:var(--text);';
+    heading.textContent='Renderer Capabilities';
+    capabilitiesEl.appendChild(heading);
+
+    const names=Object.keys(capabilities);
+    if(names.length===0){
+      const emptyLine=document.createElement('div');
+      emptyLine.textContent='No renderers registered.';
+      capabilitiesEl.appendChild(emptyLine);
+      return;
+    }
+
+    function yesNo(value){
+      return value?'Yes':'No';
+    }
+
+    names.forEach(name=>{
+      const caps=capabilities[name]||{};
+      const entry=document.createElement('div');
+      entry.style.cssText='margin-top:6px;padding-top:6px;border-top:1px solid var(--border2);';
+
+      const nameLine=document.createElement('div');
+      nameLine.innerHTML='<b style="color:var(--text);">Renderer: '+String(name).toUpperCase()+'</b>';
+      entry.appendChild(nameLine);
+
+      const renderingLine=document.createElement('div');
+      renderingLine.textContent='Rendering: '+yesNo(caps.rendering);
+      entry.appendChild(renderingLine);
+
+      const experimentalLine=document.createElement('div');
+      experimentalLine.textContent='Experimental: '+yesNo(caps.experimental);
+      entry.appendChild(experimentalLine);
+
+      const initializedLine=document.createElement('div');
+      initializedLine.textContent='Initialized: '+yesNo(caps.initialized);
+      entry.appendChild(initializedLine);
+
+      capabilitiesEl.appendChild(entry);
+    });
+  }
+
   function renderAll(){
     renderList();
     renderStatus();
     renderDiagnostics();
     renderHistory();
     renderLifecycle();
+    renderCapabilities();
   }
 
   // Phase 4L: guards against duplicate simultaneous apply requests and
