@@ -1015,12 +1015,57 @@ const BrushRenderer = {
   getTipAlphaInvalidationReason(){ return this.active.getTipAlphaInvalidationReason(); },
 };
 
+// Phase 2C: GpuBrushRenderer skeleton. Implements the exact same public
+// renderer interface as CpuBrushRenderer, but every method is an
+// intentionally empty stub — no rendering, no state, no GPU APIs of any
+// kind. Registered below but NOT activated; CpuBrushRenderer remains the
+// active renderer. This exists purely to verify the registry/dispatcher
+// architecture supports a second implementation.
+const GpuBrushRenderer = {
+  drawDab(d,rendererContext){
+    // intentionally empty
+  },
+  beginStroke(){
+    // intentionally empty
+  },
+  endStroke(){
+    // intentionally empty
+  },
+  invalidateCaches(which){
+    // intentionally empty
+  },
+  getCacheStats(){
+    return { analytic:0, softRound:0, tip:0 };
+  },
+  getLineContinuity(){
+    return null;
+  },
+  setLineContinuity(value){
+    // intentionally empty
+  },
+  getTipAlphaBuffer(){
+    return null;
+  },
+  setTipAlphaSeedPixels(value){
+    // intentionally empty
+  },
+  setTipAlphaInvalidationReason(value){
+    // intentionally empty
+  },
+  getTipAlphaInvalidationReason(){
+    return null;
+  },
+};
+
 // CPU renderer registers itself and becomes the active renderer. This is
 // the only registration call in the codebase today — the exact same
 // runtime state (BrushRenderer.active === CpuBrushRenderer) as before
 // Phase 2B, just reached via the registry instead of a hardcoded field.
 BrushRenderer.registerRenderer('cpu',CpuBrushRenderer);
 BrushRenderer.setActiveRenderer('cpu');
+
+// GPU renderer registers itself but is NOT activated. CPU stays active.
+BrushRenderer.registerRenderer('gpu',GpuBrushRenderer);
 
 window.CpuBrushRenderer = CpuBrushRenderer;
 window.BrushRenderer = BrushRenderer;
