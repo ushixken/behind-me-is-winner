@@ -1087,6 +1087,12 @@ const BrushRenderer = {
   _preferredName: 'cpu',
   _preferenceListeners: [],
   active: null,
+  // Phase 5J: frame-integration diagnostics — plain counter/timestamp
+  // only, owned by the dispatcher itself (not _gpuState), since
+  // withFrame() is a dispatcher-level convenience and applies
+  // regardless of which renderer is active.
+  _wrappedFrames: 0,
+  _lastWrapTime: null,
   // Phase 4O: startup diagnostics only. These record the outcome of the
   // most recent applyPreferredRenderer() call (result, failure reason,
   // and timestamp) purely for status reporting — no GPU resources
@@ -1172,6 +1178,36 @@ const BrushRenderer = {
       return this.active.endFrame();
     }
     return true;
+  },
+  // Phase 5J: lightweight frame integration helper. Calls this.beginFrame()
+  // (itself a pure forwarder — see above, safely a no-op if the active
+  // renderer doesn't implement frame lifecycle methods), runs the
+  // callback, then calls this.endFrame() in a finally block so the
+  // frame is always closed out even if the callback throws, and
+  // returns the callback's own result. Does not switch renderers — no
+  // setActiveRenderer()/activateRenderer()/applyPreferredRenderer()
+  // call anywhere in this method. Increments the dispatcher-level
+  // wrappedFrames counter and records lastWrapTime regardless of
+  // whether the active renderer actually supports beginFrame/endFrame,
+  // since "a frame was wrapped" is true either way.
+  withFrame(callback){
+    this.beginFrame();
+    try{
+      return (typeof callback==='function')?callback():undefined;
+    }finally{
+      this.endFrame();
+      this._wrappedFrames+=1;
+      this._lastWrapTime=Date.now();
+    }
+  },
+  // Phase 5J: read-only frame-integration diagnostics. Exposes only
+  // plain numbers/timestamps — never _gpuState or any adapter/device/
+  // queue/pipeline/shader/buffer/texture/context object.
+  getFrameIntegrationDiagnostics(){
+    return {
+      wrappedFrames: this._wrappedFrames,
+      lastWrapTime: this._lastWrapTime
+    };
   },
   invalidateCaches(which){ return this.active.invalidateCaches(which); },
   getCacheStats(){ return this.active.getCacheStats(); },
