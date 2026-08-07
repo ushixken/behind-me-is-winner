@@ -1064,6 +1064,7 @@ const BrushRenderer = {
   _renderers: {},
   _activeName: null,
   _preferredName: 'cpu',
+  _preferenceListeners: [],
   active: null,
   // Registers a renderer implementation under `name`. Does not activate it.
   registerRenderer(name,renderer){
@@ -1131,9 +1132,31 @@ const BrushRenderer = {
   setPreferredRenderer(name){
     this._preferredName=name;
     this.savePreferredRenderer();
+    this._notifyPreferenceChanged();
   },
   getPreferredRenderer(){
     return this._preferredName;
+  },
+  // Phase 4H: simple internal pub/sub for preference-change
+  // notifications. Storage/listener management only — no activation,
+  // no renderer switching, no DOM/UI involvement. Listeners receive
+  // only { name: <preferred renderer name> }, never any GPU resource.
+  onPreferenceChanged(callback){
+    this._preferenceListeners.push(callback);
+  },
+  removePreferenceChanged(callback){
+    const idx=this._preferenceListeners.indexOf(callback);
+    if(idx!==-1) this._preferenceListeners.splice(idx,1);
+  },
+  _notifyPreferenceChanged(){
+    const payload={name:this._preferredName};
+    for(const cb of this._preferenceListeners.slice()){
+      try{
+        cb(payload);
+      }catch(e){
+        // Listener errors must not break preference storage.
+      }
+    }
   },
   // Phase 4E: localStorage persistence for the preference only — never
   // activates a renderer. loadPreferredRenderer() reads the stored
