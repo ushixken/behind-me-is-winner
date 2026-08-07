@@ -3237,6 +3237,26 @@ const GpuBrushRenderer = {
         device: device,
         format: _gpuState.canvasFormat,
         alphaMode: 'premultiplied',
+        // Fix: the canvas's swapchain texture (returned by
+        // context.getCurrentTexture(), see _presentLayerToCanvas()) is
+        // used as the COPY DESTINATION of a copyTextureToTexture() from
+        // layerTexture (the persistent, committed-strokes surface) —
+        // that's how the visible canvas gets seeded with previously
+        // committed content before the in-progress stroke is blended on
+        // top. GPUCanvasConfiguration.usage defaults to
+        // RENDER_ATTACHMENT only, which does NOT include COPY_DST, so
+        // that copy was a silent WebGPU validation failure on every
+        // call. It happened to go unnoticed WITHIN a single stroke
+        // because the browser can retain the same acquired swapchain
+        // texture across several synchronous calls in one task/frame —
+        // but the moment a new stroke's first present acquires a fresh
+        // (blank) swapchain texture, the failed copy left it blank
+        // instead of seeded with layerTexture's content, and the new
+        // stroke's live-preview compose (loadOp:'load') then blended
+        // onto that blank texture instead of onto the previous,
+        // already-committed stroke — making it disappear the instant
+        // the next stroke began, with no frame/layer switch involved.
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST,
       });
       _gpuState.configured=true;
       _gpuState.initialized=true;

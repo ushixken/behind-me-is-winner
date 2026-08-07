@@ -3345,7 +3345,7 @@ function _endStroke(pointerId){
   // returns, before the awaited GPU-idle signal resolves. Passing the
   // snapshot explicitly means the save still lands on the frame the stroke
   // was actually drawn on, not wherever curLayer/curFrame ends up next.
-  if(drawing){drawing=false;_flushStrokeTail();if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_restoreSelectionScopePixels();_cleanupErasedSmartOwnership();if(typeof window.saveActiveToKeyAsync==='function')window.saveActiveToKeyAsync(curLayer,curFrame);else saveActiveToKey();}
+  if(drawing){drawing=false;_flushStrokeTail();if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_restoreSelectionScopePixels();_cleanupErasedSmartOwnership();_lastStrokeSavePromise=(typeof window.saveActiveToKeyAsync==='function')?window.saveActiveToKeyAsync(curLayer,curFrame):(saveActiveToKey(),null);}
   if(lineStart&&(_lineDragging||_curveToolGesture)){
     // Line drag aborted mid-gesture (pointercancel, tab blur, etc.) -- undo
     // was never pushed and the layer was never touched, so just discard the
@@ -3368,6 +3368,23 @@ function _endStroke(pointerId){
   _activeStrokePointerId=null;
   _strokeOwnerLayer=-1;_strokeOwnerFrame=-1;
 }
+// Phase 6F.8.5: finishActiveDrawingBeforeArtworkChange() used to return a
+// plain boolean, even though the stroke-completion path it triggers
+// (_endStroke() -> saveActiveToKeyAsync()) is asynchronous when GPU is
+// authoritative -- it only awaits BrushRenderer.waitForGPU() and THEN
+// reads getActiveSurface() to capture the finished stroke into the stored
+// key. Every caller of this function (loadFrame() in particular) treated
+// its return as synchronous and immediately went on to load the NEW
+// frame's content into the *same* shared GPU layerTexture/canvas via
+// BrushRenderer.loadActiveSurface() -- clobbering layerTexture (and the
+// canvas saveActiveToKeyAsync() will eventually read from) before that
+// pending save ever got to capture the just-finished stroke. That race is
+// what made a stroke silently vanish the moment the user changed frames:
+// the key never received the real pixels, so switching back later loaded
+// blank/stale content. _lastStrokeSavePromise captures whatever promise
+// (or null, for CPU/no-op) _endStroke()'s save produced so callers can
+// await it before touching the shared surface again.
+let _lastStrokeSavePromise=null;
 window.finishActiveDrawingBeforeArtworkChange=function(nextLayer,nextFrame){
   // Pointer-up stabilization catch-up still owns an uncommitted stroke even
   // though `drawing` is already false. Resolve that session synchronously so
@@ -3380,10 +3397,11 @@ window.finishActiveDrawingBeforeArtworkChange=function(nextLayer,nextFrame){
   if(!active){
     _recompGeneration++;if(_recompRAFHandle)cancelAnimationFrame(_recompRAFHandle);_recompRAFHandle=0;_recompRAF=false;_frameDirty=null;_strokeDirty=null;
     if(_strokePreviewCtx&&_strokePreviewCanvas)_strokePreviewCtx.clearRect(0,0,_strokePreviewCanvas.width,_strokePreviewCanvas.height);
-    return false;
+    return null;
   }
   const destinationLayer=nextLayer,destinationFrame=nextFrame;
   _endingForArtworkChange=true;
+  _lastStrokeSavePromise=null;
   try{
     if(_strokeOwnerLayer>=0)curLayer=_strokeOwnerLayer;
     if(_strokeOwnerFrame>=0)curFrame=_strokeOwnerFrame;
@@ -3393,7 +3411,14 @@ window.finishActiveDrawingBeforeArtworkChange=function(nextLayer,nextFrame){
     _recompGeneration++;if(_recompRAFHandle)cancelAnimationFrame(_recompRAFHandle);_recompRAFHandle=0;_recompRAF=false;_frameDirty=null;_strokeDirty=null;
     curLayer=destinationLayer;curFrame=destinationFrame;
   }
-  return true;
+  // Return the pending save promise (set by _endStroke() below, via
+  // saveActiveToKeyAsync()) so callers -- specifically loadFrame() --
+  // can wait for the just-finished stroke to actually be captured before
+  // overwriting the shared GPU surface with a different frame's content.
+  // null here (CPU renderer, or saveActiveToKeyAsync unavailable) means
+  // the save already happened synchronously and it's safe to proceed
+  // immediately, same as the old `return true` behavior.
+  return _lastStrokeSavePromise;
 };
 document.addEventListener('visibilitychange',()=>{
   if(document.hidden){_endStroke();}

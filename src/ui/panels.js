@@ -359,7 +359,27 @@ window.saveActiveToKeyAsync=saveActiveToKeyAsync;
 
 function loadFrame(li,fi){
   if(typeof window.prepareTransformForArtworkChange==='function')window.prepareTransformForArtworkChange(li,fi);
-  if(typeof window.finishActiveDrawingBeforeArtworkChange==='function')window.finishActiveDrawingBeforeArtworkChange(li,fi);
+  // Phase 6F.8.5: finishActiveDrawingBeforeArtworkChange() may return a
+  // pending save promise (GPU renderer, stroke was in progress) instead
+  // of finishing synchronously -- see its comment in brush-engine.js.
+  // The rest of this function loads (fi)'s content onto the SAME shared
+  // GPU layerTexture/canvas that pending save still needs to read FROM
+  // (via BrushRenderer.getActiveSurface()) to capture the stroke that
+  // was just finished on the OLD frame. Running _loadFrameBody() before
+  // that save resolves overwrites layerTexture first, so the save wakes
+  // up and captures the NEW frame's content into the OLD frame's key --
+  // this is the root cause of "changing frame and returning removes GPU
+  // strokes". Waiting for the promise (a no-op chain for CPU/null) fixes
+  // it without changing loadFrame()'s synchronous signature/behavior for
+  // any caller that isn't mid-stroke on GPU.
+  const _pendingSave=(typeof window.finishActiveDrawingBeforeArtworkChange==='function')?window.finishActiveDrawingBeforeArtworkChange(li,fi):null;
+  if(_pendingSave&&typeof _pendingSave.then==='function'){
+    _pendingSave.then(()=>_loadFrameBody(li,fi));
+    return;
+  }
+  _loadFrameBody(li,fi);
+}
+function _loadFrameBody(li,fi){
   if(window.CameraSystem&&typeof CameraSystem.evaluateAt==='function')CameraSystem.evaluateAt(fi);
   const k=getHeldKey(li,fi);
   // Revised GPU integration: resolve the CW×CH source image once (either
@@ -831,14 +851,24 @@ function goToFrame(f,addSel,noSel,selectionOnly){
   // could grab synchronously, which is what let a just-drawn stroke vanish
   // when the user immediately scrubbed to another frame.
   const _saveLayer=curLayer,_saveFrame=curFrame;
-  if(typeof window.saveActiveToKeyAsync==='function')window.saveActiveToKeyAsync(_saveLayer,_saveFrame);else saveActiveToKey();
-  curFrame=Math.max(0,Math.min(TOTAL-1,f));
-  window.TimelineScrubController?.reset(curFrame);
-  if(!noSel){if(!addSel) selectedFrames.clear();selectedFrames.add(curFrame);}
-  loadFrame(curLayer,curFrame);
-  window.AudioPlaybackEngine?.frameChanged(curFrame,{playing:typeof playing==='boolean'&&playing,scrubbing:typeof scrubbing==='boolean'&&scrubbing});
-  if(selectionOnly&&typeof refreshTimelineSelection==='function')refreshTimelineSelection();
-  else renderTimeline();
+  // Phase 6F.8.5: this pre-save's own promise (GPU renderer) must resolve
+  // -- i.e. actually read the old frame's pixels off the shared GPU
+  // surface -- before loadFrame() below is allowed to load a different
+  // frame's content onto that same surface, or the pre-save silently
+  // captures the WRONG (new) frame instead. See loadFrame()'s comment in
+  // this file and finishActiveDrawingBeforeArtworkChange()'s comment in
+  // brush-engine.js for the full race this closes.
+  const _preSave=(typeof window.saveActiveToKeyAsync==='function')?window.saveActiveToKeyAsync(_saveLayer,_saveFrame):(saveActiveToKey(),null);
+  const _proceed=()=>{
+    curFrame=Math.max(0,Math.min(TOTAL-1,f));
+    window.TimelineScrubController?.reset(curFrame);
+    if(!noSel){if(!addSel) selectedFrames.clear();selectedFrames.add(curFrame);}
+    loadFrame(curLayer,curFrame);
+    window.AudioPlaybackEngine?.frameChanged(curFrame,{playing:typeof playing==='boolean'&&playing,scrubbing:typeof scrubbing==='boolean'&&scrubbing});
+    if(selectionOnly&&typeof refreshTimelineSelection==='function')refreshTimelineSelection();
+    else renderTimeline();
+  };
+  if(_preSave&&typeof _preSave.then==='function')_preSave.then(_proceed);else _proceed();
 }
 function switchLayer(li,options){
   options=options||{};
@@ -849,16 +879,23 @@ function switchLayer(li,options){
   // ~12 existing callers, but the save itself must not read GPU pixels
   // before GPU has actually finished the last stroke.
   const _saveLayer=curLayer,_saveFrame=curFrame;
-  if(typeof window.saveActiveToKeyAsync==='function')window.saveActiveToKeyAsync(_saveLayer,_saveFrame);else saveActiveToKey();
-  curLayer=li;activeGroupId=null;selectedGroupIds.clear();layerShiftAnchor=li;groupShiftAnchor=null;
-  if(typeof window.clearCameraTimelineSelection==='function')window.clearCameraTimelineSelection();
-  if(!options.preserveTimelineSelection&&typeof syncTimelineSelectionToActiveLayer==='function')syncTimelineSelectionToActiveLayer();
-  if(!options.skipLoadFrame)loadFrame(curLayer,curFrame);
-  syncOpacityControls();renderLayerPanel();
-  if(options.skipTimelineRender&&typeof refreshTimelineSelection==='function')refreshTimelineSelection();
-  else renderTimeline();
-  if(window.PaletteDocker&&typeof window.PaletteDocker.refresh==='function') window.PaletteDocker.refresh();
-  window.dispatchEvent(new CustomEvent('active-layer-changed',{detail:{layerIndex:curLayer,layer:layers[curLayer]}}));
+  // Phase 6F.8.5: same race as goToFrame() above -- wait for this pre-save
+  // to actually finish reading the OLD layer's GPU surface before
+  // loadFrame() below loads the NEW layer onto that shared surface.
+  const _preSave=(typeof window.saveActiveToKeyAsync==='function')?window.saveActiveToKeyAsync(_saveLayer,_saveFrame):(saveActiveToKey(),null);
+  const _proceed=()=>{
+    curLayer=li;activeGroupId=null;selectedGroupIds.clear();layerShiftAnchor=li;groupShiftAnchor=null;
+    if(typeof window.clearCameraTimelineSelection==='function')window.clearCameraTimelineSelection();
+    if(!options.preserveTimelineSelection&&typeof syncTimelineSelectionToActiveLayer==='function')syncTimelineSelectionToActiveLayer();
+    if(!options.skipLoadFrame)loadFrame(curLayer,curFrame);
+    syncOpacityControls();renderLayerPanel();
+    if(options.skipTimelineRender&&typeof refreshTimelineSelection==='function')refreshTimelineSelection();
+    else renderTimeline();
+    if(window.PaletteDocker&&typeof window.PaletteDocker.refresh==='function') window.PaletteDocker.refresh();
+    window.dispatchEvent(new CustomEvent('active-layer-changed',{detail:{layerIndex:curLayer,layer:layers[curLayer]}}));
+  };
+  if(_preSave&&typeof _preSave.then==='function'){_preSave.then(_proceed);return;}
+  _proceed();
 }
 
 // ════════════════════════════════════════════════════════════════
