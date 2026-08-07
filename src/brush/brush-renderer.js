@@ -1746,6 +1746,14 @@ const _gpuState = {
   // notified the renderer after a frame was presented.
   presentedFrames: 0,
   lastPresentTime: null,
+  // Phase 5P: renderer-idle diagnostics — plain fields only (a count, a
+  // timestamp). No GPU resources are created or destroyed here;
+  // rendererIdle() itself performs no flush, no command submission, no
+  // shader/pipeline/buffer/texture work — it exists purely so callers
+  // can verify the engine notified the renderer once all pending
+  // stroke-completion work had finished.
+  idleTransitions: 0,
+  lastIdleTime: null,
 };
 
 // Phase 2C: GpuBrushRenderer skeleton. Implements the exact same public
@@ -2199,6 +2207,40 @@ const GpuBrushRenderer = {
     return {
       presentedFrames: _gpuState.presentedFrames,
       lastPresentTime: _gpuState.lastPresentTime
+    };
+  },
+  // Phase 5P: dispatcher-level renderer-idle notification. Pure
+  // forwarder — calls the active renderer's rendererIdle() only if it
+  // implements one (GpuBrushRenderer does, as of Phase 5P;
+  // CpuBrushRenderer does not and is left unmodified), and never
+  // reassigns `this.active`. No setActiveRenderer()/activateRenderer()/
+  // applyPreferredRenderer() call, no renderer switching of any kind —
+  // a renderer with no rendererIdle() is a no-op success.
+  notifyRendererIdle(){
+    if(this.active && typeof this.active.rendererIdle==='function'){
+      return this.active.rendererIdle();
+    }
+    return true;
+  },
+  // Phase 5P: renderer-idle notification. Called by the dispatcher
+  // (BrushRenderer.notifyRendererIdle()) after the engine's own
+  // authoritative stroke-completion sequence (endStroke ->
+  // flushActiveRenderer -> recomposite -> presentActiveRenderer) has
+  // already finished — this method itself performs no flush, no
+  // command submission, and creates or destroys no GPU resource (no
+  // shader, pipeline, buffer, or texture). It only increments a
+  // diagnostics counter and records a timestamp, then returns true.
+  rendererIdle(){
+    _gpuState.idleTransitions+=1;
+    _gpuState.lastIdleTime=Date.now();
+    return true;
+  },
+  // Phase 5P: read-only idle diagnostics. Exposes only plain
+  // numbers/timestamps, never any GPU resource/object.
+  getIdleDiagnostics(){
+    return {
+      idleTransitions: _gpuState.idleTransitions,
+      lastIdleTime: _gpuState.lastIdleTime
     };
   },
   // Phase 5G: stroke lifecycle integration. beginStroke() clears any

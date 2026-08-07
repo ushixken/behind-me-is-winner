@@ -3231,6 +3231,14 @@ function _completePostStrokePresentation(layerIndex,frameIndex){
     // switching/activation, no rendering/batching/stabilization
     // change — purely a post-presentation notification.
     if(window.BrushRenderer) BrushRenderer.presentActiveRenderer();
+    // Phase 5P: immediately after presentation has been acknowledged
+    // (BrushRenderer.presentActiveRenderer() directly above), notify
+    // the active renderer that all stroke-completion work has
+    // finished via the dispatcher-level BrushRenderer.notifyRendererIdle()
+    // API only. No renderer switching/activation, no GPU resource
+    // creation/destruction, no rendering/batching/stabilization change
+    // — purely a post-presentation idle notification.
+    if(window.BrushRenderer) BrushRenderer.notifyRendererIdle();
   }
 }
 // BUG FIX ("brush turns into an eraser / smears the canvas after
