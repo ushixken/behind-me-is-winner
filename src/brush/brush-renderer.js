@@ -1221,6 +1221,20 @@ const BrushRenderer = {
     }
     return null;
   },
+  // Phase 5S: dispatcher-level renderer memory diagnostics accessor.
+  // Pure forwarder — calls the active renderer's getMemoryDiagnostics()
+  // only if it implements one (GpuBrushRenderer does, as of Phase 5S;
+  // CpuBrushRenderer does not and is left unmodified), and never
+  // reassigns `this.active`. No setActiveRenderer()/activateRenderer()/
+  // applyPreferredRenderer() call, no renderer switching of any kind.
+  // Returns null when unavailable, matching the other diagnostics
+  // forwarders above.
+  getRendererMemoryDiagnostics(){
+    if(this.active && typeof this.active.getMemoryDiagnostics==='function'){
+      return this.active.getMemoryDiagnostics();
+    }
+    return null;
+  },
   // Phase 5I: dispatcher-level frame lifecycle forwarding. Pure
   // forwarders — each calls the corresponding method on the active
   // renderer only if it implements one (GpuBrushRenderer does;
@@ -1716,6 +1730,19 @@ const _gpuState = {
   // submitCommands), reused as-is.
   framesSubmitted: 0,
   lastFrameTime: null,
+  // Phase 5S: renderer-owned resource-count diagnostics only. No new
+  // GPU resources are created because of these fields — they are
+  // incremented at existing creation/destruction sites and never reset,
+  // matching the cumulative-diagnostic-history pattern used by every
+  // other counter in this object.
+  vertexBuffersCreated: 0,
+  vertexBuffersDestroyed: 0,
+  pipelinesCreated: 0,
+  pipelinesDestroyed: 0,
+  shaderModulesCreated: 0,
+  shaderModulesDestroyed: 0,
+  commandEncodersCreated: 0,
+  renderPassesStarted: 0,
   // Phase 5C: dedicated resources for the minimal visible dab quad.
   // Kept entirely separate from the Phase 3H fullscreen-triangle
   // pipeline/shader (_gpuState.pipeline/shaderModule) so that pipeline's
@@ -1974,6 +2001,10 @@ const GpuBrushRenderer = {
     _gpuState.dabShaderModule=shaderModule;
     _gpuState.dabPipelineLayout=pipelineLayout;
     _gpuState.dabPipeline=pipeline;
+    // Phase 5S: diagnostics only — mirrors the resources just created
+    // above; does not change what was created.
+    _gpuState.shaderModulesCreated++;
+    _gpuState.pipelinesCreated++;
     return true;
   },
   // Phase 5F: ensures the shared batch vertex buffer can hold at least
@@ -1993,11 +2024,15 @@ const GpuBrushRenderer = {
     if(_gpuState.dabVertexBuffer){
       _gpuState.dabVertexBuffer.destroy();
       _gpuState.dabVertexBuffer=null;
+      // Phase 5S: diagnostics only — records the destroy() above.
+      _gpuState.vertexBuffersDestroyed++;
     }
     _gpuState.dabVertexBuffer=_gpuState.device.createBuffer({
       size: capacity*6*2*4,
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
     });
+    // Phase 5S: diagnostics only — records the createBuffer() above.
+    _gpuState.vertexBuffersCreated++;
     _gpuState.dabBatchCapacity=capacity;
     return true;
   },
@@ -2564,6 +2599,8 @@ const GpuBrushRenderer = {
     if(!_gpuState.initialized) return false;
     if(!_gpuState.device) return false;
     _gpuState.commandEncoder=_gpuState.device.createCommandEncoder();
+    // Phase 5S: diagnostics only — records the createCommandEncoder() above.
+    _gpuState.commandEncodersCreated++;
     _gpuState.commandBuffer=null;
     return true;
   },
@@ -2610,6 +2647,8 @@ const GpuBrushRenderer = {
         storeOp: 'store',
       }],
     });
+    // Phase 5S: diagnostics only — records the beginRenderPass() above.
+    _gpuState.renderPassesStarted++;
     // Phase 3I: bind the pipeline to the freshly-opened render pass, if
     // one exists. This only sets the pipeline state on the pass — it
     // does not issue draw()/drawIndexed()/drawIndirect()/
@@ -2696,6 +2735,11 @@ const GpuBrushRenderer = {
     _gpuState.pipelineLayout=pipelineLayout;
     _gpuState.pipeline=renderPipeline;
     // bindGroupLayout and bindGroup remain null — nothing to bind yet.
+
+    // Phase 5S: diagnostics only — mirrors the resources just created
+    // above; does not change what was created.
+    _gpuState.shaderModulesCreated++;
+    _gpuState.pipelinesCreated++;
 
     return true;
   },
@@ -2858,6 +2902,22 @@ const GpuBrushRenderer = {
     return {
       framesSubmitted: _gpuState.framesSubmitted,
       lastFrameTime: _gpuState.lastFrameTime
+    };
+  },
+  // Phase 5S: read-only renderer-owned resource-count diagnostics.
+  // Exposes only plain cumulative numbers — never any GPU resource
+  // object. Metadata only; does not affect rendering behavior or
+  // resource lifetime, and counters are never reset here.
+  getMemoryDiagnostics(){
+    return {
+      vertexBuffersCreated: _gpuState.vertexBuffersCreated,
+      vertexBuffersDestroyed: _gpuState.vertexBuffersDestroyed,
+      pipelinesCreated: _gpuState.pipelinesCreated,
+      pipelinesDestroyed: _gpuState.pipelinesDestroyed,
+      shaderModulesCreated: _gpuState.shaderModulesCreated,
+      shaderModulesDestroyed: _gpuState.shaderModulesDestroyed,
+      commandEncodersCreated: _gpuState.commandEncodersCreated,
+      renderPassesStarted: _gpuState.renderPassesStarted
     };
   },
 };
