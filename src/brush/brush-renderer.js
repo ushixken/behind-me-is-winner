@@ -1179,6 +1179,34 @@ const BrushRenderer = {
     }
     return true;
   },
+  // Phase 5P: dispatcher-level renderer-idle notification. Pure
+  // forwarder — calls the active renderer's rendererIdle() only if it
+  // implements one (GpuBrushRenderer does, as of Phase 5P;
+  // CpuBrushRenderer does not and is left unmodified), and never
+  // reassigns `this.active`. No setActiveRenderer()/activateRenderer()/
+  // applyPreferredRenderer() call, no renderer switching of any kind —
+  // a renderer with no rendererIdle() is a no-op success.
+  notifyRendererIdle(){
+    if(this.active && typeof this.active.rendererIdle==='function'){
+      return this.active.rendererIdle();
+    }
+    return true;
+  },
+  // Phase 5Q: dispatcher-level renderer-session diagnostics accessor.
+  // Pure forwarder — calls the active renderer's
+  // getSessionDiagnostics() only if it implements one (GpuBrushRenderer
+  // does, as of Phase 5Q; CpuBrushRenderer does not and is left
+  // unmodified), and never reassigns `this.active`. No
+  // setActiveRenderer()/activateRenderer()/applyPreferredRenderer()
+  // call, no renderer switching of any kind. Returns null (not true)
+  // when unavailable, since this is a diagnostics accessor, not a
+  // fire-and-forget notification.
+  getRendererSessionDiagnostics(){
+    if(this.active && typeof this.active.getSessionDiagnostics==='function'){
+      return this.active.getSessionDiagnostics();
+    }
+    return null;
+  },
   // Phase 5I: dispatcher-level frame lifecycle forwarding. Pure
   // forwarders — each calls the corresponding method on the active
   // renderer only if it implements one (GpuBrushRenderer does;
@@ -1754,6 +1782,15 @@ const _gpuState = {
   // stroke-completion work had finished.
   idleTransitions: 0,
   lastIdleTime: null,
+  // Phase 5Q: renderer session lifetime diagnostics — plain fields
+  // only (timestamps, counts). No GPU resources are created or
+  // destroyed here; these track when the current session started,
+  // when it was last active, and cumulative stroke/frame counts for
+  // that session.
+  sessionStartedAt: null,
+  sessionLastActivity: null,
+  sessionStrokeCount: 0,
+  sessionFrameCount: 0,
 };
 
 // Phase 2C: GpuBrushRenderer skeleton. Implements the exact same public
@@ -2176,6 +2213,11 @@ const GpuBrushRenderer = {
     _gpuState.framesEnded+=1;
     _gpuState.lastFrameEndTime=Date.now();
     _gpuState.lastFrameFlushResult=result;
+    // Phase 5Q: session-lifetime tracking — a frame ending counts as
+    // session activity. Plain counter/timestamp only, no new rendering
+    // path and no change to the flush result computed above.
+    _gpuState.sessionFrameCount+=1;
+    _gpuState.sessionLastActivity=Date.now();
     return result;
   },
   // Phase 5I: read-only frame lifecycle diagnostics. Exposes only
@@ -2209,19 +2251,11 @@ const GpuBrushRenderer = {
       lastPresentTime: _gpuState.lastPresentTime
     };
   },
-  // Phase 5P: dispatcher-level renderer-idle notification. Pure
-  // forwarder — calls the active renderer's rendererIdle() only if it
-  // implements one (GpuBrushRenderer does, as of Phase 5P;
-  // CpuBrushRenderer does not and is left unmodified), and never
-  // reassigns `this.active`. No setActiveRenderer()/activateRenderer()/
-  // applyPreferredRenderer() call, no renderer switching of any kind —
-  // a renderer with no rendererIdle() is a no-op success.
-  notifyRendererIdle(){
-    if(this.active && typeof this.active.rendererIdle==='function'){
-      return this.active.rendererIdle();
-    }
-    return true;
-  },
+  // Phase 5P: dispatcher-level renderer-idle notification lives on
+  // BrushRenderer (the dispatcher), not here — see BrushRenderer.
+  // notifyRendererIdle() below. rendererIdle() itself, the
+  // GPU-specific implementation, is defined further down alongside
+  // getIdleDiagnostics().
   // Phase 5P: renderer-idle notification. Called by the dispatcher
   // (BrushRenderer.notifyRendererIdle()) after the engine's own
   // authoritative stroke-completion sequence (endStroke ->
@@ -2233,6 +2267,10 @@ const GpuBrushRenderer = {
   rendererIdle(){
     _gpuState.idleTransitions+=1;
     _gpuState.lastIdleTime=Date.now();
+    // Phase 5Q: session-lifetime tracking — going idle still counts as
+    // session activity (it marks when the session was last touched,
+    // not when it was busy). Plain timestamp only.
+    _gpuState.sessionLastActivity=Date.now();
     return true;
   },
   // Phase 5P: read-only idle diagnostics. Exposes only plain
@@ -2241,6 +2279,16 @@ const GpuBrushRenderer = {
     return {
       idleTransitions: _gpuState.idleTransitions,
       lastIdleTime: _gpuState.lastIdleTime
+    };
+  },
+  // Phase 5Q: read-only renderer-session diagnostics. Exposes only
+  // plain numbers/timestamps, never any GPU resource/object.
+  getSessionDiagnostics(){
+    return {
+      sessionStartedAt: _gpuState.sessionStartedAt,
+      sessionLastActivity: _gpuState.sessionLastActivity,
+      sessionStrokeCount: _gpuState.sessionStrokeCount,
+      sessionFrameCount: _gpuState.sessionFrameCount
     };
   },
   // Phase 5G: stroke lifecycle integration. beginStroke() clears any
@@ -2259,6 +2307,17 @@ const GpuBrushRenderer = {
       _gpuState.dabQueue.length=0;
       _gpuState.queuedDabs=0;
     }
+    // Phase 5Q: session-lifetime tracking. A session begins at the
+    // first stroke since the last reset() (sessionStartedAt stays
+    // null, and is only set once, until reset() clears it again);
+    // every stroke increments the cumulative session stroke count and
+    // updates the last-activity timestamp. Plain counters/timestamps
+    // only — no new rendering path.
+    if(_gpuState.sessionStartedAt===null){
+      _gpuState.sessionStartedAt=Date.now();
+    }
+    _gpuState.sessionStrokeCount+=1;
+    _gpuState.sessionLastActivity=Date.now();
   },
   // Phase 5G: endStroke() now submits whatever dabs this stroke queued
   // by calling the existing flushDabQueue() (Phase 5F) — no new
@@ -2651,6 +2710,13 @@ const GpuBrushRenderer = {
     // counters — those are a cumulative diagnostic history, not
     // initialization state. Resetting GPU init state must not hide how
     // many strokes/dabs were received, drawn, or failed.
+    // Phase 5Q: reset() ends the current renderer session by clearing
+    // only sessionStartedAt/sessionLastActivity — the next beginStroke()
+    // will start a new session. sessionStrokeCount/sessionFrameCount
+    // are cumulative diagnostics (matching every other counter in this
+    // object) and are intentionally NOT cleared here.
+    _gpuState.sessionStartedAt=null;
+    _gpuState.sessionLastActivity=null;
     return true;
   },
   // Phase 4T: metadata only — GPU renderer does not draw yet, so
