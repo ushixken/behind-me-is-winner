@@ -1617,5 +1617,15 @@ BrushRenderer.registerRenderer('gpu',GpuBrushRenderer);
 // renderer remains 'cpu' regardless of what preference was loaded.
 BrushRenderer.loadPreferredRenderer();
 
+// Phase 4J: minimal startup hook — attempt the loaded preference once,
+// through the existing applyPreferredRenderer() -> activateRenderer()
+// path only. No new activation logic is added here: activateRenderer()
+// already leaves the current renderer active and returns false if the
+// target's initialize() fails (see Phase 4A), so a GPU preference that
+// fails to initialize simply leaves CPU active, exactly as it already
+// did before this call existed. setActiveRenderer('gpu') is never
+// called directly — only activateRenderer(), via applyPreferredRenderer().
+BrushRenderer.applyPreferredRenderer();
+
 window.CpuBrushRenderer = CpuBrushRenderer;
 window.BrushRenderer = BrushRenderer;
