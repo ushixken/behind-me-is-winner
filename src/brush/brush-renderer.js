@@ -1235,6 +1235,20 @@ const BrushRenderer = {
     }
     return null;
   },
+  // Phase 5T: dispatcher-level renderer error diagnostics accessor.
+  // Pure forwarder — calls the active renderer's getErrorDiagnostics()
+  // only if it implements one (GpuBrushRenderer does, as of Phase 5T;
+  // CpuBrushRenderer does not and is left unmodified), and never
+  // reassigns `this.active`. No setActiveRenderer()/activateRenderer()/
+  // applyPreferredRenderer() call, no renderer switching of any kind.
+  // Returns null when unavailable, matching the other diagnostics
+  // forwarders above.
+  getRendererErrorDiagnostics(){
+    if(this.active && typeof this.active.getErrorDiagnostics==='function'){
+      return this.active.getErrorDiagnostics();
+    }
+    return null;
+  },
   // Phase 5I: dispatcher-level frame lifecycle forwarding. Pure
   // forwarders — each calls the corresponding method on the active
   // renderer only if it implements one (GpuBrushRenderer does;
@@ -1743,6 +1757,14 @@ const _gpuState = {
   shaderModulesDestroyed: 0,
   commandEncodersCreated: 0,
   renderPassesStarted: 0,
+  // Phase 5T: cumulative error diagnostics only. No rendering/behavior
+  // is driven by these fields — they are populated solely by
+  // _recordError() below, which reuses (not duplicates) the existing
+  // initError/catch bookkeeping already present in this file.
+  lastError: null,
+  lastErrorTime: null,
+  errorCount: 0,
+  errorHistory: [],
   // Phase 5C: dedicated resources for the minimal visible dab quad.
   // Kept entirely separate from the Phase 3H fullscreen-triangle
   // pipeline/shader (_gpuState.pipeline/shaderModule) so that pipeline's
@@ -1862,6 +1884,24 @@ const _gpuState = {
 // it is GPU-renderer-specific lifecycle setup that must be called
 // explicitly and does not affect the active renderer.
 const GpuBrushRenderer = {
+  // Phase 5T: cumulative error-diagnostics recorder. Converts Error
+  // objects to their message string (falling back to String(error) for
+  // non-Error values), stores lastError/lastErrorTime, increments
+  // errorCount, and appends {message,time} to errorHistory, trimmed to
+  // the newest 20 entries. Diagnostics only — never throws, never
+  // changes any rendering/activation/GPU-resource state, and does not
+  // itself set _gpuState.initError (call sites keep setting that
+  // separately, exactly as before, since getInitError() depends on it).
+  _recordError(error){
+    const message=(error instanceof Error)?error.message:String(error);
+    _gpuState.lastError=message;
+    _gpuState.lastErrorTime=Date.now();
+    _gpuState.errorCount+=1;
+    _gpuState.errorHistory.push({message,time:_gpuState.lastErrorTime});
+    if(_gpuState.errorHistory.length>20){
+      _gpuState.errorHistory.splice(0,_gpuState.errorHistory.length-20);
+    }
+  },
   // Phase 5R: timing helper only — no GPU work, no rendering. Uses
   // performance.now() when available (sub-millisecond, monotonic),
   // falling back to Date.now() otherwise. Used solely to measure
@@ -2235,6 +2275,10 @@ const GpuBrushRenderer = {
       _gpuState.failedBatches+=1;
       _gpuState.failedDabs+=dabCount;
       _gpuState.commandEncoder=null;
+      // Phase 5T: reuse the shared error recorder instead of duplicating
+      // bookkeeping logic — diagnostics only, does not change the
+      // counters/behavior above.
+      this._recordError(err||'flush-failed');
       this._recordFlush(flushReason,false);
       return false;
     }
@@ -2505,16 +2549,19 @@ const GpuBrushRenderer = {
     try{
       if(!navigator||!navigator.gpu){
         _gpuState.initError='webgpu-unsupported';
+        this._recordError('webgpu-unsupported');
         return false;
       }
       const adapter=await navigator.gpu.requestAdapter();
       if(!adapter){
         _gpuState.initError='adapter-unavailable';
+        this._recordError('adapter-unavailable');
         return false;
       }
       const device=await adapter.requestDevice();
       if(!device){
         _gpuState.initError='device-unavailable';
+        this._recordError('device-unavailable');
         return false;
       }
       _gpuState.adapter=adapter;
@@ -2538,6 +2585,7 @@ const GpuBrushRenderer = {
       const canvas=(typeof activeC!=='undefined'&&activeC)?activeC:(typeof document!=='undefined'?document.getElementById('active-canvas'):null);
       if(!canvas){
         _gpuState.initError='canvas-unavailable';
+        this._recordError('canvas-unavailable');
         _gpuState.canvas=null;
         _gpuState.context=null;
         _gpuState.configured=false;
@@ -2546,6 +2594,7 @@ const GpuBrushRenderer = {
       const context=canvas.getContext('webgpu');
       if(!context){
         _gpuState.initError='webgpu-context-unavailable';
+        this._recordError('webgpu-context-unavailable');
         _gpuState.canvas=null;
         _gpuState.context=null;
         _gpuState.configured=false;
@@ -2569,6 +2618,7 @@ const GpuBrushRenderer = {
       return true;
     }catch(err){
       _gpuState.initError=(err&&err.message)||'gpu-init-failed';
+      this._recordError(err||'gpu-init-failed');
       _gpuState.adapter=null;
       _gpuState.device=null;
       _gpuState.queue=null;
@@ -2854,6 +2904,12 @@ const GpuBrushRenderer = {
     // object) and are intentionally NOT cleared here.
     _gpuState.sessionStartedAt=null;
     _gpuState.sessionLastActivity=null;
+    // Phase 5T: reset clears only the latest-error snapshot fields.
+    // errorCount/errorHistory are cumulative diagnostic history (same
+    // pattern as every other counter in this object) and are
+    // intentionally NOT cleared here.
+    _gpuState.lastError=null;
+    _gpuState.lastErrorTime=null;
     return true;
   },
   // Phase 4T: metadata only — GPU renderer does not draw yet, so
@@ -2918,6 +2974,18 @@ const GpuBrushRenderer = {
       shaderModulesDestroyed: _gpuState.shaderModulesDestroyed,
       commandEncodersCreated: _gpuState.commandEncodersCreated,
       renderPassesStarted: _gpuState.renderPassesStarted
+    };
+  },
+  // Phase 5T: read-only cumulative error diagnostics. Exposes only
+  // plain strings/numbers/timestamps — never any GPU resource object.
+  // errorHistory is returned as a defensive copy (new array of shallow
+  // copies) so callers cannot mutate internal state.
+  getErrorDiagnostics(){
+    return {
+      lastError: _gpuState.lastError,
+      lastErrorTime: _gpuState.lastErrorTime,
+      errorCount: _gpuState.errorCount,
+      errorHistory: _gpuState.errorHistory.map(entry=>({...entry}))
     };
   },
 };
