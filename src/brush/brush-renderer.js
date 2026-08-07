@@ -2120,13 +2120,18 @@ const GpuBrushRenderer = {
     const tip=typeof window!=='undefined'?window.brushTipCanvas:null;
     const tipW=tip&&tip.width||1,tipH=tip&&tip.height||1,tipReference=Math.max(tipW,tipH);
     const tipMode=tip?(window.brushTipMode==='replace'?2:1):0;
+    // Phase 6K: mirror the CPU custom-tip dimension rule using the already
+    // resolved per-dab roundness (or the static tip setting when absent).
+    const baseRoundness=d&&d.roundness!=null?d.roundness:(window.brushTipRoundness==null?1:window.brushTipRoundness);
+    const tipRoundness=tip?Math.max(window.brushTipMinimumRoundness||0,Math.min(1,baseRoundness)):1;
+    const compressWidth=tipW<tipH;
     const reflected=rendererContext&&((!!rendererContext.flipX)!=(!!rendererContext.flipY));
     const tipRotation=tip?(reflected?-(d.rotation||0):(d.rotation||0)):0;
     return this._enqueueDab(Object.assign({},d,{
       gpuInnerFrac:innerFrac,
       gpuTipMode:tipMode,
-      gpuTipScaleX:tipW/tipReference,
-      gpuTipScaleY:tipH/tipReference,
+      gpuTipScaleX:(tipW/tipReference)*(compressWidth?tipRoundness:1),
+      gpuTipScaleY:(tipH/tipReference)*(compressWidth?1:tipRoundness),
       gpuTipRotation:tipRotation
     }));
   },
