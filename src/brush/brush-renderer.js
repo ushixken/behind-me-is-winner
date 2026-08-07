@@ -1161,6 +1161,23 @@ const BrushRenderer = {
       // Storage unavailable/blocked — no-op.
     }
   },
+  // Phase 4G: UI-facing helpers. getRendererOptions() builds its list
+  // dynamically from the registry (never hardcoded) so it reflects
+  // whatever's currently registered. selectPreferredRenderer() only
+  // validates the name and delegates to setPreferredRenderer() — it
+  // never activates or initializes a renderer, and never calls
+  // applyPreferredRenderer().
+  getRendererOptions(){
+    return Object.keys(this._renderers).map(name=>({
+      name,
+      available: true
+    }));
+  },
+  selectPreferredRenderer(name){
+    if(!this._renderers[name]) return false;
+    this.setPreferredRenderer(name);
+    return true;
+  },
   // Phase 4D: pure delegation — applies whatever preference is
   // currently stored by calling the existing activateRenderer() with
   // it. No duplicated activation logic, no new state, not called from
