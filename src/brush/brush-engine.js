@@ -4202,6 +4202,15 @@ function _handleMoveEvent(e){
     }
   }
   _scheduleRecomposite();
+  // Phase 6A: flush any GPU dabs queued by this move event using the
+  // existing dispatcher-level BrushRenderer.flushActiveRenderer() API
+  // (the same flush path already wired in at stroke-commit above) so
+  // GPU rendering updates continuously while the pen is moving, not
+  // only at pen-up. This is a no-op for the CPU renderer (no
+  // flushPendingDabs method) and for the GPU renderer when nothing is
+  // queued (flushPendingDabs() itself is an empty-queue no-op) — no
+  // new rendering path, no direct queue/batch access, no timer.
+  if(window.BrushRenderer) BrushRenderer.flushActiveRenderer();
 }
 // pointerrawupdate (Chromium 77+ / Windows Ink API) fires IN ADDITION TO
 // pointermove for the same physical pen movement Ã¢â‚¬â€ it does not replace it.
