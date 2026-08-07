@@ -1545,6 +1545,22 @@ const _gpuState = {
   // submitCommands), reused as-is.
   framesSubmitted: 0,
   lastFrameTime: null,
+  // Phase 5C: dedicated resources for the minimal visible dab quad.
+  // Kept entirely separate from the Phase 3H fullscreen-triangle
+  // pipeline/shader (_gpuState.pipeline/shaderModule) so that pipeline's
+  // existing behavior (submitEmptyFrame/renderFrame/selfTest) is left
+  // completely untouched. No textures, samplers, or bind groups — a
+  // single flat-color pipeline plus a small vertex buffer holding one
+  // quad (2 triangles / 6 vertices) that is overwritten per dab.
+  dabPipeline: null,
+  dabShaderModule: null,
+  dabPipelineLayout: null,
+  dabVertexBuffer: null,
+  // Diagnostics only: counts actual submitted GPU dab draw calls, as
+  // opposed to dabsReceived (Phase 5A), which counts every drawDab()
+  // call regardless of whether the GPU was initialized/able to draw.
+  dabsDrawn: 0,
+  lastDabTime: null,
 };
 
 // Phase 2C: GpuBrushRenderer skeleton. Implements the exact same public
@@ -1565,8 +1581,137 @@ const GpuBrushRenderer = {
   // BrushRenderer dispatcher (this.active.beginStroke/drawDab/
   // endStroke) — no rendering, no shader/pipeline/buffer/texture work,
   // no brush appearance/stabilization/pressure logic touched.
+  // Phase 5C: connects drawDab() to a minimal real GPU draw call. Still
+  // no stabilization/pressure/spacing/hardness/texture/blending logic —
+  // those all remain entirely in brush-engine.js and are never read
+  // here. This only takes the already-computed dab position/radius
+  // (d.x, d.y, d.r) and submits a single flat-color quad at that
+  // location using the existing command-encoder/submit helpers
+  // (createCommandEncoder/submitCommands) from Phase 3D. If the GPU
+  // renderer isn't initialized (e.g. GPU was registered but never
+  // manually activated/initialized), this is a no-op beyond the
+  // existing receive-counter bookkeeping — no fallback to CPU is
+  // performed here or anywhere else.
   drawDab(d,rendererContext){
     _gpuState.dabsReceived+=1;
+    if(!_gpuState.initialized) return;
+    if(!_gpuState.device || !_gpuState.context || !_gpuState.canvas) return;
+    if(!this.createDabPipeline()) return;
+    this._writeDabQuad(d);
+    if(!this.createCommandEncoder()) return;
+    const currentTexture=_gpuState.context.getCurrentTexture();
+    if(!currentTexture) return;
+    const view=currentTexture.createView();
+    // loadOp:'load' so each dab is composited onto whatever the GPU
+    // canvas already contains rather than clearing it — a stroke is
+    // many dabs, not one. This does not touch the CPU canvas/context.
+    const pass=_gpuState.commandEncoder.beginRenderPass({
+      colorAttachments: [{
+        view,
+        loadOp: 'load',
+        storeOp: 'store',
+      }],
+    });
+    pass.setPipeline(_gpuState.dabPipeline);
+    pass.setVertexBuffer(0,_gpuState.dabVertexBuffer);
+    pass.draw(6);
+    pass.end();
+    if(!this.submitCommands()) return;
+    _gpuState.dabsDrawn+=1;
+    _gpuState.lastDabTime=Date.now();
+  },
+  // Phase 5C: smallest possible GPU-side dab representation — a single
+  // flat-color quad (2 triangles, 6 vertices, no indices), no bind
+  // group, no uniforms, no texture/sampler. Idempotent: returns true
+  // immediately once created. Entirely separate from createPipeline()
+  // (Phase 3H), which remains untouched and still used by
+  // renderFrame()/submitEmptyFrame()/selfTest().
+  createDabPipeline(){
+    if(_gpuState.dabPipeline) return true;
+    if(!_gpuState.device || !_gpuState.canvasFormat) return false;
+    const device=_gpuState.device;
+
+    const shaderCode=`
+      struct VertexOut {
+        @builtin(position) position: vec4<f32>,
+      };
+
+      @vertex
+      fn vs_main(@location(0) pos: vec2<f32>) -> VertexOut {
+        var out: VertexOut;
+        out.position = vec4<f32>(pos, 0.0, 1.0);
+        return out;
+      }
+
+      @fragment
+      fn fs_main() -> @location(0) vec4<f32> {
+        // Single fixed opaque color. No texture, no pressure/opacity
+        // modulation, no blending logic — a plain solid dab shape.
+        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+      }
+    `;
+
+    const shaderModule=device.createShaderModule({code:shaderCode});
+    const pipelineLayout=device.createPipelineLayout({bindGroupLayouts:[]});
+
+    const pipeline=device.createRenderPipeline({
+      layout:pipelineLayout,
+      vertex:{
+        module:shaderModule,
+        entryPoint:'vs_main',
+        buffers:[{
+          arrayStride: 2*4,
+          attributes:[{shaderLocation:0, offset:0, format:'float32x2'}],
+        }],
+      },
+      fragment:{
+        module:shaderModule,
+        entryPoint:'fs_main',
+        targets:[{format:_gpuState.canvasFormat}],
+      },
+      primitive:{
+        topology:'triangle-list',
+      },
+    });
+
+    // 6 vertices * 2 floats * 4 bytes = 48 bytes. COPY_DST so
+    // _writeDabQuad() can overwrite it per dab via queue.writeBuffer.
+    const vertexBuffer=device.createBuffer({
+      size: 6*2*4,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
+
+    _gpuState.dabShaderModule=shaderModule;
+    _gpuState.dabPipelineLayout=pipelineLayout;
+    _gpuState.dabPipeline=pipeline;
+    _gpuState.dabVertexBuffer=vertexBuffer;
+    return true;
+  },
+  // Phase 5C: converts the dab's existing pixel-space position/radius
+  // (d.x, d.y, d.r — the same values CpuBrushRenderer.drawDab() already
+  // receives; no new fields are read from d) into a single NDC quad and
+  // uploads it to the vertex buffer. No pressure, hardness, rotation,
+  // roundness, or texture is read or applied — a plain axis-aligned
+  // square the size of the dab radius.
+  _writeDabQuad(d){
+    const canvas=_gpuState.canvas;
+    const w=canvas.width||1, h=canvas.height||1;
+    const r=(d&&typeof d.r==='number')?d.r:1;
+    const cx=(d&&typeof d.x==='number')?d.x:0;
+    const cy=(d&&typeof d.y==='number')?d.y:0;
+
+    const toNdc=(px,py)=>[ (px/w)*2-1, 1-(py/h)*2 ];
+
+    const [x0,y0]=toNdc(cx-r, cy-r);
+    const [x1,y1]=toNdc(cx+r, cy-r);
+    const [x2,y2]=toNdc(cx+r, cy+r);
+    const [x3,y3]=toNdc(cx-r, cy+r);
+
+    const verts=new Float32Array([
+      x0,y0,  x1,y1,  x2,y2,
+      x0,y0,  x2,y2,  x3,y3,
+    ]);
+    _gpuState.queue.writeBuffer(_gpuState.dabVertexBuffer,0,verts);
   },
   beginStroke(){
     _gpuState.inStroke=true;
@@ -1923,9 +2068,16 @@ const GpuBrushRenderer = {
     _gpuState.shaderModule=null;
     _gpuState.bindGroupLayout=null;
     _gpuState.bindGroup=null;
-    // Phase 5A: reset does not clear receive counters — those are a
-    // cumulative diagnostic history, not initialization state. Resetting
-    // GPU init state must not hide how many strokes/dabs were received.
+    // Phase 5C: dab-pipeline resources are GPU-device-bound (like the
+    // Phase 3H pipeline above) and must be recreated after a reset.
+    _gpuState.dabPipeline=null;
+    _gpuState.dabShaderModule=null;
+    _gpuState.dabPipelineLayout=null;
+    _gpuState.dabVertexBuffer=null;
+    // Phase 5A/5C: reset does not clear receive/draw counters — those
+    // are a cumulative diagnostic history, not initialization state.
+    // Resetting GPU init state must not hide how many strokes/dabs were
+    // received or drawn.
     return true;
   },
   // Phase 4T: metadata only — GPU renderer does not draw yet, so
@@ -1949,6 +2101,16 @@ const GpuBrushRenderer = {
       strokesReceived: _gpuState.strokesReceived,
       dabsReceived: _gpuState.dabsReceived,
       inStroke: _gpuState.inStroke
+    };
+  },
+  // Phase 5C: read-only diagnostics confirming real GPU dab draw calls
+  // were submitted (as opposed to merely received — see
+  // getReceiveCounters()). Exposes only plain numbers/timestamps, never
+  // any GPU resource object.
+  getDabDrawStats(){
+    return {
+      dabsDrawn: _gpuState.dabsDrawn,
+      lastDabTime: _gpuState.lastDabTime
     };
   },
   // Phase 5B: read-only frame-submission diagnostics. Exposes only
