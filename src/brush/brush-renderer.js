@@ -972,6 +972,16 @@ const BrushRenderer = {
   // transformation — reference identity is preserved exactly.
   getLineContinuity(){ return _autoHardRoundPrevDab; },
   setLineContinuity(value){ _autoHardRoundPrevDab=value; },
+  // Phase 1G-B2: renderer-owned tip alpha bookkeeping (_tipAlphaBuf,
+  // _tipAlphaSeedPixels, _tipAlphaInvalidationReason). brush-engine.js
+  // previously read/wrote these module-level variables directly from
+  // window.setBrushTip. These methods give it an API surface instead, so
+  // the variables stay private to this file. No cloning or transformation
+  // — values/reference identity are preserved exactly.
+  getTipAlphaBuffer(){ return _tipAlphaBuf; },
+  setTipAlphaSeedPixels(value){ _tipAlphaSeedPixels=value; },
+  setTipAlphaInvalidationReason(value){ _tipAlphaInvalidationReason=value; },
+  getTipAlphaInvalidationReason(){ return _tipAlphaInvalidationReason; },
 };
 
 window.CpuBrushRenderer = CpuBrushRenderer;

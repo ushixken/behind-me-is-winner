@@ -3758,15 +3758,15 @@ function _normalizeTipAlpha(canvas){
   return canvas;
 }
 window.setBrushTip=function(canvas,referenceDiameter,invalidationReason){
-  const trace=window.CustomTipCacheTrace,previousCanvas=window.brushTipCanvas,previousVersion=window.brushTipVersion||0,previousAlphaBuffer=_tipAlphaBuf;
+  const trace=window.CustomTipCacheTrace,previousCanvas=window.brushTipCanvas,previousVersion=window.brushTipVersion||0,previousAlphaBuffer=BrushRenderer.getTipAlphaBuffer();
   _lastNormalizedTipPixels=null;window.brushTipCanvas=canvas?_normalizeTipAlpha(canvas):null;
   window.brushTipSpacingBasis=canvas?'image-width':'diameter';
   window.brushTipReferenceDiameter=canvas&&Number.isFinite(Number(referenceDiameter))&&Number(referenceDiameter)>0?Number(referenceDiameter):null;
   window.brushTipVersion=(window.brushTipVersion||0)+1;
-  _tipAlphaSeedPixels=window.TipReadbackExperiment&&window.TipReadbackExperiment.mode==='D'&&_lastNormalizedTipPixels?{data:_lastNormalizedTipPixels.data,w:_lastNormalizedTipPixels.w,h:_lastNormalizedTipPixels.h,version:window.brushTipVersion}:null;
+  BrushRenderer.setTipAlphaSeedPixels(window.TipReadbackExperiment&&window.TipReadbackExperiment.mode==='D'&&_lastNormalizedTipPixels?{data:_lastNormalizedTipPixels.data,w:_lastNormalizedTipPixels.w,h:_lastNormalizedTipPixels.h,version:window.brushTipVersion}:null);
   BrushRenderer.invalidateCaches({tip:true,aa:true,stamp:true});
-  _tipAlphaInvalidationReason=invalidationReason||'setBrushTip-call';
-  if(trace)trace.invalidated({reason:_tipAlphaInvalidationReason,previousVersion,tipVersion:window.brushTipVersion,previousTipCanvasId:trace.objectId(previousCanvas,'tip-canvas'),tipCanvasId:trace.objectId(window.brushTipCanvas,'tip-canvas'),sameCanvas:previousCanvas===window.brushTipCanvas,alphaBufferId:trace.objectId(previousAlphaBuffer,'alpha-buffer'),stack:(new Error()).stack});
+  BrushRenderer.setTipAlphaInvalidationReason(invalidationReason||'setBrushTip-call');
+  if(trace)trace.invalidated({reason:BrushRenderer.getTipAlphaInvalidationReason(),previousVersion,tipVersion:window.brushTipVersion,previousTipCanvasId:trace.objectId(previousCanvas,'tip-canvas'),tipCanvasId:trace.objectId(window.brushTipCanvas,'tip-canvas'),sameCanvas:previousCanvas===window.brushTipCanvas,alphaBufferId:trace.objectId(previousAlphaBuffer,'alpha-buffer'),stack:(new Error()).stack});
   if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.tipChanged();
 };
 window.clearBrushTip=function(){
