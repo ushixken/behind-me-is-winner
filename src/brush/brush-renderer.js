@@ -2167,6 +2167,18 @@ const GpuBrushRenderer = {
   // uploading a whole buffer itself, so a full batch of dabs can be
   // assembled into one typed array and uploaded in a single
   // queue.writeBuffer() call from flushDabQueue().
+  // Phase 6C: brush-engine.js's _stampDab() already resolves the
+  // pressure-controlled radius once, via _getEffectiveBrushParams(e) ->
+  // _computeEffectiveParams(e), and stores it as d.r on the very same
+  // dab object that is handed to CpuBrushRenderer.drawDab(d,...) AND
+  // BrushRenderer.drawDab(d,...) (the dispatcher) for the active
+  // renderer — GpuBrushRenderer.drawDab() enqueues that exact object
+  // (_enqueueDab(), unmodified) and this method reads d.r straight off
+  // it below. So the quad this method emits is already sized from the
+  // identical pressure-scaled radius the CPU path uses for the same
+  // dab — no pressure is recomputed from pointer/pressure data here,
+  // no second pipeline, dab order in the queue is untouched. Verified
+  // by inspection; no functional change was required in this method.
   _writeDabQuadInto(arr,offset,d,w,h){
     const r=(d&&typeof d.r==='number')?d.r:1;
     const cx=(d&&typeof d.x==='number')?d.x:0;
