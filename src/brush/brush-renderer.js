@@ -1938,6 +1938,11 @@ const _gpuState = {
   composeBindGroupLayout: null,
   composeSampler: null,
   composeUniformBuffer: null,
+  composeTextureSampler: null,
+  composeTextureMask: null,
+  composeTextureMaskKey: null,
+  composeTextureMaskWidth: 0,
+  composeTextureMaskHeight: 0,
   submittedDabs: 0,
   droppedDabs: 0,
   lastBatchTime: null,
@@ -2498,6 +2503,48 @@ const GpuBrushRenderer = {
   // paint pipeline mirrors the dab pipeline's premultiplied source-over
   // blend. Phase 6H adds a destination-out variant using the same shader,
   // bindings, opacity, and full-screen compose pass for eraser strokes.
+  // Phase 6L: reuse the CPU texture pipeline's already-scaled grayscale
+  // alpha mask. The mask is cached by the same settings that rebuild the
+  // CPU canvas, and a white fallback keeps non-textured brushes unchanged.
+  _ensureComposeTextureMask(){
+    if(!_gpuState.device||!_gpuState.queue) return null;
+    const enabled=typeof window!=='undefined'&&!!window.brushTextureEnabled&&!!window.brushTextureCanvas;
+    const strength=enabled?Math.max(0,Math.min(1,Number(window.brushTextureStrength)||0)):0;
+    if(enabled&&typeof _getScaledTextureCanvas==='function') _getScaledTextureCanvas();
+    const mask=enabled&&typeof _texGrayMaskCanvas!=='undefined'?_texGrayMaskCanvas:null;
+    const width=mask&&mask.width||1,height=mask&&mask.height||1;
+    const key=mask?[
+      window.brushTextureVersion||0,
+      Number(window.brushTextureScale)||1,
+      !!window.brushTextureInvert,
+      Number(window.brushTextureBrightness)||0,
+      Number(window.brushTextureContrast)||0,
+      width,height
+    ].join('|'):'fallback';
+    if(!_gpuState.composeTextureMask||_gpuState.composeTextureMaskKey!==key){
+      if(_gpuState.composeTextureMask)_gpuState.composeTextureMask.destroy();
+      _gpuState.composeTextureMask=_gpuState.device.createTexture({
+        size:{width,height},
+        format:'r8unorm',
+        usage:GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_DST,
+      });
+      if(mask){
+        const rgba=mask.getContext('2d',{willReadFrequently:true}).getImageData(0,0,width,height).data;
+        const alpha=new Uint8Array(width*height);
+        for(let i=0,p=3;i<alpha.length;i++,p+=4) alpha[i]=rgba[p];
+        _gpuState.queue.writeTexture({texture:_gpuState.composeTextureMask},alpha,{bytesPerRow:width},{width,height});
+      }else{
+        _gpuState.queue.writeTexture({texture:_gpuState.composeTextureMask},new Uint8Array([255]),{bytesPerRow:1},{width:1,height:1});
+      }
+      _gpuState.composeTextureMaskKey=key;
+      _gpuState.composeTextureMaskWidth=width;
+      _gpuState.composeTextureMaskHeight=height;
+    }
+    if(!_gpuState.composeTextureSampler)_gpuState.composeTextureSampler=_gpuState.device.createSampler({
+      addressModeU:'repeat',addressModeV:'repeat',magFilter:'linear',minFilter:'linear'
+    });
+    return {texture:_gpuState.composeTextureMask,width,height,strength};
+  },
   createComposePipeline(){
     if(_gpuState.composePipeline&&_gpuState.composeErasePipeline) return true;
     if(!_gpuState.device || !_gpuState.canvasFormat) return false;
@@ -2521,14 +2568,22 @@ const GpuBrushRenderer = {
       }
       @group(0) @binding(0) var srcSampler: sampler;
       @group(0) @binding(1) var srcTexture: texture_2d<f32>;
-      struct Opacity { value: f32 };
-      @group(0) @binding(2) var<uniform> opacityUniform: Opacity;
+      struct ComposeParams {
+        opacity: f32,
+        texture_strength: f32,
+        texture_repeat: vec2<f32>,
+      };
+      @group(0) @binding(2) var<uniform> params: ComposeParams;
+      @group(0) @binding(3) var textureSampler: sampler;
+      @group(0) @binding(4) var textureMask: texture_2d<f32>;
       @fragment
       fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         let sample = textureSample(srcTexture, srcSampler, in.uv);
-        // sample is already premultiplied (see dab pipeline fs_main);
-        // scaling both components by opacity keeps it premultiplied.
-        return sample * opacityUniform.value;
+        let grain = textureSample(textureMask, textureSampler, in.uv * params.texture_repeat).r;
+        let texture_factor = mix(1.0, grain, params.texture_strength);
+        // Hardness/tip coverage is already baked into the premultiplied
+        // stroke sample. Texture masks that result once, before opacity.
+        return sample * (params.opacity * texture_factor);
       }
     `;
     const shaderModule=device.createShaderModule({code:shaderCode});
@@ -2537,6 +2592,8 @@ const GpuBrushRenderer = {
         {binding:0,visibility:GPUShaderStage.FRAGMENT,sampler:{type:'filtering'}},
         {binding:1,visibility:GPUShaderStage.FRAGMENT,texture:{sampleType:'float'}},
         {binding:2,visibility:GPUShaderStage.FRAGMENT,buffer:{type:'uniform'}},
+        {binding:3,visibility:GPUShaderStage.FRAGMENT,sampler:{type:'filtering'}},
+        {binding:4,visibility:GPUShaderStage.FRAGMENT,texture:{sampleType:'float'}},
       ],
     });
     const pipelineLayout=device.createPipelineLayout({bindGroupLayouts:[bindGroupLayout]});
@@ -2586,14 +2643,24 @@ const GpuBrushRenderer = {
   // composite argument selects source-over paint or destination-out erase.
   _runComposePass(srcTexture,targetView,opacity,loadOp,composite){
     if(!this.createComposePipeline()) return false;
+    const textureInfo=this._ensureComposeTextureMask();
+    if(!textureInfo) return false;
     const device=_gpuState.device;
-    device.queue.writeBuffer(_gpuState.composeUniformBuffer,0,new Float32Array([Math.max(0,Math.min(1,opacity)),0,0,0]));
+    const canvasWidth=_gpuState.canvas&&_gpuState.canvas.width||1;
+    const canvasHeight=_gpuState.canvas&&_gpuState.canvas.height||1;
+    const textureStrength=composite==='erase'?0:textureInfo.strength;
+    device.queue.writeBuffer(_gpuState.composeUniformBuffer,0,new Float32Array([
+      Math.max(0,Math.min(1,opacity)),textureStrength,
+      canvasWidth/textureInfo.width,canvasHeight/textureInfo.height
+    ]));
     const bindGroup=device.createBindGroup({
       layout:_gpuState.composeBindGroupLayout,
       entries:[
         {binding:0,resource:_gpuState.composeSampler},
         {binding:1,resource:srcTexture.createView()},
         {binding:2,resource:{buffer:_gpuState.composeUniformBuffer}},
+        {binding:3,resource:_gpuState.composeTextureSampler},
+        {binding:4,resource:textureInfo.texture.createView()},
       ],
     });
     const encoder=device.createCommandEncoder();
@@ -3691,6 +3758,12 @@ const GpuBrushRenderer = {
     _gpuState.composeBindGroupLayout=null;
     _gpuState.composeSampler=null;
     _gpuState.composeUniformBuffer=null;
+    _gpuState.composeTextureSampler=null;
+    if(_gpuState.composeTextureMask)_gpuState.composeTextureMask.destroy();
+    _gpuState.composeTextureMask=null;
+    _gpuState.composeTextureMaskKey=null;
+    _gpuState.composeTextureMaskWidth=0;
+    _gpuState.composeTextureMaskHeight=0;
     // Phase 5E: the live queue itself (pending, not-yet-flushed dabs)
     // is cleared on reset since it was staged for a GPU device that is
     // being torn down — those dabs can never be submitted against it.
