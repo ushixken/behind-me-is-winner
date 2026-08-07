@@ -1098,11 +1098,21 @@ const BrushRenderer = {
 // and drawDab/beginStroke/endStroke/invalidateCaches remain no-ops — but
 // the line-continuity and tip-alpha methods now read/write this object
 // instead of returning hardcoded nulls.
+//
+// Phase 3A: adds GPU device lifecycle fields (adapter, device, queue,
+// initialized, initError). These are populated only by initialize()
+// below and are never touched by drawDab/beginStroke/endStroke/etc. in
+// this phase — no rendering work reads or writes them yet.
 const _gpuState = {
   lineContinuity: null,
   tipAlphaBuffer: null,
   tipAlphaSeedPixels: null,
   tipAlphaInvalidationReason: null,
+  adapter: null,
+  device: null,
+  queue: null,
+  initialized: false,
+  initError: null,
 };
 
 // Phase 2C: GpuBrushRenderer skeleton. Implements the exact same public
@@ -1111,6 +1121,12 @@ const _gpuState = {
 // kind. Registered below but NOT activated; CpuBrushRenderer remains the
 // active renderer. This exists purely to verify the registry/dispatcher
 // architecture supports a second implementation.
+//
+// Phase 3A: adds initialize() — WebGPU adapter/device acquisition only.
+// No pipelines, shaders, textures, or buffers are created. initialize()
+// is not part of the frozen BrushRenderer dispatch contract (Phase 2E);
+// it is GPU-renderer-specific lifecycle setup that must be called
+// explicitly and does not affect the active renderer.
 const GpuBrushRenderer = {
   drawDab(d,rendererContext){
     // intentionally empty
@@ -1144,6 +1160,48 @@ const GpuBrushRenderer = {
   },
   getTipAlphaInvalidationReason(){
     return _gpuState.tipAlphaInvalidationReason;
+  },
+  // Phase 3A: initialization/lifecycle only — detects WebGPU support,
+  // requests an adapter and device, and stores them in the renderer's
+  // private _gpuState. Does NOT create a pipeline, shader, texture, or
+  // buffer, and does NOT render anything. Returns a Promise<boolean>:
+  // true on success, false on any failure (unsupported browser, adapter
+  // unavailable, device request rejected, etc.). Never throws — every
+  // failure path is caught internally so no exception can escape to the
+  // caller. Calling this does NOT switch the active renderer; that
+  // remains an explicit, separate decision via
+  // BrushRenderer.setActiveRenderer(), which this method never calls.
+  async initialize(){
+    if(_gpuState.initialized) return true;
+    try{
+      if(!navigator||!navigator.gpu){
+        _gpuState.initError='webgpu-unsupported';
+        return false;
+      }
+      const adapter=await navigator.gpu.requestAdapter();
+      if(!adapter){
+        _gpuState.initError='adapter-unavailable';
+        return false;
+      }
+      const device=await adapter.requestDevice();
+      if(!device){
+        _gpuState.initError='device-unavailable';
+        return false;
+      }
+      _gpuState.adapter=adapter;
+      _gpuState.device=device;
+      _gpuState.queue=device.queue;
+      _gpuState.initialized=true;
+      _gpuState.initError=null;
+      return true;
+    }catch(err){
+      _gpuState.initError=(err&&err.message)||'gpu-init-failed';
+      _gpuState.adapter=null;
+      _gpuState.device=null;
+      _gpuState.queue=null;
+      _gpuState.initialized=false;
+      return false;
+    }
   },
 };
 
