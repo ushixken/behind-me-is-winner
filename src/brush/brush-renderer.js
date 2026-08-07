@@ -1114,13 +1114,26 @@ const BrushRenderer = {
   // commandEncoder, etc.) are ever surfaced here. `available` is built
   // dynamically from whatever is currently registered, never hardcoded.
   getRendererStatus(){
+    // Phase 4M: errors built dynamically by asking each registered
+    // renderer for its own safe diagnostic string via getInitError()
+    // (if it exposes one) — no renderer name is hardcoded here, and
+    // only string error data is ever included, never GPU objects.
+    const errors={};
+    for(const name of Object.keys(this._renderers)){
+      const renderer=this._renderers[name];
+      const err=(renderer && typeof renderer.getInitError==='function')
+        ?renderer.getInitError()
+        :null;
+      if(err) errors[name]=err;
+    }
     return {
       active: this._activeName,
       available: Object.keys(this._renderers),
       initialized: {
         cpu: true,
         gpu: _gpuState.initialized
-      }
+      },
+      errors
     };
   },
   // Phase 4C: preference storage only. setPreferredRenderer() merely
@@ -1597,6 +1610,14 @@ const GpuBrushRenderer = {
   async selfTest(){
     if(!(await this.initialize())) return false;
     return this.renderFrame();
+  },
+  // Phase 4M: safe, read-only diagnostic accessor. Exposes only the
+  // recorded initError string (already produced by initialize()'s own
+  // catch path) — never the adapter/device/queue/canvas/context/pipeline
+  // objects that live alongside it in _gpuState. Returns null when there
+  // is no error to report.
+  getInitError(){
+    return _gpuState.initError;
   },
 };
 

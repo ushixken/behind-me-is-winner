@@ -154,8 +154,10 @@ document.getElementById('pref-cursor-brush-shape').onchange=e=>{ if(e.target.che
     let statusText;
     if(preferred && active && preferred!==active){
       const initialized=status.initialized && status.initialized[preferred];
+      const errorMsg=status.errors && status.errors[preferred];
       statusText=preferred.toUpperCase()+' unavailable';
-      if(initialized===false) statusText+=' (not initialized)';
+      if(errorMsg) statusText+=': '+errorMsg;
+      else if(initialized===false) statusText+=' (not initialized)';
     }else if(active){
       statusText=active.toUpperCase()+' active';
     }else{
@@ -163,6 +165,28 @@ document.getElementById('pref-cursor-brush-shape').onchange=e=>{ if(e.target.che
     }
     statusLine.innerHTML='<b style="color:var(--text);">Status:</b> '+statusText;
     statusEl.appendChild(statusLine);
+
+    // Phase 4M: per-renderer initialization diagnostic line, sourced
+    // only from getRendererStatus().errors — a plain safe string per
+    // renderer (e.g. "webgpu-unsupported"), never a GPU object. Shown
+    // only for the preferred renderer when it isn't CPU, since that's
+    // the renderer whose init outcome the user actually cares about
+    // right now. "Ready" is shown when initialized with no error.
+    if(preferred){
+      const diagLine=document.createElement('div');
+      const preferredErr=status.errors && status.errors[preferred];
+      const preferredInitialized=status.initialized && status.initialized[preferred];
+      let diagText;
+      if(preferredErr){
+        diagText=preferredErr;
+      }else if(preferredInitialized){
+        diagText='Ready';
+      }else{
+        diagText='Not yet initialized';
+      }
+      diagLine.innerHTML='<b style="color:var(--text);">'+preferred.toUpperCase()+' status:</b> '+diagText;
+      statusEl.appendChild(diagLine);
+    }
   }
 
   function renderAll(){
