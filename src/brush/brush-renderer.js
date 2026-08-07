@@ -1089,6 +1089,23 @@ const BrushRenderer = {
   setTipAlphaSeedPixels(value){ return this.active.setTipAlphaSeedPixels(value); },
   setTipAlphaInvalidationReason(value){ return this.active.setTipAlphaInvalidationReason(value); },
   getTipAlphaInvalidationReason(){ return this.active.getTipAlphaInvalidationReason(); },
+  // Phase 4A: safe public API for switching renderers. Unlike
+  // setActiveRenderer() (the low-level setter, unchanged above), this
+  // validates the name is registered, no-ops if it's already active,
+  // and — if the target renderer exposes an initialize() method —
+  // awaits it before switching, leaving the current renderer active on
+  // failure. Not called from anywhere yet; does not auto-activate GPU.
+  async activateRenderer(name){
+    const renderer=this._renderers[name];
+    if(!renderer) return false;
+    if(this._activeName===name) return true;
+    if(typeof renderer.initialize==='function'){
+      const ok=await renderer.initialize();
+      if(!ok) return false;
+    }
+    this.setActiveRenderer(name);
+    return true;
+  },
 };
 
 // Phase 2D: GpuBrushRenderer owns its own private state object, entirely
