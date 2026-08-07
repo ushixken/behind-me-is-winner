@@ -1470,6 +1470,13 @@ const GpuBrushRenderer = {
     if(!this.submitCommands()) return false;
     return true;
   },
+  // Phase 3L: minimal self-test entry point. Reuses initialize() and
+  // renderFrame() as-is — no duplicated init or render logic. Not
+  // called from anywhere yet, and does not activate the GPU renderer.
+  async selfTest(){
+    if(!(await this.initialize())) return false;
+    return this.renderFrame();
+  },
 };
 
 // CPU renderer registers itself and becomes the active renderer. This is
