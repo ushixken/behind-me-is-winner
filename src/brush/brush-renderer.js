@@ -1134,6 +1134,15 @@ const BrushRenderer = {
   getPreferredRenderer(){
     return this._preferredName;
   },
+  // Phase 4D: pure delegation — applies whatever preference is
+  // currently stored by calling the existing activateRenderer() with
+  // it. No duplicated activation logic, no new state, not called from
+  // anywhere (including module init), so storing a GPU preference
+  // still has no effect until this is explicitly invoked elsewhere.
+  async applyPreferredRenderer(){
+    const preferred=this.getPreferredRenderer();
+    return this.activateRenderer(preferred);
+  },
 };
 
 // Phase 2D: GpuBrushRenderer owns its own private state object, entirely
