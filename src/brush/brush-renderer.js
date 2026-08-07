@@ -1063,6 +1063,7 @@ const CpuBrushRenderer = {
 const BrushRenderer = {
   _renderers: {},
   _activeName: null,
+  _preferredName: 'cpu',
   active: null,
   // Registers a renderer implementation under `name`. Does not activate it.
   registerRenderer(name,renderer){
@@ -1120,6 +1121,18 @@ const BrushRenderer = {
         gpu: _gpuState.initialized
       }
     };
+  },
+  // Phase 4C: preference storage only. setPreferredRenderer() merely
+  // records a name string — it never calls activateRenderer() or
+  // setActiveRenderer(), so storing a preference has no effect on which
+  // renderer is currently active. getPreferredRenderer() defaults to
+  // 'cpu' when nothing has been stored yet. No GPU resources are
+  // touched or exposed by either method.
+  setPreferredRenderer(name){
+    this._preferredName=name;
+  },
+  getPreferredRenderer(){
+    return this._preferredName;
   },
 };
 
