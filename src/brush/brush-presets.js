@@ -12,7 +12,7 @@
   // Flow (per-dab build-up within the stroke)
   bindRange('ts-flow','ts-flow-val','',v=>{brushFlow=v/100;});
   // Hardness
-  bindRange('ts-hardness','ts-hardness-val','',v=>{brushHardness=v/100;_aaDabCache.clear();_softRoundMaskCache.clear();_tipDabCache.clear();_stampCache.clear();});
+  bindRange('ts-hardness','ts-hardness-val','',v=>{brushHardness=v/100;BrushRenderer.invalidateCaches();});
   bindRange('ts-spacing','ts-spacing-val','%',v=>{window._tsSpacing=v/100;});
   const spacingEl=document.getElementById('ts-spacing');
   window._tsSpacing=spacingEl?(+spacingEl.value/100):0.12;
@@ -160,8 +160,8 @@ function updateBlendModeUI(){
   // they just need to publish the current slider value as a 0..1 fraction.
   bindRange('ts-size-jitter','ts-size-jitter-val','%',v=>{window.brushTipSizeJitter=v/100;});
   bindRange('ts-angle-jitter','ts-angle-jitter-val','%',v=>{window.brushTipAngleJitter=v/100;});
-  bindRange('ts-round-jitter','ts-round-jitter-val','%',v=>{window.brushTipRoundnessJitter=v/100;_stampCache.clear();});
-  bindRange('ts-tip-min-roundness','ts-tip-min-roundness-val','%',v=>{window.brushTipMinimumRoundness=v/100;_tipDabCache.clear();_stampCache.clear();});
+  bindRange('ts-round-jitter','ts-round-jitter-val','%',v=>{window.brushTipRoundnessJitter=v/100;BrushRenderer.invalidateCaches({stamp:true});});
+  bindRange('ts-tip-min-roundness','ts-tip-min-roundness-val','%',v=>{window.brushTipMinimumRoundness=v/100;BrushRenderer.invalidateCaches({tip:true,stamp:true});});
   bindRange('ts-scatter-amount','ts-scatter-amount-val','%',v=>{window._tsScatterAmount=v/100;});
   bindRange('ts-scatter-count','ts-scatter-count-val','',v=>{window._tsScatterCount=Math.min(50,Math.max(1,Math.round(v)));});
   if(window._tsScatterBothAxes==null) window._tsScatterBothAxes=true;
@@ -255,7 +255,7 @@ function updateBlendModeUI(){
     }
     brushAA=nextAA;
     window.brushAAMode=nextAA?_lastEnabledAAMode:'none';
-    if(changed){_aaDabCache.clear();_stampCache.clear();_tipDabCache.clear();}
+    if(changed){BrushRenderer.invalidateCaches({aa:true,stamp:true,tip:true});}
     const checkbox=document.getElementById('ts-aa');
     if(checkbox){
       checkbox.checked=brushAA;
@@ -274,7 +274,7 @@ function updateBlendModeUI(){
     const m=(mode==='weak'||mode==='medium'||mode==='strong')?mode:'medium';
     _lastEnabledAAMode=m;
     window.brushAAMode=m;
-    if(!brushAA) _setBrushAA(true); else { _aaDabCache.clear();_stampCache.clear();_tipDabCache.clear(); }
+    if(!brushAA) _setBrushAA(true); else { BrushRenderer.invalidateCaches({aa:true,stamp:true,tip:true}); }
     _syncAAModeUI();
     if(typeof applyTransform==='function')applyTransform();
   }
@@ -2755,12 +2755,12 @@ function applyToolPreset(json){
     const taperMode=document.getElementById('ts-taper-mode');
     if(taperMode) taperMode.dispatchEvent(new Event('input',{bubbles:true}));
     const mapping = {
-      'ts-size': {slider:'ts-size', val:'ts-size-val', suffix:'', extra: v=>{toolSizes[tool]=v; const bpSz=document.getElementById('bp-sz'); if(bpSz)bpSz.value=v; if(typeof refreshSizeUI==='function')refreshSizeUI(); _aaDabCache.clear();_stampCache.clear();}},
-      'ts-hardness': {slider:'ts-hardness', val:'ts-hardness-val', suffix:'', extra: v=>{brushHardness=v/100; _aaDabCache.clear(); _softRoundMaskCache.clear();_stampCache.clear();}},
+      'ts-size': {slider:'ts-size', val:'ts-size-val', suffix:'', extra: v=>{toolSizes[tool]=v; const bpSz=document.getElementById('bp-sz'); if(bpSz)bpSz.value=v; if(typeof refreshSizeUI==='function')refreshSizeUI(); BrushRenderer.invalidateCaches({aa:true,stamp:true});}},
+      'ts-hardness': {slider:'ts-hardness', val:'ts-hardness-val', suffix:'', extra: v=>{brushHardness=v/100; BrushRenderer.invalidateCaches({aa:true,softRound:true,stamp:true});}},
       'ts-opacity': {slider:'ts-opacity', val:'ts-opacity-val', suffix:'', extra: v=>{brushOpacity=v/100;}},
       'ts-flow': {slider:'ts-flow', val:'ts-flow-val', suffix:'', extra: v=>{brushFlow=v/100;}},
       'ts-spacing': {slider:'ts-spacing', val:'ts-spacing-val', suffix:'%', extra: v=>{window._tsSpacing=v/100;}},
-      'ts-roundness': {slider:'ts-roundness', val:'ts-roundness-val', suffix:'', extra: v=>{window._tsRoundness=v/100; _aaDabCache.clear();_stampCache.clear();}},
+      'ts-roundness': {slider:'ts-roundness', val:'ts-roundness-val', suffix:'', extra: v=>{window._tsRoundness=v/100; BrushRenderer.invalidateCaches({aa:true,stamp:true});}},
       'ts-aa': null,
       'ts-aa-mode': null,
       'ts-airbrush': null,
