@@ -970,6 +970,13 @@ const CpuBrushRenderer = {
   setTipAlphaSeedPixels(value){ _tipAlphaSeedPixels=value; },
   setTipAlphaInvalidationReason(value){ _tipAlphaInvalidationReason=value; },
   getTipAlphaInvalidationReason(){ return _tipAlphaInvalidationReason; },
+  // Phase 4N: trivial diagnostic contract member — CPU has no async
+  // initialization step, so its self-test is simply "yes, available".
+  // Not initialization logic, not rendering logic; purely a diagnostic
+  // signal for the dispatcher's selfTestRenderer().
+  selfTest(){
+    return true;
+  },
 };
 
 // Phase 2E: Renderer interface freeze. The methods below constitute the
@@ -1135,6 +1142,20 @@ const BrushRenderer = {
       },
       errors
     };
+  },
+  // Phase 4N: generic self-test dispatcher. Looks the renderer up by
+  // name in the registry and, if it exposes a selfTest() method, awaits
+  // it; otherwise treats "no selfTest()" as a pass. This never
+  // activates anything — no setActiveRenderer()/activateRenderer()/
+  // applyPreferredRenderer() calls — it only checks whether the named
+  // renderer can initialize/verify itself.
+  async selfTestRenderer(name){
+    const renderer=this._renderers[name];
+    if(!renderer) return false;
+    if(typeof renderer.selfTest==='function'){
+      return await renderer.selfTest();
+    }
+    return true;
   },
   // Phase 4C: preference storage only. setPreferredRenderer() merely
   // records a name string — it never calls activateRenderer() or

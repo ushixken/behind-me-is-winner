@@ -81,6 +81,17 @@ document.getElementById('pref-cursor-brush-shape').onchange=e=>{ if(e.target.che
   applyBtn.textContent='Apply Renderer';
   statusEl.insertAdjacentElement('afterend',applyBtn);
 
+  // Phase 4N: Run Renderer Test button — checks whether the currently
+  // preferred renderer can initialize/verify itself, without switching
+  // the active renderer. Sits right below Apply Renderer.
+  const testBtn=document.createElement('button');
+  testBtn.type='button';
+  testBtn.id='pref-renderer-test';
+  testBtn.className='modal-btn';
+  testBtn.style.cssText='margin-top:6px;';
+  testBtn.textContent='Run Renderer Test';
+  applyBtn.insertAdjacentElement('afterend',testBtn);
+
   function renderList(){
     if(typeof window.BrushRenderer.getRendererOptions!=='function') return;
     const options=window.BrushRenderer.getRendererOptions();
@@ -217,6 +228,37 @@ document.getElementById('pref-cursor-brush-shape').onchange=e=>{ if(e.target.che
       applyBtn.disabled=false;
       applyBtn.textContent=originalLabel;
       _applyInProgress=false;
+    }
+  });
+
+  // Phase 4N: tests the currently preferred renderer only —
+  // BrushRenderer.getPreferredRenderer() supplies the name, so this
+  // never hardcodes "cpu"/"gpu". selfTestRenderer() only checks/
+  // initializes; it never activates. Same guard/restore pattern as
+  // the Apply button above.
+  let _testInProgress=false;
+  testBtn.addEventListener('click',async()=>{
+    if(_testInProgress) return;
+    if(typeof window.BrushRenderer.selfTestRenderer!=='function') return;
+    if(typeof window.BrushRenderer.getPreferredRenderer!=='function') return;
+    _testInProgress=true;
+    const originalLabel=testBtn.textContent;
+    testBtn.disabled=true;
+    testBtn.textContent='Testing…';
+    let passed=false;
+    try{
+      const name=window.BrushRenderer.getPreferredRenderer();
+      passed=await window.BrushRenderer.selfTestRenderer(name);
+    }catch(e){
+      passed=false;
+    }finally{
+      renderAll();
+      testBtn.disabled=false;
+      testBtn.textContent=originalLabel;
+      _testInProgress=false;
+      if(typeof window.siteAlert==='function'){
+        window.siteAlert(passed?'Renderer test passed':'Renderer test failed',{title:'Renderer Test'});
+      }
     }
   });
 
