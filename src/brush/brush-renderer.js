@@ -1166,6 +1166,19 @@ const BrushRenderer = {
     }
     return true;
   },
+  // Phase 5O: dispatcher-level renderer-present notification. Pure
+  // forwarder — calls the active renderer's presentFrame() only if it
+  // implements one (GpuBrushRenderer does, as of Phase 5O;
+  // CpuBrushRenderer does not and is left unmodified), and never
+  // reassigns `this.active`. No setActiveRenderer()/activateRenderer()/
+  // applyPreferredRenderer() call, no renderer switching of any kind —
+  // a renderer with no presentFrame() is a no-op success.
+  presentActiveRenderer(){
+    if(this.active && typeof this.active.presentFrame==='function'){
+      return this.active.presentFrame();
+    }
+    return true;
+  },
   // Phase 5I: dispatcher-level frame lifecycle forwarding. Pure
   // forwarders — each calls the corresponding method on the active
   // renderer only if it implements one (GpuBrushRenderer does;
@@ -1725,6 +1738,14 @@ const _gpuState = {
   lastFrameStartTime: null,
   lastFrameEndTime: null,
   lastFrameFlushResult: null,
+  // Phase 5O: renderer-present notification diagnostics — plain fields
+  // only (a count, a timestamp). No GPU resources are created or
+  // tracked here; presentFrame() itself performs no GPU work (no
+  // submission, no flush, no command encoder/pipeline/shader/buffer/
+  // texture) — it exists purely so callers can verify the engine
+  // notified the renderer after a frame was presented.
+  presentedFrames: 0,
+  lastPresentTime: null,
 };
 
 // Phase 2C: GpuBrushRenderer skeleton. Implements the exact same public
@@ -2158,6 +2179,26 @@ const GpuBrushRenderer = {
       lastFrameStartTime: _gpuState.lastFrameStartTime,
       lastFrameEndTime: _gpuState.lastFrameEndTime,
       lastFrameFlushResult: _gpuState.lastFrameFlushResult
+    };
+  },
+  // Phase 5O: renderer-present notification. Called by the dispatcher
+  // (BrushRenderer.presentActiveRenderer()) after the engine's own
+  // authoritative recomposite()/presentation step has already
+  // completed — this method itself never submits GPU work, never
+  // flushes any queue, never creates a command encoder, pipeline,
+  // shader, buffer, or texture. It only increments a diagnostics
+  // counter and records a timestamp, then returns true.
+  presentFrame(){
+    _gpuState.presentedFrames+=1;
+    _gpuState.lastPresentTime=Date.now();
+    return true;
+  },
+  // Phase 5O: read-only presentation diagnostics. Exposes only plain
+  // numbers/timestamps, never any GPU resource/object.
+  getPresentationDiagnostics(){
+    return {
+      presentedFrames: _gpuState.presentedFrames,
+      lastPresentTime: _gpuState.lastPresentTime
     };
   },
   // Phase 5G: stroke lifecycle integration. beginStroke() clears any

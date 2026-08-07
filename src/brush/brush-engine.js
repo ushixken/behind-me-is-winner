@@ -3222,7 +3222,16 @@ function _completePostStrokePresentation(layerIndex,frameIndex){
   // change to brush rendering/stabilization/spacing/pressure/taper/
   // opacity/hardness/textures.
   if(window.BrushRenderer) BrushRenderer.flushActiveRenderer();
-  if(layerIndex>=0&&frameIndex>=0&&curLayer===layerIndex&&curFrame===frameIndex)recomposite(layerIndex,frameIndex);
+  if(layerIndex>=0&&frameIndex>=0&&curLayer===layerIndex&&curFrame===frameIndex){
+    recomposite(layerIndex,frameIndex);
+    // Phase 5O: immediately after this authoritative presentation
+    // (the recomposite() call directly above) has completed, notify
+    // the active renderer via the dispatcher-level
+    // BrushRenderer.presentActiveRenderer() API only. No renderer
+    // switching/activation, no rendering/batching/stabilization
+    // change — purely a post-presentation notification.
+    if(window.BrushRenderer) BrushRenderer.presentActiveRenderer();
+  }
 }
 // BUG FIX ("brush turns into an eraser / smears the canvas after
 // switching tabs and back"): the old code only cleared the `drawing`
