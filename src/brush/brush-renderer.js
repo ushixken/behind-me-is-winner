@@ -1093,6 +1093,12 @@ const BrushRenderer = {
   // regardless of which renderer is active.
   _wrappedFrames: 0,
   _lastWrapTime: null,
+  // Phase 5K: stroke-frame-wrapper diagnostics — plain counter/
+  // timestamp only, separate from the Phase 5J generic frame-wrap
+  // counters since withStrokeFrame() is specifically for batched
+  // stroke operations.
+  _wrappedStrokes: 0,
+  _lastStrokeFrameTime: null,
   // Phase 4O: startup diagnostics only. These record the outcome of the
   // most recent applyPreferredRenderer() call (result, failure reason,
   // and timestamp) purely for status reporting — no GPU resources
@@ -1207,6 +1213,34 @@ const BrushRenderer = {
     return {
       wrappedFrames: this._wrappedFrames,
       lastWrapTime: this._lastWrapTime
+    };
+  },
+  // Phase 5K: dispatcher helper for batched brush/stroke operations.
+  // Begins a renderer frame (this.beginFrame() — the existing pure
+  // forwarder from Phase 5I, unchanged), runs the stroke callback, and
+  // always ends the frame via a finally block (this.endFrame(), also
+  // unchanged) so the frame is closed out even if the callback throws.
+  // Returns the callback's own result. Does not call
+  // setActiveRenderer()/activateRenderer()/applyPreferredRenderer() —
+  // it never switches, initializes, or activates any renderer; it only
+  // forwards to the already-active one via beginFrame()/endFrame().
+  withStrokeFrame(callback){
+    this.beginFrame();
+    try{
+      return (typeof callback==='function')?callback():undefined;
+    }finally{
+      this.endFrame();
+      this._wrappedStrokes+=1;
+      this._lastStrokeFrameTime=Date.now();
+    }
+  },
+  // Phase 5K: read-only stroke-frame diagnostics. Exposes only plain
+  // numbers/timestamps — never _gpuState or any adapter/device/queue/
+  // pipeline/shader/buffer/texture/context object.
+  getStrokeFrameDiagnostics(){
+    return {
+      wrappedStrokes: this._wrappedStrokes,
+      lastStrokeFrameTime: this._lastStrokeFrameTime
     };
   },
   invalidateCaches(which){ return this.active.invalidateCaches(which); },
