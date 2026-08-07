@@ -1561,6 +1561,12 @@ const _gpuState = {
   // call regardless of whether the GPU was initialized/able to draw.
   dabsDrawn: 0,
   lastDabTime: null,
+  // Phase 5D: counts drawDab() calls that reached real GPU submission
+  // work but did not complete successfully (encoder/texture/pipeline
+  // failure, or an exception from the GPU API itself). Does not count
+  // calls that were simple no-ops because the GPU wasn't initialized —
+  // those only increment dabsReceived, since nothing was attempted.
+  failedDabs: 0,
 };
 
 // Phase 2C: GpuBrushRenderer skeleton. Implements the exact same public
@@ -1592,33 +1598,83 @@ const GpuBrushRenderer = {
   // manually activated/initialized), this is a no-op beyond the
   // existing receive-counter bookkeeping — no fallback to CPU is
   // performed here or anywhere else.
+  //
+  // Phase 5D: hardening only — no coordinate-formula change (the
+  // pixel->NDC math below was already correct: activeC.width/height is
+  // the same raw pixel space d.x/d.y are already expressed in
+  // elsewhere in brush-engine.js, and the y-flip already accounted for
+  // canvas 2D's top-left-down origin vs WebGPU's NDC y-up). What Phase
+  // 5D adds:
+  //   - wraps the whole submission in try/catch so any GPU error
+  //     (e.g. a lost device) can never throw out of drawDab() — it is
+  //     caught, counted in failedDabs, and returns false safely.
+  //   - returns a boolean (true = a dab was actually submitted to the
+  //     GPU queue, false = it was not, for any reason) instead of
+  //     nothing, so callers/diagnostics can tell success from no-op.
+  //   - guards against a zero-size canvas (division by zero in the
+  //     pixel->NDC conversion) before doing any GPU work.
+  //   - no new GPU resources are created per call beyond what's
+  //     strictly per-frame/per-submission in WebGPU's model (a command
+  //     encoder and a texture view must be re-acquired every call —
+  //     that's inherent to the API, not something to cache). The
+  //     pipeline, shader modules, pipeline layout, and vertex buffer
+  //     are all created exactly once (createDabPipeline() is
+  //     idempotent) and reused on every subsequent dab.
   drawDab(d,rendererContext){
     _gpuState.dabsReceived+=1;
-    if(!_gpuState.initialized) return;
-    if(!_gpuState.device || !_gpuState.context || !_gpuState.canvas) return;
-    if(!this.createDabPipeline()) return;
-    this._writeDabQuad(d);
-    if(!this.createCommandEncoder()) return;
-    const currentTexture=_gpuState.context.getCurrentTexture();
-    if(!currentTexture) return;
-    const view=currentTexture.createView();
-    // loadOp:'load' so each dab is composited onto whatever the GPU
-    // canvas already contains rather than clearing it — a stroke is
-    // many dabs, not one. This does not touch the CPU canvas/context.
-    const pass=_gpuState.commandEncoder.beginRenderPass({
-      colorAttachments: [{
-        view,
-        loadOp: 'load',
-        storeOp: 'store',
-      }],
-    });
-    pass.setPipeline(_gpuState.dabPipeline);
-    pass.setVertexBuffer(0,_gpuState.dabVertexBuffer);
-    pass.draw(6);
-    pass.end();
-    if(!this.submitCommands()) return;
-    _gpuState.dabsDrawn+=1;
-    _gpuState.lastDabTime=Date.now();
+    try{
+      if(!_gpuState.initialized) return false;
+      if(!_gpuState.device || !_gpuState.context || !_gpuState.canvas) return false;
+      const canvas=_gpuState.canvas;
+      if(!canvas.width || !canvas.height){
+        _gpuState.failedDabs+=1;
+        return false;
+      }
+      if(!this.createDabPipeline()){
+        _gpuState.failedDabs+=1;
+        return false;
+      }
+      this._writeDabQuad(d);
+      if(!this.createCommandEncoder()){
+        _gpuState.failedDabs+=1;
+        return false;
+      }
+      const currentTexture=_gpuState.context.getCurrentTexture();
+      if(!currentTexture){
+        _gpuState.commandEncoder=null;
+        _gpuState.failedDabs+=1;
+        return false;
+      }
+      const view=currentTexture.createView();
+      // loadOp:'load' so each dab is composited onto whatever the GPU
+      // canvas already contains rather than clearing it — a stroke is
+      // many dabs, not one. This does not touch the CPU canvas/context.
+      const pass=_gpuState.commandEncoder.beginRenderPass({
+        colorAttachments: [{
+          view,
+          loadOp: 'load',
+          storeOp: 'store',
+        }],
+      });
+      pass.setPipeline(_gpuState.dabPipeline);
+      pass.setVertexBuffer(0,_gpuState.dabVertexBuffer);
+      pass.draw(6);
+      pass.end();
+      if(!this.submitCommands()){
+        _gpuState.failedDabs+=1;
+        return false;
+      }
+      _gpuState.dabsDrawn+=1;
+      _gpuState.lastDabTime=Date.now();
+      return true;
+    }catch(err){
+      // Any GPU-side failure (e.g. device lost, validation error) lands
+      // here. Never throws out of drawDab(), never switches the active
+      // renderer, never touches CPU state — just counted and reported.
+      _gpuState.failedDabs+=1;
+      _gpuState.commandEncoder=null;
+      return false;
+    }
   },
   // Phase 5C: smallest possible GPU-side dab representation — a single
   // flat-color quad (2 triangles, 6 vertices, no indices), no bind
@@ -2074,10 +2130,10 @@ const GpuBrushRenderer = {
     _gpuState.dabShaderModule=null;
     _gpuState.dabPipelineLayout=null;
     _gpuState.dabVertexBuffer=null;
-    // Phase 5A/5C: reset does not clear receive/draw counters — those
-    // are a cumulative diagnostic history, not initialization state.
-    // Resetting GPU init state must not hide how many strokes/dabs were
-    // received or drawn.
+    // Phase 5A/5C/5D: reset does not clear receive/draw/failure
+    // counters — those are a cumulative diagnostic history, not
+    // initialization state. Resetting GPU init state must not hide how
+    // many strokes/dabs were received, drawn, or failed.
     return true;
   },
   // Phase 4T: metadata only — GPU renderer does not draw yet, so
@@ -2107,9 +2163,14 @@ const GpuBrushRenderer = {
   // were submitted (as opposed to merely received — see
   // getReceiveCounters()). Exposes only plain numbers/timestamps, never
   // any GPU resource object.
+  // Phase 5D: dabsReceived/dabsDrawn/failedDabs/lastDabTime in one
+  // place, per the Phase 5D minimal-diagnostics requirement. Exposes
+  // only plain numbers/timestamps, never any GPU resource object.
   getDabDrawStats(){
     return {
+      dabsReceived: _gpuState.dabsReceived,
       dabsDrawn: _gpuState.dabsDrawn,
+      failedDabs: _gpuState.failedDabs,
       lastDabTime: _gpuState.lastDabTime
     };
   },
