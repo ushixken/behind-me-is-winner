@@ -1154,6 +1154,25 @@ const BrushRenderer = {
     }
     return true;
   },
+  // Phase 5I: dispatcher-level frame lifecycle forwarding. Pure
+  // forwarders — each calls the corresponding method on the active
+  // renderer only if it implements one (GpuBrushRenderer does;
+  // CpuBrushRenderer does not and is left unmodified), and never
+  // reassigns `this.active`. No setActiveRenderer()/activateRenderer()/
+  // applyPreferredRenderer() call, no renderer switching of any kind —
+  // a renderer with no beginFrame()/endFrame() is a no-op success.
+  beginFrame(){
+    if(this.active && typeof this.active.beginFrame==='function'){
+      return this.active.beginFrame();
+    }
+    return true;
+  },
+  endFrame(){
+    if(this.active && typeof this.active.endFrame==='function'){
+      return this.active.endFrame();
+    }
+    return true;
+  },
   invalidateCaches(which){ return this.active.invalidateCaches(which); },
   getCacheStats(){ return this.active.getCacheStats(); },
   getLineContinuity(){ return this.active.getLineContinuity(); },
@@ -1627,6 +1646,15 @@ const _gpuState = {
   lastFlushReason: null,
   lastFlushResult: null,
   lastFlushTime: null,
+  // Phase 5I: frame lifecycle diagnostics — plain fields only (counts,
+  // timestamps, a boolean). No GPU resources are created or tracked
+  // here; this exists purely so callers can verify when queued dabs
+  // are flushed relative to frame/stroke boundaries.
+  framesStarted: 0,
+  framesEnded: 0,
+  lastFrameStartTime: null,
+  lastFrameEndTime: null,
+  lastFrameFlushResult: null,
 };
 
 // Phase 2C: GpuBrushRenderer skeleton. Implements the exact same public
@@ -2025,6 +2053,41 @@ const GpuBrushRenderer = {
       lastFlushReason: _gpuState.lastFlushReason,
       lastFlushResult: _gpuState.lastFlushResult,
       lastFlushTime: _gpuState.lastFlushTime
+    };
+  },
+  // Phase 5I: frame lifecycle tracking — diagnostics only. beginFrame()
+  // just counts and timestamps; it creates no GPU resources and does
+  // not touch/reset any existing counter (dabsReceived, dabsDrawn,
+  // submittedDabs, droppedDabs, batchesSubmitted, failedBatches,
+  // failedDabs, strokesReceived, or the flush-metadata fields are all
+  // left exactly as they were).
+  beginFrame(){
+    _gpuState.framesStarted+=1;
+    _gpuState.lastFrameStartTime=Date.now();
+  },
+  // Phase 5I: endFrame() wires the existing flush path
+  // (flushDabQueue(), unchanged since Phase 5F/5H) into a frame-end
+  // lifecycle point, tagged with reason 'frame-end' so it's
+  // distinguishable in getFlushDiagnostics() from a stroke-end or
+  // manual flush. No new rendering path, no pipeline/buffer/texture
+  // work beyond what flushDabQueue() already does, and it never
+  // switches the active renderer.
+  endFrame(){
+    const result=this.flushDabQueue('frame-end');
+    _gpuState.framesEnded+=1;
+    _gpuState.lastFrameEndTime=Date.now();
+    _gpuState.lastFrameFlushResult=result;
+    return result;
+  },
+  // Phase 5I: read-only frame lifecycle diagnostics. Exposes only
+  // plain numbers/booleans/timestamps, never any GPU resource/object.
+  getFrameLifecycleDiagnostics(){
+    return {
+      framesStarted: _gpuState.framesStarted,
+      framesEnded: _gpuState.framesEnded,
+      lastFrameStartTime: _gpuState.lastFrameStartTime,
+      lastFrameEndTime: _gpuState.lastFrameEndTime,
+      lastFrameFlushResult: _gpuState.lastFrameFlushResult
     };
   },
   // Phase 5G: stroke lifecycle integration. beginStroke() clears any
