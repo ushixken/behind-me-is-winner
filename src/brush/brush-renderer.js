@@ -952,18 +952,6 @@ const CpuBrushRenderer = {
       tip: _tipDabCache.size
     };
   },
-};
-
-const BrushRenderer = {
-  // Single active renderer. Phase 1D only ever sets/uses CpuBrushRenderer;
-  // this indirection exists purely so a future renderer can be swapped in
-  // without touching any call site in brush-engine.js.
-  active: CpuBrushRenderer,
-  drawDab(d,rendererContext){ return this.active.drawDab(d,rendererContext); },
-  beginStroke(){ return this.active.beginStroke(); },
-  endStroke(){ return this.active.endStroke(); },
-  invalidateCaches(which){ return this.active.invalidateCaches(which); },
-  getCacheStats(){ return this.active.getCacheStats(); },
   // Phase 1G-B1: renderer-owned auto hard round continuity state
   // (_autoHardRoundPrevDab). brush-engine.js previously read/wrote this
   // module-level variable directly across snapshot save/restore and
@@ -982,6 +970,29 @@ const BrushRenderer = {
   setTipAlphaSeedPixels(value){ _tipAlphaSeedPixels=value; },
   setTipAlphaInvalidationReason(value){ _tipAlphaInvalidationReason=value; },
   getTipAlphaInvalidationReason(){ return _tipAlphaInvalidationReason; },
+};
+
+// Phase 2A: BrushRenderer is a thin dispatcher only. Every method simply
+// forwards to the active renderer implementation (CpuBrushRenderer today);
+// no renderer logic or state access lives here directly. This is the
+// stable interface brush-engine.js (and any future renderer swap) code
+// against.
+const BrushRenderer = {
+  // Single active renderer. Phase 1D only ever sets/uses CpuBrushRenderer;
+  // this indirection exists purely so a future renderer can be swapped in
+  // without touching any call site in brush-engine.js.
+  active: CpuBrushRenderer,
+  drawDab(d,rendererContext){ return this.active.drawDab(d,rendererContext); },
+  beginStroke(){ return this.active.beginStroke(); },
+  endStroke(){ return this.active.endStroke(); },
+  invalidateCaches(which){ return this.active.invalidateCaches(which); },
+  getCacheStats(){ return this.active.getCacheStats(); },
+  getLineContinuity(){ return this.active.getLineContinuity(); },
+  setLineContinuity(value){ return this.active.setLineContinuity(value); },
+  getTipAlphaBuffer(){ return this.active.getTipAlphaBuffer(); },
+  setTipAlphaSeedPixels(value){ return this.active.setTipAlphaSeedPixels(value); },
+  setTipAlphaInvalidationReason(value){ return this.active.setTipAlphaInvalidationReason(value); },
+  getTipAlphaInvalidationReason(){ return this.active.getTipAlphaInvalidationReason(); },
 };
 
 window.CpuBrushRenderer = CpuBrushRenderer;
