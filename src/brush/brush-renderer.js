@@ -1583,6 +1583,12 @@ const _gpuState = {
   submittedDabs: 0,
   droppedDabs: 0,
   lastBatchTime: null,
+  // Phase 5F: batch-buffer capacity (in dabs, not bytes) currently
+  // allocated for _gpuState.dabVertexBuffer, and batch-level
+  // (as opposed to Phase 5D's dab-level) submission diagnostics.
+  dabBatchCapacity: 0,
+  batchesSubmitted: 0,
+  failedBatches: 0,
 };
 
 // Phase 2C: GpuBrushRenderer skeleton. Implements the exact same public
@@ -1645,62 +1651,17 @@ const GpuBrushRenderer = {
   // capacity the incoming dab is dropped from the queue only (counted
   // in droppedDabs); the immediate GPU submission still happens as
   // before regardless.
+  // Phase 5F: drawDab() now ONLY enqueues — it performs no GPU
+  // submission of its own. All per-dab immediate command-encoder/
+  // render-pass/submit work from Phase 5D has been removed from this
+  // method; that work now happens once per batch inside
+  // flushDabQueue() below. No brush appearance/stabilization/pressure/
+  // spacing/hardness/texture/blending logic is read or added — this
+  // still only stages the exact raw `d` object drawDab() already
+  // received, unmodified.
   drawDab(d,rendererContext){
     _gpuState.dabsReceived+=1;
-    this._enqueueDab(d);
-    try{
-      if(!_gpuState.initialized) return false;
-      if(!_gpuState.device || !_gpuState.context || !_gpuState.canvas) return false;
-      const canvas=_gpuState.canvas;
-      if(!canvas.width || !canvas.height){
-        _gpuState.failedDabs+=1;
-        return false;
-      }
-      if(!this.createDabPipeline()){
-        _gpuState.failedDabs+=1;
-        return false;
-      }
-      this._writeDabQuad(d);
-      if(!this.createCommandEncoder()){
-        _gpuState.failedDabs+=1;
-        return false;
-      }
-      const currentTexture=_gpuState.context.getCurrentTexture();
-      if(!currentTexture){
-        _gpuState.commandEncoder=null;
-        _gpuState.failedDabs+=1;
-        return false;
-      }
-      const view=currentTexture.createView();
-      // loadOp:'load' so each dab is composited onto whatever the GPU
-      // canvas already contains rather than clearing it — a stroke is
-      // many dabs, not one. This does not touch the CPU canvas/context.
-      const pass=_gpuState.commandEncoder.beginRenderPass({
-        colorAttachments: [{
-          view,
-          loadOp: 'load',
-          storeOp: 'store',
-        }],
-      });
-      pass.setPipeline(_gpuState.dabPipeline);
-      pass.setVertexBuffer(0,_gpuState.dabVertexBuffer);
-      pass.draw(6);
-      pass.end();
-      if(!this.submitCommands()){
-        _gpuState.failedDabs+=1;
-        return false;
-      }
-      _gpuState.dabsDrawn+=1;
-      _gpuState.lastDabTime=Date.now();
-      return true;
-    }catch(err){
-      // Any GPU-side failure (e.g. device lost, validation error) lands
-      // here. Never throws out of drawDab(), never switches the active
-      // renderer, never touches CPU state — just counted and reported.
-      _gpuState.failedDabs+=1;
-      _gpuState.commandEncoder=null;
-      return false;
-    }
+    return this._enqueueDab(d);
   },
   // Phase 5C: smallest possible GPU-side dab representation — a single
   // flat-color quad (2 triangles, 6 vertices, no indices), no bind
@@ -1708,8 +1669,17 @@ const GpuBrushRenderer = {
   // immediately once created. Entirely separate from createPipeline()
   // (Phase 3H), which remains untouched and still used by
   // renderFrame()/submitEmptyFrame()/selfTest().
+  //
+  // Phase 5F: no longer creates a fixed 1-dab vertex buffer here — the
+  // vertex buffer is now a growable batch buffer managed separately by
+  // _ensureDabBatchCapacity(), since a flush submits many dabs' worth
+  // of vertices in one draw call. Pipeline/shader creation itself is
+  // unchanged (same shader, same single-color output, same vertex
+  // layout — one quad's worth of attributes, repeated per dab in the
+  // batch buffer).
   createDabPipeline(){
     if(_gpuState.dabPipeline) return true;
+
     if(!_gpuState.device || !_gpuState.canvasFormat) return false;
     const device=_gpuState.device;
 
@@ -1756,17 +1726,38 @@ const GpuBrushRenderer = {
       },
     });
 
-    // 6 vertices * 2 floats * 4 bytes = 48 bytes. COPY_DST so
-    // _writeDabQuad() can overwrite it per dab via queue.writeBuffer.
-    const vertexBuffer=device.createBuffer({
-      size: 6*2*4,
-      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-    });
-
+    // Phase 5F: no fixed-size buffer created here anymore — see
+    // _ensureDabBatchCapacity(), which lazily creates/grows
+    // _gpuState.dabVertexBuffer only when a flush needs more capacity
+    // than it currently has.
     _gpuState.dabShaderModule=shaderModule;
     _gpuState.dabPipelineLayout=pipelineLayout;
     _gpuState.dabPipeline=pipeline;
-    _gpuState.dabVertexBuffer=vertexBuffer;
+    return true;
+  },
+  // Phase 5F: ensures the shared batch vertex buffer can hold at least
+  // `dabCount` dabs (6 vertices * 2 floats each). Reused across
+  // flushes — only recreated when an incoming batch is larger than
+  // what's already allocated ("grow buffer only when required"),
+  // never once per dab and never once per flush if the existing
+  // buffer is already big enough. Growth doubles capacity (starting
+  // from a small minimum) rather than allocating exactly what's
+  // needed each time, to reduce how often reallocation happens across
+  // consecutive flushes of similar size.
+  _ensureDabBatchCapacity(dabCount){
+    if(_gpuState.dabVertexBuffer && _gpuState.dabBatchCapacity>=dabCount) return true;
+    if(!_gpuState.device) return false;
+    let capacity=_gpuState.dabBatchCapacity||64;
+    while(capacity<dabCount) capacity*=2;
+    if(_gpuState.dabVertexBuffer){
+      _gpuState.dabVertexBuffer.destroy();
+      _gpuState.dabVertexBuffer=null;
+    }
+    _gpuState.dabVertexBuffer=_gpuState.device.createBuffer({
+      size: capacity*6*2*4,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
+    _gpuState.dabBatchCapacity=capacity;
     return true;
   },
   // Phase 5C: converts the dab's existing pixel-space position/radius
@@ -1775,9 +1766,13 @@ const GpuBrushRenderer = {
   // uploads it to the vertex buffer. No pressure, hardness, rotation,
   // roundness, or texture is read or applied — a plain axis-aligned
   // square the size of the dab radius.
-  _writeDabQuad(d){
-    const canvas=_gpuState.canvas;
-    const w=canvas.width||1, h=canvas.height||1;
+  // Phase 5F: same pixel->NDC math as before (unchanged formula — see
+  // Phase 5D verification), but now writes one dab's 12 floats into a
+  // caller-provided Float32Array at a given vertex offset instead of
+  // uploading a whole buffer itself, so a full batch of dabs can be
+  // assembled into one typed array and uploaded in a single
+  // queue.writeBuffer() call from flushDabQueue().
+  _writeDabQuadInto(arr,offset,d,w,h){
     const r=(d&&typeof d.r==='number')?d.r:1;
     const cx=(d&&typeof d.x==='number')?d.x:0;
     const cy=(d&&typeof d.y==='number')?d.y:0;
@@ -1789,11 +1784,12 @@ const GpuBrushRenderer = {
     const [x2,y2]=toNdc(cx+r, cy+r);
     const [x3,y3]=toNdc(cx-r, cy+r);
 
-    const verts=new Float32Array([
-      x0,y0,  x1,y1,  x2,y2,
-      x0,y0,  x2,y2,  x3,y3,
-    ]);
-    _gpuState.queue.writeBuffer(_gpuState.dabVertexBuffer,0,verts);
+    arr[offset+0]=x0; arr[offset+1]=y0;
+    arr[offset+2]=x1; arr[offset+3]=y1;
+    arr[offset+4]=x2; arr[offset+5]=y2;
+    arr[offset+6]=x0; arr[offset+7]=y0;
+    arr[offset+8]=x2; arr[offset+9]=y2;
+    arr[offset+10]=x3; arr[offset+11]=y3;
   },
   // Phase 5E: pushes the raw dab data (exact object reference, no
   // transform/copy of its fields — "queue only raw dab data already
@@ -1820,21 +1816,120 @@ const GpuBrushRenderer = {
   // diagnostics (submittedDabs, lastBatchTime) to mark that batch as
   // accounted for. Safe to call at any time, including when the queue
   // is empty (a no-op batch) or when the GPU isn't initialized.
+  // Phase 5F: real batched GPU submission. Consumes every dab
+  // currently in the queue and submits them in exactly one GPU command
+  // buffer / one render pass / one draw call — this is the actual
+  // "efficient multiple-dab submission" the queue was built for in
+  // Phase 5E. Reuses the existing dab pipeline (createDabPipeline(),
+  // unchanged shape/shader/appearance) and the existing
+  // createCommandEncoder()/submitCommands() helpers from Phase 3D — no
+  // new rendering pipeline is introduced. The queue is only cleared
+  // after a successful submission ("submit all queued dabs before
+  // clearing the queue"); on failure the queue is left untouched so a
+  // caller could inspect/retry, and the failure is counted in
+  // failedBatches (batch-level) and failedDabs (dab-level, reusing the
+  // Phase 5D counter — "keep failed dabs counted"). Never throws, never
+  // switches the active renderer, never touches CPU state. Safe to
+  // call with an empty queue (a true no-op — no GPU work, no counters
+  // touched) or when the GPU isn't initialized (also a no-op, since
+  // there is nothing to submit against).
   flushDabQueue(){
-    const drained=_gpuState.dabQueue.length;
-    _gpuState.dabQueue.length=0;
-    _gpuState.queuedDabs=0;
-    _gpuState.submittedDabs+=drained;
-    _gpuState.lastBatchTime=Date.now();
-    return drained;
+    const dabCount=_gpuState.dabQueue.length;
+    if(dabCount===0) return true;
+    try{
+      if(!_gpuState.initialized) return false;
+      if(!_gpuState.device || !_gpuState.context || !_gpuState.canvas) return false;
+      const canvas=_gpuState.canvas;
+      if(!canvas.width || !canvas.height){
+        _gpuState.failedBatches+=1;
+        _gpuState.failedDabs+=dabCount;
+        return false;
+      }
+      if(!this.createDabPipeline()){
+        _gpuState.failedBatches+=1;
+        _gpuState.failedDabs+=dabCount;
+        return false;
+      }
+      if(!this._ensureDabBatchCapacity(dabCount)){
+        _gpuState.failedBatches+=1;
+        _gpuState.failedDabs+=dabCount;
+        return false;
+      }
+
+      // Build the whole batch's vertex data in one typed array and
+      // upload it in a single queue.writeBuffer() call, instead of one
+      // write per dab.
+      const verts=new Float32Array(dabCount*12);
+      for(let i=0;i<dabCount;i++){
+        this._writeDabQuadInto(verts,i*12,_gpuState.dabQueue[i],canvas.width,canvas.height);
+      }
+      _gpuState.queue.writeBuffer(_gpuState.dabVertexBuffer,0,verts);
+
+      if(!this.createCommandEncoder()){
+        _gpuState.failedBatches+=1;
+        _gpuState.failedDabs+=dabCount;
+        return false;
+      }
+      const currentTexture=_gpuState.context.getCurrentTexture();
+      if(!currentTexture){
+        _gpuState.commandEncoder=null;
+        _gpuState.failedBatches+=1;
+        _gpuState.failedDabs+=dabCount;
+        return false;
+      }
+      const view=currentTexture.createView();
+      // loadOp:'load' so this batch composites onto whatever the GPU
+      // canvas already contains rather than clearing it — unchanged
+      // from Phase 5D's per-dab behavior, just applied once per batch
+      // instead of once per dab.
+      const pass=_gpuState.commandEncoder.beginRenderPass({
+        colorAttachments: [{
+          view,
+          loadOp: 'load',
+          storeOp: 'store',
+        }],
+      });
+      pass.setPipeline(_gpuState.dabPipeline);
+      pass.setVertexBuffer(0,_gpuState.dabVertexBuffer);
+      // Single draw call for the entire batch: 6 vertices per dab,
+      // dabCount dabs, no indices, no instancing.
+      pass.draw(dabCount*6);
+      pass.end();
+      if(!this.submitCommands()){
+        _gpuState.failedBatches+=1;
+        _gpuState.failedDabs+=dabCount;
+        return false;
+      }
+
+      _gpuState.dabsDrawn+=dabCount;
+      _gpuState.submittedDabs+=dabCount;
+      _gpuState.batchesSubmitted+=1;
+      _gpuState.lastDabTime=Date.now();
+      _gpuState.lastBatchTime=Date.now();
+      _gpuState.dabQueue.length=0;
+      _gpuState.queuedDabs=0;
+      return true;
+    }catch(err){
+      // Any GPU-side failure (e.g. device lost, validation error) lands
+      // here. Never throws out of flushDabQueue(), never switches the
+      // active renderer, never touches CPU state — just counted and
+      // reported. Queue is intentionally left intact on this path too.
+      _gpuState.failedBatches+=1;
+      _gpuState.failedDabs+=dabCount;
+      _gpuState.commandEncoder=null;
+      return false;
+    }
   },
-  // Phase 5E: read-only queue diagnostics. Exposes only plain numbers/
-  // timestamps, never the queued dab objects or any GPU resource.
+  // Phase 5E/5F: read-only queue diagnostics. Exposes only plain
+  // numbers/timestamps, never the queued dab objects or any GPU
+  // resource.
   getQueueStats(){
     return {
       queuedDabs: _gpuState.queuedDabs,
       submittedDabs: _gpuState.submittedDabs,
       droppedDabs: _gpuState.droppedDabs,
+      batchesSubmitted: _gpuState.batchesSubmitted,
+      failedBatches: _gpuState.failedBatches,
       lastBatchTime: _gpuState.lastBatchTime
     };
   },
@@ -2199,13 +2294,18 @@ const GpuBrushRenderer = {
     _gpuState.dabShaderModule=null;
     _gpuState.dabPipelineLayout=null;
     _gpuState.dabVertexBuffer=null;
+    // Phase 5F: the batch buffer's capacity tracking must reset
+    // alongside the buffer itself, so the next flush after a fresh
+    // initialize() correctly reallocates rather than assuming stale
+    // capacity from a destroyed buffer.
+    _gpuState.dabBatchCapacity=0;
     // Phase 5E: the live queue itself (pending, not-yet-flushed dabs)
     // is cleared on reset since it was staged for a GPU device that is
     // being torn down — those dabs can never be submitted against it.
     // This mirrors clearing the GPU-bound pipeline/buffer fields above.
-    // submittedDabs/droppedDabs counters are NOT cleared, matching the
-    // cumulative-diagnostic-history pattern used for every other
-    // counter in this object.
+    // submittedDabs/droppedDabs/batchesSubmitted/failedBatches counters
+    // are NOT cleared, matching the cumulative-diagnostic-history
+    // pattern used for every other counter in this object.
     _gpuState.dabQueue.length=0;
     _gpuState.queuedDabs=0;
     // Phase 5A/5C/5D: reset does not clear receive/draw/failure
