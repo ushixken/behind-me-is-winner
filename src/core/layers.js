@@ -179,7 +179,7 @@ function copyFrame(){
   styleClipboard=layer.type==='smart-raster'&&typeof getStyleFrameBundle==='function'
     ?getStyleFrameBundle(curLayer,curFrame):null;
 }
-function cutFrame(){
+async function cutFrame(){
   if(window.CameraTimeline&&CameraTimeline.selected)return CameraTimeline.handleShortcut('cut');
   copyFrame();
   const layer=layers[curLayer];
@@ -188,6 +188,10 @@ function cutFrame(){
   if(typeof deleteStyleFrame==='function')deleteStyleFrame(curLayer,curFrame);
   ctx.clearRect(0,0,CW,CH);
   const h=getHeldKey(curLayer,curFrame);if(h)ctx.drawImage(h,0,0);
+  if(window.BrushRenderer&&typeof BrushRenderer.loadActiveSurface==='function'){
+    BrushRenderer.loadActiveSurface(activeC);
+    if(typeof BrushRenderer.waitForGPU==='function')await BrushRenderer.waitForGPU();
+  }
   saveActiveToKey();loadFrame(curLayer,curFrame);renderTimeline();
 }
 function _pasteSmartRasterClipboardOwnership(li,fi,rgbaCanvas,payload,dx,dy){
@@ -221,7 +225,7 @@ function _pasteSmartRasterClipboardOwnership(li,fi,rgbaCanvas,payload,dx,dy){
     destination.styleIds[ny*destination.width+nx]=destinationIndex;
   }
 }
-function pasteFrame(){
+async function pasteFrame(){
   if(window.CameraTimeline&&CameraTimeline.selected)return CameraTimeline.handleShortcut('paste');
   if(!clipboard)return;
   const layer=layers[curLayer],isSmartRaster=layer.type==='smart-raster';
@@ -230,6 +234,10 @@ function pasteFrame(){
   ctx.clearRect(0,0,CW,CH);
   ctx.drawImage(clipboard,0,0);
   if(isSmartRaster){_pasteSmartRasterClipboardOwnership(curLayer,curFrame,clipboard,styleClipboard,0,0);if(window.SmartRasterV4Document&&typeof window.SmartRasterV4Document.restoreFrame==='function')window.SmartRasterV4Document.restoreFrame(layer,curFrame,styleClipboard&&styleClipboard.v4||null);}
+  if(window.BrushRenderer&&typeof BrushRenderer.loadActiveSurface==='function'){
+    BrushRenderer.loadActiveSurface(activeC);
+    if(typeof BrushRenderer.waitForGPU==='function')await BrushRenderer.waitForGPU();
+  }
   saveActiveToKey();recomposite(curLayer,curFrame);
 }
 function _captureSmartRasterFrameSlot(li,fi){
@@ -588,7 +596,7 @@ document.getElementById('dd-cut').onclick=()=>{cutLayer(curLayer);closeAllDropdo
 document.getElementById('dd-copy').onclick=()=>{copyLayer(curLayer);closeAllDropdowns();};
 document.getElementById('dd-paste').onclick=()=>{pasteLayer(curLayer);closeAllDropdowns();};
 document.getElementById('dd-duplicate').onclick=()=>{duplicateLayer(curLayer);closeAllDropdowns();};
-function clearCurrentFrame(){if(window.CameraTimeline&&CameraTimeline.selected){CameraTimeline.handleShortcut('delete');return;}if(typeof window.finishActiveDrawingBeforeArtworkChange==='function')window.finishActiveDrawingBeforeArtworkChange(curLayer,curFrame);pushUndo();ensureKey();ctx.clearRect(0,0,CW,CH);if(typeof clearExtendedLayerFrame==='function')clearExtendedLayerFrame(curLayer,curFrame);if(typeof deleteStyleFrame==='function') deleteStyleFrame(curLayer,curFrame);saveActiveToKey();recomposite(curLayer,curFrame);}
+async function clearCurrentFrame(){if(window.CameraTimeline&&CameraTimeline.selected){CameraTimeline.handleShortcut('delete');return;}if(typeof window.finishActiveDrawingBeforeArtworkChange==='function')window.finishActiveDrawingBeforeArtworkChange(curLayer,curFrame);pushUndo();ensureKey();ctx.clearRect(0,0,CW,CH);if(typeof clearExtendedLayerFrame==='function')clearExtendedLayerFrame(curLayer,curFrame);if(typeof deleteStyleFrame==='function') deleteStyleFrame(curLayer,curFrame);if(window.BrushRenderer&&typeof BrushRenderer.loadActiveSurface==='function'){BrushRenderer.loadActiveSurface(activeC);if(typeof BrushRenderer.waitForGPU==='function')await BrushRenderer.waitForGPU();}saveActiveToKey();recomposite(curLayer,curFrame);}
 document.getElementById('dd-clear').onclick=()=>{clearCurrentFrame();closeAllDropdowns();};
 
 // Window menu

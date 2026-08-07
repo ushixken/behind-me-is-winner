@@ -291,7 +291,7 @@
     window.dispatchEvent(new CustomEvent('pixel-selection-changed',{detail:{active:false,source:'deselect'}}));
   }
 
-  function deleteSelectedPixels(){
+  async function deleteSelectedPixels(){
     if(!selectionActive||!selectionMask)return false;
     var state=window.pixelSelectionState,layer=layers[curLayer];if(!state||state.layerIndex!==curLayer||!layer)return false;
     var selectedStyleIds=Array.isArray(state.styleIds)?state.styleIds.filter(Boolean):[];
@@ -309,7 +309,12 @@
     for(var p=0,o=0;p<selectionMask.length;p++,o+=4)if(selectionMask[p]===255){
       rgba[o]=rgba[o+1]=rgba[o+2]=rgba[o+3]=0;if(frame&&frame.styleIds)frame.styleIds[p]=0;
     }
-    ctx.putImageData(image,0,0);saveActiveToKey();recomposite(curLayer,curFrame);renderTimeline();clearSelection();return true;
+    ctx.putImageData(image,0,0);
+    if(window.BrushRenderer&&typeof BrushRenderer.loadActiveSurface==='function'){
+      BrushRenderer.loadActiveSurface(activeC);
+      if(typeof BrushRenderer.waitForGPU==='function')await BrushRenderer.waitForGPU();
+    }
+    saveActiveToKey();recomposite(curLayer,curFrame);renderTimeline();clearSelection();return true;
   }
   async function replaceSelectedWithStyle(styleId,rgba){
     var state=window.pixelSelectionState,layer=layers[curLayer];
