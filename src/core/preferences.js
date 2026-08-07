@@ -69,6 +69,18 @@ document.getElementById('pref-cursor-brush-shape').onchange=e=>{ if(e.target.che
   statusEl.style.cssText='margin-top:10px;padding:8px;border-radius:8px;border:1px solid var(--border2);font-size:11px;color:var(--text2);line-height:1.6;';
   listEl.insertAdjacentElement('afterend',statusEl);
 
+  // Phase 4L: explicit Apply button. Selecting an option only ever
+  // stores a preference (see the radio onchange below) — this button
+  // is the single place in the Preferences UI allowed to trigger
+  // activation, via the existing applyPreferredRenderer().
+  const applyBtn=document.createElement('button');
+  applyBtn.type='button';
+  applyBtn.id='pref-renderer-apply';
+  applyBtn.className='modal-btn';
+  applyBtn.style.cssText='margin-top:10px;';
+  applyBtn.textContent='Apply Renderer';
+  statusEl.insertAdjacentElement('afterend',applyBtn);
+
   function renderList(){
     if(typeof window.BrushRenderer.getRendererOptions!=='function') return;
     const options=window.BrushRenderer.getRendererOptions();
@@ -157,6 +169,32 @@ document.getElementById('pref-cursor-brush-shape').onchange=e=>{ if(e.target.che
     renderList();
     renderStatus();
   }
+
+  // Phase 4L: guards against duplicate simultaneous apply requests and
+  // restores the button's label/enabled state once the attempt settles,
+  // whether it succeeds or fails. applyPreferredRenderer() already
+  // leaves the current renderer active on failure (see Phase 4A/4J) —
+  // this handler just re-reads status afterward and never throws.
+  let _applyInProgress=false;
+  applyBtn.addEventListener('click',async()=>{
+    if(_applyInProgress) return;
+    if(typeof window.BrushRenderer.applyPreferredRenderer!=='function') return;
+    _applyInProgress=true;
+    const originalLabel=applyBtn.textContent;
+    applyBtn.disabled=true;
+    applyBtn.textContent='Applying…';
+    try{
+      await window.BrushRenderer.applyPreferredRenderer();
+    }catch(e){
+      // Swallow — failure is reflected via renderStatus() below, not
+      // by throwing out of a UI click handler.
+    }finally{
+      renderAll();
+      applyBtn.disabled=false;
+      applyBtn.textContent=originalLabel;
+      _applyInProgress=false;
+    }
+  });
 
   // Lets the Preferences-open handler above refresh the list so it always
   // reflects the current stored preference when the modal is opened.
