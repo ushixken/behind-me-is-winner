@@ -1364,6 +1364,15 @@ const GpuBrushRenderer = {
         storeOp: 'store',
       }],
     });
+    // Phase 3I: bind the pipeline to the freshly-opened render pass, if
+    // one exists. This only sets the pipeline state on the pass — it
+    // does not issue draw()/drawIndexed()/drawIndirect()/
+    // dispatchWorkgroups(), and no buffers, bind groups, textures, or
+    // samplers are created here or anywhere else. Returns false if
+    // there's no render pass or no pipeline.
+    if(!_gpuState.renderPass) return false;
+    if(!_gpuState.pipeline) return false;
+    _gpuState.renderPass.setPipeline(_gpuState.pipeline);
     return true;
   },
   // Safely ends the current render pass (if one is open) and clears the
