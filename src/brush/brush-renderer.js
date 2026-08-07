@@ -1567,6 +1567,22 @@ const _gpuState = {
   // calls that were simple no-ops because the GPU wasn't initialized —
   // those only increment dabsReceived, since nothing was attempted.
   failedDabs: 0,
+  // Phase 5E: minimal dab queue — preparation infrastructure only. Does
+  // NOT change what drawDab() already renders (Phase 5D's immediate
+  // per-dab submission is left completely intact, so appearance/timing
+  // of what appears on screen is unchanged). This queue simply
+  // accumulates the exact raw `d` object each drawDab() call already
+  // received, unmodified, so a future phase can submit multiple dabs
+  // in one batched command buffer instead of one-per-call. A hard cap
+  // prevents unbounded growth if flushDabQueue() is never called;
+  // overflow entries are dropped (counted, never silently lost) rather
+  // than resized/reallocated per push.
+  dabQueue: [],
+  dabQueueMaxSize: 4096,
+  queuedDabs: 0,
+  submittedDabs: 0,
+  droppedDabs: 0,
+  lastBatchTime: null,
 };
 
 // Phase 2C: GpuBrushRenderer skeleton. Implements the exact same public
@@ -1620,8 +1636,18 @@ const GpuBrushRenderer = {
   //     pipeline, shader modules, pipeline layout, and vertex buffer
   //     are all created exactly once (createDabPipeline() is
   //     idempotent) and reused on every subsequent dab.
+  //
+  // Phase 5E: also stages the exact raw `d` object into
+  // _gpuState.dabQueue, unmodified, as batching-preparation bookkeeping
+  // for a future phase. This is purely additive — it does not replace,
+  // delay, or skip the Phase 5D immediate GPU submission above/below,
+  // so what actually renders and when is unchanged. If the queue is at
+  // capacity the incoming dab is dropped from the queue only (counted
+  // in droppedDabs); the immediate GPU submission still happens as
+  // before regardless.
   drawDab(d,rendererContext){
     _gpuState.dabsReceived+=1;
+    this._enqueueDab(d);
     try{
       if(!_gpuState.initialized) return false;
       if(!_gpuState.device || !_gpuState.context || !_gpuState.canvas) return false;
@@ -1768,6 +1794,49 @@ const GpuBrushRenderer = {
       x0,y0,  x2,y2,  x3,y3,
     ]);
     _gpuState.queue.writeBuffer(_gpuState.dabVertexBuffer,0,verts);
+  },
+  // Phase 5E: pushes the raw dab data (exact object reference, no
+  // transform/copy of its fields — "queue only raw dab data already
+  // provided by drawDab()") onto the queue. Enforces
+  // dabQueueMaxSize so an app that never calls flushDabQueue() can't
+  // grow this unboundedly; anything past the cap is dropped and
+  // counted, never silently discarded without a trace.
+  _enqueueDab(d){
+    if(_gpuState.dabQueue.length>=_gpuState.dabQueueMaxSize){
+      _gpuState.droppedDabs+=1;
+      return false;
+    }
+    _gpuState.dabQueue.push(d);
+    _gpuState.queuedDabs=_gpuState.dabQueue.length;
+    return true;
+  },
+  // Phase 5E: flush method. Drains the queue built up by drawDab()'s
+  // Phase 5E staging step. Preparation only — this phase does not
+  // introduce a real batched multi-dab-per-pass draw (that would mean
+  // building/altering the render pipeline, which Phase 5E explicitly
+  // must not do). What actually renders on screen already happened via
+  // Phase 5D's unchanged immediate per-dab submission inside drawDab();
+  // flushDabQueue() only clears the bookkeeping queue and updates
+  // diagnostics (submittedDabs, lastBatchTime) to mark that batch as
+  // accounted for. Safe to call at any time, including when the queue
+  // is empty (a no-op batch) or when the GPU isn't initialized.
+  flushDabQueue(){
+    const drained=_gpuState.dabQueue.length;
+    _gpuState.dabQueue.length=0;
+    _gpuState.queuedDabs=0;
+    _gpuState.submittedDabs+=drained;
+    _gpuState.lastBatchTime=Date.now();
+    return drained;
+  },
+  // Phase 5E: read-only queue diagnostics. Exposes only plain numbers/
+  // timestamps, never the queued dab objects or any GPU resource.
+  getQueueStats(){
+    return {
+      queuedDabs: _gpuState.queuedDabs,
+      submittedDabs: _gpuState.submittedDabs,
+      droppedDabs: _gpuState.droppedDabs,
+      lastBatchTime: _gpuState.lastBatchTime
+    };
   },
   beginStroke(){
     _gpuState.inStroke=true;
@@ -2130,6 +2199,15 @@ const GpuBrushRenderer = {
     _gpuState.dabShaderModule=null;
     _gpuState.dabPipelineLayout=null;
     _gpuState.dabVertexBuffer=null;
+    // Phase 5E: the live queue itself (pending, not-yet-flushed dabs)
+    // is cleared on reset since it was staged for a GPU device that is
+    // being torn down — those dabs can never be submitted against it.
+    // This mirrors clearing the GPU-bound pipeline/buffer fields above.
+    // submittedDabs/droppedDabs counters are NOT cleared, matching the
+    // cumulative-diagnostic-history pattern used for every other
+    // counter in this object.
+    _gpuState.dabQueue.length=0;
+    _gpuState.queuedDabs=0;
     // Phase 5A/5C/5D: reset does not clear receive/draw/failure
     // counters — those are a cumulative diagnostic history, not
     // initialization state. Resetting GPU init state must not hide how
