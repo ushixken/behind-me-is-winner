@@ -977,6 +977,11 @@ const CpuBrushRenderer = {
   selfTest(){
     return true;
   },
+  // Phase 4R: no-op. CPU rendering has no initialization state to clear
+  // and must not change behavior on reset.
+  reset(){
+    return true;
+  },
 };
 
 // Phase 2E: Renderer interface freeze. The methods below constitute the
@@ -1166,6 +1171,23 @@ const BrushRenderer = {
       return await renderer.selfTest();
     }
     return true;
+  },
+  // Phase 4R: resets a registered renderer's initialization/diagnostic
+  // state via its own reset() method, if it exposes one. Does not
+  // activate, switch, or change the preferred/active renderer in any
+  // way — purely delegates to the renderer's own cleanup.
+  resetRenderer(name){
+    const renderer=this._renderers[name];
+    if(!renderer) return false;
+    if(typeof renderer.reset==='function') renderer.reset();
+    return true;
+  },
+  // Phase 4R: resets whichever renderer is currently active, by name,
+  // via resetRenderer(). No switching — the active renderer stays the
+  // same before and after this call.
+  resetActiveRenderer(){
+    const name=this.getActiveRenderer();
+    return this.resetRenderer(name);
   },
   // Phase 4C: preference storage only. setPreferredRenderer() merely
   // records a name string — it never calls activateRenderer() or
@@ -1700,6 +1722,32 @@ const GpuBrushRenderer = {
   // is no error to report.
   getInitError(){
     return _gpuState.initError;
+  },
+  // Phase 4R: diagnostics/resource cleanup only. Clears initialization
+  // flags and all lifecycle/resource fields back to their pre-init
+  // defaults. Does not create anything (no adapter/device request, no
+  // shader/pipeline creation) and does not touch CpuBrushRenderer or
+  // any BrushRenderer active/preferred state.
+  reset(){
+    _gpuState.initialized=false;
+    _gpuState.initError=null;
+    _gpuState.adapter=null;
+    _gpuState.device=null;
+    _gpuState.queue=null;
+    _gpuState.canvas=null;
+    _gpuState.context=null;
+    _gpuState.configured=false;
+    _gpuState.commandEncoder=null;
+    _gpuState.commandBuffer=null;
+    _gpuState.currentTexture=null;
+    _gpuState.currentTextureView=null;
+    _gpuState.renderPass=null;
+    _gpuState.pipeline=null;
+    _gpuState.pipelineLayout=null;
+    _gpuState.shaderModule=null;
+    _gpuState.bindGroupLayout=null;
+    _gpuState.bindGroup=null;
+    return true;
   },
 };
 

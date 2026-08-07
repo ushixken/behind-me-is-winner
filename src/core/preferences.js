@@ -92,6 +92,19 @@ document.getElementById('pref-cursor-brush-shape').onchange=e=>{ if(e.target.che
   testBtn.textContent='Run Renderer Test';
   applyBtn.insertAdjacentElement('afterend',testBtn);
 
+  // Phase 4R: Reset Active Renderer button — resets the currently
+  // active renderer's diagnostic/resource state via
+  // BrushRenderer.resetActiveRenderer(). No activation, no switching:
+  // never calls applyPreferredRenderer()/activateRenderer()/
+  // setActiveRenderer().
+  const resetBtn=document.createElement('button');
+  resetBtn.type='button';
+  resetBtn.id='pref-renderer-reset';
+  resetBtn.className='modal-btn';
+  resetBtn.style.cssText='margin-top:6px;';
+  resetBtn.textContent='Reset Active Renderer';
+  testBtn.insertAdjacentElement('afterend',resetBtn);
+
   // Phase 4P: diagnostics block for the last applyPreferredRenderer()
   // outcome. Sits below the existing status section (after the test
   // button). Read-only — sourced only from
@@ -100,7 +113,7 @@ document.getElementById('pref-cursor-brush-shape').onchange=e=>{ if(e.target.che
   const diagnosticsEl=document.createElement('div');
   diagnosticsEl.id='pref-renderer-diagnostics';
   diagnosticsEl.style.cssText='margin-top:10px;padding:8px;border-radius:8px;border:1px solid var(--border2);font-size:11px;color:var(--text2);line-height:1.6;';
-  testBtn.insertAdjacentElement('afterend',diagnosticsEl);
+  resetBtn.insertAdjacentElement('afterend',diagnosticsEl);
 
   // Phase 4Q: read-only Renderer History section, below diagnostics.
   // Sourced only from BrushRenderer.getRendererApplyHistory() — a
@@ -393,6 +406,31 @@ document.getElementById('pref-cursor-brush-shape').onchange=e=>{ if(e.target.che
       if(typeof window.siteAlert==='function'){
         window.siteAlert(passed?'Renderer test passed':'Renderer test failed',{title:'Renderer Test'});
       }
+    }
+  });
+
+  // Phase 4R: guards against duplicate simultaneous reset requests and
+  // restores the button's label/enabled state once it settles.
+  // resetActiveRenderer() never activates or switches renderers —
+  // applyPreferredRenderer()/activateRenderer()/setActiveRenderer() are
+  // never called from this handler.
+  let _resetInProgress=false;
+  resetBtn.addEventListener('click',()=>{
+    if(_resetInProgress) return;
+    if(typeof window.BrushRenderer.resetActiveRenderer!=='function') return;
+    _resetInProgress=true;
+    const originalLabel=resetBtn.textContent;
+    resetBtn.disabled=true;
+    resetBtn.textContent='Resetting…';
+    try{
+      window.BrushRenderer.resetActiveRenderer();
+    }catch(e){
+      // Swallow — any resulting state is reflected via renderAll() below.
+    }finally{
+      renderAll();
+      resetBtn.disabled=false;
+      resetBtn.textContent=originalLabel;
+      _resetInProgress=false;
     }
   });
 
