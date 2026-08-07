@@ -1106,6 +1106,21 @@ const BrushRenderer = {
     this.setActiveRenderer(name);
     return true;
   },
+  // Phase 4B: read-only, high-level status snapshot. Exposes only
+  // renderer names/flags — no internal GPU resources (adapter, device,
+  // queue, canvas, context, pipeline, shaderModule, bindGroup,
+  // commandEncoder, etc.) are ever surfaced here. `available` is built
+  // dynamically from whatever is currently registered, never hardcoded.
+  getRendererStatus(){
+    return {
+      active: this._activeName,
+      available: Object.keys(this._renderers),
+      initialized: {
+        cpu: true,
+        gpu: _gpuState.initialized
+      }
+    };
+  },
 };
 
 // Phase 2D: GpuBrushRenderer owns its own private state object, entirely
