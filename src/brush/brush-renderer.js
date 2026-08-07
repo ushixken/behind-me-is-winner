@@ -1127,6 +1127,21 @@ const BrushRenderer = {
   drawDab(d,rendererContext){ return this.active.drawDab(d,rendererContext); },
   beginStroke(){ return this.active.beginStroke(); },
   endStroke(){ return this.active.endStroke(); },
+  // Phase 5G: dispatcher-level flush support. Forwards to the active
+  // renderer's flushPendingDabs() if it implements one (GpuBrushRenderer
+  // does, as of Phase 5G; CpuBrushRenderer does not, and is left
+  // completely unmodified). Not renderer-switching or fallback logic —
+  // it never changes `this.active`, it just optionally calls a method
+  // on whichever renderer is already active. A renderer with nothing
+  // to flush (no flushPendingDabs method, e.g. CPU) is treated as an
+  // automatic no-op success, since "nothing queued to flush" and
+  // "flushed nothing successfully" are the same observable outcome.
+  flushActiveRenderer(){
+    if(this.active && typeof this.active.flushPendingDabs==='function'){
+      return this.active.flushPendingDabs();
+    }
+    return true;
+  },
   invalidateCaches(which){ return this.active.invalidateCaches(which); },
   getCacheStats(){ return this.active.getCacheStats(); },
   getLineContinuity(){ return this.active.getLineContinuity(); },
@@ -1933,12 +1948,41 @@ const GpuBrushRenderer = {
       lastBatchTime: _gpuState.lastBatchTime
     };
   },
+  // Phase 5G: stroke lifecycle integration. beginStroke() clears any
+  // stale, not-yet-flushed queue left over from a previous stroke
+  // (e.g. if that stroke's endStroke() flush failed — see
+  // flushDabQueue()'s "queue left intact on failure" behavior) so a
+  // new stroke never accidentally batches a prior stroke's dabs
+  // together with its own. This only touches the live queue array —
+  // it does NOT clear any diagnostic history counter (dabsReceived,
+  // dabsDrawn, submittedDabs, droppedDabs, batchesSubmitted,
+  // failedBatches, failedDabs all untouched).
   beginStroke(){
     _gpuState.inStroke=true;
     _gpuState.strokesReceived+=1;
+    if(_gpuState.dabQueue.length>0){
+      _gpuState.dabQueue.length=0;
+      _gpuState.queuedDabs=0;
+    }
   },
+  // Phase 5G: endStroke() now submits whatever dabs this stroke queued
+  // by calling the existing flushDabQueue() (Phase 5F) — no new
+  // rendering path, just wiring the existing batch-submission method
+  // into the existing stroke-end lifecycle point so a stroke's dabs
+  // are guaranteed to reach the GPU before the stroke is considered
+  // complete. Returns flushDabQueue()'s own success/failure boolean.
   endStroke(){
     _gpuState.inStroke=false;
+    return this.flushDabQueue();
+  },
+  // Phase 5G: optional frame-lifecycle helper. Flushes the queue only
+  // if there's actually something queued ("flush queued dabs only when
+  // needed") — an empty queue is a true no-op, no GPU work performed,
+  // no counters touched. Delegates to the existing flushDabQueue()
+  // (Phase 5F) rather than creating a second/duplicate submission path.
+  flushPendingDabs(){
+    if(_gpuState.dabQueue.length===0) return true;
+    return this.flushDabQueue();
   },
   invalidateCaches(which){
     // intentionally empty
