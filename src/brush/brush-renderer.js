@@ -1080,6 +1080,9 @@ const BrushRenderer = {
   _lastApplyResult: null,
   _lastApplyError: null,
   _lastApplyTime: null,
+  // Phase 4Q: bounded history of applyPreferredRenderer() attempts.
+  // Diagnostics only — newest-10 records, no GPU resources stored.
+  _applyHistory: [],
   // Registers a renderer implementation under `name`. Does not activate it.
   registerRenderer(name,renderer){
     this._renderers[name]=renderer;
@@ -1267,6 +1270,21 @@ const BrushRenderer = {
     this._lastApplyResult=result;
     this._lastApplyError=error;
     this._lastApplyTime=Date.now();
+
+    // Phase 4Q: append this attempt to the bounded history, keeping only
+    // the newest 10 records. Diagnostics only — same fields as the
+    // single-snapshot state above, plus the active renderer name.
+    this._applyHistory.push({
+      result,
+      error,
+      preferred,
+      active: this.getActiveRenderer(),
+      time: this._lastApplyTime
+    });
+    if(this._applyHistory.length>10){
+      this._applyHistory.splice(0,this._applyHistory.length-10);
+    }
+
     return result;
   },
   // Phase 4O: read-only status snapshot of the last applyPreferredRenderer()
@@ -1281,6 +1299,11 @@ const BrushRenderer = {
       preferred: this.getPreferredRenderer(),
       active: this.getActiveRenderer()
     };
+  },
+  // Phase 4Q: returns a copy of the apply-attempt history (newest-10),
+  // so callers cannot mutate internal state directly.
+  getRendererApplyHistory(){
+    return this._applyHistory.map(record=>({...record}));
   },
 };
 

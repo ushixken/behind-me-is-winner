@@ -102,6 +102,15 @@ document.getElementById('pref-cursor-brush-shape').onchange=e=>{ if(e.target.che
   diagnosticsEl.style.cssText='margin-top:10px;padding:8px;border-radius:8px;border:1px solid var(--border2);font-size:11px;color:var(--text2);line-height:1.6;';
   testBtn.insertAdjacentElement('afterend',diagnosticsEl);
 
+  // Phase 4Q: read-only Renderer History section, below diagnostics.
+  // Sourced only from BrushRenderer.getRendererApplyHistory() — a
+  // public API returning a copy of the bounded (newest-10) history.
+  // No activation calls, no GPU internals.
+  const historyEl=document.createElement('div');
+  historyEl.id='pref-renderer-history';
+  historyEl.style.cssText='margin-top:10px;padding:8px;border-radius:8px;border:1px solid var(--border2);font-size:11px;color:var(--text2);line-height:1.6;';
+  diagnosticsEl.insertAdjacentElement('afterend',historyEl);
+
   function renderList(){
     if(typeof window.BrushRenderer.getRendererOptions!=='function') return;
     const options=window.BrushRenderer.getRendererOptions();
@@ -265,10 +274,69 @@ document.getElementById('pref-cursor-brush-shape').onchange=e=>{ if(e.target.che
     diagnosticsEl.appendChild(timeLine);
   }
 
+  // Phase 4Q: read-only readout of the apply-attempt history, sourced
+  // solely from BrushRenderer.getRendererApplyHistory(). Renderer names
+  // stay dynamic — never hardcoded. No activation call is made here.
+  function renderHistory(){
+    if(typeof window.BrushRenderer.getRendererApplyHistory!=='function'){
+      historyEl.textContent='';
+      return;
+    }
+    const history=window.BrushRenderer.getRendererApplyHistory();
+
+    historyEl.innerHTML='';
+
+    const heading=document.createElement('div');
+    heading.style.cssText='font-weight:600;color:var(--text);';
+    heading.textContent='Renderer History';
+    historyEl.appendChild(heading);
+
+    if(!history || history.length===0){
+      const emptyLine=document.createElement('div');
+      emptyLine.textContent='No apply attempts yet.';
+      historyEl.appendChild(emptyLine);
+      return;
+    }
+
+    // Newest first for readability.
+    history.slice().reverse().forEach(record=>{
+      const entry=document.createElement('div');
+      entry.style.cssText='margin-top:6px;padding-top:6px;border-top:1px solid var(--border2);';
+
+      const resultText=record.result===true?'Success':(record.result===false?'Failed':'Not run yet');
+      let timeText='—';
+      if(record.time){
+        try{
+          timeText=new Date(record.time).toLocaleString();
+        }catch(e){
+          timeText=String(record.time);
+        }
+      }
+
+      const line1=document.createElement('div');
+      line1.innerHTML='<b style="color:var(--text);">'+timeText+'</b> — '+resultText;
+      entry.appendChild(line1);
+
+      const line2=document.createElement('div');
+      line2.textContent='Preferred: '+(record.preferred?String(record.preferred).toUpperCase():'—')+
+        '  •  Active: '+(record.active?String(record.active).toUpperCase():'—');
+      entry.appendChild(line2);
+
+      if(record.error){
+        const line3=document.createElement('div');
+        line3.textContent='Error: '+record.error;
+        entry.appendChild(line3);
+      }
+
+      historyEl.appendChild(entry);
+    });
+  }
+
   function renderAll(){
     renderList();
     renderStatus();
     renderDiagnostics();
+    renderHistory();
   }
 
   // Phase 4L: guards against duplicate simultaneous apply requests and
