@@ -3213,6 +3213,15 @@ function _completePostStrokePresentation(layerIndex,frameIndex){
   if(_strokePreviewCtx&&_strokePreviewCanvas)_strokePreviewCtx.clearRect(0,0,_strokePreviewCanvas.width,_strokePreviewCanvas.height);
   if(_srPreviewTintCtx&&_srPreviewTintCanvas)_srPreviewTintCtx.clearRect(0,0,_srPreviewTintCanvas.width,_srPreviewTintCanvas.height);
   _frameDirty=null;_strokeDirty=null;
+  // Phase 5N: immediately before this frame is finalized/presented (the
+  // recomposite() call below — the authoritative pointerup barrier that
+  // flattens and presents the frame, not per-dab rendering), flush any
+  // renderer work still queued, via the same dispatcher-level
+  // BrushRenderer.flushActiveRenderer() API used at stroke completion
+  // (Phase 5M). No renderer switching, no direct queue/batch access, no
+  // change to brush rendering/stabilization/spacing/pressure/taper/
+  // opacity/hardness/textures.
+  if(window.BrushRenderer) BrushRenderer.flushActiveRenderer();
   if(layerIndex>=0&&frameIndex>=0&&curLayer===layerIndex&&curFrame===frameIndex)recomposite(layerIndex,frameIndex);
 }
 // BUG FIX ("brush turns into an eraser / smears the canvas after
