@@ -1539,6 +1539,12 @@ const _gpuState = {
   strokesReceived: 0,
   dabsReceived: 0,
   inStroke: false,
+  // Phase 5B: frame submission counter only. No new GPU resources —
+  // plain numbers for diagnostics of the existing command-submission
+  // flow (createCommandEncoder/beginRenderPass/endRenderPass/
+  // submitCommands), reused as-is.
+  framesSubmitted: 0,
+  lastFrameTime: null,
 };
 
 // Phase 2C: GpuBrushRenderer skeleton. Implements the exact same public
@@ -1854,6 +1860,30 @@ const GpuBrushRenderer = {
     if(!this.submitCommands()) return false;
     return true;
   },
+  // Phase 5B: submits a minimal, valid GPU frame that only clears the
+  // canvas — reuses createCommandEncoder()/beginRenderPass()/
+  // endRenderPass()/submitCommands() exactly as they already exist.
+  // Deliberately does NOT call createPipeline(): no shader module,
+  // pipeline, or bind group is created by this method. beginRenderPass()
+  // opens the render pass with its existing clear-to-transparent color
+  // attachment before it ever checks for a pipeline, so the clear still
+  // happens even though no pipeline draw is issued; the resulting
+  // "no pipeline" false from beginRenderPass() is expected here and is
+  // not treated as a hard failure as long as a render pass actually
+  // opened (i.e. endRenderPass() succeeds). Returns false if the
+  // renderer isn't initialized, or if any real step (encoder creation,
+  // opening a pass at all, or submission) fails. On success, increments
+  // the frame counter and timestamp.
+  submitEmptyFrame(){
+    if(!_gpuState.initialized) return false;
+    if(!this.createCommandEncoder()) return false;
+    this.beginRenderPass();
+    if(!this.endRenderPass()) return false;
+    if(!this.submitCommands()) return false;
+    _gpuState.framesSubmitted+=1;
+    _gpuState.lastFrameTime=Date.now();
+    return true;
+  },
   // Phase 3L: minimal self-test entry point. Reuses initialize() and
   // renderFrame() as-is — no duplicated init or render logic. Not
   // called from anywhere yet, and does not activate the GPU renderer.
@@ -1919,6 +1949,16 @@ const GpuBrushRenderer = {
       strokesReceived: _gpuState.strokesReceived,
       dabsReceived: _gpuState.dabsReceived,
       inStroke: _gpuState.inStroke
+    };
+  },
+  // Phase 5B: read-only frame-submission diagnostics. Exposes only
+  // plain numbers/timestamps — never adapter/device/queue/pipeline/
+  // shader/texture/buffer objects. Confirms submitEmptyFrame() is
+  // successfully producing and submitting GPU command buffers.
+  getFrameStats(){
+    return {
+      framesSubmitted: _gpuState.framesSubmitted,
+      lastFrameTime: _gpuState.lastFrameTime
     };
   },
 };
