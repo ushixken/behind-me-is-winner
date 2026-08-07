@@ -1138,6 +1138,9 @@ const _gpuState = {
   configured: false,
   commandEncoder: null,
   commandBuffer: null,
+  currentTexture: null,
+  currentTextureView: null,
+  renderPass: null,
 };
 
 // Phase 2C: GpuBrushRenderer skeleton. Implements the exact same public
@@ -1309,6 +1312,50 @@ const GpuBrushRenderer = {
     _gpuState.queue.submit([commandBuffer]);
     _gpuState.commandBuffer=commandBuffer;
     _gpuState.commandEncoder=null;
+    return true;
+  },
+  // Phase 3E: minimal render-pass infrastructure. Neither method is
+  // called anywhere yet — they exist only as infrastructure for a future
+  // rendering phase. No pipeline, shader module, bind group, or GPU
+  // buffer is created by either method; the only texture involved is the
+  // current swapchain texture acquired from the already-configured
+  // canvas context.
+  //
+  // Requires an existing command encoder (from createCommandEncoder()).
+  // Acquires the current swapchain texture from the configured canvas
+  // context, creates a view from it, stores both in _gpuState, and opens
+  // a render pass on the command encoder with a single color attachment
+  // that clears to a transparent color and stores the result. Returns
+  // false (no-op) if there's no command encoder or no configured
+  // context; returns true once the render pass has begun.
+  beginRenderPass(){
+    if(!_gpuState.commandEncoder) return false;
+    if(!_gpuState.context) return false;
+    const currentTexture=_gpuState.context.getCurrentTexture();
+    if(!currentTexture) return false;
+    const currentTextureView=currentTexture.createView();
+    _gpuState.currentTexture=currentTexture;
+    _gpuState.currentTextureView=currentTextureView;
+    _gpuState.renderPass=_gpuState.commandEncoder.beginRenderPass({
+      colorAttachments: [{
+        view: currentTextureView,
+        clearValue: { r:0, g:0, b:0, a:0 },
+        loadOp: 'clear',
+        storeOp: 'store',
+      }],
+    });
+    return true;
+  },
+  // Safely ends the current render pass (if one is open) and clears the
+  // stored render-pass reference. Does not clear currentTexture/
+  // currentTextureView — those simply remain the last-acquired swapchain
+  // texture/view until the next beginRenderPass() call overwrites them.
+  // Returns false (no-op) if there is no render pass to end; returns
+  // true after ending it.
+  endRenderPass(){
+    if(!_gpuState.renderPass) return false;
+    _gpuState.renderPass.end();
+    _gpuState.renderPass=null;
     return true;
   },
 };
