@@ -1532,6 +1532,13 @@ const _gpuState = {
   shaderModule: null,
   bindGroupLayout: null,
   bindGroup: null,
+  // Phase 5A: receive counters only — track how many times this
+  // renderer has been called through the same beginStroke/drawDab/
+  // endStroke path CpuBrushRenderer receives. No rendering, no GPU
+  // resource creation; these are plain numbers for diagnostics.
+  strokesReceived: 0,
+  dabsReceived: 0,
+  inStroke: false,
 };
 
 // Phase 2C: GpuBrushRenderer skeleton. Implements the exact same public
@@ -1547,14 +1554,20 @@ const _gpuState = {
 // it is GPU-renderer-specific lifecycle setup that must be called
 // explicitly and does not affect the active renderer.
 const GpuBrushRenderer = {
+  // Phase 5A: minimal lifecycle receive-tracking only. Receives the
+  // exact same calls CpuBrushRenderer gets via the unchanged
+  // BrushRenderer dispatcher (this.active.beginStroke/drawDab/
+  // endStroke) — no rendering, no shader/pipeline/buffer/texture work,
+  // no brush appearance/stabilization/pressure logic touched.
   drawDab(d,rendererContext){
-    // intentionally empty
+    _gpuState.dabsReceived+=1;
   },
   beginStroke(){
-    // intentionally empty
+    _gpuState.inStroke=true;
+    _gpuState.strokesReceived+=1;
   },
   endStroke(){
-    // intentionally empty
+    _gpuState.inStroke=false;
   },
   invalidateCaches(which){
     // intentionally empty
@@ -1880,6 +1893,9 @@ const GpuBrushRenderer = {
     _gpuState.shaderModule=null;
     _gpuState.bindGroupLayout=null;
     _gpuState.bindGroup=null;
+    // Phase 5A: reset does not clear receive counters — those are a
+    // cumulative diagnostic history, not initialization state. Resetting
+    // GPU init state must not hide how many strokes/dabs were received.
     return true;
   },
   // Phase 4T: metadata only — GPU renderer does not draw yet, so
@@ -1891,6 +1907,18 @@ const GpuBrushRenderer = {
       rendering: false,
       initialized: _gpuState.initialized,
       experimental: true
+    };
+  },
+  // Phase 5A: read-only receive-counter diagnostics. Exposes only plain
+  // numbers/booleans — never adapter/device/queue/pipeline/shader/
+  // texture/buffer objects. Confirms the GPU renderer is receiving the
+  // same beginStroke/drawDab/endStroke calls CPU does, without
+  // implementing any rendering.
+  getReceiveCounters(){
+    return {
+      strokesReceived: _gpuState.strokesReceived,
+      dabsReceived: _gpuState.dabsReceived,
+      inStroke: _gpuState.inStroke
     };
   },
 };
