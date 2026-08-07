@@ -106,8 +106,17 @@ document.getElementById('pref-cursor-brush-shape').onchange=e=>{ if(e.target.che
 
   // Keep the UI in sync if something elsewhere in the app changes the
   // preference (e.g. another panel, or a future settings-sync feature).
+  // #modal-preferences is a static overlay (index.html) that's toggled
+  // via the .visible class and never removed/recreated, so there's no
+  // unmount point to tie a removal call to today. The listener is still
+  // kept as a named, stored reference — matching the removable-listener
+  // pattern used elsewhere in this codebase (e.g. site-dialog.js) — so
+  // BrushRenderer.removePreferenceChanged(_prefRendererListener) is a
+  // trivial one-liner if a teardown path is ever introduced.
+  function _prefRendererListener(){ renderList(); }
+  window._prefRendererListener=_prefRendererListener;
   if(typeof window.BrushRenderer.onPreferenceChanged==='function'){
-    window.BrushRenderer.onPreferenceChanged(()=>renderList());
+    window.BrushRenderer.onPreferenceChanged(_prefRendererListener);
   }
 
   renderList();
