@@ -1822,6 +1822,21 @@ const _gpuState = {
   dabQueue: [],
   dabQueueMaxSize: 4096,
   queuedDabs: 0,
+  // Phase 6B: persistent accumulation texture that dab batches are
+  // rendered into (loadOp:'load', same texture object reused across
+  // every flush) so previously drawn strokes are never lost. The
+  // canvas's own swapchain texture (context.getCurrentTexture())
+  // cannot be used for this — a new, blank texture is handed back for
+  // presentation, so anything drawn to a previous one is gone once
+  // that frame presents. This texture is not part of the swapchain;
+  // it is only ever blitted onto the current swapchain texture (a
+  // plain GPU-to-GPU copy, not a second render/draw pipeline) inside
+  // the existing flushDabQueue() so the canvas reflects the
+  // accumulated result. Sized to match the GPU canvas; recreated (and
+  // re-cleared) only when that size changes.
+  accumTexture: null,
+  accumTextureWidth: 0,
+  accumTextureHeight: 0,
   submittedDabs: 0,
   droppedDabs: 0,
   lastBatchTime: null,
@@ -2098,6 +2113,48 @@ const GpuBrushRenderer = {
     _gpuState.dabBatchCapacity=capacity;
     return true;
   },
+  // Phase 6B: lazily creates (or recreates, on a canvas size change)
+  // the persistent accumulation texture dab batches are rendered into.
+  // Created once per size and then reused — "recreated only when
+  // required", same growth-avoidance principle as
+  // _ensureDabBatchCapacity() above. A fresh/resized texture is
+  // cleared exactly once, right here, via its own tiny clear pass; every
+  // subsequent flush into it uses loadOp:'load' (see
+  // _flushDabQueueImplTimed) so prior strokes already drawn into it are
+  // preserved rather than replayed.
+  _ensureAccumTexture(width,height){
+    if(_gpuState.accumTexture && _gpuState.accumTextureWidth===width && _gpuState.accumTextureHeight===height){
+      return true;
+    }
+    if(!_gpuState.device || !_gpuState.canvasFormat) return false;
+    if(_gpuState.accumTexture){
+      _gpuState.accumTexture.destroy();
+      _gpuState.accumTexture=null;
+    }
+    _gpuState.accumTexture=_gpuState.device.createTexture({
+      size:{width,height},
+      format:_gpuState.canvasFormat,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST,
+    });
+    _gpuState.accumTextureWidth=width;
+    _gpuState.accumTextureHeight=height;
+    // Clear the new texture to transparent exactly once, here, on its
+    // own tiny command buffer — separate from the dab batch encoder in
+    // _flushDabQueueImplTimed so this one-time reset never gets mixed
+    // up with (or mistaken for) that method's own encoder/pass state.
+    const clearEncoder=_gpuState.device.createCommandEncoder();
+    const clearPass=clearEncoder.beginRenderPass({
+      colorAttachments: [{
+        view:_gpuState.accumTexture.createView(),
+        loadOp:'clear',
+        clearValue:{r:0,g:0,b:0,a:0},
+        storeOp:'store',
+      }],
+    });
+    clearPass.end();
+    _gpuState.queue.submit([clearEncoder.finish()]);
+    return true;
+  },
   // Phase 5C: converts the dab's existing pixel-space position/radius
   // (d.x, d.y, d.r — the same values CpuBrushRenderer.drawDab() already
   // receives; no new fields are read from d) into a single NDC quad and
@@ -2231,6 +2288,15 @@ const GpuBrushRenderer = {
         this._recordFlush(flushReason,false);
         return false;
       }
+      // Phase 6B: ensure the persistent accumulation texture (see
+      // _gpuState.accumTexture) exists and matches the canvas's current
+      // size before drawing into it.
+      if(!this._ensureAccumTexture(canvas.width,canvas.height)){
+        _gpuState.failedBatches+=1;
+        _gpuState.failedDabs+=dabCount;
+        this._recordFlush(flushReason,false);
+        return false;
+      }
 
       // Build the whole batch's vertex data in one typed array and
       // upload it in a single queue.writeBuffer() call, instead of one
@@ -2255,11 +2321,14 @@ const GpuBrushRenderer = {
         this._recordFlush(flushReason,false);
         return false;
       }
-      const view=currentTexture.createView();
-      // loadOp:'load' so this batch composites onto whatever the GPU
-      // canvas already contains rather than clearing it — unchanged
-      // from Phase 5D's per-dab behavior, just applied once per batch
-      // instead of once per dab.
+      // Phase 6B: this batch is now drawn into the persistent
+      // accumulation texture, not directly into the swapchain's
+      // currentTexture — loadOp:'load' here composites onto everything
+      // previously flushed into accumTexture (this stroke's earlier
+      // batches AND every prior stroke's), since it is the same texture
+      // object every time rather than a fresh per-frame swapchain
+      // texture.
+      const view=_gpuState.accumTexture.createView();
       const pass=_gpuState.commandEncoder.beginRenderPass({
         colorAttachments: [{
           view,
@@ -2273,6 +2342,16 @@ const GpuBrushRenderer = {
       // dabCount dabs, no indices, no instancing.
       pass.draw(dabCount*6);
       pass.end();
+      // Phase 6B: blit the accumulation texture onto this frame's
+      // swapchain texture so the canvas actually displays the
+      // accumulated result. A single GPU-to-GPU copy, in the same
+      // command buffer as the batch draw above — not a second render
+      // pipeline, not a dab replay, no CPU readback.
+      _gpuState.commandEncoder.copyTextureToTexture(
+        {texture:_gpuState.accumTexture},
+        {texture:currentTexture},
+        {width:canvas.width,height:canvas.height}
+      );
       if(!this.submitCommands()){
         _gpuState.failedBatches+=1;
         _gpuState.failedDabs+=dabCount;
@@ -2914,6 +2993,19 @@ const GpuBrushRenderer = {
     // initialize() correctly reallocates rather than assuming stale
     // capacity from a destroyed buffer.
     _gpuState.dabBatchCapacity=0;
+    // Phase 6B: the persistent accumulation texture is GPU-device-bound
+    // exactly like the dab pipeline/buffer above and cannot survive a
+    // device teardown — drop the reference (and its size tracking) so
+    // the next flush after a fresh initialize() recreates it via
+    // _ensureAccumTexture() instead of touching a destroyed texture.
+    // This is a reset of the accumulated *GPU resource*, not of drawing
+    // behavior — flushDabQueue()/endStroke() are untouched.
+    if(_gpuState.accumTexture){
+      _gpuState.accumTexture.destroy();
+    }
+    _gpuState.accumTexture=null;
+    _gpuState.accumTextureWidth=0;
+    _gpuState.accumTextureHeight=0;
     // Phase 5E: the live queue itself (pending, not-yet-flushed dabs)
     // is cleared on reset since it was staged for a GPU device that is
     // being torn down — those dabs can never be submitted against it.
