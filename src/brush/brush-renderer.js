@@ -1378,6 +1378,24 @@ const GpuBrushRenderer = {
     _gpuState.renderPass=null;
     return true;
   },
+  // Phase 3G: prerequisite-validation stub only. Does NOT call
+  // device.createShaderModule(), device.createRenderPipeline(),
+  // device.createPipelineLayout(), device.createBindGroupLayout(), or
+  // device.createBindGroupLayout()/createBindGroup() — pipeline,
+  // pipelineLayout, shaderModule, bindGroupLayout, and bindGroup all
+  // remain null. This method exists only so a future phase has a single
+  // place to implement real pipeline creation; it is not called from
+  // anywhere yet. Returns false if the GPU renderer isn't initialized,
+  // has no device, or has no canvas format. Returns true without doing
+  // anything further if a pipeline already exists (idempotent — no
+  // recreation), or if all prerequisites are simply satisfied.
+  createPipeline(){
+    if(!_gpuState.initialized) return false;
+    if(!_gpuState.device) return false;
+    if(!_gpuState.canvasFormat) return false;
+    if(_gpuState.pipeline) return true;
+    return true;
+  },
 };
 
 // CPU renderer registers itself and becomes the active renderer. This is
