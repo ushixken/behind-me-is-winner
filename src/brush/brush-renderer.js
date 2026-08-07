@@ -1130,9 +1130,36 @@ const BrushRenderer = {
   // touched or exposed by either method.
   setPreferredRenderer(name){
     this._preferredName=name;
+    this.savePreferredRenderer();
   },
   getPreferredRenderer(){
     return this._preferredName;
+  },
+  // Phase 4E: localStorage persistence for the preference only — never
+  // activates a renderer. loadPreferredRenderer() reads the stored
+  // value and updates _preferredName if present (leaving the current
+  // value, default 'cpu', untouched if missing or on any storage
+  // error). savePreferredRenderer() writes the current _preferredName
+  // back to the same key. Neither calls activateRenderer() or
+  // applyPreferredRenderer().
+  loadPreferredRenderer(){
+    try{
+      if(typeof localStorage==='undefined') return;
+      const stored=localStorage.getItem('preferredRenderer');
+      if(stored!==null && stored!==undefined){
+        this._preferredName=stored;
+      }
+    }catch(e){
+      // Storage unavailable/blocked — keep current _preferredName.
+    }
+  },
+  savePreferredRenderer(){
+    try{
+      if(typeof localStorage==='undefined') return;
+      localStorage.setItem('preferredRenderer',this._preferredName);
+    }catch(e){
+      // Storage unavailable/blocked — no-op.
+    }
   },
   // Phase 4D: pure delegation — applies whatever preference is
   // currently stored by calling the existing activateRenderer() with
