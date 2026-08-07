@@ -2098,7 +2098,14 @@ const GpuBrushRenderer = {
   // received, unmodified.
   drawDab(d,rendererContext){
     _gpuState.dabsReceived+=1;
-    return this._enqueueDab(d);
+    const aaMode=_currentAAMode();
+    const hardness=rendererContext&&typeof rendererContext.brushHardness==='number'
+      ? rendererContext.brushHardness
+      : 1;
+    const innerFrac=aaMode==='none'
+      ? 1
+      : _effectiveInnerFrac(d&&d.r,hardness,aaMode);
+    return this._enqueueDab(Object.assign({},d,{gpuInnerFrac:innerFrac}));
   },
   // Phase 5C: smallest possible GPU-side dab representation — a single
   // flat-color quad (2 triangles, 6 vertices, no indices), no bind
@@ -2148,14 +2155,16 @@ const GpuBrushRenderer = {
         @builtin(position) position: vec4<f32>,
         @location(0) color: vec4<f32>,
         @location(1) uv: vec2<f32>,
+        @location(2) inner_frac: f32,
       };
 
       @vertex
-      fn vs_main(@location(0) pos: vec2<f32>, @location(1) color: vec4<f32>, @location(2) uv: vec2<f32>) -> VertexOut {
+      fn vs_main(@location(0) pos: vec2<f32>, @location(1) color: vec4<f32>, @location(2) uv: vec2<f32>, @location(3) inner_frac: f32) -> VertexOut {
         var out: VertexOut;
         out.position = vec4<f32>(pos, 0.0, 1.0);
         out.color = color;
         out.uv = uv;
+        out.inner_frac = inner_frac;
         return out;
       }
 
@@ -2167,9 +2176,14 @@ const GpuBrushRenderer = {
         // the circle a clean (~1px) edge instead of a jagged hard cutoff
         // — required just to render a circle at all, not the CPU
         // renderer's separate, larger hardness-falloff gradient, which
-        // remains unimplemented here.
+        // is supplied per dab from the shared CPU falloff calculation.
         let dist = length(in.uv);
-        let coverage = 1.0 - smoothstep(0.9, 1.0, dist);
+        var coverage: f32;
+        if (in.inner_frac >= 1.0) {
+          coverage = select(0.0, 1.0, dist < 1.0);
+        } else {
+          coverage = 1.0 - smoothstep(in.inner_frac, 1.0, dist);
+        }
         if (coverage <= 0.0) {
           discard;
         }
@@ -2190,11 +2204,12 @@ const GpuBrushRenderer = {
         module:shaderModule,
         entryPoint:'vs_main',
         buffers:[{
-          arrayStride: 8*4,
+          arrayStride: 9*4,
           attributes:[
             {shaderLocation:0, offset:0, format:'float32x2'},
             {shaderLocation:1, offset:2*4, format:'float32x4'},
             {shaderLocation:2, offset:6*4, format:'float32x2'},
+            {shaderLocation:3, offset:8*4, format:'float32'},
           ],
         }],
       },
@@ -2253,7 +2268,7 @@ const GpuBrushRenderer = {
       // vertices/dab, just a wider per-vertex stride to carry color.
       // Phase 6F: widened again to 8 floats/vertex (+2 for UV) to mask
       // the quad into a circle — see createDabPipeline().
-      size: capacity*6*8*4,
+      size: capacity*6*9*4,
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
     });
     // Phase 5S: diagnostics only — records the createBuffer() above.
@@ -2621,11 +2636,13 @@ const GpuBrushRenderer = {
     const [x2,y2]=toNdc(cx+r, cy+r);
     const [x3,y3]=toNdc(cx-r, cy+r);
 
-    const stride=8;
+    const innerFrac=(d&&typeof d.gpuInnerFrac==='number')?Math.max(0,Math.min(1,d.gpuInnerFrac)):1;
+    const stride=9;
     const writeVertex=(base,x,y,u,v)=>{
       arr[base+0]=x; arr[base+1]=y;
       arr[base+2]=cr; arr[base+3]=cg; arr[base+4]=cb; arr[base+5]=ca;
       arr[base+6]=u; arr[base+7]=v;
+      arr[base+8]=innerFrac;
     };
     writeVertex(offset+0*stride, x0,y0, -1,-1);
     writeVertex(offset+1*stride, x1,y1,  1,-1);
@@ -2769,9 +2786,9 @@ const GpuBrushRenderer = {
       // 4 rgba + 2 uv), up from 36 — matches _writeDabQuadInto()'s new
       // per-vertex stride and createDabPipeline()'s buffer layout.
       // Batch-per-draw-call structure is unchanged.
-      const verts=new Float32Array(dabCount*48);
+      const verts=new Float32Array(dabCount*54);
       for(let i=0;i<dabCount;i++){
-        this._writeDabQuadInto(verts,i*48,_gpuState.dabQueue[i],canvas.width,canvas.height);
+        this._writeDabQuadInto(verts,i*54,_gpuState.dabQueue[i],canvas.width,canvas.height);
       }
       _gpuState.queue.writeBuffer(_gpuState.dabVertexBuffer,0,verts);
 
