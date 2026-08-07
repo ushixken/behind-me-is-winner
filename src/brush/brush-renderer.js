@@ -2254,7 +2254,21 @@ const GpuBrushRenderer = {
         let dist = length(in.uv);
         var coverage: f32;
         if (in.inner_frac >= 1.0) {
-          coverage = select(0.0, 1.0, dist < 1.0);
+          // AA mode "none": the CPU aliased path (_getAliasedStamp) rasterizes
+          // the dab with the canvas's own antialiased arc() fill first, then
+          // snaps every pixel touched by ANY nonzero coverage to fully opaque
+          // (see _dabAliased). That "any coverage counts" rule is more
+          // inclusive than a bare per-fragment center-point test, so a plain
+          // dist-less-than-1.0 cutoff here renders a visibly thinner/tighter
+          // circle than the CPU pencil at the same radius. fwidth of dist is the
+          // screen-space size of one pixel in normalized dist units at this
+          // fragment, so nudging the cutoff out by half of it reproduces the
+          // same "pixel is on if the true edge passes anywhere through it"
+          // boundary the CPU rasterizer already snapped to, while staying a
+          // hard 0 or 1 step (no partial-alpha fringe) exactly like the CPU
+          // pencil's pixel-quantized output.
+          let px = fwidth(dist);
+          coverage = select(0.0, 1.0, dist < 1.0 + 0.5 * px);
         } else {
           coverage = 1.0 - smoothstep(in.inner_frac, 1.0, dist);
         }
