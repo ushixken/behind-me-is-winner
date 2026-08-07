@@ -1117,6 +1117,21 @@ const BrushRenderer = {
 // (device + preferred format + premultiplied alpha). No texture, buffer,
 // shader, pipeline, bind group, command encoder, or render pass is
 // created — configuration only.
+//
+// Phase 3D: adds command-submission transient fields (commandEncoder,
+// commandBuffer), used only by createCommandEncoder()/submitCommands().
+//
+// Phase 3E: adds render-pass transient fields (currentTexture,
+// currentTextureView, renderPass), used only by beginRenderPass()/
+// endRenderPass().
+//
+// Phase 3F: adds pipeline-resource placeholder fields (pipeline,
+// pipelineLayout, shaderModule, bindGroupLayout, bindGroup). All
+// initialized to null and never assigned anywhere in this phase — no
+// createShaderModule/createRenderPipeline/createPipelineLayout/
+// createBindGroupLayout/createBindGroup call exists yet. These fields
+// exist purely so a future phase has somewhere to store pipeline
+// resources; nothing reads or writes them in this phase.
 const _gpuState = {
   lineContinuity: null,
   tipAlphaBuffer: null,
@@ -1141,6 +1156,11 @@ const _gpuState = {
   currentTexture: null,
   currentTextureView: null,
   renderPass: null,
+  pipeline: null,
+  pipelineLayout: null,
+  shaderModule: null,
+  bindGroupLayout: null,
+  bindGroup: null,
 };
 
 // Phase 2C: GpuBrushRenderer skeleton. Implements the exact same public
