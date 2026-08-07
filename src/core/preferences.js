@@ -124,6 +124,15 @@ document.getElementById('pref-cursor-brush-shape').onchange=e=>{ if(e.target.che
   historyEl.style.cssText='margin-top:10px;padding:8px;border-radius:8px;border:1px solid var(--border2);font-size:11px;color:var(--text2);line-height:1.6;';
   diagnosticsEl.insertAdjacentElement('afterend',historyEl);
 
+  // Phase 4S: read-only Renderer Lifecycle section, below history.
+  // Sourced only from BrushRenderer.getRendererLifecycleStatus() — a
+  // public API built dynamically from registered renderers. No
+  // _gpuState/GPU internal access.
+  const lifecycleEl=document.createElement('div');
+  lifecycleEl.id='pref-renderer-lifecycle';
+  lifecycleEl.style.cssText='margin-top:10px;padding:8px;border-radius:8px;border:1px solid var(--border2);font-size:11px;color:var(--text2);line-height:1.6;';
+  historyEl.insertAdjacentElement('afterend',lifecycleEl);
+
   function renderList(){
     if(typeof window.BrushRenderer.getRendererOptions!=='function') return;
     const options=window.BrushRenderer.getRendererOptions();
@@ -345,11 +354,73 @@ document.getElementById('pref-cursor-brush-shape').onchange=e=>{ if(e.target.che
     });
   }
 
+  // Phase 4S: read-only readout of per-renderer lifecycle state, sourced
+  // solely from BrushRenderer.getRendererLifecycleStatus(). Renderer
+  // names/order come from the returned object's own keys — never
+  // hardcoded to "cpu"/"gpu".
+  function renderLifecycle(){
+    if(typeof window.BrushRenderer.getRendererLifecycleStatus!=='function'){
+      lifecycleEl.textContent='';
+      return;
+    }
+    const lifecycle=window.BrushRenderer.getRendererLifecycleStatus();
+
+    lifecycleEl.innerHTML='';
+
+    const heading=document.createElement('div');
+    heading.style.cssText='font-weight:600;color:var(--text);';
+    heading.textContent='Renderer Lifecycle';
+    lifecycleEl.appendChild(heading);
+
+    const names=Object.keys(lifecycle);
+    if(names.length===0){
+      const emptyLine=document.createElement('div');
+      emptyLine.textContent='No renderers registered.';
+      lifecycleEl.appendChild(emptyLine);
+      return;
+    }
+
+    names.forEach(name=>{
+      const record=lifecycle[name]||{};
+      const entry=document.createElement('div');
+      entry.style.cssText='margin-top:6px;padding-top:6px;border-top:1px solid var(--border2);';
+
+      const nameLine=document.createElement('div');
+      nameLine.innerHTML='<b style="color:var(--text);">'+String(name).toUpperCase()+'</b>';
+      entry.appendChild(nameLine);
+
+      const stateLine=document.createElement('div');
+      stateLine.textContent='State: '+(record.state||'idle');
+      entry.appendChild(stateLine);
+
+      if(record.updatedAt){
+        let timeText;
+        try{
+          timeText=new Date(record.updatedAt).toLocaleTimeString();
+        }catch(e){
+          timeText=String(record.updatedAt);
+        }
+        const updatedLine=document.createElement('div');
+        updatedLine.textContent='Updated: '+timeText;
+        entry.appendChild(updatedLine);
+      }
+
+      if(record.error){
+        const errorLine=document.createElement('div');
+        errorLine.textContent='Error: '+record.error;
+        entry.appendChild(errorLine);
+      }
+
+      lifecycleEl.appendChild(entry);
+    });
+  }
+
   function renderAll(){
     renderList();
     renderStatus();
     renderDiagnostics();
     renderHistory();
+    renderLifecycle();
   }
 
   // Phase 4L: guards against duplicate simultaneous apply requests and

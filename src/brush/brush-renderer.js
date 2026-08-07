@@ -1088,6 +1088,19 @@ const BrushRenderer = {
   // Phase 4Q: bounded history of applyPreferredRenderer() attempts.
   // Diagnostics only — newest-10 records, no GPU resources stored.
   _applyHistory: [],
+  // Phase 4S: lifecycle state per registered renderer name. Diagnostics
+  // only — never hardcoded to "cpu"/"gpu"; built/updated dynamically as
+  // renderers are activated/reset.
+  _rendererStates: {},
+  // Phase 4S: internal helper to set a renderer's lifecycle record.
+  // Diagnostics only — does not affect activation/registration.
+  _setRendererState(name,state,error){
+    this._rendererStates[name]={
+      state,
+      updatedAt: Date.now(),
+      error: error||null
+    };
+  },
   // Registers a renderer implementation under `name`. Does not activate it.
   registerRenderer(name,renderer){
     this._renderers[name]=renderer;
@@ -1123,11 +1136,17 @@ const BrushRenderer = {
     const renderer=this._renderers[name];
     if(!renderer) return false;
     if(this._activeName===name) return true;
+    this._setRendererState(name,'initializing',null);
     if(typeof renderer.initialize==='function'){
       const ok=await renderer.initialize();
-      if(!ok) return false;
+      if(!ok){
+        const err=(typeof renderer.getInitError==='function')?renderer.getInitError():null;
+        this._setRendererState(name,'failed',err);
+        return false;
+      }
     }
     this.setActiveRenderer(name);
+    this._setRendererState(name,'active',null);
     return true;
   },
   // Phase 4B: read-only, high-level status snapshot. Exposes only
@@ -1180,6 +1199,7 @@ const BrushRenderer = {
     const renderer=this._renderers[name];
     if(!renderer) return false;
     if(typeof renderer.reset==='function') renderer.reset();
+    this._setRendererState(name,'idle',null);
     return true;
   },
   // Phase 4R: resets whichever renderer is currently active, by name,
@@ -1326,6 +1346,19 @@ const BrushRenderer = {
   // so callers cannot mutate internal state directly.
   getRendererApplyHistory(){
     return this._applyHistory.map(record=>({...record}));
+  },
+  // Phase 4S: read-only lifecycle status, built dynamically from every
+  // registered renderer name (never hardcoded to "cpu"/"gpu"). Renderers
+  // with no recorded state yet default to "idle" with no error/time.
+  getRendererLifecycleStatus(){
+    const out={};
+    for(const name of Object.keys(this._renderers)){
+      const record=this._rendererStates[name];
+      out[name]=record
+        ? {...record}
+        : {state:'idle',updatedAt:null,error:null};
+    }
+    return out;
   },
 };
 
