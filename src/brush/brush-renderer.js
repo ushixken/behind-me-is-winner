@@ -1249,6 +1249,20 @@ const BrushRenderer = {
     }
     return null;
   },
+  // Phase 5U: dispatcher-level combined diagnostics export accessor.
+  // Pure forwarder — calls the active renderer's exportDiagnostics()
+  // only if it implements one (GpuBrushRenderer does, as of Phase 5U;
+  // CpuBrushRenderer does not and is left unmodified), and never
+  // reassigns `this.active`. No setActiveRenderer()/activateRenderer()/
+  // applyPreferredRenderer() call, no renderer switching of any kind.
+  // Returns null when unavailable, matching the other diagnostics
+  // forwarders above. This is the single implementation of this method.
+  exportRendererDiagnostics(){
+    if(this.active && typeof this.active.exportDiagnostics==='function'){
+      return this.active.exportDiagnostics();
+    }
+    return null;
+  },
   // Phase 5I: dispatcher-level frame lifecycle forwarding. Pure
   // forwarders — each calls the corresponding method on the active
   // renderer only if it implements one (GpuBrushRenderer does;
@@ -2987,6 +3001,37 @@ const GpuBrushRenderer = {
       errorCount: _gpuState.errorCount,
       errorHistory: _gpuState.errorHistory.map(entry=>({...entry}))
     };
+  },
+  // Phase 5U: single public export combining every existing renderer
+  // diagnostic getter into one object. Each section is produced by
+  // calling the corresponding existing public getter (never rebuilt
+  // manually), so this stays in lockstep with whatever those getters
+  // already return. Deep-cloned via JSON round-trip — every source
+  // getter already returns plain strings/numbers/booleans/null/plain
+  // objects/arrays, so the round-trip is a safe defensive copy that
+  // guarantees the caller cannot mutate any internal _gpuState
+  // reference through the returned object. Diagnostics only — no
+  // rendering, activation, or GPU resource is touched or exposed.
+  exportDiagnostics(){
+    const snapshot={
+      receive: this.getReceiveCounters(),
+      frame: this.getFrameStats(),
+      dab: this.getDabDrawStats(),
+      queue: this.getQueueStats(),
+      flush: this.getFlushDiagnostics(),
+      lifecycle: this.getFrameLifecycleDiagnostics(),
+      presentation: this.getPresentationDiagnostics(),
+      idle: this.getIdleDiagnostics(),
+      session: this.getSessionDiagnostics(),
+      performance: this.getPerformanceDiagnostics(),
+      memory: this.getMemoryDiagnostics(),
+      errors: this.getErrorDiagnostics()
+    };
+    try{
+      return JSON.parse(JSON.stringify(snapshot));
+    }catch(e){
+      return snapshot;
+    }
   },
 };
 
