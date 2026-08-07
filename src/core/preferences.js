@@ -92,6 +92,16 @@ document.getElementById('pref-cursor-brush-shape').onchange=e=>{ if(e.target.che
   testBtn.textContent='Run Renderer Test';
   applyBtn.insertAdjacentElement('afterend',testBtn);
 
+  // Phase 4P: diagnostics block for the last applyPreferredRenderer()
+  // outcome. Sits below the existing status section (after the test
+  // button). Read-only — sourced only from
+  // BrushRenderer.getRendererApplyStatus(), never from _gpuState or any
+  // GPU internals. No activation call is made here.
+  const diagnosticsEl=document.createElement('div');
+  diagnosticsEl.id='pref-renderer-diagnostics';
+  diagnosticsEl.style.cssText='margin-top:10px;padding:8px;border-radius:8px;border:1px solid var(--border2);font-size:11px;color:var(--text2);line-height:1.6;';
+  testBtn.insertAdjacentElement('afterend',diagnosticsEl);
+
   function renderList(){
     if(typeof window.BrushRenderer.getRendererOptions!=='function') return;
     const options=window.BrushRenderer.getRendererOptions();
@@ -200,9 +210,65 @@ document.getElementById('pref-cursor-brush-shape').onchange=e=>{ if(e.target.che
     }
   }
 
+  // Phase 4P: read-only readout of the last applyPreferredRenderer()
+  // result, sourced solely from BrushRenderer.getRendererApplyStatus().
+  // Renderer names stay dynamic (whatever the status reports) — never
+  // hardcoded to "cpu"/"gpu". No activation call is made from here.
+  function renderDiagnostics(){
+    if(typeof window.BrushRenderer.getRendererApplyStatus!=='function'){
+      diagnosticsEl.textContent='';
+      return;
+    }
+    const applyStatus=window.BrushRenderer.getRendererApplyStatus();
+
+    diagnosticsEl.innerHTML='';
+
+    const heading=document.createElement('div');
+    heading.style.cssText='font-weight:600;color:var(--text);';
+    heading.textContent='Last Apply Result';
+    diagnosticsEl.appendChild(heading);
+
+    const resultLine=document.createElement('div');
+    let resultText;
+    if(applyStatus.result===true) resultText='Success';
+    else if(applyStatus.result===false) resultText='Failed';
+    else resultText='Not run yet';
+    resultLine.innerHTML='<b style="color:var(--text);">Result:</b> '+resultText;
+    diagnosticsEl.appendChild(resultLine);
+
+    const preferredLine=document.createElement('div');
+    preferredLine.innerHTML='<b style="color:var(--text);">Preferred used:</b> '+
+      (applyStatus.preferred?String(applyStatus.preferred).toUpperCase():'—');
+    diagnosticsEl.appendChild(preferredLine);
+
+    const activeLine=document.createElement('div');
+    activeLine.innerHTML='<b style="color:var(--text);">Active after apply:</b> '+
+      (applyStatus.active?String(applyStatus.active).toUpperCase():'—');
+    diagnosticsEl.appendChild(activeLine);
+
+    if(applyStatus.error){
+      const errorLine=document.createElement('div');
+      errorLine.innerHTML='<b style="color:var(--text);">Error:</b> '+applyStatus.error;
+      diagnosticsEl.appendChild(errorLine);
+    }
+
+    const timeLine=document.createElement('div');
+    let timeText='—';
+    if(applyStatus.time){
+      try{
+        timeText=new Date(applyStatus.time).toLocaleString();
+      }catch(e){
+        timeText=String(applyStatus.time);
+      }
+    }
+    timeLine.innerHTML='<b style="color:var(--text);">Timestamp:</b> '+timeText;
+    diagnosticsEl.appendChild(timeLine);
+  }
+
   function renderAll(){
     renderList();
     renderStatus();
+    renderDiagnostics();
   }
 
   // Phase 4L: guards against duplicate simultaneous apply requests and
