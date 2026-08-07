@@ -192,6 +192,13 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;fon
   will-change:transform;
 }
 #composite-canvas,#onion-canvas,#active-canvas,#display-canvas,#transform-canvas{position:absolute;top:0;left:0;display:block;}
+/* gpu-canvas: same absolute top:0/left:0 positioning as its
+   canvas-wrap siblings (so its size/position matches active-canvas
+   exactly once JS syncs its width/height attrs the same way, in a
+   later phase). Stays [hidden] until something explicitly activates
+   GPU presentation — preparation only, per Phase 5V. */
+#gpu-canvas{position:absolute;top:0;left:0;display:block;pointer-events:none;}
+#gpu-canvas[hidden]{display:none;}
 #webgpu-presentation-canvas{position:absolute;inset:0;width:100%;height:100%;display:none;pointer-events:none;z-index:1;}
 body.webgpu-presentation-active #webgpu-presentation-canvas{display:block;}
 body.webgpu-presentation-active #composite-canvas,

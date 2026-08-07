@@ -2590,13 +2590,21 @@ const GpuBrushRenderer = {
       _gpuState.deviceFeatures=device.features?Array.from(device.features):null;
       _gpuState.deviceLimits=device.limits?{...device.limits}:null;
       _gpuState.preferredCanvasFormat=(typeof navigator.gpu.getPreferredCanvasFormat==='function')?navigator.gpu.getPreferredCanvasFormat():null;
-      // Phase 3C: locate the app's drawing canvas (the same canvas whose
-      // 2D context is threaded into rendererContext.ctx for the CPU
-      // renderer, per Phase 1G-A) and acquire a GPUCanvasContext from it.
-      // Falls back to a DOM lookup if the bare global isn't reachable in
-      // this scope. This does not touch or reconfigure the 2D context
-      // that CpuBrushRenderer already uses.
-      const canvas=(typeof activeC!=='undefined'&&activeC)?activeC:(typeof document!=='undefined'?document.getElementById('active-canvas'):null);
+      // Phase 3C: locate the app's drawing canvas.
+      // Phase 5V: this now looks for the DEDICATED WebGPU canvas
+      // (#gpu-canvas), NOT active-canvas. active-canvas is permanently
+      // bound to a 2D context in core-state.js (const ctx=
+      // activeC.getContext('2d')) — a canvas element can only ever be
+      // bound to one context type for its lifetime, so requesting a
+      // 'webgpu' context on that same element always returns null (see
+      // the Phase 5 GPU-init investigation). gpu-canvas is a separate
+      // element added in index.html specifically so this call can
+      // eventually succeed; it is not yet used for any rendering, and
+      // this file still does not touch or reconfigure the 2D context
+      // that CpuBrushRenderer uses. No DOM/global fallback to
+      // active-canvas is used here — activeC intentionally never
+      // appears in this lookup.
+      const canvas=(typeof document!=='undefined')?document.getElementById('gpu-canvas'):null;
       if(!canvas){
         _gpuState.initError='canvas-unavailable';
         this._recordError('canvas-unavailable');

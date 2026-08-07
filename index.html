@@ -173,6 +173,17 @@
       <canvas id="display-canvas"></canvas>
       <canvas id="onion-canvas"></canvas>
       <canvas id="active-canvas"></canvas>
+      <!-- gpu-canvas: dedicated WebGPU presentation target for
+           GpuBrushRenderer (Phase 5V — preparation only, not yet used
+           for rendering). Kept separate from active-canvas because a
+           single canvas element can only ever be bound to ONE context
+           type (2D or WebGPU) for its lifetime — active-canvas is
+           already permanently bound to a 2D context in core-state.js,
+           so GpuBrushRenderer.initialize()'s getContext('webgpu') call
+           must target its own canvas instead. Sized/positioned to
+           match active-canvas via #gpu-canvas in style.css. Hidden by
+           default; nothing shows or activates it yet. -->
+      <canvas id="gpu-canvas" hidden></canvas>
       <canvas id="transform-canvas"></canvas>
     </div>
     <!-- perspective-guide-canvas: sized to the VIEWPORT (canvas-area), not the
