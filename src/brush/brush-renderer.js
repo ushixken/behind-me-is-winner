@@ -1435,6 +1435,31 @@ const BrushRenderer = {
     }
     return out;
   },
+  // Phase 4V: unified, read-only diagnostics snapshot combining every
+  // existing diagnostics API into one object. Deep-cloned via
+  // JSON round-trip (all source values are plain strings/numbers/
+  // booleans/null/plain-objects/arrays already) so the caller cannot
+  // mutate any BrushRenderer internal state through the returned
+  // object. No activation, no switching, no GPU internals exposed —
+  // purely aggregates existing public getters.
+  getRendererDiagnostics(){
+    const snapshot={
+      timestamp: Date.now(),
+      active: this.getActiveRenderer(),
+      preferred: this.getPreferredRenderer(),
+      status: this.getRendererStatus(),
+      health: this.getRendererHealth(),
+      capabilities: this.getRendererCapabilities(),
+      lifecycle: this.getRendererLifecycleStatus(),
+      apply: this.getRendererApplyStatus(),
+      history: this.getRendererApplyHistory()
+    };
+    try{
+      return JSON.parse(JSON.stringify(snapshot));
+    }catch(e){
+      return snapshot;
+    }
+  },
 };
 
 // Phase 2D: GpuBrushRenderer owns its own private state object, entirely

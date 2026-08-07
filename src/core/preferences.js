@@ -149,6 +149,26 @@ document.getElementById('pref-cursor-brush-shape').onchange=e=>{ if(e.target.che
   healthEl.style.cssText='margin-top:10px;padding:8px;border-radius:8px;border:1px solid var(--border2);font-size:11px;color:var(--text2);line-height:1.6;';
   capabilitiesEl.insertAdjacentElement('afterend',healthEl);
 
+  // Phase 4V: read-only Renderer Snapshot section, below health. Sourced
+  // only from BrushRenderer.getRendererDiagnostics() — a public API that
+  // aggregates every other diagnostics getter. No _gpuState/GPU
+  // internal access.
+  const snapshotEl=document.createElement('div');
+  snapshotEl.id='pref-renderer-snapshot';
+  snapshotEl.style.cssText='margin-top:10px;padding:8px;border-radius:8px;border:1px solid var(--border2);font-size:11px;color:var(--text2);line-height:1.6;';
+  healthEl.insertAdjacentElement('afterend',snapshotEl);
+
+  // Phase 4V: Copy Diagnostics button — builds the full snapshot via
+  // getRendererDiagnostics(), JSON-stringifies it, and copies to the
+  // clipboard if available. No activation, no renderer changes.
+  const copyBtn=document.createElement('button');
+  copyBtn.type='button';
+  copyBtn.id='pref-renderer-copy-diagnostics';
+  copyBtn.className='modal-btn';
+  copyBtn.style.cssText='margin-top:6px;';
+  copyBtn.textContent='Copy Diagnostics';
+  snapshotEl.insertAdjacentElement('afterend',copyBtn);
+
   function renderList(){
     if(typeof window.BrushRenderer.getRendererOptions!=='function') return;
     const options=window.BrushRenderer.getRendererOptions();
@@ -550,6 +570,96 @@ document.getElementById('pref-cursor-brush-shape').onchange=e=>{ if(e.target.che
     });
   }
 
+  // Phase 4V: read-only summary readout of the unified diagnostics
+  // snapshot, sourced solely from BrushRenderer.getRendererDiagnostics().
+  // No _gpuState access, no hardcoded renderer names.
+  function renderSnapshot(){
+    if(typeof window.BrushRenderer.getRendererDiagnostics!=='function'){
+      snapshotEl.textContent='';
+      return;
+    }
+    const snapshot=window.BrushRenderer.getRendererDiagnostics();
+
+    snapshotEl.innerHTML='';
+
+    const heading=document.createElement('div');
+    heading.style.cssText='font-weight:600;color:var(--text);';
+    heading.textContent='Renderer Snapshot';
+    snapshotEl.appendChild(heading);
+
+    let timeText='—';
+    if(snapshot.timestamp){
+      try{
+        timeText=new Date(snapshot.timestamp).toLocaleString();
+      }catch(e){
+        timeText=String(snapshot.timestamp);
+      }
+    }
+    const timeLine=document.createElement('div');
+    timeLine.innerHTML='<b style="color:var(--text);">Timestamp:</b> '+timeText;
+    snapshotEl.appendChild(timeLine);
+
+    const activeLine=document.createElement('div');
+    activeLine.innerHTML='<b style="color:var(--text);">Active renderer:</b> '+
+      (snapshot.active?String(snapshot.active).toUpperCase():'—');
+    snapshotEl.appendChild(activeLine);
+
+    const preferredLine=document.createElement('div');
+    preferredLine.innerHTML='<b style="color:var(--text);">Preferred renderer:</b> '+
+      (snapshot.preferred?String(snapshot.preferred).toUpperCase():'—');
+    snapshotEl.appendChild(preferredLine);
+
+    const rendererNames=(snapshot.status && Array.isArray(snapshot.status.available))
+      ?snapshot.status.available
+      :Object.keys(snapshot.capabilities||{});
+    const countLine=document.createElement('div');
+    countLine.innerHTML='<b style="color:var(--text);">Renderer count:</b> '+rendererNames.length;
+    snapshotEl.appendChild(countLine);
+
+    const applyResult=(snapshot.apply && snapshot.apply.result);
+    const applyText=applyResult===true?'Success':(applyResult===false?'Failed':'Not run yet');
+    const applyLine=document.createElement('div');
+    applyLine.innerHTML='<b style="color:var(--text);">Apply result:</b> '+applyText;
+    snapshotEl.appendChild(applyLine);
+
+    const healthEntries=snapshot.health||{};
+    const healthNames=Object.keys(healthEntries);
+    const healthyCount=healthNames.filter(name=>healthEntries[name] && healthEntries[name].healthy).length;
+    const healthLine=document.createElement('div');
+    healthLine.innerHTML='<b style="color:var(--text);">Health summary:</b> '+
+      healthyCount+' / '+healthNames.length+' healthy';
+    snapshotEl.appendChild(healthLine);
+  }
+
+  // Phase 4V: copies the full JSON diagnostics snapshot to the
+  // clipboard. Purely reads via getRendererDiagnostics() — no
+  // activation, no renderer state changes.
+  copyBtn.addEventListener('click',async()=>{
+    if(typeof window.BrushRenderer.getRendererDiagnostics!=='function') return;
+    const originalLabel=copyBtn.textContent;
+    let text;
+    try{
+      const snapshot=window.BrushRenderer.getRendererDiagnostics();
+      text=JSON.stringify(snapshot,null,2);
+    }catch(e){
+      copyBtn.textContent='Copy failed';
+      setTimeout(()=>{ copyBtn.textContent=originalLabel; },1500);
+      return;
+    }
+    try{
+      if(navigator.clipboard && typeof navigator.clipboard.writeText==='function'){
+        await navigator.clipboard.writeText(text);
+        copyBtn.textContent='Copied!';
+      }else{
+        copyBtn.textContent='Clipboard unavailable';
+      }
+    }catch(e){
+      copyBtn.textContent='Copy failed';
+    }finally{
+      setTimeout(()=>{ copyBtn.textContent=originalLabel; },1500);
+    }
+  });
+
   function renderAll(){
     renderList();
     renderStatus();
@@ -558,6 +668,7 @@ document.getElementById('pref-cursor-brush-shape').onchange=e=>{ if(e.target.che
     renderLifecycle();
     renderCapabilities();
     renderHealth();
+    renderSnapshot();
   }
 
   // Phase 4L: guards against duplicate simultaneous apply requests and
