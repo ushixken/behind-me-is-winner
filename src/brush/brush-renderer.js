@@ -1570,5 +1570,12 @@ BrushRenderer.setActiveRenderer('cpu');
 // GPU renderer registers itself but is NOT activated. CPU stays active.
 BrushRenderer.registerRenderer('gpu',GpuBrushRenderer);
 
+// Phase 4F: load any saved renderer preference from localStorage now
+// that BrushRenderer is fully constructed and registered. This only
+// updates _preferredName — it does not call activateRenderer(),
+// applyPreferredRenderer(), or setActiveRenderer(), so the active
+// renderer remains 'cpu' regardless of what preference was loaded.
+BrushRenderer.loadPreferredRenderer();
+
 window.CpuBrushRenderer = CpuBrushRenderer;
 window.BrushRenderer = BrushRenderer;
