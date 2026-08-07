@@ -964,6 +964,14 @@ const BrushRenderer = {
   endStroke(){ return this.active.endStroke(); },
   invalidateCaches(which){ return this.active.invalidateCaches(which); },
   getCacheStats(){ return this.active.getCacheStats(); },
+  // Phase 1G-B1: renderer-owned auto hard round continuity state
+  // (_autoHardRoundPrevDab). brush-engine.js previously read/wrote this
+  // module-level variable directly across snapshot save/restore and
+  // various reset points. These two methods give it an API surface
+  // instead, so the variable stays private to this file. No cloning or
+  // transformation — reference identity is preserved exactly.
+  getLineContinuity(){ return _autoHardRoundPrevDab; },
+  setLineContinuity(value){ _autoHardRoundPrevDab=value; },
 };
 
 window.CpuBrushRenderer = CpuBrushRenderer;

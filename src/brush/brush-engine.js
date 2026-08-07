@@ -668,11 +668,11 @@ window._prewarmLiveStrokeComposition=_prewarmLiveStrokeComposition;
 function _prewarmRealDisposableDab(){
   if(_inStroke||drawing||tool!=='brush'||!activeC||typeof recomposite!=='function')return{success:false,error:'Select Brush and finish the active stroke first.'};
   const perf=_brushPerf(),totalStart=performance.now();
-  const saved={frameDirty:_frameDirty,strokeDirty:_strokeDirty,texPending:_texPendingRect,inStroke:_inStroke,flowSpacing:_flowSpacingRatio,isPen:_isDrawingWithPen,currentPressure,_smoothedPressure,lastKnownPressure:_lastKnownPressure,strokeFirstSample:_strokeFirstSample,strokeDabCount:_strokeDabCount,strokeDist:_strokeDistSoFar,autoPrev:_autoHardRoundPrevDab,rotationValid:_rotationPrevValid,rotationPrevX:_rotationPrevX,rotationPrevY:_rotationPrevY,rotationDirection:_rotationDirection,disposablePrewarm:_disposableDabPrewarm};
+  const saved={frameDirty:_frameDirty,strokeDirty:_strokeDirty,texPending:_texPendingRect,inStroke:_inStroke,flowSpacing:_flowSpacingRatio,isPen:_isDrawingWithPen,currentPressure,_smoothedPressure,lastKnownPressure:_lastKnownPressure,strokeFirstSample:_strokeFirstSample,strokeDabCount:_strokeDabCount,strokeDist:_strokeDistSoFar,autoPrev:BrushRenderer.getLineContinuity(),rotationValid:_rotationPrevValid,rotationPrevX:_rotationPrevX,rotationPrevY:_rotationPrevY,rotationDirection:_rotationDirection,disposablePrewarm:_disposableDabPrewarm};
   let rect=null,alphaPixels=0;
   try{
     const prepareStart=perf?performance.now():0;
-    _ensureStrokeCanvas();_disposableDabPrewarm=true;_frameDirty=null;_strokeDirty=null;_texPendingRect=null;_autoHardRoundPrevDab=null;_strokeReplayDabs.length=0;_inStroke=true;
+    _ensureStrokeCanvas();_disposableDabPrewarm=true;_frameDirty=null;_strokeDirty=null;_texPendingRect=null;BrushRenderer.setLineContinuity(null);_strokeReplayDabs.length=0;_inStroke=true;
     _isDrawingWithPen=false;currentPressure=1;_smoothedPressure=1;_lastKnownPressure=1;_strokeFirstSample=true;_strokeDabCount=0;_strokeDistSoFar=0;_rotationPrevValid=false;
     const synthetic={pointerType:'mouse',pressure:0.5,buttons:1,timeStamp:performance.now()};
     const size=Math.max(1,getBrushSize()),margin=Math.min(Math.max(4,Math.ceil(size*2)),Math.max(4,Math.floor(Math.min(activeC.width,activeC.height)/2)));
@@ -704,7 +704,7 @@ function _prewarmRealDisposableDab(){
     if(_srPreviewTintCtx&&_srPreviewTintCanvas)_srPreviewTintCtx.clearRect(0,0,_srPreviewTintCanvas.width,_srPreviewTintCanvas.height);
     if(_texturedStrokeCtx&&_texturedStrokeCanvas)_texturedStrokeCtx.clearRect(0,0,_texturedStrokeCanvas.width,_texturedStrokeCanvas.height);
     if(rect)recomposite(curLayer,curFrame,rect);
-    _frameDirty=saved.frameDirty;_strokeDirty=saved.strokeDirty;_texPendingRect=saved.texPending;_inStroke=saved.inStroke;_flowSpacingRatio=saved.flowSpacing;_isDrawingWithPen=saved.isPen;currentPressure=saved.currentPressure;_smoothedPressure=saved.smoothedPressure;_lastKnownPressure=saved.lastKnownPressure;_strokeFirstSample=saved.strokeFirstSample;_strokeDabCount=saved.strokeDabCount;_strokeDistSoFar=saved.strokeDist;_autoHardRoundPrevDab=saved.autoPrev;_rotationPrevValid=saved.rotationValid;_rotationPrevX=saved.rotationPrevX;_rotationPrevY=saved.rotationPrevY;_rotationDirection=saved.rotationDirection;_disposableDabPrewarm=saved.disposablePrewarm;
+    _frameDirty=saved.frameDirty;_strokeDirty=saved.strokeDirty;_texPendingRect=saved.texPending;_inStroke=saved.inStroke;_flowSpacingRatio=saved.flowSpacing;_isDrawingWithPen=saved.isPen;currentPressure=saved.currentPressure;_smoothedPressure=saved.smoothedPressure;_lastKnownPressure=saved.lastKnownPressure;_strokeFirstSample=saved.strokeFirstSample;_strokeDabCount=saved.strokeDabCount;_strokeDistSoFar=saved.strokeDist;BrushRenderer.setLineContinuity(saved.autoPrev);_rotationPrevValid=saved.rotationValid;_rotationPrevX=saved.rotationPrevX;_rotationPrevY=saved.rotationPrevY;_rotationDirection=saved.rotationDirection;_disposableDabPrewarm=saved.disposablePrewarm;
     if(perf)perf.measure('real-dab-prewarm-total',totalStart,{rect,alphaPixels});
   }
 }
@@ -1442,14 +1442,14 @@ function _flushStrokeTail(){
   }else if(_strokeCtx){
     _strokeCtx.clearRect(0,0,_strokeCanvas.width,_strokeCanvas.height);
   }
-  _autoHardRoundPrevDab=null;
+  BrushRenderer.setLineContinuity(null);
   _replayingTaper=true;
   for(let i=0;i<_strokeReplayDabs.length;i++){
     const d=_strokeReplayDabs[i];
     _drawDabNow(Object.assign({},d,{r:Math.max(0.05,d.r*factors[i])}));
   }
   _replayingTaper=false;
-  _autoHardRoundPrevDab=null;
+  BrushRenderer.setLineContinuity(null);
   _strokeReplayDabs.length=0;
   _strokeReplayBase=null;
 }
@@ -3029,7 +3029,7 @@ function _renderLineDrag(ex,ey,e,phase){
   _pendingDabs.length=0;
   _strokeSegCarryOver=0;
   _strokeDistSoFar=0;
-  _autoHardRoundPrevDab=null;
+  BrushRenderer.setLineContinuity(null);
   _rotationPrevValid=false;
   _beginEndTaperCapture();
   const usePenPressure=_isDrawingWithPen&&getLinePressureMode()==='pen';
@@ -3231,7 +3231,7 @@ function _endStroke(pointerId){
   _strokeCompletionStarted=true;
   _baselineConditionerFinish(true);
   _stopAirbrushSpray();
-  _autoHardRoundPrevDab=null;
+  BrushRenderer.setLineContinuity(null);
   if(drawing){drawing=false;_flushStrokeTail();if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();}
   if(lineStart&&(_lineDragging||_curveToolGesture)){
     // Line drag aborted mid-gesture (pointercancel, tab blur, etc.) -- undo
@@ -3982,7 +3982,7 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
   diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
   drawing=true;lx=p.x;ly=p.y;
   _baselineConditionerReset(_baselineSampleFromEvent(e,p,currentPressure));
-  _autoHardRoundPrevDab=null;
+  BrushRenderer.setLineContinuity(null);
   _resetCurve(p.x,p.y,currentPressure);
   if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.event('spacing-path-initialization-complete',{carryOver:_strokeSegCarryOver});
   _lastPointerEvent=e;
