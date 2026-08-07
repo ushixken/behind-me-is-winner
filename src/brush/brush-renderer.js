@@ -972,6 +972,82 @@ const CpuBrushRenderer = {
   getTipAlphaInvalidationReason(){ return _tipAlphaInvalidationReason; },
 };
 
+// Phase 2E: Renderer interface freeze. The methods below constitute the
+// frozen public contract between brush-engine.js and BrushRenderer. Any
+// current or future renderer implementation (CpuBrushRenderer,
+// GpuBrushRenderer, or others registered later) must implement every
+// method in this contract with matching signatures. No new methods should
+// be added to this contract without a corresponding phase; no existing
+// method should change signature or meaning.
+//
+//   drawDab(d, rendererContext)
+//     Renders a single dab descriptor `d` (x, y, r, rgb, alpha, composite,
+//     rotation, roundness, ...) using ambient rendering surfaces and view
+//     state carried in `rendererContext` (ctx, strokeCtx, inStroke, flipX,
+//     flipY, tool, brushHardness — see Phase 1G-A). Return value is a
+//     boolean: true if the auto-hard-round continuity path handled the
+//     dab (segment already drawn), false if the caller's normal AA/aliased
+//     path was used instead.
+//
+//   beginStroke()
+//     Called when a paint stroke starts. No return value. May be a no-op
+//     (CPU renderer: intentionally always a no-op — see Phase 1D header).
+//
+//   endStroke()
+//     Called when a paint stroke ends/commits. No return value. May be a
+//     no-op, same as beginStroke().
+//
+//   invalidateCaches(which)
+//     Clears renderer-internal dab/stamp caches. `which` is an optional
+//     object of boolean flags ({aa, stamp, tip, softRound}) selecting a
+//     subset to clear; omitting it clears everything. No return value.
+//
+//   getCacheStats()
+//     Returns a snapshot object { analytic, softRound, tip } describing
+//     current cache sizes, for diagnostics only. Read-only, no side
+//     effects.
+//
+//   getLineContinuity()
+//     Returns the renderer's current auto-hard-round continuity value
+//     (an opaque {x,y,r,rgb,alpha} object, or null if no continuous
+//     segment is in progress). Reference identity is preserved — callers
+//     must not assume a particular shape beyond "opaque or null".
+//
+//   setLineContinuity(value)
+//     Overwrites the renderer's auto-hard-round continuity value (used by
+//     brush-engine.js's undo/pointercancel snapshot restore and stroke/
+//     tool reset points). No return value.
+//
+//   getTipAlphaBuffer()
+//     Returns the renderer's current cached tip-alpha buffer (opaque
+//     Float32Array, or null if unbuilt), for diagnostics/trace use only.
+//
+//   setTipAlphaSeedPixels(value)
+//     Overwrites the renderer's tip-alpha seed-pixels bookkeeping (opaque
+//     {data,w,h,version} object, or null). Used by window.setBrushTip when
+//     a new tip is imported. No return value.
+//
+//   setTipAlphaInvalidationReason(value)
+//     Overwrites the renderer's recorded reason string for the next tip-
+//     alpha cache rebuild (used for diagnostics/tracing). No return value.
+//
+//   getTipAlphaInvalidationReason()
+//     Returns the currently recorded tip-alpha invalidation reason
+//     (string or null).
+//
+//   registerRenderer(name, renderer)
+//     Registers a renderer implementation object under a string `name` in
+//     the internal registry. Does not activate it. No return value.
+//
+//   setActiveRenderer(name)
+//     Activates a previously-registered renderer by name; all dispatch
+//     methods above will forward to it from this point on. Throws if
+//     `name` was never registered. No return value.
+//
+//   getActiveRenderer()
+//     Returns the string name of the currently active renderer (e.g.
+//     'cpu'), or null if none has been activated yet.
+//
 // Phase 2A: BrushRenderer is a thin dispatcher only. Every method simply
 // forwards to the active renderer implementation (CpuBrushRenderer today);
 // no renderer logic or state access lives here directly. This is the
