@@ -1015,6 +1015,20 @@ const BrushRenderer = {
   getTipAlphaInvalidationReason(){ return this.active.getTipAlphaInvalidationReason(); },
 };
 
+// Phase 2D: GpuBrushRenderer owns its own private state object, entirely
+// separate from CpuBrushRenderer's module-level variables. Nothing here
+// is shared with the CPU renderer's state. This is still not a real
+// implementation — cache stats stay at their harmless zeroed defaults,
+// and drawDab/beginStroke/endStroke/invalidateCaches remain no-ops — but
+// the line-continuity and tip-alpha methods now read/write this object
+// instead of returning hardcoded nulls.
+const _gpuState = {
+  lineContinuity: null,
+  tipAlphaBuffer: null,
+  tipAlphaSeedPixels: null,
+  tipAlphaInvalidationReason: null,
+};
+
 // Phase 2C: GpuBrushRenderer skeleton. Implements the exact same public
 // renderer interface as CpuBrushRenderer, but every method is an
 // intentionally empty stub — no rendering, no state, no GPU APIs of any
@@ -1038,22 +1052,22 @@ const GpuBrushRenderer = {
     return { analytic:0, softRound:0, tip:0 };
   },
   getLineContinuity(){
-    return null;
+    return _gpuState.lineContinuity;
   },
   setLineContinuity(value){
-    // intentionally empty
+    _gpuState.lineContinuity=value;
   },
   getTipAlphaBuffer(){
-    return null;
+    return _gpuState.tipAlphaBuffer;
   },
   setTipAlphaSeedPixels(value){
-    // intentionally empty
+    _gpuState.tipAlphaSeedPixels=value;
   },
   setTipAlphaInvalidationReason(value){
-    // intentionally empty
+    _gpuState.tipAlphaInvalidationReason=value;
   },
   getTipAlphaInvalidationReason(){
-    return null;
+    return _gpuState.tipAlphaInvalidationReason;
   },
 };
 
