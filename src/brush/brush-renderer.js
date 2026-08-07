@@ -2120,11 +2120,14 @@ const GpuBrushRenderer = {
     const tip=typeof window!=='undefined'?window.brushTipCanvas:null;
     const tipW=tip&&tip.width||1,tipH=tip&&tip.height||1,tipReference=Math.max(tipW,tipH);
     const tipMode=tip?(window.brushTipMode==='replace'?2:1):0;
+    const reflected=rendererContext&&((!!rendererContext.flipX)!=(!!rendererContext.flipY));
+    const tipRotation=tip?(reflected?-(d.rotation||0):(d.rotation||0)):0;
     return this._enqueueDab(Object.assign({},d,{
       gpuInnerFrac:innerFrac,
       gpuTipMode:tipMode,
       gpuTipScaleX:tipW/tipReference,
-      gpuTipScaleY:tipH/tipReference
+      gpuTipScaleY:tipH/tipReference,
+      gpuTipRotation:tipRotation
     }));
   },
   // Phase 5C: smallest possible GPU-side dab representation — a single
@@ -2667,9 +2670,9 @@ const GpuBrushRenderer = {
   // Phase 5C: converts the dab's existing pixel-space position/radius
   // (d.x, d.y, d.r — the same values CpuBrushRenderer.drawDab() already
   // receives; no new fields are read from d) into a single NDC quad and
-  // uploads it to the vertex buffer. No pressure, hardness, rotation,
-  // roundness, or texture is read or applied — a plain axis-aligned
-  // square the size of the dab radius.
+  // uploads it to the vertex buffer. Phase 6J rotates custom-tip quads
+  // from the existing resolved dab angle; pressure, roundness, and texture
+  // math remain untouched.
   // Phase 5F: same pixel->NDC math as before (unchanged formula — see
   // Phase 5D verification), but now writes one dab's 12 floats into a
   // caller-provided Float32Array at a given vertex offset instead of
@@ -2693,9 +2696,9 @@ const GpuBrushRenderer = {
   // already reads for its fillStyle) and d.alpha (0-1, same value
   // CPU already applies via ctx.globalAlpha) and writes them
   // unmodified, per vertex, alongside the existing NDC position math
-  // (untouched). No new fields are read from d; hardness/roundness/
-  // rotation/texture/erase-compositing are still not read here — see
-  // the arr[offset+N] color writes below for exactly what's added.
+  // (untouched). Phase 6J additionally reads only the renderer-staged
+  // custom-tip rotation; roundness/texture/erase compositing remain
+  // unchanged.
   // Phase 6F: writes 8 floats per vertex now (2 position + 4 rgba + 2
   // uv) instead of 6 — uv is the vertex's local position within the
   // quad in [-1,1], i.e. how far this corner is from the dab center as
@@ -2714,13 +2717,18 @@ const GpuBrushRenderer = {
     const tipMode=(d&&typeof d.gpuTipMode==='number')?d.gpuTipMode:0;
     const rx=r*((d&&typeof d.gpuTipScaleX==='number')?d.gpuTipScaleX:1);
     const ry=r*((d&&typeof d.gpuTipScaleY==='number')?d.gpuTipScaleY:1);
+    const rotation=(d&&typeof d.gpuTipRotation==='number')?d.gpuTipRotation:0;
+    const cosine=Math.cos(rotation),sine=Math.sin(rotation);
 
     const toNdc=(px,py)=>[ (px/w)*2-1, 1-(py/h)*2 ];
-
-    const [x0,y0]=toNdc(cx-rx, cy-ry);
-    const [x1,y1]=toNdc(cx+rx, cy-ry);
-    const [x2,y2]=toNdc(cx+rx, cy+ry);
-    const [x3,y3]=toNdc(cx-rx, cy+ry);
+    const rotatedCorner=(localX,localY)=>toNdc(
+      cx+localX*cosine-localY*sine,
+      cy+localX*sine+localY*cosine
+    );
+    const [x0,y0]=rotatedCorner(-rx,-ry);
+    const [x1,y1]=rotatedCorner( rx,-ry);
+    const [x2,y2]=rotatedCorner( rx, ry);
+    const [x3,y3]=rotatedCorner(-rx, ry);
 
     const innerFrac=(d&&typeof d.gpuInnerFrac==='number')?Math.max(0,Math.min(1,d.gpuInnerFrac)):1;
     const stride=10;
