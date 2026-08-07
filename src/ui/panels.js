@@ -300,22 +300,69 @@ function ensureKey(options){
 function saveActiveToKey(){
   if(typeof isDrawingFrameHidden==='function'&&isDrawingFrameHidden(curLayer,curFrame))return;
   const layer=layers[curLayer],kf=layer.frames[curFrame];if(!kf)return;
+  // Revised GPU integration: read through BrushRenderer.getActiveSurface()
+  // instead of hardcoded activeC, so undo/history/keyframe storage picks
+  // up whichever renderer is actually active (CpuBrushRenderer's activeC,
+  // or GpuBrushRenderer's own persistent layerTexture-backed canvas).
+  // saveActiveToKey() is only ever called after a stroke has fully
+  // committed (never mid-stroke), so this is always the renderer's
+  // committed-only surface, never a live in-progress blend.
+  const activeSurface=(window.BrushRenderer&&typeof BrushRenderer.getActiveSurface==='function')?BrushRenderer.getActiveSurface():activeC;
   const extended=getExtendedLayerFrame(curLayer,curFrame);
   if(extended){
     const minX=Math.min(extended.x,0),minY=Math.min(extended.y,0),maxX=Math.max(extended.x+extended.canvas.width,CW),maxY=Math.max(extended.y+extended.canvas.height,CH);
     const full=document.createElement('canvas');full.width=maxX-minX;full.height=maxY-minY;const fullContext=full.getContext('2d');
-    fullContext.drawImage(extended.canvas,extended.x-minX,extended.y-minY);fullContext.clearRect(-minX,-minY,CW,CH);fullContext.drawImage(activeC,-minX,-minY);
+    fullContext.drawImage(extended.canvas,extended.x-minX,extended.y-minY);fullContext.clearRect(-minX,-minY,CW,CH);fullContext.drawImage(activeSurface,-minX,-minY);
     setExtendedLayerFrame(curLayer,curFrame,full,minX,minY);return;
   }
-  const kctx=kf.getContext('2d');kctx.clearRect(0,0,CW,CH);kctx.drawImage(activeC,0,0);
+  const kctx=kf.getContext('2d');kctx.clearRect(0,0,CW,CH);kctx.drawImage(activeSurface,0,0);
 }
 
 function loadFrame(li,fi){
   if(typeof window.prepareTransformForArtworkChange==='function')window.prepareTransformForArtworkChange(li,fi);
   if(typeof window.finishActiveDrawingBeforeArtworkChange==='function')window.finishActiveDrawingBeforeArtworkChange(li,fi);
   if(window.CameraSystem&&typeof CameraSystem.evaluateAt==='function')CameraSystem.evaluateAt(fi);
-  ctx.clearRect(0,0,CW,CH);
-  const k=getHeldKey(li,fi);if(k){const keyFrame=Object.keys(layers[li].frames).find(frame=>layers[li].frames[frame]===k),extended=keyFrame==null?null:getExtendedLayerFrame(li,keyFrame);if(extended)ctx.drawImage(extended.canvas,extended.x,extended.y);else ctx.drawImage(k,0,0);}
+  const k=getHeldKey(li,fi);
+  // Revised GPU integration: resolve the CW×CH source image once (either
+  // the plain keyframe canvas or an extended-layer-frame composited back
+  // to canvas bounds), then hand it to BrushRenderer.loadActiveSurface()
+  // — the single choke point that populates whichever renderer is
+  // actually active (CpuBrushRenderer draws it onto activeC via 2D
+  // drawImage; GpuBrushRenderer uploads it onto layerTexture via
+  // copyExternalImageToTexture). This is loading static stored frame
+  // data, not re-rendering a stroke, so it does not reintroduce the
+  // rejected per-stroke GPU<->CPU copy this pass removed.
+  let sourceForActive=null;
+  if(k){
+    const keyFrame=Object.keys(layers[li].frames).find(frame=>layers[li].frames[frame]===k),extended=keyFrame==null?null:getExtendedLayerFrame(li,keyFrame);
+    if(extended){
+      const tmp=document.createElement('canvas');tmp.width=CW;tmp.height=CH;
+      tmp.getContext('2d').drawImage(extended.canvas,extended.x,extended.y);
+      sourceForActive=tmp;
+    } else {
+      sourceForActive=k;
+    }
+  }
+  // Revised GPU integration: frame loading now goes through the single
+  // BrushRenderer.loadActiveSurface() choke point for BOTH CPU and GPU —
+  // CpuBrushRenderer.loadIntoLayer() performs the exact same
+  // clearRect+drawImage this used to do by hand directly on ctx/activeC,
+  // so there is no behavior change for CPU, and no more unconditional
+  // mirroring into activeC when GPU is the authoritative renderer. Every
+  // downstream consumer that used to require that mirror (selection
+  // tools, magic wand, smart raster, transform, undo/history, export)
+  // has been converted to read through BrushRenderer.getActiveSurface()
+  // instead — see the Final GPU Integration Report — so the temporary
+  // compatibility shim this comment used to describe is gone.
+  const activeLoaded=(window.BrushRenderer&&typeof BrushRenderer.loadActiveSurface==='function')?BrushRenderer.loadActiveSurface(sourceForActive):false;
+  if(!activeLoaded){
+    // Fallback only for the case BrushRenderer/loadActiveSurface isn't
+    // available yet (e.g. very early startup before brush-renderer.js
+    // has registered any renderer) — keeps activeC populated so nothing
+    // downstream sees a blank canvas during that narrow window.
+    ctx.clearRect(0,0,CW,CH);
+    if(sourceForActive) ctx.drawImage(sourceForActive,0,0);
+  }
   recomposite(li,fi);updateOnion();updatePlayhead();
   document.getElementById('frame-info').textContent=frameLabel(fi)+' / '+frameLabel(TOTAL-1);
   updateStatus();
@@ -375,23 +422,26 @@ function recomposite(li,fi,dirtyRect){
     const layerAlpha=(l.opacity??1)*_layerGroupChainOpacity(l);
     const eff=_effectiveLayerClip(l);
 
-    // Determine what to draw: active layer uses activeC, others use stored key
+    // Determine what to draw: active layer uses the active renderer's
+    // own surface, others use stored key
     let srcCanvas;
     if(idx===li){
       if(!layerVisible){activeC.style.opacity='0';continue;}
       const isGrpStencil=(eff.stencil==='group-inside'||eff.stencil==='group-outside')&&eff.clipToGroup;
       const isCurGrpMask=l.groupId&&(layers.some(ol=>ol.clipToGroup===l.groupId&&(ol.stencil==='group-inside'||ol.stencil==='group-outside'))||_groupUsedAsGroupMaskSource(l.groupId));
       activeC.style.opacity='0';
-      // Mid-stroke, dabs live on the offscreen stroke-scratch canvas (not
-      // activeC) until pointerup commits them — see brush-engine.js. Use
-      // the live preview (activeC + in-progress stroke, pre-blended at
-      // brushOpacity) so the stroke is visible as it's drawn instead of
-      // only appearing once the stroke ends.
-      if(typeof _inStroke!=='undefined'&&_inStroke&&typeof _getLiveStrokePreview==='function'){
-        const liveStart=presentationStart?performance.now():0;
-        srcCanvas=_getLiveStrokePreview();livePreviewDraws++;
-        if(presentationStart)latencyProfiler.measure('live-preview-draw',liveStart,{layerIndex:idx,width:srcCanvas.width,height:srcCanvas.height});
-      }else{srcCanvas=activeC;persistentLayerDraws++;}
+      // Revised GPU integration: BrushRenderer.getActiveSurface() is now
+      // the single source of truth for the active layer's pixels,
+      // whether or not a stroke is in progress and whether CPU or GPU is
+      // active. CpuBrushRenderer.getLayerSurface() internally returns
+      // _getLiveStrokePreview() mid-stroke (or activeC otherwise) —
+      // identical behavior to the branch this replaces.
+      // GpuBrushRenderer.getLayerSurface() returns its own persistent,
+      // GPU-owned canvas (already blended with any in-progress stroke —
+      // see brush-renderer.js's _presentLayerToCanvas()). Falls back to
+      // activeC if no renderer/abstraction is available.
+      srcCanvas=(window.BrushRenderer&&typeof BrushRenderer.getActiveSurface==='function')?BrushRenderer.getActiveSurface():activeC;
+      if(typeof _inStroke!=='undefined'&&_inStroke)livePreviewDraws++;else persistentLayerDraws++;
     } else {
       if(!layerVisible) continue;
       srcCanvas=getHeldKey(idx,fi);
@@ -408,7 +458,7 @@ function recomposite(li,fi,dirtyRect){
         if(ml.groupId!==eff.clipToGroup) return;
         const mgrp=groups.find(g=>g.id===ml.groupId);
         if(!ml.visible||!mgrp||!mgrp.visible) return;
-        const ms=mi===li?activeC:getHeldKey(mi,fi);
+        const ms=mi===li?((window.BrushRenderer&&typeof BrushRenderer.getActiveSurface==='function')?BrushRenderer.getActiveSurface():activeC):getHeldKey(mi,fi);
         if(ms){mc.globalAlpha=ml.opacity??1;mc.drawImage(ms,0,0);mc.globalAlpha=1;}
       });
       const tmp=_scratchTmp;const tc=tmp.getContext('2d');tc.clearRect(0,0,CW,CH);
@@ -423,7 +473,7 @@ function recomposite(li,fi,dirtyRect){
     }
     if(eff.stencil!=='none'&&eff.stencil!=='group-inside'&&eff.stencil!=='group-outside'&&eff.clipTo!=null&&layers[eff.clipTo]){
       maskPasses++;
-      const maskCanvas=eff.clipTo===li?activeC:getHeldKey(eff.clipTo,fi);
+      const maskCanvas=eff.clipTo===li?((window.BrushRenderer&&typeof BrushRenderer.getActiveSurface==='function')?BrushRenderer.getActiveSurface():activeC):getHeldKey(eff.clipTo,fi);
       if(maskCanvas){
         const tmp=_scratchTmp;const tc=tmp.getContext('2d');tc.clearRect(0,0,CW,CH);
         tc.drawImage(srcCanvas,0,0);
@@ -595,7 +645,21 @@ const BrushRafExperiment=(function(){
   }
   function uninstallRafObserver(){if(rafInstalled){window.requestAnimationFrame=nativeRaf;rafInstalled=false;nativeRaf=null;}}
   function hashBytes(data){let hash=2166136261,nonEmpty=false;for(let i=0;i<data.length;i++){hash^=data[i];hash=Math.imul(hash,16777619);if((i&3)===3&&data[i])nonEmpty=true;}return{hash:(hash>>>0).toString(16),nonEmpty};}
-  function artworkDigest(){return hashBytes(activeC.getContext('2d',{willReadFrequently:true}).getImageData(0,0,CW,CH).data);}
+  // Revised GPU integration: read through BrushRenderer.getActiveSurface()
+  // instead of hardcoded activeC so this diagnostic digest reflects
+  // whichever renderer is actually active. getImageData needs a 2D
+  // context; activeC already has one (ctx, module scope) — for a
+  // non-2D surface (e.g. GPU's own canvas) draw it onto a scratch 2D
+  // canvas first. This is a one-off diagnostics readback, not a
+  // per-frame stroke copy, so it does not reintroduce the per-frame
+  // GPU->CPU readback this pass removes.
+  function artworkDigest(){
+    const surface=(window.BrushRenderer&&typeof BrushRenderer.getActiveSurface==='function')?BrushRenderer.getActiveSurface():activeC;
+    if(surface===activeC) return hashBytes(activeC.getContext('2d',{willReadFrequently:true}).getImageData(0,0,CW,CH).data);
+    const scratch=document.createElement('canvas');scratch.width=CW;scratch.height=CH;
+    const sctx=scratch.getContext('2d',{willReadFrequently:true});sctx.drawImage(surface,0,0);
+    return hashBytes(sctx.getImageData(0,0,CW,CH).data);
+  }
   function smartDigest(layer){if(!layer||layer.type!=='smart-raster')return null;if(typeof window.SmartRasterV4DebugDigest==='function'){const v4=window.SmartRasterV4DebugDigest();if(v4)return v4;}const frame=layer.smartStyleFrames&&layer.smartStyleFrames[curFrame],text=JSON.stringify(frame||null),bytes=new TextEncoder().encode(text);return{fallback:true,length:text.length,hash:hashBytes(bytes).hash};}
   function setupSnapshot(){
     const layer=layers[curLayer],key=layer&&layer.frames&&layer.frames[curFrame],artwork=artworkDigest();
@@ -684,7 +748,7 @@ const KeyframeLatencyExperiment=(function(){
   async function prepareTrial(keyState,presentation,coldMs=12000){
     if(!KEY_STATES.has(keyState)||!PRESENTATIONS.has(presentation))throw new Error('Use keyState empty/precreated and presentation current/immediate/deadline-aware.');
     if(pending||preparing)throw new Error('Finish the current trial first.');
-    const current=config();if(current.layerType!=='bitmap')throw new Error('This six-condition series requires a Normal Raster layer.');if(!baseline){baseline=current;const layer=layers[curLayer],slot=layer.frames&&layer.frames[curFrame],slotCopy=slot?mkLayerCanvas():null,activeCopy=mkLayerCanvas();if(slotCopy)slotCopy.getContext('2d').drawImage(slot,0,0);activeCopy.getContext('2d').drawImage(activeC,0,0);original={layerIndex:curLayer,frameIndex:curFrame,hadKey:!!slot,slot:slotCopy,active:activeCopy};historyBaseline={undo:undoStack.slice(),redo:redoStack.slice()};}else if(signature(current)!==signature(baseline))throw new Error('Layer, frame, brush, zoom, or canvas differs from the baseline.');
+    const current=config();if(current.layerType!=='bitmap')throw new Error('This six-condition series requires a Normal Raster layer.');if(!baseline){baseline=current;const layer=layers[curLayer],slot=layer.frames&&layer.frames[curFrame],slotCopy=slot?mkLayerCanvas():null,activeCopy=mkLayerCanvas();if(slotCopy)slotCopy.getContext('2d').drawImage(slot,0,0);activeCopy.getContext('2d').drawImage((window.BrushRenderer&&typeof BrushRenderer.getActiveSurface==='function')?BrushRenderer.getActiveSurface():activeC,0,0);original={layerIndex:curLayer,frameIndex:curFrame,hadKey:!!slot,slot:slotCopy,active:activeCopy};historyBaseline={undo:undoStack.slice(),redo:redoStack.slice()};}else if(signature(current)!==signature(baseline))throw new Error('Layer, frame, brush, zoom, or canvas differs from the baseline.');
     preparing=true;window.__suspendAutomaticCompositionPrewarm=true;if(window.CompositionPrewarm)window.CompositionPrewarm.cancelPending();window.BrushLatencyProfiler.enable(true);
     undoStack.splice(0,undoStack.length,...historyBaseline.undo);redoStack.splice(0,redoStack.length,...historyBaseline.redo);
     const layer=layers[curLayer];ctx.clearRect(0,0,CW,CH);

@@ -192,11 +192,12 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;fon
   will-change:transform;
 }
 #composite-canvas,#onion-canvas,#active-canvas,#display-canvas,#transform-canvas{position:absolute;top:0;left:0;display:block;}
-/* gpu-canvas: same absolute top:0/left:0 positioning as its
-   canvas-wrap siblings (so its size/position matches active-canvas
-   exactly once JS syncs its width/height attrs the same way, in a
-   later phase). Stays [hidden] until something explicitly activates
-   GPU presentation — preparation only, per Phase 5V. */
+/* gpu-canvas: GpuBrushRenderer's private per-stroke scratch surface (the
+   GPU counterpart of brush-engine.js's in-memory _strokeCanvas) — never
+   shown to the user. Its pixels only ever reach the screen indirectly,
+   composited onto active-canvas (see brush-engine.js's _commitGpuStroke()/
+   _getLiveStrokePreview()). Stays [hidden] permanently; nothing toggles
+   this anymore. */
 #gpu-canvas{position:absolute;top:0;left:0;display:block;pointer-events:none;}
 #gpu-canvas[hidden]{display:none;}
 #webgpu-presentation-canvas{position:absolute;inset:0;width:100%;height:100%;display:none;pointer-events:none;z-index:1;}
@@ -207,14 +208,6 @@ body.webgpu-presentation-active #onion-canvas,
 body.webgpu-presentation-active #active-canvas{opacity:0!important;}
 body.webgpu-presentation-active #canvas-wrap{z-index:2;}
 #active-canvas{cursor:default;touch-action:none;-ms-touch-action:none;}
-/* Phase 5W: presentation-layer toggle only, set via
-   setGpuPresentationActive() in core-state.js whenever
-   BrushRenderer.setActiveRenderer() switches renderers. visibility:hidden
-   (not display:none) so active-canvas's layout box/size/position are
-   completely unaffected — it just stops being painted while gpu-canvas
-   (its sibling in #canvas-wrap, sharing the same CSS position/transform)
-   is shown instead. */
-#active-canvas.gpu-presentation-active{visibility:hidden;}
 #composite-canvas,#onion-canvas,#display-canvas{pointer-events:none;}
 #onion-canvas{visibility:hidden;}
 #transform-canvas{pointer-events:none;touch-action:none;-ms-touch-action:none;}

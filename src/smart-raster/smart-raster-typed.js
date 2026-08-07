@@ -125,9 +125,44 @@
       catch(shadowError){window.__smartRasterV4LastError=shadowError;}
     }
     return changed;
-  }  function artworkCanvas(li,fi){
+  }  // Revised GPU integration: reads through BrushRenderer.getActiveSurface()
+  // instead of hardcoded activeC when this is the active layer/frame's
+  // live surface, so style-diffing (applyDiff/commitBrushMask/
+  // clearWhereTransparent/getFrameBundle) reflects whichever renderer is
+  // actually authoritative — CpuBrushRenderer's getLayerSurface() returns
+  // activeC (identical behavior to before, already has a 2D context, so
+  // callers' .getContext('2d',...) works unchanged). GpuBrushRenderer's
+  // getLayerSurface() returns its own WebGPU-context canvas, which CANNOT
+  // also be given a 2D context (a canvas element only ever has one
+  // context type) — so every caller here that needs getImageData/
+  // putImageData on it would throw. For that case, drawImage the GPU
+  // surface onto a private 2D scratch canvas and return that instead —
+  // the same drawImage-only technique panels.js's recomposite()/
+  // artworkDigest() already use to read GPU's canvas, never
+  // getImageData/readPixels straight off the GPU context.
+  var _artworkScratch=null;
+  function artworkCanvas(li,fi){
     var layer=layers[li];
-    return li===curLayer&&fi===curFrame?activeC:layer&&layer.frames&&layer.frames[fi];
+    if(li===curLayer&&fi===curFrame){
+      var surface=(window.BrushRenderer&&typeof BrushRenderer.getActiveSurface==='function')?BrushRenderer.getActiveSurface():activeC;
+      if(surface===activeC) return activeC;
+      if(!_artworkScratch){_artworkScratch=document.createElement('canvas');}
+      if(_artworkScratch.width!==CW||_artworkScratch.height!==CH){_artworkScratch.width=CW;_artworkScratch.height=CH;}
+      var sctx=_artworkScratch.getContext('2d',{willReadFrequently:true});
+      sctx.clearRect(0,0,CW,CH);sctx.drawImage(surface,0,0);
+      return _artworkScratch;
+    }
+    return layer&&layer.frames&&layer.frames[fi];
+  }
+  // Revised GPU integration: pushes a CPU-computed pixel write for the
+  // active layer/frame into whichever renderer is actually authoritative.
+  // Smart-raster recoloring/restoring is index-based and intrinsically
+  // requires CPU getImageData/putImageData — this is the one-time
+  // CPU->GPU sync step after such a write, not a per-frame readback.
+  function _syncActiveSurfaceToGpu(){
+    if(window.BrushRenderer&&typeof BrushRenderer.loadActiveSurface==='function'&&BrushRenderer.getActiveRenderer()==='gpu'){
+      BrushRenderer.loadActiveSurface(activeC);
+    }
   }
   function applyDiff(li,fi,beforeImage,styleId){
     if(!beforeImage||!styleId)return false;
@@ -199,7 +234,14 @@
     var frame=layer.smartStyleFrames&&layer.smartStyleFrames[fi];if(!frame)return false;
     var index=Number(frame.meta.styleIdToIndex[styleId])||0;if(!index)return false;
     var frameIndex=Number(fi),activeFrame=li===curLayer?heldArtworkFrameIndex(layer,curFrame):-1,isActive=li===curLayer&&frameIndex===activeFrame;
-    var stored=layer.frames&&layer.frames[frameIndex],source=isActive?activeC:stored;if(!source)return false;
+    var stored=layer.frames&&layer.frames[frameIndex];
+    // Revised GPU integration: reads through artworkCanvas() (which
+    // resolves to whichever renderer is actually authoritative for the
+    // live layer/frame, drawImage-snapshotted to a 2D-readable scratch
+    // when GPU is active — see artworkCanvas() above) instead of
+    // hardcoded activeC, so recoloring is computed against current
+    // pixels rather than a possibly-stale CPU canvas.
+    var source=isActive?artworkCanvas(li,fi):stored;if(!source)return false;
     var sourceContext=source.getContext('2d',{willReadFrequently:true});
     var image=sourceContext.getImageData(0,0,frame.width,frame.height),data=image.data;
     var rewritten=0;
@@ -213,7 +255,16 @@
       if(!layer.frames)layer.frames={};layer.frames[frameIndex]=stored;
     }
     stored.getContext('2d').putImageData(image,0,0);
-    if(isActive&&activeC!==stored)sourceContext.putImageData(image,0,0);
+    // Revised GPU integration: the write-back for the live layer/frame
+    // must land on activeC (CPU's actual writable 2D surface — `source`
+    // above may be a throwaway scratch snapshot, not the real surface)
+    // and then be pushed into GPU's surface too via
+    // BrushRenderer.loadActiveSurface() (one-time CPU->GPU upload per
+    // recolor), so both stay in sync instead of only `stored` updating.
+    if(isActive&&activeC!==stored){
+      activeC.getContext('2d').putImageData(image,0,0);
+      _syncActiveSurfaceToGpu();
+    }
     return true;
   }  function rerenderStyle(styleId){
     var style=window.PaletteDocker&&window.PaletteDocker.findAdvancedStyleById(styleId);if(!style||!Array.isArray(style.rgba))return;
@@ -253,7 +304,15 @@
     var stored=layer.frames[fi];
     if(!stored){stored=document.createElement('canvas');stored.width=width;stored.height=height;layer.frames[fi]=stored;}
     stored.getContext('2d').putImageData(image,0,0);
-    if(li===curLayer&&Number(fi)===curFrame)activeC.getContext('2d').putImageData(image,0,0);
+    stored.getContext('2d').putImageData(image,0,0);
+    if(li===curLayer&&Number(fi)===curFrame){
+      // Revised GPU integration: undo/redo restore writes the captured
+      // RGBA bytes into activeC (CPU's writable surface) then pushes
+      // the result into GPU's surface too, mirroring the same pattern
+      // used by recolorFrame() above and tools-color.js's restoreBitmapUndo().
+      activeC.getContext('2d').putImageData(image,0,0);
+      _syncActiveSurfaceToGpu();
+    }
   }
   function resetFrame(li,fi){var layer=layers[li];if(layer&&layer.smartStyleFrames)delete layer.smartStyleFrames[fi];if(layer&&window.SmartRasterV4Document&&typeof window.SmartRasterV4Document.deleteFrame==='function')window.SmartRasterV4Document.deleteFrame(layer,fi);}
   function resizeAllFrames(nw,nh,offsetX,offsetY){

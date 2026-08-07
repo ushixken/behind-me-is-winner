@@ -374,7 +374,21 @@ function _flushLiveColorEraserPreview(){
   ctx.putImageData(image,rect.x,rect.y);
   if(layers[curLayer]&&layers[curLayer].renderMode==='style-layering')_queueLiveColorEraserPreview(ownership,rect);
 }
-function _endColorEraserStroke(){_flushLiveColorEraserPreview();if(_colorEraserOwnership&&window.SmartRasterLayer&&typeof window.SmartRasterLayer.finishStyleErase==='function')window.SmartRasterLayer.finishStyleErase(_colorEraserOwnership);_colorEraserBase=null;_colorEraserOwnership=null;}
+function _endColorEraserStroke(){
+  _flushLiveColorEraserPreview();
+  if(_colorEraserOwnership&&window.SmartRasterLayer&&typeof window.SmartRasterLayer.finishStyleErase==='function')window.SmartRasterLayer.finishStyleErase(_colorEraserOwnership);
+  // Revised GPU integration: color-eraser dabs are written per-dab
+  // directly into ctx/activeC via getImageData/putImageData (a live,
+  // high-frequency pixel diff against smart-raster style ownership —
+  // there is no GPU-native equivalent, and pushing a full-canvas
+  // upload on every dab would be a serious perf regression). Instead,
+  // sync once here at stroke-end, the same one-time-per-operation
+  // pattern used by the other smart-raster write paths in this pass.
+  if(_colorEraserBase&&window.BrushRenderer&&typeof BrushRenderer.loadActiveSurface==='function'&&BrushRenderer.getActiveRenderer()==='gpu'){
+    BrushRenderer.loadActiveSurface(activeC);
+  }
+  _colorEraserBase=null;_colorEraserOwnership=null;
+}
 let _replayingTaper = false;
 
 function _beginEndTaperCapture(){
@@ -384,7 +398,14 @@ function _beginEndTaperCapture(){
   _strokeReplayBase=document.createElement('canvas');
   _strokeReplayBase.width=activeC.width;
   _strokeReplayBase.height=activeC.height;
-  _strokeReplayBase.getContext('2d').drawImage(activeC,0,0);
+  // Revised GPU integration: taper-replay capture reads through
+  // BrushRenderer.getActiveSurface() instead of hardcoded activeC, so
+  // the eraser end-taper base reflects whichever renderer is actually
+  // authoritative (this only runs for tool==='eraser', which is a CPU
+  // 2D compositing operation either way, but the base snapshot itself
+  // must start from current committed pixels, not a possibly-stale
+  // activeC when GPU is active).
+  _strokeReplayBase.getContext('2d').drawImage((window.BrushRenderer&&typeof BrushRenderer.getActiveSurface==='function')?BrushRenderer.getActiveSurface():activeC,0,0);
 }
 
 function _ensureStrokeCanvas(){
@@ -454,7 +475,32 @@ function _drawBrushComposite(targetCtx,src){
 }
 
 
+// Revised GPU integration: GpuBrushRenderer now owns its own commit
+// step end-to-end inside BrushRenderer.endStroke() (see
+// brush-renderer.js's GpuBrushRenderer.endStroke() /
+// _composeStrokeOntoLayer()) — it blends its finished stroke onto its
+// own persistent layerTexture via a GPU render pass, entirely on the
+// GPU side, and never touches ctx/activeC. There is deliberately no
+// GPU-specific commit function here anymore: activeC must NOT become
+// the storage for GPU-rendered strokes (that was the rejected
+// architecture — a canvas-to-canvas drawImage into activeC at commit
+// time, which silently made CPU's canvas the "real" backing store for
+// GPU strokes and broke the renderer abstraction). brush-engine.js's
+// only remaining job for GPU is the lifecycle call below: tell the
+// active renderer the stroke is over and let it flush/commit itself.
+
 function _commitStrokeCanvas(){
+  // When GpuBrushRenderer is active, its own endStroke() (called below,
+  // same as the CPU path) already performs the full commit — flushing
+  // any remaining queued dabs AND composing them onto its persistent
+  // surface (layerTexture). Nothing here needs to read or write
+  // ctx/activeC for GPU; the CPU-only _strokeCanvas/ctx logic below is
+  // skipped entirely since GPU dabs never land on _strokeCanvas.
+  if(window.BrushRenderer && BrushRenderer.getActiveRenderer()==='gpu'){
+    BrushRenderer.endStroke();
+    BrushRenderer.flushActiveRenderer();
+    return;
+  }
   if(!_strokeCanvas) return;
   const commitSession=_activeStrokeSession,commitLayer=curLayer,commitFrame=curFrame;
   _traceStrokeLifecycle('commit-start',{sessionId:commitSession,sourceLayer:commitLayer,sourceFrame:commitFrame,dirtyRect:_strokeDirty?{minX:_strokeDirty.minX,minY:_strokeDirty.minY,maxX:_strokeDirty.maxX,maxY:_strokeDirty.maxY}:null});
@@ -532,6 +578,22 @@ function _getLiveStrokePreview(){
     _strokePreviewCtx = _strokePreviewCanvas.getContext('2d');
   } else {
     _strokePreviewCtx.clearRect(0, 0, w, h);
+  }
+  // Revised GPU integration: when GpuBrushRenderer is active, it already
+  // maintains its own live-preview surface — its getLayerSurface()
+  // canvas is kept current with "committed content + in-progress stroke,
+  // blended" on every dab-batch flush (see brush-renderer.js's
+  // flushDabQueue() -> _presentLayerToCanvas(true, ...)), entirely on
+  // the GPU side. So the CPU-only "composite _strokeCanvas onto a copy
+  // of activeC" logic below (needed because CPU dabs land on a private
+  // offscreen scratch) doesn't apply to GPU at all — there is nothing to
+  // build here; just hand back the GPU renderer's own surface directly.
+  // No _strokePreviewCanvas allocation, no drawImage of activeC, no
+  // pixel readback, no duplicate rendering.
+  if(window.BrushRenderer && BrushRenderer.getActiveRenderer()==='gpu' && typeof BrushRenderer.active.getLayerSurface==='function'){
+    const gpuSurface=BrushRenderer.active.getLayerSurface();
+    if(perf)perf.measure('live-preview-total',previewTotalStart,{path:'gpu-renderer',width:w,height:h});
+    if(gpuSurface) return gpuSurface;
   }
   _strokePreviewCtx.drawImage(activeC, 0, 0);
   if(perf)perf.measure('live-preview-buffer-preparation',previewBufferStart,perf.canvasDetail(_strokePreviewCanvas,_strokePreviewCtx,{allocatedOrResized:previewAllocated,source:'activeC',getImageData:false}));
@@ -3250,7 +3312,17 @@ function _completePostStrokePresentation(layerIndex,frameIndex){
 //     (e.g. the up-event was lost), stop the stroke instead of trusting
 //     the old `drawing` flag blindly.
 function _restoreSelectionScopePixels(){
-  if(_selectionScopeBase&&window.SelectionScope)SelectionScope.restoreProtectedPixels(ctx,_selectionScopeBase);
+  if(_selectionScopeBase&&window.SelectionScope){
+    SelectionScope.restoreProtectedPixels(ctx,_selectionScopeBase);
+    // Revised GPU integration: this restore writes directly into
+    // ctx/activeC (selection-scope protection is a pixel-mask compare,
+    // inherently CPU/getImageData-based). Push the result into GPU's
+    // surface too so an eraser stroke's scope restoration isn't lost
+    // when GPU is authoritative.
+    if(window.BrushRenderer&&typeof BrushRenderer.loadActiveSurface==='function'&&BrushRenderer.getActiveRenderer()==='gpu'){
+      BrushRenderer.loadActiveSurface(activeC);
+    }
+  }
   _selectionScopeBase=null;
 }
 function _isStyleLayeringColorErase(){
@@ -4010,7 +4082,11 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
   if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('taperSetup',diagnosticSetupStart);
   if(latencyProfiler)latencyProfiler.measure('taper-buffer-preparation',stageStart,{active:!!_strokeReplayBase,canvas:{width:CW,height:CH}});
   diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
-  stageStart=latencyProfiler?performance.now():0;_selectionScopeBase=tool==='eraser'&&window.SelectionScope?SelectionScope.captureArtwork(activeC):null;
+  // Revised GPU integration: the eraser-scope base capture reads through
+  // BrushRenderer.getActiveSurface() instead of hardcoded activeC, so it
+  // captures whichever renderer's surface is actually authoritative
+  // before the stroke begins.
+  stageStart=latencyProfiler?performance.now():0;_selectionScopeBase=tool==='eraser'&&window.SelectionScope?SelectionScope.captureArtwork((window.BrushRenderer&&typeof BrushRenderer.getActiveSurface==='function')?BrushRenderer.getActiveSurface():activeC):null;
   if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('selectionSetup',diagnosticSetupStart);
   if(latencyProfiler)latencyProfiler.measure('selection-scope-setup',stageStart,{active:!!window.SelectionScope,captured:!!_selectionScopeBase,getImageData:!!_selectionScopeBase});
   diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;

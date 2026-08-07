@@ -737,7 +737,15 @@ function enterTransformTool(){
     const pixelState=window.PixelSelection&&PixelSelection.isActive()?PixelSelection.getState():null;
     const extended=!pixelState&&typeof getExtendedLayerFrame==='function'?getExtendedLayerFrame(curLayer,tfContext.drawingFrameIndex):null;
     if(extended){tfSnapshot=document.createElement('canvas');tfSnapshot.width=extended.canvas.width;tfSnapshot.height=extended.canvas.height;tfSnapshot.getContext('2d').drawImage(extended.canvas,0,0);tfSnapshot._tfOriginX=extended.x;tfSnapshot._tfOriginY=extended.y;}
-    else{tfSnapshot=mkLayerCanvas();tfSnapshot.getContext('2d').drawImage(activeC,0,0);tfSnapshot._tfOriginX=0;tfSnapshot._tfOriginY=0;}
+    else{
+      // Revised GPU integration: snapshot whichever renderer is actually
+      // authoritative for the active layer's committed pixels, not
+      // hardcoded activeC — CpuBrushRenderer's getLayerSurface() returns
+      // activeC itself (identical behavior to before), GpuBrushRenderer's
+      // returns its own persistent, GPU-composited canvas.
+      const tfSource=(window.BrushRenderer&&typeof BrushRenderer.getActiveSurface==='function')?BrushRenderer.getActiveSurface():activeC;
+      tfSnapshot=mkLayerCanvas();tfSnapshot.getContext('2d').drawImage(tfSource,0,0);tfSnapshot._tfOriginX=0;tfSnapshot._tfOriginY=0;
+    }
     if(pixelState&&pixelState.layerIndex===curLayer&&pixelState.bounds){
       const selected=mkLayerCanvas(),background=mkLayerCanvas();
       const selectedCtx=selected.getContext('2d'),backgroundCtx=background.getContext('2d');
@@ -843,6 +851,18 @@ function commitTransformTool(options){
   const storedExtended=!!_tfStoreFullTransform(targetLayer,targetFrame,storageSource,storageOptions);
   if(tfPerspective)_tfCommitSmartPerspectiveTransform();
   else _tfCommitSmartFreeTransform();
+  // Revised GPU integration: the transform result above is necessarily
+  // computed via 2D canvas transform/perspective math directly into
+  // ctx/activeC (matrix warps and perspective quads aren't reproduced
+  // here on the GPU path). Push the finished, already-CPU-composited
+  // bake into whichever renderer is actually authoritative via
+  // BrushRenderer.loadActiveSurface() (a one-time CPU->GPU upload at
+  // commit, not a per-frame readback) so saveActiveToKey() below —
+  // which reads through BrushRenderer.getActiveSurface() — picks up
+  // this transform's result instead of GPU's stale prior surface.
+  if(window.BrushRenderer&&typeof BrushRenderer.loadActiveSurface==='function'&&BrushRenderer.getActiveRenderer()==='gpu'){
+    BrushRenderer.loadActiveSurface(activeC);
+  }
   if(!storedExtended)saveActiveToKey();
   recomposite(curLayer,curFrame);
   renderTimeline();
@@ -874,6 +894,13 @@ function cancelTransformTool(){
 
   ctx.clearRect(0,0,CW,CH);
   if(tfSnapshot) ctx.drawImage(tfSnapshot,Number(tfSnapshot._tfOriginX)||0,Number(tfSnapshot._tfOriginY)||0);
+  // Revised GPU integration: same reasoning as the commit path above —
+  // this restores the pre-transform snapshot via 2D drawImage directly
+  // into ctx/activeC, so push it into GPU's surface too before
+  // saveActiveToKey() reads through BrushRenderer.getActiveSurface().
+  if(window.BrushRenderer&&typeof BrushRenderer.loadActiveSurface==='function'&&BrushRenderer.getActiveRenderer()==='gpu'){
+    BrushRenderer.loadActiveSurface(activeC);
+  }
   saveActiveToKey();
   recomposite(curLayer,curFrame);
   renderTimeline();

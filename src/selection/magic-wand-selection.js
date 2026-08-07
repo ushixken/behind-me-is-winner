@@ -25,7 +25,20 @@
   function update(values){Object.assign(settings,values||{});normalizeSettings();persist();window.dispatchEvent(new CustomEvent('magic-wand-settings-changed'));}
   function sampleImage(){
     if(settings.sample==='all'){recomposite(curLayer,curFrame);return compCtx.getImageData(0,0,CW,CH);}
-    return ctx.getImageData(0,0,CW,CH);
+    // Revised GPU integration: "current layer only" sampling reads
+    // through BrushRenderer.getActiveSurface() instead of hardcoded
+    // ctx/activeC, so it reflects whichever renderer is actually
+    // authoritative. GPU's surface has a WebGPU context and can't also
+    // be given a 2D one, so drawImage it onto a private 2D scratch first
+    // (same technique used elsewhere in this pass) before getImageData.
+    var surface=(window.BrushRenderer&&typeof BrushRenderer.getActiveSurface==='function')?BrushRenderer.getActiveSurface():activeC;
+    if(surface===activeC) return ctx.getImageData(0,0,CW,CH);
+    if(!sampleImage._scratch)sampleImage._scratch=document.createElement('canvas');
+    var scratch=sampleImage._scratch;
+    if(scratch.width!==CW||scratch.height!==CH){scratch.width=CW;scratch.height=CH;}
+    var sctx=scratch.getContext('2d',{willReadFrequently:true});
+    sctx.clearRect(0,0,CW,CH);sctx.drawImage(surface,0,0);
+    return sctx.getImageData(0,0,CW,CH);
   }
   // Similarity uses Chebyshev distance: the greatest absolute channel
   // difference must be <= Color Range. The 0..255 value is therefore an

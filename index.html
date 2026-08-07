@@ -173,16 +173,22 @@
       <canvas id="display-canvas"></canvas>
       <canvas id="onion-canvas"></canvas>
       <canvas id="active-canvas"></canvas>
-      <!-- gpu-canvas: dedicated WebGPU presentation target for
-           GpuBrushRenderer (Phase 5V — preparation only, not yet used
-           for rendering). Kept separate from active-canvas because a
-           single canvas element can only ever be bound to ONE context
-           type (2D or WebGPU) for its lifetime — active-canvas is
-           already permanently bound to a 2D context in core-state.js,
-           so GpuBrushRenderer.initialize()'s getContext('webgpu') call
-           must target its own canvas instead. Sized/positioned to
-           match active-canvas via #gpu-canvas in style.css. Hidden by
-           default; nothing shows or activates it yet. -->
+      <!-- gpu-canvas: GpuBrushRenderer's private WebGPU rendering
+           target — its per-stroke scratch surface, the GPU counterpart
+           of brush-engine.js's in-memory _strokeCanvas. Kept separate
+           from active-canvas because a single canvas element can only
+           ever be bound to ONE context type (2D or WebGPU) for its
+           lifetime — active-canvas is already permanently bound to a
+           2D context in core-state.js, so GpuBrushRenderer's
+           getContext('webgpu') call must target its own canvas
+           instead. Sized/positioned to match active-canvas via
+           #gpu-canvas in style.css. Stays hidden permanently: it is
+           never shown to the user or swapped in place of
+           active-canvas — its content only ever reaches the screen
+           indirectly, composited onto active-canvas at stroke
+           boundaries (see brush-engine.js's _commitGpuStroke() /
+           _getLiveStrokePreview()), keeping active-canvas the single
+           logical drawing surface for every renderer. -->
       <canvas id="gpu-canvas" hidden></canvas>
       <canvas id="transform-canvas"></canvas>
     </div>

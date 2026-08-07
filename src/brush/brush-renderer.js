@@ -931,6 +931,31 @@ const CpuBrushRenderer = {
   // cannot change observable behavior.
   beginStroke(){},
   endStroke(){},
+  // Revised GPU integration: this renderer's authoritative drawing
+  // surface is activeC itself — dabs are composited onto it directly by
+  // brush-engine.js's _commitStrokeCanvas() (mid-stroke, dabs live on
+  // the private _strokeCanvas scratch and _getLiveStrokePreview() is
+  // used for display instead — see brush-engine.js). Mirrors
+  // GpuBrushRenderer.getLayerSurface() so BrushRenderer.getActiveSurface()
+  // can read either renderer through one call, without either renderer
+  // needing to know about the other's storage.
+  getLayerSurface(){
+    if(typeof _inStroke!=='undefined'&&_inStroke&&typeof _getLiveStrokePreview==='function'){
+      return _getLiveStrokePreview();
+    }
+    return typeof activeC!=='undefined'?activeC:null;
+  },
+  // CPU counterpart of GpuBrushRenderer.loadIntoLayer(): activeC already
+  // IS this renderer's permanent surface, so loading a frame is a plain
+  // 2D drawImage — unchanged from what brush-engine.js/panels.js did
+  // directly before this pass, just reachable through the same
+  // dispatcher method GPU uses.
+  loadIntoLayer(source){
+    if(typeof ctx==='undefined'||typeof activeC==='undefined') return false;
+    ctx.clearRect(0,0,activeC.width,activeC.height);
+    if(source) ctx.drawImage(source,0,0);
+    return true;
+  },
   // Phase 1F-B: cache ownership API. brush-engine.js previously reached
   // into this file's Map caches directly (_aaDabCache.clear(), etc.) —
   // these two methods give it an API surface instead, so the renderer's
@@ -1132,14 +1157,14 @@ const BrushRenderer = {
     if(!renderer) throw new Error('BrushRenderer: no renderer registered under "'+name+'"');
     this._activeName=name;
     this.active=renderer;
-    // Phase 5W: presentation-layer sync only — does not affect which
-    // renderer is chosen/activated (that decision is entirely the
-    // assignment above, unchanged). Calls the existing
-    // setGpuPresentationActive() helper (core-state.js) so gpu-canvas/
-    // active-canvas visibility always matches whichever renderer just
-    // became active, no matter which caller reached this method
-    // (activateRenderer(), or the two hardcoded calls at module init).
-    if(typeof setGpuPresentationActive==='function') setGpuPresentationActive(name==='gpu');
+    // Architecture fix (GPU-integration pass): renderer switching no
+    // longer swaps which on-screen canvas is visible. activeC is the
+    // single logical drawing surface for every renderer — gpu-canvas is
+    // now a private, always-hidden scratch surface owned by
+    // GpuBrushRenderer (see getStrokeCanvas()/_clearAccumTexture()
+    // above and brush-engine.js's _commitGpuStroke()), the same role
+    // _strokeCanvas plays for CpuBrushRenderer. There is nothing left
+    // to toggle here.
   },
   getActiveRenderer(){
     return this._activeName;
@@ -1147,6 +1172,36 @@ const BrushRenderer = {
   drawDab(d,rendererContext){ return this.active.drawDab(d,rendererContext); },
   beginStroke(){ return this.active.beginStroke(); },
   endStroke(){ return this.active.endStroke(); },
+  // Revised GPU integration: the single choke point every downstream
+  // consumer (recomposite, saveActiveToKey/undo-history, export,
+  // sampling, transforms, ...) should call instead of reading the
+  // module-level `activeC` directly. Forwards to whichever renderer is
+  // active's getLayerSurface() — CpuBrushRenderer's returns activeC (or
+  // the live stroke preview mid-stroke); GpuBrushRenderer's returns its
+  // own persistent, GPU-owned canvas. Falls back to activeC only if no
+  // renderer is active yet (startup) or the active renderer doesn't
+  // implement getLayerSurface(), so existing single-renderer code paths
+  // are never left without a surface.
+  getActiveSurface(){
+    if(this.active && typeof this.active.getLayerSurface==='function'){
+      const surface=this.active.getLayerSurface();
+      if(surface) return surface;
+    }
+    return typeof activeC!=='undefined'?activeC:null;
+  },
+  // Revised GPU integration: loads `source` (a plain 2D
+  // canvas/image/null) into the active renderer's own surface —
+  // CpuBrushRenderer draws it onto activeC via 2D drawImage;
+  // GpuBrushRenderer uploads it onto layerTexture via
+  // copyExternalImageToTexture. Used by frame/layer/undo loading (see
+  // panels.js's loadFrame()) so switching artwork populates whichever
+  // renderer is currently active instead of assuming CPU/activeC.
+  loadActiveSurface(source){
+    if(this.active && typeof this.active.loadIntoLayer==='function'){
+      return this.active.loadIntoLayer(source);
+    }
+    return false;
+  },
   // Phase 5G: dispatcher-level flush support. Forwards to the active
   // renderer's flushPendingDabs() if it implements one (GpuBrushRenderer
   // does, as of Phase 5G; CpuBrushRenderer does not, and is left
@@ -1837,6 +1892,25 @@ const _gpuState = {
   accumTexture: null,
   accumTextureWidth: 0,
   accumTextureHeight: 0,
+  // Revised GPU integration: the persistent, permanent per-layer surface.
+  // Unlike accumTexture (per-stroke scratch, cleared at every
+  // beginStroke — see _clearAccumTexture()), layerTexture is only ever
+  // created blank once (or on a genuine size change) and otherwise
+  // accumulates every committed stroke for the lifetime of the active
+  // layer, exactly the same role activeC/ctx plays for CpuBrushRenderer.
+  // It is composed into FROM accumTexture (never the reverse) by
+  // _composeStrokeOntoLayer(), entirely on the GPU (render-pass blend,
+  // no getImageData/readPixels, no CPU canvas involved). This is the
+  // texture getLayerSurface()'s returned canvas is kept in sync with.
+  layerTexture: null,
+  layerTextureWidth: 0,
+  layerTextureHeight: 0,
+  composePipeline: null,
+  composePipelineLayout: null,
+  composeShaderModule: null,
+  composeBindGroupLayout: null,
+  composeSampler: null,
+  composeUniformBuffer: null,
   submittedDabs: 0,
   droppedDabs: 0,
   lastBatchTime: null,
@@ -2022,6 +2096,29 @@ const GpuBrushRenderer = {
   // unchanged (same shader, same single-color output, same vertex
   // layout — one quad's worth of attributes, repeated per dab in the
   // batch buffer).
+  // Phase 6E: appearance-parity update. The dab pipeline now also takes
+  // a per-vertex RGBA color (location 1) instead of emitting a fixed
+  // solid black, and the color target has standard source-over alpha
+  // blending enabled — matching the CPU renderer's compositing
+  // (ctx.globalAlpha + normal 'source-over' fill, see
+  // CpuBrushRenderer.drawDab()) for the two most visible appearance
+  // gaps: dab color and dab opacity. Position math, topology, and the
+  // one-draw-call-per-batch structure are all unchanged from Phase 5F.
+  // Phase 6E: appearance-parity update. The dab pipeline now also takes
+  // a per-vertex RGBA color (location 1) instead of emitting a fixed
+  // solid black, and the color target has standard source-over alpha
+  // blending enabled — matching the CPU renderer's compositing
+  // (ctx.globalAlpha + normal 'source-over' fill, see
+  // CpuBrushRenderer.drawDab()) for the two most visible appearance
+  // gaps: dab color and dab opacity. Position math, topology, and the
+  // one-draw-call-per-batch structure are all unchanged from Phase 5F.
+  // Phase 6F: adds a per-vertex local UV (location 2, quad-space
+  // coordinate in [-1,1]) so the fragment shader can mask each quad
+  // down to a circle. This is the single largest remaining visual
+  // mismatch found in this phase's investigation — every dab was a
+  // literal hard-edged square, whereas CpuBrushRenderer always draws a
+  // round dab (see e.g. _dabAA/_dabAliased's circular falloff). Color,
+  // blending, and batching from Phase 6E are otherwise untouched.
   createDabPipeline(){
     if(_gpuState.dabPipeline) return true;
 
@@ -2031,20 +2128,38 @@ const GpuBrushRenderer = {
     const shaderCode=`
       struct VertexOut {
         @builtin(position) position: vec4<f32>,
+        @location(0) color: vec4<f32>,
+        @location(1) uv: vec2<f32>,
       };
 
       @vertex
-      fn vs_main(@location(0) pos: vec2<f32>) -> VertexOut {
+      fn vs_main(@location(0) pos: vec2<f32>, @location(1) color: vec4<f32>, @location(2) uv: vec2<f32>) -> VertexOut {
         var out: VertexOut;
         out.position = vec4<f32>(pos, 0.0, 1.0);
+        out.color = color;
+        out.uv = uv;
         return out;
       }
 
       @fragment
-      fn fs_main() -> @location(0) vec4<f32> {
-        // Single fixed opaque color. No texture, no pressure/opacity
-        // modulation, no blending logic — a plain solid dab shape.
-        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+      fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+        // Phase 6F: mask the quad down to a circle. dist is the
+        // fragment's distance from the dab center in quad-space, where
+        // 1.0 is exactly at the dab radius. A single smoothstep gives
+        // the circle a clean (~1px) edge instead of a jagged hard cutoff
+        // — required just to render a circle at all, not the CPU
+        // renderer's separate, larger hardness-falloff gradient, which
+        // remains unimplemented here.
+        let dist = length(in.uv);
+        let coverage = 1.0 - smoothstep(0.9, 1.0, dist);
+        if (coverage <= 0.0) {
+          discard;
+        }
+        // Phase 6E: per-dab color/opacity, alpha-premultiplied for the
+        // blend state below (out-of-scope-for-blending straight alpha
+        // would double-apply alpha under 'src-alpha' blending).
+        let a = in.color.a * coverage;
+        return vec4<f32>(in.color.rgb * a, a);
       }
     `;
 
@@ -2057,14 +2172,24 @@ const GpuBrushRenderer = {
         module:shaderModule,
         entryPoint:'vs_main',
         buffers:[{
-          arrayStride: 2*4,
-          attributes:[{shaderLocation:0, offset:0, format:'float32x2'}],
+          arrayStride: 8*4,
+          attributes:[
+            {shaderLocation:0, offset:0, format:'float32x2'},
+            {shaderLocation:1, offset:2*4, format:'float32x4'},
+            {shaderLocation:2, offset:6*4, format:'float32x2'},
+          ],
         }],
       },
       fragment:{
         module:shaderModule,
         entryPoint:'fs_main',
-        targets:[{format:_gpuState.canvasFormat}],
+        targets:[{
+          format:_gpuState.canvasFormat,
+          blend:{
+            color:{srcFactor:'one', dstFactor:'one-minus-src-alpha', operation:'add'},
+            alpha:{srcFactor:'one', dstFactor:'one-minus-src-alpha', operation:'add'},
+          },
+        }],
       },
       primitive:{
         topology:'triangle-list',
@@ -2105,7 +2230,12 @@ const GpuBrushRenderer = {
       _gpuState.vertexBuffersDestroyed++;
     }
     _gpuState.dabVertexBuffer=_gpuState.device.createBuffer({
-      size: capacity*6*2*4,
+      // Phase 6E: each vertex is now 6 floats (2 position + 4 rgba, see
+      // createDabPipeline()'s buffer layout) instead of 2 — same 6
+      // vertices/dab, just a wider per-vertex stride to carry color.
+      // Phase 6F: widened again to 8 floats/vertex (+2 for UV) to mask
+      // the quad into a circle — see createDabPipeline().
+      size: capacity*6*8*4,
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
     });
     // Phase 5S: diagnostics only — records the createBuffer() above.
@@ -2134,14 +2264,36 @@ const GpuBrushRenderer = {
     _gpuState.accumTexture=_gpuState.device.createTexture({
       size:{width,height},
       format:_gpuState.canvasFormat,
-      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST,
+      // TEXTURE_BINDING added (revised GPU integration) so
+      // _composeStrokeOntoLayer()'s compose pipeline can sample this
+      // stroke's finished dabs as an input texture when blending them
+      // onto layerTexture — a GPU render-pass read, not a CPU readback.
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING,
     });
     _gpuState.accumTextureWidth=width;
     _gpuState.accumTextureHeight=height;
-    // Clear the new texture to transparent exactly once, here, on its
-    // own tiny command buffer — separate from the dab batch encoder in
-    // _flushDabQueueImplTimed so this one-time reset never gets mixed
-    // up with (or mistaken for) that method's own encoder/pass state.
+    // Clear the freshly (re)created texture to transparent exactly once,
+    // via the same helper beginStroke() uses to reset it between strokes
+    // (see _clearAccumTexture() below) — a brand-new/resized texture
+    // starts from the identical blank state a stroke boundary produces.
+    this._clearAccumTexture();
+    return true;
+  },
+  // Revised GPU integration: accumTexture is this renderer's per-STROKE
+  // scratch surface — the exact same role _strokeCanvas plays for
+  // CpuBrushRenderer (see brush-engine.js's
+  // _ensureStrokeCanvas/_commitStrokeCanvas). It is reset on every
+  // beginStroke() (below) so it holds only the in-progress stroke's
+  // dabs. Where this now differs from the rejected GPU-integration-pass
+  // design: accumTexture's contents are never copied onto activeC.
+  // Instead, at stroke-end, _composeStrokeOntoLayer() blends accumTexture
+  // onto layerTexture — a second, GPU-owned texture that persists across
+  // strokes — via a GPU render pass (see createComposePipeline()/
+  // _composeStrokeOntoLayer() below). layerTexture, not activeC, is this
+  // renderer's permanent drawing surface; it is what getLayerSurface()
+  // exposes to the rest of the app.
+  _clearAccumTexture(){
+    if(!_gpuState.accumTexture || !_gpuState.device || !_gpuState.queue) return false;
     const clearEncoder=_gpuState.device.createCommandEncoder();
     const clearPass=clearEncoder.beginRenderPass({
       colorAttachments: [{
@@ -2154,6 +2306,247 @@ const GpuBrushRenderer = {
     clearPass.end();
     _gpuState.queue.submit([clearEncoder.finish()]);
     return true;
+  },
+  // Revised GPU integration: lazily creates (or resizes) layerTexture,
+  // this renderer's permanent per-layer surface. Mirrors
+  // _ensureAccumTexture() above, with one deliberate difference — this
+  // texture is cleared only when first created or when its size
+  // actually changes, never on a stroke boundary, since it must retain
+  // every previously committed stroke.
+  _ensureLayerTexture(width,height){
+    if(_gpuState.layerTexture && _gpuState.layerTextureWidth===width && _gpuState.layerTextureHeight===height){
+      return true;
+    }
+    if(!_gpuState.device || !_gpuState.canvasFormat) return false;
+    if(_gpuState.layerTexture){
+      _gpuState.layerTexture.destroy();
+      _gpuState.layerTexture=null;
+    }
+    _gpuState.layerTexture=_gpuState.device.createTexture({
+      size:{width,height},
+      format:_gpuState.canvasFormat,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    _gpuState.layerTextureWidth=width;
+    _gpuState.layerTextureHeight=height;
+    const clearEncoder=_gpuState.device.createCommandEncoder();
+    const clearPass=clearEncoder.beginRenderPass({
+      colorAttachments:[{view:_gpuState.layerTexture.createView(),loadOp:'clear',clearValue:{r:0,g:0,b:0,a:0},storeOp:'store'}],
+    });
+    clearPass.end();
+    _gpuState.queue.submit([clearEncoder.finish()]);
+    return true;
+  },
+  // Revised GPU integration: loads a plain 2D canvas/image (a stored
+  // keyframe, an undo snapshot, a freshly-loaded project, etc.) into
+  // layerTexture, so switching frames/layers/undo-state while GPU is
+  // the active renderer updates the renderer's OWN authoritative
+  // surface instead of relying on activeC. This is a CPU->GPU upload
+  // (queue.copyExternalImageToTexture), the opposite direction from —
+  // and unrelated to — the per-frame GPU->CPU stroke readback this pass
+  // exists to remove; it happens only on an explicit, infrequent,
+  // user-initiated frame/layer/undo change, never during stroke
+  // painting. `source===null` clears layerTexture to blank (an empty
+  // frame). No 2D context/getImageData involved either way.
+  loadIntoLayer(source){
+    if(!_gpuState.device||!_gpuState.queue||!_gpuState.canvas) return false;
+    const w=_gpuState.canvas.width,h=_gpuState.canvas.height;
+    if(!this._ensureLayerTexture(w,h)) return false;
+    if(!_gpuState.layerTexture) return false;
+    // _ensureLayerTexture() already clears a freshly (re)created
+    // texture; if it already existed at this size, clear it explicitly
+    // so a blank/loaded frame doesn't inherit whatever was drawn before.
+    const clearEncoder=_gpuState.device.createCommandEncoder();
+    const clearPass=clearEncoder.beginRenderPass({
+      colorAttachments:[{view:_gpuState.layerTexture.createView(),loadOp:'clear',clearValue:{r:0,g:0,b:0,a:0},storeOp:'store'}],
+    });
+    clearPass.end();
+    _gpuState.queue.submit([clearEncoder.finish()]);
+    if(source){
+      try{
+        _gpuState.queue.copyExternalImageToTexture({source},{texture:_gpuState.layerTexture},{width:w,height:h});
+      }catch(err){
+        this._recordError(err||'load-into-layer-failed');
+        return false;
+      }
+    }
+    this._presentLayerToCanvas(false,0);
+    return true;
+  },
+  // Revised GPU integration: builds the compose pipeline used by
+  // _composeStrokeOntoLayer() to blend a finished stroke (accumTexture)
+  // onto the persistent layer surface (layerTexture), and by
+  // _blitLiveStrokePreview() to blend the in-progress stroke onto the
+  // swapchain for live preview without touching layerTexture. A plain
+  // full-screen textured quad (no vertex buffer — positions/uv are
+  // computed from @builtin(vertex_index)) whose fragment shader samples
+  // accumTexture and scales its alpha (and premultiplied color) by a
+  // uniform opacity, matching brush-engine.js's
+  // ctx.globalAlpha=brushOpacity CPU-side step, but performed as a GPU
+  // render pass instead of a canvas-to-canvas 2D drawImage. The blend
+  // state mirrors the dab pipeline's premultiplied source-over blend so
+  // stacking here matches stacking there.
+  createComposePipeline(){
+    if(_gpuState.composePipeline) return true;
+    if(!_gpuState.device || !_gpuState.canvasFormat) return false;
+    const device=_gpuState.device;
+    const shaderCode=`
+      struct VertexOut {
+        @builtin(position) position: vec4<f32>,
+        @location(0) uv: vec2<f32>,
+      };
+      @vertex
+      fn vs_main(@builtin(vertex_index) idx: u32) -> VertexOut {
+        var pos = array<vec2<f32>, 6>(
+          vec2<f32>(-1.0,-1.0), vec2<f32>( 1.0,-1.0), vec2<f32>(-1.0, 1.0),
+          vec2<f32>(-1.0, 1.0), vec2<f32>( 1.0,-1.0), vec2<f32>( 1.0, 1.0)
+        );
+        var out: VertexOut;
+        let p = pos[idx];
+        out.position = vec4<f32>(p, 0.0, 1.0);
+        out.uv = vec2<f32>((p.x+1.0)*0.5, (1.0-p.y)*0.5);
+        return out;
+      }
+      @group(0) @binding(0) var srcSampler: sampler;
+      @group(0) @binding(1) var srcTexture: texture_2d<f32>;
+      struct Opacity { value: f32 };
+      @group(0) @binding(2) var<uniform> opacityUniform: Opacity;
+      @fragment
+      fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+        let sample = textureSample(srcTexture, srcSampler, in.uv);
+        // sample is already premultiplied (see dab pipeline fs_main);
+        // scaling both components by opacity keeps it premultiplied.
+        return sample * opacityUniform.value;
+      }
+    `;
+    const shaderModule=device.createShaderModule({code:shaderCode});
+    const bindGroupLayout=device.createBindGroupLayout({
+      entries:[
+        {binding:0,visibility:GPUShaderStage.FRAGMENT,sampler:{type:'filtering'}},
+        {binding:1,visibility:GPUShaderStage.FRAGMENT,texture:{sampleType:'float'}},
+        {binding:2,visibility:GPUShaderStage.FRAGMENT,buffer:{type:'uniform'}},
+      ],
+    });
+    const pipelineLayout=device.createPipelineLayout({bindGroupLayouts:[bindGroupLayout]});
+    const pipeline=device.createRenderPipeline({
+      layout:pipelineLayout,
+      vertex:{module:shaderModule,entryPoint:'vs_main'},
+      fragment:{
+        module:shaderModule,
+        entryPoint:'fs_main',
+        targets:[{
+          format:_gpuState.canvasFormat,
+          blend:{
+            color:{srcFactor:'one',dstFactor:'one-minus-src-alpha',operation:'add'},
+            alpha:{srcFactor:'one',dstFactor:'one-minus-src-alpha',operation:'add'},
+          },
+        }],
+      },
+      primitive:{topology:'triangle-list'},
+    });
+    _gpuState.composeShaderModule=shaderModule;
+    _gpuState.composePipelineLayout=pipelineLayout;
+    _gpuState.composeBindGroupLayout=bindGroupLayout;
+    _gpuState.composePipeline=pipeline;
+    _gpuState.composeSampler=device.createSampler({magFilter:'linear',minFilter:'linear'});
+    _gpuState.composeUniformBuffer=device.createBuffer({size:16,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});
+    _gpuState.shaderModulesCreated++;
+    _gpuState.pipelinesCreated++;
+    return true;
+  },
+  // Revised GPU integration: runs the compose pass described above,
+  // reading `srcTexture` (either accumTexture, the just-finished
+  // stroke, or layerTexture itself for the live-preview base) and
+  // writing into `targetView` at the given opacity. loadOp is 'load'
+  // when compositing onto existing content (the normal case) so
+  // whatever is already in the target is preserved underneath.
+  _runComposePass(srcTexture,targetView,opacity,loadOp){
+    if(!this.createComposePipeline()) return false;
+    const device=_gpuState.device;
+    device.queue.writeBuffer(_gpuState.composeUniformBuffer,0,new Float32Array([Math.max(0,Math.min(1,opacity)),0,0,0]));
+    const bindGroup=device.createBindGroup({
+      layout:_gpuState.composeBindGroupLayout,
+      entries:[
+        {binding:0,resource:_gpuState.composeSampler},
+        {binding:1,resource:srcTexture.createView()},
+        {binding:2,resource:{buffer:_gpuState.composeUniformBuffer}},
+      ],
+    });
+    const encoder=device.createCommandEncoder();
+    const pass=encoder.beginRenderPass({
+      colorAttachments:[{view:targetView,loadOp:loadOp||'load',storeOp:'store'}],
+    });
+    pass.setPipeline(_gpuState.composePipeline);
+    pass.setBindGroup(0,bindGroup);
+    pass.draw(6);
+    pass.end();
+    _gpuState.queue.submit([encoder.finish()]);
+    return true;
+  },
+  // Revised GPU integration: the GPU-owned replacement for the rejected
+  // _commitGpuStroke() CPU-side copy. Blends accumTexture (this
+  // stroke's finished dabs, already fully flushed by endStroke() before
+  // this is called) onto layerTexture — the persistent per-layer
+  // surface — at brushOpacity, entirely via _runComposePass() above. No
+  // getImageData/readPixels, no 2D canvas context, no activeC. Once
+  // this returns, layerTexture (not activeC) holds the authoritative
+  // result of the stroke, matching CpuBrushRenderer's contract of
+  // "committed strokes live on the renderer's own surface".
+  _composeStrokeOntoLayer(opacity){
+    const w=_gpuState.accumTextureWidth,h=_gpuState.accumTextureHeight;
+    if(!w||!h) return false;
+    if(!this._ensureLayerTexture(w,h)) return false;
+    if(!_gpuState.accumTexture||!_gpuState.layerTexture) return false;
+    return this._runComposePass(_gpuState.accumTexture,_gpuState.layerTexture.createView(),opacity,'load');
+  },
+  // Revised GPU integration: refreshes the swapchain canvas (gpu-canvas)
+  // so it always shows layerTexture's committed content, optionally
+  // blended with the in-progress stroke on top (live preview) without
+  // ever writing that in-progress blend into layerTexture itself. This
+  // is what keeps getLayerSurface()'s returned canvas correct both
+  // mid-stroke (committed + live stroke) and at rest (committed only).
+  _presentLayerToCanvas(includeLiveStroke,liveOpacity){
+    if(!_gpuState.context||!_gpuState.canvas) return false;
+    const currentTexture=_gpuState.context.getCurrentTexture();
+    if(!currentTexture) return false;
+    const w=_gpuState.canvas.width,h=_gpuState.canvas.height;
+    if(!this._ensureLayerTexture(w,h)) return false;
+    const encoder=_gpuState.device.createCommandEncoder();
+    encoder.copyTextureToTexture({texture:_gpuState.layerTexture},{texture:currentTexture},{width:w,height:h});
+    _gpuState.queue.submit([encoder.finish()]);
+    if(includeLiveStroke && _gpuState.accumTexture){
+      this._runComposePass(_gpuState.accumTexture,currentTexture.createView(),liveOpacity,'load');
+    }
+    return true;
+  },
+  // Architecture fix: returns this renderer's current stroke-scratch
+  // surface as a CanvasImageSource, mirroring the (private, brush-
+  // engine.js-owned) _strokeCanvas that CpuBrushRenderer's dabs land
+  // on. brush-engine.js uses this — via BrushRenderer.active — to
+  // composite the in-progress/finished GPU stroke onto activeC through
+  // the exact same drawImage()+globalAlpha+blend-mode pipeline
+  // (_drawBrushComposite) CPU strokes already go through, instead of
+  // gpu-canvas being shown to the user directly as a competing surface.
+  // Returns the live #gpu-canvas element itself (already kept in sync
+  // with accumTexture by every flush's copyTextureToTexture blit) —
+  // no pixel readback, no new texture/buffer, no duplicate render.
+  // Revised GPU integration: the canvas this returns is now kept
+  // current with layerTexture (committed strokes) at rest, and with
+  // layerTexture + the in-progress stroke blended on top while a
+  // stroke is active (see flushDabQueue()'s _presentLayerToCanvas(true,
+  // ...) call and endStroke()'s _presentLayerToCanvas(false,...) call
+  // above) — never with accumTexture alone. This is this renderer's
+  // authoritative drawing surface, the GPU counterpart of activeC.
+  getLayerSurface(){
+    return _gpuState.canvas||null;
+  },
+  // Retained for any existing caller still asking for "the stroke
+  // surface" by its old name; identical to getLayerSurface() now that
+  // the canvas always reflects the persistent, composited result rather
+  // than a disconnected per-stroke scratch. New code should prefer
+  // BrushRenderer.getActiveSurface() (which calls getLayerSurface()).
+  getStrokeCanvas(){
+    return this.getLayerSurface();
   },
   // Phase 5C: converts the dab's existing pixel-space position/radius
   // (d.x, d.y, d.r — the same values CpuBrushRenderer.drawDab() already
@@ -2179,10 +2572,29 @@ const GpuBrushRenderer = {
   // dab — no pressure is recomputed from pointer/pressure data here,
   // no second pipeline, dab order in the queue is untouched. Verified
   // by inspection; no functional change was required in this method.
+  // Phase 6E: writes 6 floats per vertex now (2 position + 4 rgba)
+  // instead of 2 — reads d.rgb (0-255, same array CpuBrushRenderer
+  // already reads for its fillStyle) and d.alpha (0-1, same value
+  // CPU already applies via ctx.globalAlpha) and writes them
+  // unmodified, per vertex, alongside the existing NDC position math
+  // (untouched). No new fields are read from d; hardness/roundness/
+  // rotation/texture/erase-compositing are still not read here — see
+  // the arr[offset+N] color writes below for exactly what's added.
+  // Phase 6F: writes 8 floats per vertex now (2 position + 4 rgba + 2
+  // uv) instead of 6 — uv is the vertex's local position within the
+  // quad in [-1,1], i.e. how far this corner is from the dab center as
+  // a fraction of its radius, letting the fragment shader mask the
+  // quad into a circle (length(uv) <= 1). Color writes (Phase 6E) and
+  // position/NDC math are unchanged.
   _writeDabQuadInto(arr,offset,d,w,h){
     const r=(d&&typeof d.r==='number')?d.r:1;
     const cx=(d&&typeof d.x==='number')?d.x:0;
     const cy=(d&&typeof d.y==='number')?d.y:0;
+    const rgb=(d&&d.rgb)?d.rgb:[0,0,0];
+    const cr=Math.max(0,Math.min(1,(rgb[0]||0)/255));
+    const cg=Math.max(0,Math.min(1,(rgb[1]||0)/255));
+    const cb=Math.max(0,Math.min(1,(rgb[2]||0)/255));
+    const ca=(d&&typeof d.alpha==='number')?Math.max(0,Math.min(1,d.alpha)):1;
 
     const toNdc=(px,py)=>[ (px/w)*2-1, 1-(py/h)*2 ];
 
@@ -2191,12 +2603,18 @@ const GpuBrushRenderer = {
     const [x2,y2]=toNdc(cx+r, cy+r);
     const [x3,y3]=toNdc(cx-r, cy+r);
 
-    arr[offset+0]=x0; arr[offset+1]=y0;
-    arr[offset+2]=x1; arr[offset+3]=y1;
-    arr[offset+4]=x2; arr[offset+5]=y2;
-    arr[offset+6]=x0; arr[offset+7]=y0;
-    arr[offset+8]=x2; arr[offset+9]=y2;
-    arr[offset+10]=x3; arr[offset+11]=y3;
+    const stride=8;
+    const writeVertex=(base,x,y,u,v)=>{
+      arr[base+0]=x; arr[base+1]=y;
+      arr[base+2]=cr; arr[base+3]=cg; arr[base+4]=cb; arr[base+5]=ca;
+      arr[base+6]=u; arr[base+7]=v;
+    };
+    writeVertex(offset+0*stride, x0,y0, -1,-1);
+    writeVertex(offset+1*stride, x1,y1,  1,-1);
+    writeVertex(offset+2*stride, x2,y2,  1, 1);
+    writeVertex(offset+3*stride, x0,y0, -1,-1);
+    writeVertex(offset+4*stride, x2,y2,  1, 1);
+    writeVertex(offset+5*stride, x3,y3, -1, 1);
   },
   // Phase 5E: pushes the raw dab data (exact object reference, no
   // transform/copy of its fields — "queue only raw dab data already
@@ -2324,9 +2742,18 @@ const GpuBrushRenderer = {
       // Build the whole batch's vertex data in one typed array and
       // upload it in a single queue.writeBuffer() call, instead of one
       // write per dab.
-      const verts=new Float32Array(dabCount*12);
+      // Phase 6E: 36 floats/dab now (6 vertices * 6 floats: 2 position +
+      // 4 rgba), up from 12 (6 vertices * 2 position-only floats) —
+      // matches _writeDabQuadInto()'s new per-vertex stride and
+      // createDabPipeline()'s buffer layout. Batch-per-draw-call
+      // structure is unchanged.
+      // Phase 6F: 48 floats/dab now (6 vertices * 8 floats: 2 position +
+      // 4 rgba + 2 uv), up from 36 — matches _writeDabQuadInto()'s new
+      // per-vertex stride and createDabPipeline()'s buffer layout.
+      // Batch-per-draw-call structure is unchanged.
+      const verts=new Float32Array(dabCount*48);
       for(let i=0;i<dabCount;i++){
-        this._writeDabQuadInto(verts,i*12,_gpuState.dabQueue[i],canvas.width,canvas.height);
+        this._writeDabQuadInto(verts,i*48,_gpuState.dabQueue[i],canvas.width,canvas.height);
       }
       _gpuState.queue.writeBuffer(_gpuState.dabVertexBuffer,0,verts);
 
@@ -2365,22 +2792,23 @@ const GpuBrushRenderer = {
       // dabCount dabs, no indices, no instancing.
       pass.draw(dabCount*6);
       pass.end();
-      // Phase 6B: blit the accumulation texture onto this frame's
-      // swapchain texture so the canvas actually displays the
-      // accumulated result. A single GPU-to-GPU copy, in the same
-      // command buffer as the batch draw above — not a second render
-      // pipeline, not a dab replay, no CPU readback.
-      _gpuState.commandEncoder.copyTextureToTexture(
-        {texture:_gpuState.accumTexture},
-        {texture:currentTexture},
-        {width:canvas.width,height:canvas.height}
-      );
       if(!this.submitCommands()){
         _gpuState.failedBatches+=1;
         _gpuState.failedDabs+=dabCount;
         this._recordFlush(flushReason,false);
         return false;
       }
+      // Revised GPU integration: the swapchain no longer receives a raw
+      // copy of accumTexture alone (that showed only the in-progress
+      // stroke, disconnected from anything already committed). Instead
+      // the canvas is refreshed from layerTexture (the persistent,
+      // committed surface) with accumTexture blended on top at
+      // brushOpacity — matching CpuBrushRenderer's live-preview
+      // contract of "committed content + in-progress stroke, blended,
+      // never written back to the committed surface". See
+      // _presentLayerToCanvas()/_composeStrokeOntoLayer() above.
+      const liveOpacity=(typeof brushOpacity==='number')?brushOpacity:1;
+      this._presentLayerToCanvas(true,liveOpacity);
 
       _gpuState.dabsDrawn+=dabCount;
       _gpuState.submittedDabs+=dabCount;
@@ -2603,6 +3031,15 @@ const GpuBrushRenderer = {
       _gpuState.dabQueue.length=0;
       _gpuState.queuedDabs=0;
     }
+    // Reset the per-stroke accumulation surface (see
+    // _clearAccumTexture()'s comment) so this stroke starts from blank,
+    // exactly like _strokeCtx.clearRect() does for CpuBrushRenderer's
+    // scratch canvas in brush-engine.js's _ensureStrokeCanvas(). A
+    // no-op the first time (accumTexture doesn't exist yet — the first
+    // flush's _ensureAccumTexture() call creates and clears it). Note
+    // this only clears the stroke scratch — layerTexture, the
+    // persistent surface, is untouched here.
+    this._clearAccumTexture();
     // Phase 5Q: session-lifetime tracking. A session begins at the
     // first stroke since the last reset() (sessionStartedAt stays
     // null, and is only set once, until reset() clears it again);
@@ -2623,7 +3060,21 @@ const GpuBrushRenderer = {
   // complete. Returns flushDabQueue()'s own success/failure boolean.
   endStroke(){
     _gpuState.inStroke=false;
-    return this.flushDabQueue('stroke-end');
+    const flushed=this.flushDabQueue('stroke-end');
+    // Revised GPU integration: this is the GPU renderer's own commit
+    // step — the direct replacement for the rejected
+    // brush-engine.js._commitGpuStroke() CPU-side copy. It runs
+    // regardless of flushDabQueue()'s result (a stroke with zero queued
+    // dabs at stroke-end, e.g. a single already-flushed dab, is a valid
+    // no-op-composite, not a failure) as long as there is something in
+    // accumTexture to compose. brushOpacity is read directly (shared
+    // classic-script scope with brush-engine.js/core-state.js — see
+    // file header), the same global CpuBrushRenderer's commit path
+    // reads via ctx.globalAlpha in _commitStrokeCanvas().
+    const opacity=(typeof brushOpacity==='number')?brushOpacity:1;
+    this._composeStrokeOntoLayer(opacity);
+    this._presentLayerToCanvas(false,0);
+    return flushed;
   },
   // Phase 5G: optional frame-lifecycle helper. Flushes the queue only
   // if there's actually something queued ("flush queued dabs only when
@@ -3029,6 +3480,27 @@ const GpuBrushRenderer = {
     _gpuState.accumTexture=null;
     _gpuState.accumTextureWidth=0;
     _gpuState.accumTextureHeight=0;
+    // Revised GPU integration: layerTexture and the compose pipeline
+    // resources are equally GPU-device-bound and cannot survive a
+    // device teardown. Dropping them here means every committed stroke
+    // held only in layerTexture is lost on a renderer reset — same
+    // caveat that already applied to CpuBrushRenderer's activeC never
+    // surviving e.g. a WebGPU device loss for the GPU side specifically;
+    // out of scope for this pass (device-loss recovery/persistence is a
+    // separate concern from the activeC-copy regression being fixed
+    // here).
+    if(_gpuState.layerTexture){
+      _gpuState.layerTexture.destroy();
+    }
+    _gpuState.layerTexture=null;
+    _gpuState.layerTextureWidth=0;
+    _gpuState.layerTextureHeight=0;
+    _gpuState.composePipeline=null;
+    _gpuState.composePipelineLayout=null;
+    _gpuState.composeShaderModule=null;
+    _gpuState.composeBindGroupLayout=null;
+    _gpuState.composeSampler=null;
+    _gpuState.composeUniformBuffer=null;
     // Phase 5E: the live queue itself (pending, not-yet-flushed dabs)
     // is cleared on reset since it was staged for a GPU device that is
     // being torn down — those dabs can never be submitted against it.

@@ -270,6 +270,19 @@
     if(changed) sctx.putImageData(img,0,0);
   }
 
+  // Revised GPU integration: smart-raster recoloring is index-based and
+  // intrinsically requires CPU getImageData/putImageData — there is no
+  // GPU-native path for it here. When the write target is the active
+  // layer's own live surface (activeC), push the finished CPU-computed
+  // result into whichever renderer is actually authoritative via
+  // BrushRenderer.loadActiveSurface() (a one-time CPU->GPU upload per
+  // recolor, not a per-frame readback) so GPU doesn't silently diverge.
+  function _syncActiveSurfaceToGpu(){
+    if(window.BrushRenderer&&typeof BrushRenderer.loadActiveSurface==='function'&&BrushRenderer.getActiveRenderer()==='gpu'){
+      BrushRenderer.loadActiveSurface(activeC);
+    }
+  }
+
   // renderFrame(li, fi, targetCanvas)
   // Equivalent to the old renderSmartRasterFrame.  Converts index data into
   // RGBA pixels on targetCanvas by looking up each style ID in the palette.
@@ -311,6 +324,7 @@
       out[i+3]=Math.round(coverage*(rgba[3]==null?255:rgba[3])/255);
     }
     tctx.putImageData(rendered,0,0);
+    if(target===activeC) _syncActiveSurfaceToGpu();
     return true;
   }
 

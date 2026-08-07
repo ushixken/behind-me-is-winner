@@ -333,8 +333,23 @@
       pixels[o]=rgba[0];pixels[o+1]=rgba[1];pixels[o+2]=rgba[2];
     }
     ctx.putImageData(image,0,0);
+    // Revised GPU integration: the recolor above is computed via CPU
+    // getImageData/putImageData against ctx/activeC (unavoidable — pixel
+    // recoloring needs a 2D pixel buffer, and this is a one-off edit
+    // operation, not a per-frame stroke copy). Push the result into
+    // whichever renderer is actually authoritative via
+    // BrushRenderer.loadActiveSurface() (a no-op extra draw for CPU,
+    // a one-time CPU->GPU upload for GPU) so GPU stays in sync instead
+    // of silently diverging from activeC.
+    if(window.BrushRenderer&&typeof BrushRenderer.loadActiveSurface==='function'&&BrushRenderer.getActiveRenderer()==='gpu'){
+      BrushRenderer.loadActiveSurface(activeC);
+    }
     var stored=layer.frames&&layer.frames[frameIndex];
-    if(stored){var storedContext=stored.getContext('2d');storedContext.clearRect(0,0,state.width,state.height);storedContext.drawImage(activeC,0,0);}
+    if(stored){
+      var storedContext=stored.getContext('2d');storedContext.clearRect(0,0,state.width,state.height);
+      var activeSurface=(window.BrushRenderer&&typeof BrushRenderer.getActiveSurface==='function')?BrushRenderer.getActiveSurface():activeC;
+      storedContext.drawImage(activeSurface,0,0);
+    }
     recomposite(curLayer,curFrame);renderTimeline();scheduleOverlayRender();
     window.dispatchEvent(new CustomEvent('pixel-selection-changed',{detail:{active:true,source:'replace-selected-style',styleId:styleId,mask:selectionMask.slice(),maskCanvas:maskCanvas,bounds:selectionBounds&&Object.assign({},selectionBounds),width:state.width,height:state.height,layerIndex:curLayer,frameIndex:frameIndex}}));
     return true;

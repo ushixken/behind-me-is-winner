@@ -163,8 +163,12 @@ function _currentUndoSnapshot(){
     const styleBundle=typeof getStyleFrameBundle==='function'?getStyleFrameBundle(curLayer,curFrame):null;
     return {snap:null,styleBundle,extendedSnapshot,frame:curFrame,layer:curLayer,layerType,selectionSnapshot};
   }
+  // Revised GPU integration: undo snapshots read through
+  // BrushRenderer.getActiveSurface() instead of hardcoded activeC, so
+  // history capture reflects whichever renderer is actually active.
+  const snapSource=(window.BrushRenderer&&typeof BrushRenderer.getActiveSurface==='function')?BrushRenderer.getActiveSurface():activeC;
   const snap=mkLayerCanvas();
-  snap.getContext('2d').drawImage(activeC,0,0);
+  snap.getContext('2d').drawImage(snapSource,0,0);
   return {snap,styleBundle:null,extendedSnapshot,frame:curFrame,layer:curLayer,layerType,selectionSnapshot};
 }
 
@@ -183,6 +187,14 @@ function restoreBitmapUndo(action){
   if(!layer.frames[action.frame]) layer.frames[action.frame]=mkLayerCanvas();
   ctx.clearRect(0,0,CW,CH);
   ctx.drawImage(action.snap,0,0);
+  // Revised GPU integration: the restore above is written directly into
+  // ctx/activeC (undo snapshots are plain 2D canvases — unavoidable),
+  // so push it into GPU's surface too before anything downstream reads
+  // through the abstraction, otherwise GPU would stay on its
+  // pre-undo/redo content.
+  if(window.BrushRenderer&&typeof BrushRenderer.loadActiveSurface==='function'&&BrushRenderer.getActiveRenderer()==='gpu'){
+    BrushRenderer.loadActiveSurface(activeC);
+  }
   const frameCtx=layer.frames[action.frame].getContext('2d');
   frameCtx.clearRect(0,0,CW,CH);
   frameCtx.drawImage(activeC,0,0);

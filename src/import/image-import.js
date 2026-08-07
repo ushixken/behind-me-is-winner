@@ -161,24 +161,20 @@
     } else {
       // ── Import onto current layer's current frame ────────────
       ensureKey();
-      // Draw image over existing content on activeC, then save
-      drawImageFitted(activeC, img, fitMode);
-      // Also paint it into activeC via ctx so strokes layer correctly
-      ctx.drawImage(activeC, 0, 0);  // noop — activeC IS ctx's canvas
-      // Actually draw using ctx directly so recomposite picks it up
-      ctx.clearRect(0, 0, CW, CH);
-      // Get the existing key content first
+      // Revised GPU integration: compose the merged frame entirely on a
+      // private scratch canvas (existing key content + the imported
+      // image), never touching activeC/ctx directly. loadFrame() below
+      // is the single choke point that pushes the result onto whichever
+      // renderer is actually authoritative (BrushRenderer.loadActiveSurface(),
+      // see panels.js), so there is no need — and no correctness benefit —
+      // to pre-paint it onto activeC here first.
       const existingKey = getHeldKey(curLayer, curFrame);
-      if (existingKey) ctx.drawImage(existingKey, 0, 0);
-      drawImageFitted(activeC, img, fitMode);   // draw on top in active canvas
-      ctx.drawImage(activeC, 0, 0);
-      // Save merged result back
       const merged = mkLayerCanvas();
       const mc = merged.getContext('2d');
       if (existingKey) mc.drawImage(existingKey, 0, 0);
       drawImageFitted(merged, img, fitMode);
       layers[curLayer].frames[curFrame] = merged;
-      // Reload so activeC and composite are fresh
+      // Reload so the active renderer's surface and composite are fresh
       loadFrame(curLayer, curFrame);
       renderTimeline();
     }

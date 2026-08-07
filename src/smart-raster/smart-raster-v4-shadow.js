@@ -122,7 +122,26 @@
     }
     var result=scratch.result||{};scratch.result=result;result.rgba=rgbaTile;result.owner=owner;result.dimensions=dimensions;result.supported=ordered.supported;result.reasons=ordered.reasons;result.order=ordered.contributors.map(function(item){return item.styleIndex;});return result;
   }  function authoritativeCanvas(state){
-    if(typeof curLayer!=='undefined'&&typeof curFrame!=='undefined'&&state.layerIndex===curLayer&&state.frameIndex===curFrame&&typeof activeC!=='undefined')return activeC;
+    // Revised GPU integration: reads through BrushRenderer.getActiveSurface()
+    // for the active layer/frame instead of hardcoded activeC, so v3
+    // tile comparison (compareTile) reflects whichever renderer is
+    // actually authoritative. GpuBrushRenderer's surface has a WebGPU
+    // context and can't also be given a 2D one, so when it's returned,
+    // drawImage it onto a private 2D scratch canvas (same technique
+    // panels.js's recomposite()/artworkDigest() and smart-raster-typed.js's
+    // artworkCanvas() already use) and hand back that scratch instead.
+    if(typeof curLayer!=='undefined'&&typeof curFrame!=='undefined'&&state.layerIndex===curLayer&&state.frameIndex===curFrame){
+      var surface=(root.BrushRenderer&&typeof root.BrushRenderer.getActiveSurface==='function')?root.BrushRenderer.getActiveSurface():(typeof activeC!=='undefined'?activeC:null);
+      if(surface&&typeof activeC!=='undefined'&&surface===activeC) return activeC;
+      if(surface){
+        if(!authoritativeCanvas._scratch)authoritativeCanvas._scratch=document.createElement('canvas');
+        var scratch=authoritativeCanvas._scratch,w=surface.width,h=surface.height;
+        if(scratch.width!==w||scratch.height!==h){scratch.width=w;scratch.height=h;}
+        var sctx=scratch.getContext('2d',{willReadFrequently:true});
+        sctx.clearRect(0,0,w,h);sctx.drawImage(surface,0,0);
+        return scratch;
+      }
+    }
     return state.layer&&state.layer.frames&&state.layer.frames[state.frameIndex]||null;
   }
   function compareTile(state,key,rendered){
@@ -488,7 +507,16 @@
       var styleMap=new Map();frame.styleIdToIndex.forEach(function(v4Index,styleId){styleMap.set(styleId,root.SmartRasterLayer.ensureStyleIndex(li,state.frameIndex,styleId));});for(var py=0;py<d.height;py++)for(var px=0;px<d.width;px++){var tileOffset=py*TILE_SIZE+px,offset=(d.y+py)*owned.width+d.x+px,baked=bakedPixelStack(frame,state,key,tileOffset,styleMap),styleId=baked.owner?v4.getStyleId(frame,baked.owner):null;owned.styleIds[offset]=styleId?(styleMap.get(styleId)||0):0;if(owned.underlays){if(baked.stack.length)owned.underlays[offset]=baked.stack;else delete owned.underlays[offset];}}
     }
     var activeUsesCanvas=typeof curLayer!=='undefined'&&typeof curFrame!=='undefined'&&li===curLayer&&(state.frameIndex===curFrame||(typeof getHeldKey==='function'&&getHeldKey(li,curFrame)===canvas));
-    if(activeUsesCanvas&&typeof activeC!=='undefined'&&activeC&&activeC!==canvas){var active=activeC.getContext('2d');if(active&&active.putImageData)active.putImageData(image,d.x,d.y);}
+    if(activeUsesCanvas&&typeof activeC!=='undefined'&&activeC&&activeC!==canvas){
+      var active=activeC.getContext('2d');if(active&&active.putImageData)active.putImageData(image,d.x,d.y);
+      // Revised GPU integration: this tile write lands on activeC (CPU's
+      // writable 2D surface); push it into GPU's surface too so GPU
+      // doesn't silently diverge — one-time CPU->GPU upload per tile
+      // write, not a per-frame readback.
+      if(root.BrushRenderer&&typeof root.BrushRenderer.loadActiveSurface==='function'&&root.BrushRenderer.getActiveRenderer()==='gpu'){
+        root.BrushRenderer.loadActiveSurface(activeC);
+      }
+    }
     return true;
   }
   function layerFrameKeys(layer){var keys=new Set();Object.keys(layer.frames||{}).forEach(function(key){keys.add(Number(key));});Object.keys(layer.smartStyleFrames||{}).forEach(function(key){keys.add(Number(key));});return Array.from(keys).filter(Number.isInteger);}
