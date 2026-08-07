@@ -1373,6 +1373,11 @@ const GpuBrushRenderer = {
     if(!_gpuState.renderPass) return false;
     if(!_gpuState.pipeline) return false;
     _gpuState.renderPass.setPipeline(_gpuState.pipeline);
+    // Phase 3J: issue exactly one draw call to verify the pipeline
+    // executes. Draws the 3 hardcoded fullscreen-triangle vertices from
+    // the vertex shader — no vertex/index/instance/uniform/storage
+    // buffers, bind groups, textures, or samplers are involved.
+    _gpuState.renderPass.draw(3);
     return true;
   },
   // Safely ends the current render pass (if one is open) and clears the
