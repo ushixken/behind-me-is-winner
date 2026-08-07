@@ -1378,22 +1378,65 @@ const GpuBrushRenderer = {
     _gpuState.renderPass=null;
     return true;
   },
-  // Phase 3G: prerequisite-validation stub only. Does NOT call
-  // device.createShaderModule(), device.createRenderPipeline(),
-  // device.createPipelineLayout(), device.createBindGroupLayout(), or
-  // device.createBindGroupLayout()/createBindGroup() — pipeline,
-  // pipelineLayout, shaderModule, bindGroupLayout, and bindGroup all
-  // remain null. This method exists only so a future phase has a single
-  // place to implement real pipeline creation; it is not called from
-  // anywhere yet. Returns false if the GPU renderer isn't initialized,
-  // has no device, or has no canvas format. Returns true without doing
-  // anything further if a pipeline already exists (idempotent — no
-  // recreation), or if all prerequisites are simply satisfied.
+  // Phase 3H: creates the smallest valid WebGPU render pipeline —
+  // a fullscreen-triangle vertex shader paired with a fragment shader
+  // that outputs transparent black. No uniforms, textures, samplers,
+  // storage buffers, or vertex buffers are used. bindGroupLayout and
+  // bindGroup are intentionally left null (nothing to bind yet). This
+  // method is idempotent (returns true immediately if a pipeline
+  // already exists) and is still not called from anywhere else in the
+  // file — creating it here does not activate the GPU renderer or wire
+  // it into any render pass.
   createPipeline(){
     if(!_gpuState.initialized) return false;
     if(!_gpuState.device) return false;
     if(!_gpuState.canvasFormat) return false;
     if(_gpuState.pipeline) return true;
+
+    const device=_gpuState.device;
+
+    const shaderCode=`
+      @vertex
+      fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> @builtin(position) vec4<f32> {
+        var pos = array<vec2<f32>, 3>(
+          vec2<f32>(-1.0, -1.0),
+          vec2<f32>( 3.0, -1.0),
+          vec2<f32>(-1.0,  3.0)
+        );
+        return vec4<f32>(pos[vertexIndex], 0.0, 1.0);
+      }
+
+      @fragment
+      fn fs_main() -> @location(0) vec4<f32> {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+      }
+    `;
+
+    const shaderModule=device.createShaderModule({code:shaderCode});
+
+    const pipelineLayout=device.createPipelineLayout({bindGroupLayouts:[]});
+
+    const renderPipeline=device.createRenderPipeline({
+      layout:pipelineLayout,
+      vertex:{
+        module:shaderModule,
+        entryPoint:'vs_main',
+      },
+      fragment:{
+        module:shaderModule,
+        entryPoint:'fs_main',
+        targets:[{format:_gpuState.canvasFormat}],
+      },
+      primitive:{
+        topology:'triangle-list',
+      },
+    });
+
+    _gpuState.shaderModule=shaderModule;
+    _gpuState.pipelineLayout=pipelineLayout;
+    _gpuState.pipeline=renderPipeline;
+    // bindGroupLayout and bindGroup remain null — nothing to bind yet.
+
     return true;
   },
 };
