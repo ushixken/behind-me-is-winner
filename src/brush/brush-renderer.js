@@ -977,11 +977,31 @@ const CpuBrushRenderer = {
 // no renderer logic or state access lives here directly. This is the
 // stable interface brush-engine.js (and any future renderer swap) code
 // against.
+//
+// Phase 2B: renderer selection is now a generic name -> implementation
+// registry instead of a hardcoded `active: CpuBrushRenderer` field.
+// registerRenderer()/setActiveRenderer()/getActiveRenderer() are the only
+// additions in this phase; every dispatch method below is unchanged in
+// behavior — they still simply forward to whichever implementation is
+// currently active, which remains CpuBrushRenderer.
 const BrushRenderer = {
-  // Single active renderer. Phase 1D only ever sets/uses CpuBrushRenderer;
-  // this indirection exists purely so a future renderer can be swapped in
-  // without touching any call site in brush-engine.js.
-  active: CpuBrushRenderer,
+  _renderers: {},
+  _activeName: null,
+  active: null,
+  // Registers a renderer implementation under `name`. Does not activate it.
+  registerRenderer(name,renderer){
+    this._renderers[name]=renderer;
+  },
+  // Switches the active renderer to a previously-registered name.
+  setActiveRenderer(name){
+    const renderer=this._renderers[name];
+    if(!renderer) throw new Error('BrushRenderer: no renderer registered under "'+name+'"');
+    this._activeName=name;
+    this.active=renderer;
+  },
+  getActiveRenderer(){
+    return this._activeName;
+  },
   drawDab(d,rendererContext){ return this.active.drawDab(d,rendererContext); },
   beginStroke(){ return this.active.beginStroke(); },
   endStroke(){ return this.active.endStroke(); },
@@ -994,6 +1014,13 @@ const BrushRenderer = {
   setTipAlphaInvalidationReason(value){ return this.active.setTipAlphaInvalidationReason(value); },
   getTipAlphaInvalidationReason(){ return this.active.getTipAlphaInvalidationReason(); },
 };
+
+// CPU renderer registers itself and becomes the active renderer. This is
+// the only registration call in the codebase today — the exact same
+// runtime state (BrushRenderer.active === CpuBrushRenderer) as before
+// Phase 2B, just reached via the registry instead of a hardcoded field.
+BrushRenderer.registerRenderer('cpu',CpuBrushRenderer);
+BrushRenderer.setActiveRenderer('cpu');
 
 window.CpuBrushRenderer = CpuBrushRenderer;
 window.BrushRenderer = BrushRenderer;
