@@ -1110,6 +1110,13 @@ const BrushRenderer = {
 // adapter/device already expose — no optional features are requested,
 // no optional limits are enabled, and no canvas/texture/buffer/shader/
 // pipeline resources are created.
+//
+// Phase 3C: adds GPU canvas-context fields (canvas, context, canvasFormat,
+// configured). initialize() now also locates the app's drawing canvas,
+// acquires a GPUCanvasContext from it, and configures that context once
+// (device + preferred format + premultiplied alpha). No texture, buffer,
+// shader, pipeline, bind group, command encoder, or render pass is
+// created — configuration only.
 const _gpuState = {
   lineContinuity: null,
   tipAlphaBuffer: null,
@@ -1125,6 +1132,10 @@ const _gpuState = {
   deviceFeatures: null,
   deviceLimits: null,
   preferredCanvasFormat: null,
+  canvas: null,
+  context: null,
+  canvasFormat: null,
+  configured: false,
 };
 
 // Phase 2C: GpuBrushRenderer skeleton. Implements the exact same public
@@ -1212,6 +1223,41 @@ const GpuBrushRenderer = {
       _gpuState.deviceFeatures=device.features?Array.from(device.features):null;
       _gpuState.deviceLimits=device.limits?{...device.limits}:null;
       _gpuState.preferredCanvasFormat=(typeof navigator.gpu.getPreferredCanvasFormat==='function')?navigator.gpu.getPreferredCanvasFormat():null;
+      // Phase 3C: locate the app's drawing canvas (the same canvas whose
+      // 2D context is threaded into rendererContext.ctx for the CPU
+      // renderer, per Phase 1G-A) and acquire a GPUCanvasContext from it.
+      // Falls back to a DOM lookup if the bare global isn't reachable in
+      // this scope. This does not touch or reconfigure the 2D context
+      // that CpuBrushRenderer already uses.
+      const canvas=(typeof activeC!=='undefined'&&activeC)?activeC:(typeof document!=='undefined'?document.getElementById('active-canvas'):null);
+      if(!canvas){
+        _gpuState.initError='canvas-unavailable';
+        _gpuState.canvas=null;
+        _gpuState.context=null;
+        _gpuState.configured=false;
+        return false;
+      }
+      const context=canvas.getContext('webgpu');
+      if(!context){
+        _gpuState.initError='webgpu-context-unavailable';
+        _gpuState.canvas=null;
+        _gpuState.context=null;
+        _gpuState.configured=false;
+        return false;
+      }
+      _gpuState.canvas=canvas;
+      _gpuState.context=context;
+      _gpuState.canvasFormat=_gpuState.preferredCanvasFormat;
+      // Configure the context exactly once, using the device from Phase
+      // 3A and the preferred format discovered in Phase 3B. No texture,
+      // buffer, shader, pipeline, bind group, command encoder, or render
+      // pass is created here — configuration only.
+      context.configure({
+        device: device,
+        format: _gpuState.canvasFormat,
+        alphaMode: 'premultiplied',
+      });
+      _gpuState.configured=true;
       _gpuState.initialized=true;
       _gpuState.initError=null;
       return true;
@@ -1225,6 +1271,10 @@ const GpuBrushRenderer = {
       _gpuState.deviceFeatures=null;
       _gpuState.deviceLimits=null;
       _gpuState.preferredCanvasFormat=null;
+      _gpuState.canvas=null;
+      _gpuState.context=null;
+      _gpuState.canvasFormat=null;
+      _gpuState.configured=false;
       _gpuState.initialized=false;
       return false;
     }
