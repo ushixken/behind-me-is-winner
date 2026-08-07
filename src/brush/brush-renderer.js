@@ -1453,6 +1453,23 @@ const GpuBrushRenderer = {
 
     return true;
   },
+  // Phase 3K: orchestrates one complete GPU frame by calling the
+  // existing helpers in sequence. Does not add any new GPU work itself
+  // — createPipeline()/createCommandEncoder()/beginRenderPass()/
+  // endRenderPass()/submitCommands() are all unchanged; this just
+  // chains them and short-circuits on the first failure. Not called
+  // from anywhere yet, and does not activate the GPU renderer.
+  renderFrame(){
+    if(!_gpuState.initialized) return false;
+    if(!_gpuState.pipeline){
+      if(!this.createPipeline()) return false;
+    }
+    if(!this.createCommandEncoder()) return false;
+    if(!this.beginRenderPass()) return false;
+    if(!this.endRenderPass()) return false;
+    if(!this.submitCommands()) return false;
+    return true;
+  },
 };
 
 // CPU renderer registers itself and becomes the active renderer. This is
