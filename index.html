@@ -1339,6 +1339,7 @@
     <div id="pref-body">
       <div class="pref-ps-sidebar" id="pref-ps-sidebar">
         <div class="pref-ps-nav-item active" data-panel="cursor">Cursor</div>
+        <div class="pref-ps-nav-item" data-panel="performance">Performance</div>
         <div class="pref-ps-nav-item" data-panel="storage">Local Storage</div>
       </div>
 
@@ -1373,6 +1374,11 @@
               <span style="font-size:11px;color:var(--text2);">The active round or custom brush-tip silhouette, including roundness and rotation.</span>
             </span>
           </label>
+        </div>
+
+        <div class="pref-ps-panel" data-panel="performance">
+          <p style="font-size:11px;color:var(--text2);margin-bottom:4px;">Chooses which renderer the app prefers to use.</p>
+          <div id="pref-renderer-list"></div>
         </div>
 
         <div class="pref-ps-panel" data-panel="storage">
@@ -1696,6 +1702,7 @@
 <script src="src/geometry/freehand-closed-path.js"></script>
 <script src="src/timeline/light-table.js"></script>
 <script src="src/core/keybinds.js"></script>
+<script src="src/core/preferences.js"></script>
 <script src="src/selection/linked-pixel-selection.js"></script>
 <script src="src/selection/lasso-selection.js"></script>
 <script src="src/selection/rectangle-selection.js"></script>
