@@ -221,6 +221,15 @@ test('resolveSegmentRenderParams: zero-length first segment (beginStroke dab) is
 // be required under plain node) -- it greps the exact function body of
 // _hardRoundStampSegments and asserts it contains no _stampDab( call, per
 // the brief's explicit acceptance criterion.
+//
+// Phase 9C: _hardRoundStampSegments now routes through PrototypeRenderer
+// (see prototype-renderer.js / hard-round-prototype-integration.test.js)
+// instead of the Phase 8C HardRoundCapsuleRenderer/HardRoundCapsuleGPU CPU
+// per-segment draw this test originally asserted -- those two modules are
+// still present and untouched (legacy code retained, not removed), just no
+// longer called from this path. Updated here to assert the new backend
+// instead of the old one; the "_stampDab must never be called" acceptance
+// criterion itself is unchanged and still enforced.
 test('_hardRoundStampSegments source no longer calls _stampDab()', () => {
   const src = fs.readFileSync(path.join(__dirname, 'brush-engine.js'), 'utf8');
   const start = src.indexOf('function _hardRoundStampSegments(segments, e){');
@@ -235,7 +244,7 @@ test('_hardRoundStampSegments source no longer calls _stampDab()', () => {
   assert.ok(bodyEnd > start, 'could not find end of _hardRoundStampSegments body');
   const body = src.slice(start, bodyEnd + 1);
   assert.ok(!/_stampDab\(/.test(body), 'Hard Round segment stamping must not call _stampDab()');
-  assert.ok(/HardRoundCapsuleRenderer/.test(body), 'expected the capsule renderer to be used instead');
+  assert.ok(/renderer\.drawSegments\(/.test(body), 'expected PrototypeRenderer.drawSegments() to be used instead (Phase 9C)');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

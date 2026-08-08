@@ -1,15 +1,22 @@
 // src/brush/prototype-renderer.js
 //
-// Phase 9B — EXTRACTION ONLY. Not integrated anywhere yet.
-//
-// Pulls the actual pixel-producing "renderer" half of
+// Phase 9B — extraction of the actual pixel-producing "renderer" half of
 // prototype/prototype.html's WebGPU-branch stroke pipeline (the SS=4
 // backing-store accumulation + box-filter resolve, lines ~195-863 of the
-// prototype) into one self-contained module with exactly four public
-// methods:
+// prototype) into one self-contained module.
+//
+// Phase 9C wired this into production for Hard Round. Phase 9C.1 added
+// peekStroke() (below) after runtime verification showed the migrated
+// stroke was invisible while drawing -- prototype/prototype.html itself
+// resolves-and-presents after every accumulated batch, not just at stroke
+// end (see its present()/compositeStroke() calls), and this module had no
+// way to do that without also ending the stroke. Public surface is now
+// five methods:
 //
 //   beginStroke()
 //   drawSegments(segments)
+//   peekStroke()   -- Phase 9C.1: resolve the CURRENT accumulation for a
+//                      live preview, without ending the stroke
 //   endStroke()
 //   cancelStroke()
 //
@@ -28,7 +35,9 @@
 // already knows how to consume: a plain logical-resolution (non-
 // supersampled) RGBA canvas holding this stroke's accumulated color +
 // coverage, exactly like every other scratch stroke canvas this app
-// already produces and hands to `_commitStrokeCanvas()`.
+// already produces and hands to `_commitStrokeCanvas()`. peekStroke()
+// returns that SAME canvas mid-stroke, already-resolved, for a live
+// preview surface (e.g. _strokeCanvas) to draw.
 //
 // This module does NOT own (and must never import/touch):
 //   - pointer events / DOM event wiring
@@ -460,7 +469,8 @@
   }
 
   // -----------------------------------------------------------------------
-  // PrototypeRenderer -- the four-method public surface.
+  // PrototypeRenderer -- the five-method public surface (peekStroke added
+  // Phase 9C.1, see module doc above).
   // -----------------------------------------------------------------------
   //
   // @param {object} opts
@@ -538,17 +548,12 @@
       if (this._usingGpu) this.gpu.flush();
     }
 
-    // Resolves the accumulated backing store down to logical resolution
-    // and returns the finished stroke canvas. Synchronous on the CPU path;
-    // the GPU path's readback is async, so callers awaiting a GPU-backed
-    // result should `await` this. `_commitStrokeCanvas()` (elsewhere, not
-    // touched by this module) is the intended consumer of the returned
-    // canvas.
-    //
-    // @returns {Promise<{canvas: HTMLCanvasElement|OffscreenCanvas, composite: string, segmentCount: number}>}
-    async endStroke() {
-      if (!this._active) return { canvas: this._outCanvas, composite: this._composite, segmentCount: 0 };
-      this._active = false;
+    // Shared resolve step: reads (does not mutate) the current backing-store
+    // accumulation into _outCtx/_outCanvas. Used by both endStroke() (which
+    // also deactivates the stroke) and peekStroke() (which does not), so
+    // there is exactly one resolve code path for both -- no separate
+    // preview-only pixel path exists to drift out of sync with the real one.
+    async _resolveToOutput() {
       if (this._usingGpu) {
         const ok = await this.gpu.resolveInto(this._outCtx, this._rgb, this._composite);
         if (!ok) {
@@ -561,6 +566,36 @@
       } else {
         this.cpu.resolveInto(this._outCtx, this._rgb, this._composite);
       }
+    }
+
+    // Resolves the accumulated backing store down to logical resolution
+    // and returns the finished stroke canvas. Synchronous on the CPU path;
+    // the GPU path's readback is async, so callers awaiting a GPU-backed
+    // result should `await` this. `_commitStrokeCanvas()` (elsewhere, not
+    // touched by this module) is the intended consumer of the returned
+    // canvas.
+    //
+    // @returns {Promise<{canvas: HTMLCanvasElement|OffscreenCanvas, composite: string, segmentCount: number}>}
+    async endStroke() {
+      if (!this._active) return { canvas: this._outCanvas, composite: this._composite, segmentCount: 0 };
+      this._active = false;
+      await this._resolveToOutput();
+      return { canvas: this._outCanvas, composite: this._composite, segmentCount: this._segmentCount };
+    }
+
+    // Phase 9C.1: resolves the CURRENT in-progress accumulation to the
+    // output canvas for a live preview, WITHOUT ending the stroke --
+    // drawSegments() can keep accumulating normally afterward. Uses the
+    // exact same _resolveToOutput() path endStroke() uses, so a live
+    // preview and the final committed result are always pixel-consistent.
+    // Safe to call repeatedly during a stroke (once per pointermove batch,
+    // same cadence as drawSegments()); a no-op returning the last resolved
+    // canvas if no stroke is currently active.
+    //
+    // @returns {Promise<{canvas: HTMLCanvasElement|OffscreenCanvas, composite: string, segmentCount: number}>}
+    async peekStroke() {
+      if (!this._active) return { canvas: this._outCanvas, composite: this._composite, segmentCount: this._segmentCount };
+      await this._resolveToOutput();
       return { canvas: this._outCanvas, composite: this._composite, segmentCount: this._segmentCount };
     }
 

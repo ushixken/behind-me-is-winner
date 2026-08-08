@@ -4022,10 +4022,22 @@ function _endStroke(pointerId){
   _autoHardRoundPrevDab=null;
   if(drawing){
     drawing=false;
-    // Phase 8C: an eligible Hard Round stroke has no legacy tail to flush --
-    // every resolved segment was already stamped as it arrived -- so just
-    // discard PrototypeStrokeCore's buffered state for this aborted stroke.
-    if(_hardRoundStrokeActive && _hardRoundCore){ _hardRoundCore.cancelStroke(); }
+    // Phase 8C/9C: an eligible Hard Round stroke has no legacy tail to
+    // flush. Discard PrototypeStrokeCore's buffered state AND
+    // PrototypeRenderer's in-progress backing-store accumulation for this
+    // aborted stroke (Phase 9C: segments now only reach a canvas via
+    // endStroke()'s resolve, so cancelling here guarantees nothing from
+    // this stroke is ever committed -- _strokeCanvas was never drawn into).
+    if(_hardRoundStrokeActive && _hardRoundCore){
+      _hardRoundCore.cancelStroke();
+      if(_hardRoundRenderer) _hardRoundRenderer.cancelStroke();
+      // Phase 9C.1 perf fix: also drop any RAF-scheduled live preview for
+      // this stroke -- otherwise it could fire after cancelStroke() has
+      // already reset the renderer's backing store, resolving/painting
+      // stale or empty data into _strokeCtx for a stroke that no longer
+      // exists.
+      _hardRoundCancelLivePreview();
+    }
     else { _flushStrokeTail(); }
     if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();
   }
@@ -4515,21 +4527,24 @@ function _computeSpacingRadius(e, interpolatedPressure){
 // the legacy pointerdown/_handleMoveEvent/_pointerEndStroke pipeline above,
 // completely unmodified.
 //
-// Integration boundary (completed):
+// Integration boundary (Phase 9C):
 //   pointer/coalesced input -> PrototypeStrokeCore -> resolved segments
-//   -> HardRoundAdapter.resolveSegmentRenderParams() -> ONE continuous
-//   tapered capsule per segment, rendered by HardRoundCapsuleGPU (when
-//   available) or HardRoundCapsuleRenderer's CPU rasterizer -- NOT
-//   `_stampDab()`. Color/composite/hardness/AA-mode are still resolved the
-//   normal way and passed through; only the geometry primitive changed,
-//   from "point dab" to "continuous capsule". See hard-round-capsule-math.js,
-//   hard-round-capsule-renderer.js, hard-round-capsule-gpu.js.
+//   -> HardRoundAdapter.resolveSegmentRenderParams() -> PrototypeRenderer
+//   .drawSegments() (its own true SS=4 backing-store accumulation) -- NOT
+//   `_stampDab()`, and (as of Phase 9C) no longer the per-segment
+//   HardRoundCapsuleRenderer/HardRoundCapsuleGPU draw calls Phase 8C used
+//   either. Color/composite/hardness/AA-mode are still resolved the normal
+//   way and passed through unchanged; only the rendering backend changed.
+//   At stroke end, PrototypeRenderer.endStroke() resolves its backing store
+//   to one finished logical-resolution canvas, which is drawn into the
+//   existing `_strokeCanvas`/`_strokeCtx` scratch surface so the existing
+//   `_commitStrokeCanvas()` commit/persistence path is reused unmodified.
+//   See hard-round-adapter.js, prototype-renderer.js.
 //
-// No spacing-driven dab reconstruction remains in the visible Hard Round
-// stroke body: this repo previously had no reusable capsule/segment
-// renderer (confirmed by search in the Phase 8C.1 report), so the smallest
-// dedicated renderer adapter was implemented per the brief's §5 fallback
-// instruction, porting the exact analytic model from prototype/prototype.html.
+// HardRoundCapsuleRenderer/HardRoundCapsuleGPU (hard-round-capsule-
+// renderer.js / hard-round-capsule-gpu.js) are left in place, unmodified,
+// per the "do not remove legacy code yet" scope -- they are simply no
+// longer called from this migrated path.
 // ---------------------------------------------------------------------
 
 let _hardRoundCore = null;          // single PrototypeStrokeCore instance, reused across strokes
@@ -4540,6 +4555,21 @@ function _hardRoundGetCore(){
     _hardRoundCore = new window.PrototypeStrokeCore();
   }
   return _hardRoundCore;
+}
+
+// Phase 9C: single reused PrototypeRenderer instance, sized to match the
+// live scratch stroke canvas (activeC.width/height -- the same logical
+// resolution _ensureStrokeCanvas already allocates _strokeCanvas at).
+// Recreated whenever that size changes (canvas resize), exactly like
+// _ensureStrokeCanvas's own allocatedOrResized check.
+let _hardRoundRenderer = null;
+function _hardRoundGetRenderer(){
+  if(typeof window==='undefined' || !window.PrototypeRenderer) return null;
+  const w = activeC.width, h = activeC.height;
+  if(!_hardRoundRenderer || _hardRoundRenderer.width!==w || _hardRoundRenderer.height!==h){
+    _hardRoundRenderer = new window.PrototypeRenderer({width:w, height:h});
+  }
+  return _hardRoundRenderer;
 }
 
 // Exact eligibility condition (Phase 8C §9). Procedural, not a preset-name
@@ -4578,9 +4608,8 @@ function _hardRoundEligibleNow(){
 function _hardRoundStampSegments(segments, e){
   if(!segments || !segments.length) return;
   const adapter = typeof window!=='undefined' && window.HardRoundAdapter;
-  const capsule = typeof window!=='undefined' && window.HardRoundCapsuleRenderer;
-  const gpu = typeof window!=='undefined' && window.HardRoundCapsuleGPU;
-  if(!adapter || !capsule) return;
+  const renderer = _hardRoundRenderer;
+  if(!adapter || !renderer) return;
   const baseSize = getBrushSize();
   const minSizeFrac = _getMinSize();
   const curveKey = _getPressureCurve('size');
@@ -4593,35 +4622,119 @@ function _hardRoundStampSegments(segments, e){
   // Flow/Opacity dynamics (§9/§10 of Phase 8C.1's scope note: "do not
   // patch pressure again") still run through the existing, untouched
   // _getEffectiveBrushParams alpha pipeline, once per endpoint -- only its
-  // radius output is discarded here, since the capsule's own r0/r1 (from
-  // PrototypeStrokeCore) replace that per-dab Size-dynamics computation
-  // entirely for migrated Hard Round strokes.
+  // radius output is discarded here, since the segment's own r0/r1 (from
+  // PrototypeStrokeCore, via HardRoundAdapter) replace that per-dab
+  // Size-dynamics computation entirely for migrated Hard Round strokes.
   _flowSpacingRatio = 1;
+  const renderSegs = [];
   for(const seg of segments){
     currentPressure = seg.pressure0;
     const alpha0 = _getEffectiveBrushParams(e).alpha;
     currentPressure = seg.pressure1;
     const alpha1 = _getEffectiveBrushParams(e).alpha;
 
-    const renderSeg = adapter.resolveSegmentRenderParams(seg, {
+    renderSegs.push(adapter.resolveSegmentRenderParams(seg, {
       baseSize, minSizeFrac, curveKey, applyPressureCurve: _applyPressureCurve,
       rgb, composite, hardness: brushHardness, aaMode,
       getEffectiveAlpha: (pressure) => (pressure===seg.pressure0 ? alpha0 : alpha1),
-    });
-
-    if(gpu && gpu.isAvailable()){
-      gpu.drawSegment(renderSeg);
-    } else {
-      const dc = (_inStroke && composite!=='erase') ? _strokeCtx : ctx;
-      capsule.drawHardRoundCapsuleCPU(dc, renderSeg);
-      const cx=(renderSeg.x0+renderSeg.x1)/2, cy=(renderSeg.y0+renderSeg.y1)/2;
-      const halfLen=Math.hypot(renderSeg.x1-renderSeg.x0, renderSeg.y1-renderSeg.y0)/2;
-      const maxR=Math.max(renderSeg.r0, renderSeg.r1);
-      _growDirtyRect(cx, cy, halfLen+maxR+4, halfLen+maxR+4);
-    }
+    }));
   }
+  // PrototypeRenderer.drawSegments() accumulates into its own private SS=4
+  // backing store (max-blended coverage). It is not painted to any
+  // on-screen/scratch canvas by drawSegments() itself, so no per-segment
+  // dirty-rect growth or direct canvas draw happens here -- but
+  // _hardRoundPresentLivePreview() below resolves the CURRENT accumulation
+  // (via PrototypeRenderer.peekStroke(), Phase 9C.1) into the existing
+  // live-preview scratch surface after every batch, so the stroke stays
+  // continuously visible while drawing, matching prototype/prototype.html's
+  // own per-batch present(). The final, authoritative resolve still happens
+  // once via endStroke() at pointerup (see the pointerup call site below).
+  renderer.drawSegments(renderSegs);
   currentPressure = savedPressure;
   _flowSpacingRatio = previousFlowRatio;
+  _hardRoundRequestLivePreview(renderer);
+}
+
+// Phase 9C.1: resolves PrototypeRenderer's CURRENT (still in-progress)
+// backing-store accumulation into the existing live-preview scratch
+// surface (_strokeCanvas/_strokeCtx -- the exact same surface
+// _getLiveStrokePreview()/recomposite() already read for every other
+// brush's live preview) without ending the stroke, then asks for a
+// recomposite so it's actually shown. Reuses the existing preview pipeline
+// end-to-end: PrototypeRenderer.peekStroke() is the only new capability;
+// everything downstream of writing into _strokeCtx is unchanged.
+//
+// peekStroke() is async (the opt-in GPU path's readback is), so the paint
+// happens inside a .then() continuation rather than synchronously. The
+// CPU path used in production resolves on the very next microtask, which
+// always runs before the browser dispatches the next pointer event, so
+// this stays visually continuous. A session guard discards a stale
+// resolve that lands after this stroke already ended (pointerup/cancel) or
+// after a different stroke has since started.
+//
+// Phase 9C.1 perf fix: this used to be invoked directly, once per
+// pointermove/pointerrawupdate event, which made it call
+// PrototypeRenderer.peekStroke() -> _resolveToOutput() (a full box-filter
+// downsample of the entire SS=4 backing store) as often as the input
+// device fires -- up to ~1000Hz for a pen via pointerrawupdate. That is
+// the source of the added lag: drawSegments() (the actual sample
+// accumulation) is cheap and must stay per-event so no sample is ever
+// dropped, but resolving+presenting is expensive and only needs to happen
+// as often as the screen can show it. prototype/prototype.html keeps this
+// same split -- moveStroke() only pushes samples into a queue, and a
+// persistent requestAnimationFrame loop (strokeHoldTick) is the sole
+// place that composites/presents, at most once per display frame. This
+// function is now only the "do the resolve" half; the per-event path
+// calls _hardRoundRequestLivePreview() (below) instead.
+function _hardRoundPresentLivePreview(renderer){
+  if(!renderer || !_inStroke || !_strokeCtx || !_strokeCanvas) return;
+  const session = _activeStrokeSession;
+  renderer.peekStroke().then(result=>{
+    if(session!==_activeStrokeSession || !_inStroke || !_strokeCtx || !_strokeCanvas) return;
+    if(!result || !result.canvas) return;
+    _strokeCtx.clearRect(0,0,_strokeCanvas.width,_strokeCanvas.height);
+    _strokeCtx.drawImage(result.canvas,0,0);
+    _scheduleRecomposite();
+  });
+}
+
+// Phase 9C.1 perf fix: RAF-coalesced entry point for the live preview.
+// Sample accumulation (renderer.drawSegments()) still happens synchronously
+// on every pointer event in _hardRoundStampSegments -- nothing here ever
+// skips or batches segments, so no stroke fidelity is lost. This function
+// only decides WHEN to spend the expensive resolve+present step: it marks
+// "a preview is due" and, if a resolve isn't already scheduled for this
+// animation frame, schedules exactly one. Any further calls before that
+// frame fires just find one already pending and return immediately, so no
+// matter how many pointer events land in a single frame, at most one
+// peekStroke()/_resolveToOutput() happens for it -- matching
+// prototype.html's present-once-per-frame cadence.
+let _hardRoundPreviewRAF = null;
+let _hardRoundPreviewSession = null;
+function _hardRoundRequestLivePreview(renderer){
+  if(!renderer || !_inStroke || !_strokeCtx || !_strokeCanvas) return;
+  if(_hardRoundPreviewRAF !== null) return; // already scheduled for this frame
+  _hardRoundPreviewSession = _activeStrokeSession;
+  _hardRoundPreviewRAF = requestAnimationFrame(()=>{
+    _hardRoundPreviewRAF = null;
+    // Stroke may have ended/changed between scheduling and this frame
+    // actually running -- endStroke's own final resolve (via endStroke(),
+    // not peekStroke()) is the authoritative one in that case, so just
+    // drop this stale preview rather than resolving a dead/changed stroke.
+    if(_hardRoundPreviewSession !== _activeStrokeSession || !_inStroke) return;
+    _hardRoundPresentLivePreview(renderer);
+  });
+}
+
+// Cancels any pending RAF-scheduled live preview. Called on stroke
+// end/cancel so a preview resolve never fires (or races the final
+// endStroke() resolve) after the stroke it was for is already done.
+function _hardRoundCancelLivePreview(){
+  if(_hardRoundPreviewRAF !== null){
+    cancelAnimationFrame(_hardRoundPreviewRAF);
+    _hardRoundPreviewRAF = null;
+  }
+  _hardRoundPreviewSession = null;
 }
 
 // Carry-over: leftover distance from the end of each segment so the first
@@ -4830,7 +4943,7 @@ function _brushPointerDown(e){
   // Phase 8C: decided once, for the whole stroke, right after pointerType is
   // known. Re-evaluating mid-stroke (e.g. if the user hot-swapped a setting
   // while held down) would risk switching renderers under a live stroke.
-  _hardRoundStrokeActive = tool==='brush' && _hardRoundEligibleNow() && !!_hardRoundGetCore();
+  _hardRoundStrokeActive = tool==='brush' && _hardRoundEligibleNow() && !!_hardRoundGetCore() && !!_hardRoundGetRenderer();
   _strokeFirstSample = true; // this stroke's first _getPressure() call snaps immediately, no de-jitter clamping
   currentPressure=_getPressure(e);
   _smoothedPressure = currentPressure; // snap smoothing to actual pressure at stroke start (no ramp-in lag)
@@ -4937,8 +5050,14 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
       // beginStroke() zero-length segment instead of a direct _stampDab call,
       // so the very first mark already has this stroke's continuous-taper
       // radius source instead of the legacy pressure-curve one.
+      // Phase 9C: PrototypeRenderer's own accumulation also starts here, in
+      // lockstep with PrototypeStrokeCore's buffers -- _hardRoundGetRenderer()
+      // was already confirmed non-null by _hardRoundEligibleNow's caller
+      // (see _hardRoundStrokeActive's assignment above), so this is a plain
+      // reset of that existing instance, not a fallible lookup.
       _hardRoundCore.updateSettings({brushSize:getBrushSize(),stabilization:_stabilizationAmount(),zoom});
       const beginSeg=_hardRoundCore.beginStroke({x:p.x,y:p.y,pressure:currentPressure,pointerType:e.pointerType,timeStamp:e.timeStamp||performance.now()});
+      _hardRoundGetRenderer().beginStroke();
       _hardRoundStampSegments([beginSeg],e);
     } else {
       _stampDab(p.x,p.y,e);
@@ -5190,9 +5309,45 @@ function _pointerEndStroke(e){
     const finalPressure=_getPressure(e);
     const finish=_hardRoundCore.finishStroke({x:finalRaw.x,y:finalRaw.y,pressure:finalPressure,pointerType:e.pointerType,timeStamp:e.timeStamp||performance.now()});
     _hardRoundStampSegments(finish.segments,e);
-    if(_inStroke){_inStroke=false;_commitStrokeCanvas();}
-    _restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();
+    // Phase 9C.1 perf fix: drop any RAF-scheduled live preview now -- the
+    // authoritative endStroke() resolve below supersedes it, and letting a
+    // stray preview RAF fire afterward would race a now-inactive (or
+    // already-committed) renderer for nothing.
+    _hardRoundCancelLivePreview();
     _hardRoundStrokeActive=false;
+    // Phase 9C: PrototypeRenderer.endStroke() resolves the whole stroke's
+    // SS=4 backing store down to one finished logical-resolution canvas.
+    // That canvas is this stroke's entire visible output -- draw it into
+    // the existing _strokeCanvas/_strokeCtx scratch surface (exactly what
+    // the legacy per-dab path already left there for _commitStrokeCanvas()
+    // to pick up) and then fall through to the SAME commit/cleanup calls
+    // every other branch of this function already uses, unmodified.
+    // endStroke() is async only because its (best-effort, opt-in) GPU path
+    // awaits a readback; the CPU path used here resolves on the next
+    // microtask, which always runs before the browser dispatches the next
+    // pointer event, so this stays effectively synchronous with the rest
+    // of pointerup for the only path actually exercised in this phase.
+    const renderer=_hardRoundRenderer;
+    const finishHardRoundStroke=()=>{
+      _restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();
+      _finalizePointerEndStroke(e);
+    };
+    if(renderer){
+      renderer.endStroke().then(result=>{
+        if(_inStroke){
+          if(result&&result.canvas&&_strokeCtx&&_strokeCanvas){
+            _strokeCtx.clearRect(0,0,_strokeCanvas.width,_strokeCanvas.height);
+            _strokeCtx.drawImage(result.canvas,0,0);
+          }
+          _inStroke=false;_commitStrokeCanvas();
+        }
+        finishHardRoundStroke();
+      });
+    } else {
+      if(_inStroke){_inStroke=false;_commitStrokeCanvas();}
+      finishHardRoundStroke();
+    }
+    return; // finalization happens in the continuation above, not the shared tail below
   }else if(drawing){
     const finalRaw=getPos(e);
     const finalConditioned=_baselineConditionerPush(_baselineSampleFromEvent(e,finalRaw,currentPressure),{force:true});
