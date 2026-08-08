@@ -87,10 +87,19 @@
       this.bh = height * ss;
       // Float32 single-channel coverage accumulator, backing-store resolution.
       this.coverage = new Float32Array(this.bw * this.bh);
+      // Phase 9C.2: union of every drawSegment() bounding box (in
+      // backing-store/SS-space pixels) accumulated since the dirty region
+      // was last consumed by a resolve. Null means "nothing dirty". This
+      // is exactly the bounding box drawSegment() already computes per
+      // segment (via CapsuleMath.capsuleBounds) to know which pixels to
+      // rasterize -- it was simply being discarded before; nothing new is
+      // computed here, it's just retained.
+      this._dirty = null;
     }
 
     reset() {
       this.coverage.fill(0);
+      this._dirty = null;
     }
 
     // Rasterizes one render-ready segment's coverage into the backing
@@ -108,6 +117,19 @@
       const sx = Math.max(0, b.sx), sy = Math.max(0, b.sy);
       const ex = Math.min(this.bw, b.ex), ey = Math.min(this.bh, b.ey);
       if (ex <= sx || ey <= sy) return;
+
+      // Phase 9C.2: grow the pending dirty region to cover this segment's
+      // bounds too -- same bbox already computed above for rasterization,
+      // just unioned into the running total instead of thrown away.
+      if (this._dirty === null) {
+        this._dirty = { sx, sy, ex, ey };
+      } else {
+        const d = this._dirty;
+        if (sx < d.sx) d.sx = sx;
+        if (sy < d.sy) d.sy = sy;
+        if (ex > d.ex) d.ex = ex;
+        if (ey > d.ey) d.ey = ey;
+      }
 
       const cov = this.coverage;
       const bw = this.bw;
@@ -141,18 +163,53 @@
     // use -- the caller (a future integration, not this phase) decides how
     // to composite that onto a layer.
     resolveInto(outCtx, rgb, composite) {
-      const ss = this.ss, w = this.w, h = this.h, bw = this.bw;
+      this._resolveRegion(outCtx, rgb, composite, 0, 0, this.w, this.h);
+      this._dirty = null;
+    }
+
+    // Phase 9C.2: same box-filter/color-mix math as resolveInto(), but
+    // restricted to the accumulated dirty region (union of every
+    // drawSegment() bbox since the last resolve) instead of the whole
+    // w x h output. Returns false and does nothing if nothing is dirty
+    // (e.g. a peek requested before any segment has been drawn this
+    // frame) -- callers should treat that as "output already correct,
+    // nothing new to paint". Consumes (clears) the dirty region on return.
+    resolveDirtyInto(outCtx, rgb, composite) {
+      const d = this._dirty;
+      if (!d) return false;
+      const ss = this.ss;
+      // Backing-store pixel bounds -> output pixel bounds: floor/ceil so
+      // every output pixel that reads ANY touched backing-store pixel in
+      // its ssxss block is included, even at the dirty region's edges.
+      const ox0 = Math.max(0, Math.floor(d.sx / ss));
+      const oy0 = Math.max(0, Math.floor(d.sy / ss));
+      const ox1 = Math.min(this.w, Math.ceil(d.ex / ss));
+      const oy1 = Math.min(this.h, Math.ceil(d.ey / ss));
+      this._dirty = null;
+      if (ox1 <= ox0 || oy1 <= oy0) return false;
+      this._resolveRegion(outCtx, rgb, composite, ox0, oy0, ox1 - ox0, oy1 - oy0);
+      return true;
+    }
+
+    // Shared box-filter/color-mix core for both resolveInto() (full
+    // canvas) and resolveDirtyInto() (a sub-rectangle) -- identical math
+    // to the original resolveInto() body, just parameterized over which
+    // output-pixel rectangle to iterate and where to putImageData it, so
+    // the two never risk producing different pixel values for the same
+    // coverage data.
+    _resolveRegion(outCtx, rgb, composite, ox, oy, ow, oh) {
+      const ss = this.ss, bw = this.bw;
       const cov = this.coverage;
-      const img = outCtx.createImageData(w, h);
+      const img = outCtx.createImageData(ow, oh);
       const d = img.data;
       const isErase = composite === 'erase';
       const cr = isErase ? 0 : rgb[0], cg = isErase ? 0 : rgb[1], cb = isErase ? 0 : rgb[2];
       const norm = 1 / (ss * ss);
       let p = 0;
-      for (let y = 0; y < h; y++) {
-        const srcY = y * ss;
-        for (let x = 0; x < w; x++, p += 4) {
-          const srcX = x * ss;
+      for (let y = 0; y < oh; y++) {
+        const srcY = (oy + y) * ss;
+        for (let x = 0; x < ow; x++, p += 4) {
+          const srcX = (ox + x) * ss;
           let sum = 0;
           for (let by = 0; by < ss; by++) {
             const rowOff = (srcY + by) * bw + srcX;
@@ -162,7 +219,7 @@
           d[p] = cr; d[p + 1] = cg; d[p + 2] = cb; d[p + 3] = Math.round(a * 255);
         }
       }
-      outCtx.putImageData(img, 0, 0);
+      outCtx.putImageData(img, ox, oy);
     }
   }
 
@@ -511,10 +568,20 @@
       }
     }
 
-    // Starts a new stroke's accumulation. Resets the backing store; does
-    // NOT clear the output canvas until endStroke()/resolve happens, so a
-    // caller peeking at the previous output between strokes still sees the
-    // last finished result.
+    // Starts a new stroke's accumulation. Resets the backing store.
+    //
+    // Phase 9C.2: also clears the output canvas immediately, synchronously.
+    // Previously it was left untouched until the first resolve, on the
+    // theory that a caller peeking between strokes should still see the
+    // last finished result -- true, but that peeking-between-strokes case
+    // only happens while `_active` is false, i.e. strictly BEFORE this
+    // method runs, so clearing here doesn't affect it. It's required now
+    // because peekStroke() only repaints the DIRTY region of _outCtx (see
+    // resolveDirtyInto() below) -- if the previous stroke's finished
+    // pixels were left in place outside the new stroke's first dirty
+    // rectangle, they'd leak into this stroke's live preview instead of
+    // being cleared. The clear itself is one clearRect() call, not a
+    // per-frame cost.
     beginStroke() {
       if (this._active) this.cancelStroke();
       this._active = true;
@@ -522,6 +589,7 @@
       this._composite = 'paint';
       this._rgb = [0, 0, 0];
       this.cpu.reset();
+      if (this._outCtx) this._outCtx.clearRect(0, 0, this.width, this.height);
 
       if (this.preferGpu && !this._gpuInitPromise) {
         this._gpuInitPromise = this.gpu.init();
@@ -585,17 +653,45 @@
 
     // Phase 9C.1: resolves the CURRENT in-progress accumulation to the
     // output canvas for a live preview, WITHOUT ending the stroke --
-    // drawSegments() can keep accumulating normally afterward. Uses the
-    // exact same _resolveToOutput() path endStroke() uses, so a live
-    // preview and the final committed result are always pixel-consistent.
-    // Safe to call repeatedly during a stroke (once per pointermove batch,
-    // same cadence as drawSegments()); a no-op returning the last resolved
+    // drawSegments() can keep accumulating normally afterward. Safe to
+    // call repeatedly during a stroke (once per pointermove batch, same
+    // cadence as drawSegments()); a no-op returning the last resolved
     // canvas if no stroke is currently active.
+    //
+    // Phase 9C.2: no longer calls the full _resolveToOutput() on the CPU
+    // path. Investigation found resolveInto()/_resolveToOutput() always
+    // re-box-filtered the ENTIRE SS=4 backing store (this.bw x this.bh,
+    // 16x the output pixel count) on every call, regardless of how little
+    // of the canvas actually changed since the previous peek -- for a
+    // small brush moving a short distance between frames, that's a huge
+    // amount of wasted work repeated every animation frame. drawSegment()
+    // already computes each segment's bounding box (to know which pixels
+    // to rasterize); CpuBackend now retains the union of those boxes as a
+    // running dirty rectangle instead of discarding it, and
+    // resolveDirtyInto() (see prototype-renderer.js's CpuBackend) resolves
+    // only that rectangle, consuming (clearing) it afterward. The GPU path
+    // is untouched -- its resolve is already a fixed-cost full-screen
+    // shader pass, not a per-pixel JS loop, so there's no equivalent win
+    // available there, and this phase doesn't touch it.
+    // The pixel result is unchanged either way: _resolveRegion() (the
+    // shared box-filter/color-mix core) computes the exact same value for
+    // any given output pixel whether it's part of a full or partial
+    // resolve, and pixels outside the current dirty rectangle are already
+    // correct in _outCtx from the previous resolve (coverage only grows
+    // via max-blend, never shrinks, and beginStroke() clears _outCtx up
+    // front -- see its comment -- so there is no stale data for a partial
+    // resolve to accidentally leave behind).
+    // endStroke() (below) is untouched and still always does the full
+    // resolve, as the single authoritative commit-time result.
     //
     // @returns {Promise<{canvas: HTMLCanvasElement|OffscreenCanvas, composite: string, segmentCount: number}>}
     async peekStroke() {
       if (!this._active) return { canvas: this._outCanvas, composite: this._composite, segmentCount: this._segmentCount };
-      await this._resolveToOutput();
+      if (this._usingGpu) {
+        await this._resolveToOutput();
+      } else {
+        this.cpu.resolveDirtyInto(this._outCtx, this._rgb, this._composite);
+      }
       return { canvas: this._outCanvas, composite: this._composite, segmentCount: this._segmentCount };
     }
 
