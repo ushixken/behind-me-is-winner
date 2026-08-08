@@ -133,7 +133,67 @@ function resolveEffectiveRadius(opts) {
   return Math.max(0.1, r);
 }
 
-const HardRoundAdapterExports = { isHardRoundEligible, resolveEffectiveRadius };
+// ---------------------------------------------------------------------
+// Segment render-parameter adaptation (Phase 8C completion, §2)
+//
+// Takes one PrototypeStrokeCore resolved segment
+// ({x0,y0,pressure0,influence0,x1,y1,pressure1,influence1}) plus the
+// caller's current brush/color/composite state, and returns the minimal
+// render-ready segment object the capsule renderer actually consumes:
+//
+//   { x0, y0, x1, y1, r0, r1, alpha0, alpha1, rgb, composite, hardness, aaMode }
+//
+// r0/r1 are derived here (once, in one place) by feeding each endpoint's
+// own pressure/influence through the SAME resolveEffectiveRadius() used
+// everywhere else in this module, so CPU and GPU dispatch always agree --
+// neither renderer recomputes pressure independently (§7 requirement).
+//
+// alpha0/alpha1 track Flow/Opacity per endpoint the same way _stampDab's
+// per-dab alpha did (via the caller-supplied getEffectiveAlpha, which
+// wraps the existing _getEffectiveBrushParams-style Flow logic); this
+// module still owns no DOM/canvas state, so the caller must supply that
+// function rather than this module reading window.* itself.
+//
+// @param {object} segment - one PrototypeStrokeCore resolved segment
+// @param {object} opts - same shape as resolveEffectiveRadius's opts,
+//   plus:
+//   @param {number[]} opts.rgb - [r,g,b] 0..255
+//   @param {string} opts.composite - 'paint' | 'erase'
+//   @param {number} opts.hardness - brush hardness 0..1 (Hard Round is
+//     always >=0.995 per eligibility, but passed through rather than
+//     hardcoded so the renderer doesn't need a second source of truth)
+//   @param {string} opts.aaMode - active AA mode id
+//   @param {function(number,number):number} [opts.getEffectiveAlpha] -
+//     (pressure, influence) -> alpha 0..1. Defaults to a constant 1 if
+//     omitted (matches "no Flow dynamics configured").
+// @returns {object} render-ready segment, see shape above
+function resolveSegmentRenderParams(segment, opts) {
+  const seg = segment || {};
+  const o = opts || {};
+  const getAlpha = typeof o.getEffectiveAlpha === 'function' ? o.getEffectiveAlpha : () => 1;
+  const r0 = resolveEffectiveRadius({
+    baseSize: o.baseSize, minSizeFrac: o.minSizeFrac, curveKey: o.curveKey,
+    pressure: seg.pressure0, influence: seg.influence0,
+    applyPressureCurve: o.applyPressureCurve,
+  });
+  const r1 = resolveEffectiveRadius({
+    baseSize: o.baseSize, minSizeFrac: o.minSizeFrac, curveKey: o.curveKey,
+    pressure: seg.pressure1, influence: seg.influence1,
+    applyPressureCurve: o.applyPressureCurve,
+  });
+  const alpha0 = clamp01(getAlpha(seg.pressure0, seg.influence0));
+  const alpha1 = clamp01(getAlpha(seg.pressure1, seg.influence1));
+  return {
+    x0: seg.x0, y0: seg.y0, x1: seg.x1, y1: seg.y1,
+    r0, r1, alpha0, alpha1,
+    rgb: o.rgb || [0, 0, 0],
+    composite: o.composite || 'paint',
+    hardness: o.hardness == null ? 1 : o.hardness,
+    aaMode: o.aaMode || 'normal',
+  };
+}
+
+const HardRoundAdapterExports = { isHardRoundEligible, resolveEffectiveRadius, resolveSegmentRenderParams };
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = HardRoundAdapterExports;

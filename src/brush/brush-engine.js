@@ -4362,15 +4362,14 @@ function _computeEffectiveParams(e){
   }
 
   // Size dynamics
-  // Phase 8C: migrated Hard Round strokes compute `r` themselves (via
-  // PrototypeStrokeCore's resolved influence, see _hardRoundStampSegments
-  // below) and hand it in here through _hardRoundRadiusOverride so every
-  // other Size-dynamics consumer of _stampDab stays completely untouched.
-  // This is the ONLY place PrototypeStrokeCore's radius enters the shared
-  // dab rasterizer -- see Phase 8C report §2/§3.
-  if(_hardRoundRadiusOverride!=null){
-    r=_hardRoundRadiusOverride;
-  } else if(sizeCtrl !== 'off'){
+  // Phase 8C (completed): migrated Hard Round strokes no longer flow
+  // through _stampDab/_getEffectiveBrushParams for radius at all -- they
+  // render as continuous capsules with their own r0/r1 (see
+  // _hardRoundStampSegments / HardRoundCapsuleRenderer). This function is
+  // still called once per segment endpoint purely to reuse the existing
+  // Flow/Opacity alpha pipeline (its `r` output is discarded by the
+  // caller in that case), so no override switch is needed here any more.
+  if(sizeCtrl !== 'off'){
     // Pressure: only auto-apply when drawing with a pen (mouse has no real pressure).
     const applySize = (sizeCtrl === 'pressure') ? isPenStroke : true;
     if(applySize){
@@ -4516,26 +4515,25 @@ function _computeSpacingRadius(e, interpolatedPressure){
 // the legacy pointerdown/_handleMoveEvent/_pointerEndStroke pipeline above,
 // completely unmodified.
 //
-// Integration boundary:
+// Integration boundary (completed):
 //   pointer/coalesced input -> PrototypeStrokeCore -> resolved segments
-//   -> _hardRoundStampSegments() -> the SAME _stampDab() every other brush
-//   uses (color/composite/AA/hardness/flow/opacity/scatter untouched) with
-//   only its radius source swapped out via _hardRoundRadiusOverride.
+//   -> HardRoundAdapter.resolveSegmentRenderParams() -> ONE continuous
+//   tapered capsule per segment, rendered by HardRoundCapsuleGPU (when
+//   available) or HardRoundCapsuleRenderer's CPU rasterizer -- NOT
+//   `_stampDab()`. Color/composite/hardness/AA-mode are still resolved the
+//   normal way and passed through; only the geometry primitive changed,
+//   from "point dab" to "continuous capsule". See hard-round-capsule-math.js,
+//   hard-round-capsule-renderer.js, hard-round-capsule-gpu.js.
 //
-// No second/duplicate rendering path is introduced: this repo's actual
-// production Hard Round renderer is _stampDab()'s dab-walking rasterizer
-// (there is no separate capsule/segment GPU+CPU renderer from an earlier
-// phase in this codebase to reuse -- see the Phase 8C report for the note
-// on that discrepancy vs. the brief). PrototypeStrokeCore's resolved
-// samples are already densely subdivided (10 steps per quad segment, plus
-// long-jump subdivision), so stamping one dab per resolved sample point
-// reproduces a continuous stroke through the existing rasterizer without
-// inventing a new geometry pipeline.
+// No spacing-driven dab reconstruction remains in the visible Hard Round
+// stroke body: this repo previously had no reusable capsule/segment
+// renderer (confirmed by search in the Phase 8C.1 report), so the smallest
+// dedicated renderer adapter was implemented per the brief's §5 fallback
+// instruction, porting the exact analytic model from prototype/prototype.html.
 // ---------------------------------------------------------------------
 
 let _hardRoundCore = null;          // single PrototypeStrokeCore instance, reused across strokes
 let _hardRoundStrokeActive = false; // decided once at pointerdown, for the life of that stroke only
-let _hardRoundRadiusOverride = null; // read by _computeEffectiveParams's Size-dynamics block above
 
 function _hardRoundGetCore(){
   if(!_hardRoundCore && typeof window!=='undefined' && window.PrototypeStrokeCore){
@@ -4566,34 +4564,63 @@ function _hardRoundEligibleNow(){
   });
 }
 
-// Stamps every PrototypeStrokeCore resolved segment via the existing
-// _stampDab rasterizer. `seg.pressure1`/`seg.influence1` are the segment's
-// trailing-edge (newest) sample -- consecutive segments share endpoints, so
-// using the trailing edge of each is equivalent to stamping at every
-// resolved point along the curve exactly once.
+// Phase 8C completion: renders every PrototypeStrokeCore resolved segment
+// as ONE continuous tapered capsule (x0,y0,r0)->(x1,y1,r1) via
+// HardRoundCapsuleRenderer/HardRoundCapsuleGPU -- NOT via `_stampDab()`.
+// This is the fix for the Phase 8C.1 finding: the old version above
+// discarded x0/y0/pressure0/influence0 and stamped a single point dab per
+// segment through the legacy rasterizer, which is exactly what made Hard
+// Round still feel like the old brush. Every field of every resolved
+// segment is now consumed: x0/y0/x1/y1 define the capsule axis, r0/r1
+// (derived from pressure0/influence0 and pressure1/influence1 via
+// HardRoundAdapter.resolveSegmentRenderParams, the SAME radius primitive
+// used everywhere else in this module) define its continuous taper.
 function _hardRoundStampSegments(segments, e){
   if(!segments || !segments.length) return;
   const adapter = typeof window!=='undefined' && window.HardRoundAdapter;
-  if(!adapter) return;
+  const capsule = typeof window!=='undefined' && window.HardRoundCapsuleRenderer;
+  const gpu = typeof window!=='undefined' && window.HardRoundCapsuleGPU;
+  if(!adapter || !capsule) return;
   const baseSize = getBrushSize();
   const minSizeFrac = _getMinSize();
   const curveKey = _getPressureCurve('size');
+  const isErase = tool==='eraser';
+  const rgb = isErase ? [0,0,0] : _hexToRGB(color);
+  const composite = isErase ? 'erase' : 'paint';
+  const aaMode = _currentAAMode();
   const previousFlowRatio = _flowSpacingRatio;
+  const savedPressure = currentPressure;
+  // Flow/Opacity dynamics (§9/§10 of Phase 8C.1's scope note: "do not
+  // patch pressure again") still run through the existing, untouched
+  // _getEffectiveBrushParams alpha pipeline, once per endpoint -- only its
+  // radius output is discarded here, since the capsule's own r0/r1 (from
+  // PrototypeStrokeCore) replace that per-dab Size-dynamics computation
+  // entirely for migrated Hard Round strokes.
+  _flowSpacingRatio = 1;
   for(const seg of segments){
+    currentPressure = seg.pressure0;
+    const alpha0 = _getEffectiveBrushParams(e).alpha;
     currentPressure = seg.pressure1;
-    _hardRoundRadiusOverride = adapter.resolveEffectiveRadius({
-      baseSize, minSizeFrac, curveKey,
-      pressure: seg.pressure1, influence: seg.influence1,
-      applyPressureCurve: _applyPressureCurve,
+    const alpha1 = _getEffectiveBrushParams(e).alpha;
+
+    const renderSeg = adapter.resolveSegmentRenderParams(seg, {
+      baseSize, minSizeFrac, curveKey, applyPressureCurve: _applyPressureCurve,
+      rgb, composite, hardness: brushHardness, aaMode,
+      getEffectiveAlpha: (pressure) => (pressure===seg.pressure0 ? alpha0 : alpha1),
     });
-    // The resolved-point density from PrototypeStrokeCore already tracks
-    // the current effective radius (its own subdivision/maxStep logic),
-    // so dabs are placed at unit flow ratio here -- Flow/Opacity dynamics
-    // are still fully driven by seg.pressure1 above, untouched.
-    _flowSpacingRatio = 1;
-    try{ _stampDab(seg.x1, seg.y1, e); }
-    finally{ _hardRoundRadiusOverride = null; }
+
+    if(gpu && gpu.isAvailable()){
+      gpu.drawSegment(renderSeg);
+    } else {
+      const dc = (_inStroke && composite!=='erase') ? _strokeCtx : ctx;
+      capsule.drawHardRoundCapsuleCPU(dc, renderSeg);
+      const cx=(renderSeg.x0+renderSeg.x1)/2, cy=(renderSeg.y0+renderSeg.y1)/2;
+      const halfLen=Math.hypot(renderSeg.x1-renderSeg.x0, renderSeg.y1-renderSeg.y0)/2;
+      const maxR=Math.max(renderSeg.r0, renderSeg.r1);
+      _growDirtyRect(cx, cy, halfLen+maxR+4, halfLen+maxR+4);
+    }
   }
+  currentPressure = savedPressure;
   _flowSpacingRatio = previousFlowRatio;
 }
 
@@ -5165,7 +5192,7 @@ function _pointerEndStroke(e){
     _hardRoundStampSegments(finish.segments,e);
     if(_inStroke){_inStroke=false;_commitStrokeCanvas();}
     _restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();
-    _hardRoundStrokeActive=false;_hardRoundRadiusOverride=null;
+    _hardRoundStrokeActive=false;
   }else if(drawing){
     const finalRaw=getPos(e);
     const finalConditioned=_baselineConditionerPush(_baselineSampleFromEvent(e,finalRaw,currentPressure),{force:true});
@@ -5197,7 +5224,7 @@ function _pointerEndStroke(e){
   _finalizePointerEndStroke(e);
 }
 function _finalizePointerEndStroke(e){
-  _hardRoundStrokeActive=false;_hardRoundRadiusOverride=null; // Phase 8C: safety net across every exit path
+  _hardRoundStrokeActive=false; // Phase 8C: safety net across every exit path
   _endColorEraserStroke();
   _completePostStrokePresentation(_strokeOwnerLayer,_strokeOwnerFrame);
   const latencyProfiler=_brushPerf();if(latencyProfiler)latencyProfiler.finishStroke({tool,sourceLayer:_strokeOwnerLayer,sourceFrame:_strokeOwnerFrame});
