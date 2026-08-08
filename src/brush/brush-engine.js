@@ -3564,7 +3564,16 @@ let _strokeDabCount = 0;
 let _elSizeControl, _elFlowControl, _elOpacityControl, _elMinSize, _elMinFlow, _elTaperMode, _elStartTaper, _elEndTaper;
 function _getSizeControl(){ if(_elSizeControl===undefined) _elSizeControl=document.getElementById('ts-size-control'); return _elSizeControl?_elSizeControl.value:'pressure'; }
 function _getFlowControl(){ if(_elFlowControl===undefined) _elFlowControl=document.getElementById('ts-flow-control'); return _elFlowControl?_elFlowControl.value:'off'; }
-function _getOpacityControl(){ if(_elOpacityControl===undefined) _elOpacityControl=document.getElementById('ts-opacity-control'); return _elOpacityControl?_elOpacityControl.value:'pressure'; }
+// Phase 7B: fallback default corrected from 'pressure' to 'off' to match
+// both the real HTML default (index.html's #ts-opacity-control has
+// value="off" selected) and prototype.html's pressureAlpha(), which
+// always returns the constant opacity slider value regardless of
+// pressure (opacity is never pressure-driven by default — only Size is,
+// matching prototype.html's pressureRadius()). This fallback only runs
+// if the DOM element is ever missing; the shipped HTML already had the
+// correct default, so this is a defensive-default correctness fix with
+// no behavioral change in the normal app.
+function _getOpacityControl(){ if(_elOpacityControl===undefined) _elOpacityControl=document.getElementById('ts-opacity-control'); return _elOpacityControl?_elOpacityControl.value:'off'; }
 function _getMinSize(){ if(_elMinSize===undefined) _elMinSize=document.getElementById('ts-min-size'); return _elMinSize?(+_elMinSize.value/100):0.05; }
 function _getMinFlow(){ if(_elMinFlow===undefined) _elMinFlow=document.getElementById('ts-min-flow'); return _elMinFlow?(+_elMinFlow.value/100):0; }
 function _getTaperMode(){ if(_elTaperMode===undefined) _elTaperMode=document.getElementById('ts-taper-mode'); return _elTaperMode?_elTaperMode.value:'off'; }
