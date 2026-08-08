@@ -4025,9 +4025,23 @@ function _endStroke(pointerId){
     // Phase 8C/9C: an eligible Hard Round stroke has no legacy tail to
     // flush. Discard PrototypeStrokeCore's buffered state AND
     // PrototypeRenderer's in-progress backing-store accumulation for this
-    // aborted stroke (Phase 9C: segments now only reach a canvas via
-    // endStroke()'s resolve, so cancelling here guarantees nothing from
-    // this stroke is ever committed -- _strokeCanvas was never drawn into).
+    // aborted stroke, so cancelling here guarantees nothing from this
+    // stroke is ever committed.
+    //
+    // Phase 9D fix: the paragraph above stopped being true the moment
+    // Phase 9C.1 added the RAF-coalesced live preview -- that preview
+    // writes the in-progress stroke's pixels into _strokeCanvas/_strokeCtx
+    // *while still drawing*, the same scratch surface _commitStrokeCanvas()
+    // below reads from. So by the time a cancellation reaches this branch,
+    // _strokeCanvas usually already holds partial live-preview pixels from
+    // this now-aborted stroke, and the unconditional _commitStrokeCanvas()
+    // a few lines down would paint them onto the active layer -- silently
+    // committing a stroke that was supposed to be fully discarded. Clearing
+    // _strokeCanvas/_strokeCtx here (mirroring how the line/curve-tool
+    // cancel branch just below already clears its own preview surface on
+    // abort) and skipping the commit call restores the guarantee the
+    // comment above actually promises.
+    let _hardRoundStrokeWasCancelled = false;
     if(_hardRoundStrokeActive && _hardRoundCore){
       _hardRoundCore.cancelStroke();
       if(_hardRoundRenderer) _hardRoundRenderer.cancelStroke();
@@ -4037,9 +4051,11 @@ function _endStroke(pointerId){
       // stale or empty data into _strokeCtx for a stroke that no longer
       // exists.
       _hardRoundCancelLivePreview();
+      _clearLinePreviewCanvas(_strokeCanvas,_strokeCtx);
+      _hardRoundStrokeWasCancelled = true;
     }
     else { _flushStrokeTail(); }
-    if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();
+    if(_inStroke){_inStroke=false;if(!_hardRoundStrokeWasCancelled)_commitStrokeCanvas();}_restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();
   }
   if(lineStart&&(_lineDragging||_curveToolGesture)){
     // Line drag aborted mid-gesture (pointercancel, tab blur, etc.) -- undo
