@@ -852,7 +852,11 @@ function _dabAA(x,y,r,rgb,alpha,composite,rotation,roundness,rendererContext){
   // the exact same aliased/quantized stamp path as the legacy AA-off toggle
   // -- no partial-alpha edge pixels at all, regardless of hardness.
   if(_currentAAMode()==='none'){_dabAliased(x,y,r,rgb,alpha,composite,rotation,roundness,rendererContext);return;}
-  const tinyGeneratedHardRound=r<=1&&!window._brushAirbrush&&!window.brushTipCanvas&&rendererContext.brushHardness>=0.995;
+  // See _capsuleFillCpu's matching comment: hard-edged brushes need
+  // supersampled coverage up to a larger radius than soft ones, or thin
+  // diagonal strokes render as broken/dashed instead of solid.
+  const hardRoundSupersampleRadius=rendererContext.brushHardness>=0.995?4:1;
+  const tinyGeneratedHardRound=r<=hardRoundSupersampleRadius&&!window._brushAirbrush&&!window.brushTipCanvas&&rendererContext.brushHardness>=0.995;
   if(tinyGeneratedHardRound){_dabAATinyCoverage(x,y,r,rgb,alpha,composite,rendererContext);return;}
   // Same cutoff (r<=1) as Hard Round above, so custom tips remain visible
   // down to approximately the same minimum size Hard Round hits, via the
@@ -983,6 +987,129 @@ function _drawAutoHardRoundSegment(d,rendererContext){
   return true;
 }
 
+// Phase 7C: continuous capsule/segment fill for the CPU renderer.
+// Deliberately mirrors _dabAACpu's own per-pixel compositing math exactly
+// (same falloff function, same premultiplied-over-alpha blend, same
+// destination-out erase handling) so a capsule-rendered stroke looks like
+// the SAME brush as the dab-rendered one, just without the spacing gaps —
+// this is not a different visual style, it's the same hardness/AA falloff
+// evaluated against "distance to nearest point on the tapered segment"
+// instead of "distance to a single dab center". `aliased` selects the
+// AA-off/pencil-mode variant: binary coverage, no falloff, matching
+// _dabAliased's quantized-edge intent for the capsule shape.
+function _capsuleFillCpu(seg,rendererContext,aliased){
+  const{x0,y0,r0,x1,y1,r1,rgb,alpha0,alpha1,composite}=seg;
+  if(window.__CAPSULE_DEBUG__){
+    console.log('[capsuleFillCpu]',{x0:x0.toFixed(2),y0:y0.toFixed(2),r0:r0.toFixed(3),x1:x1.toFixed(2),y1:y1.toFixed(2),r1:r1.toFixed(3),aliased});
+  }
+  const dc=(rendererContext.inStroke&&composite!=='erase')?rendererContext.strokeCtx:rendererContext.ctx;
+  const dx=x1-x0,dy=y1-y0;
+  const segLenSq=Math.max(1e-6,dx*dx+dy*dy);
+  const maxR=Math.max(r0,r1,0.05);
+  const aaModeCpu=aliased?'none':_currentAAMode();
+  const isAirbrush=typeof window!=='undefined'&&!!window._brushAirbrush;
+  const pad=aliased?1:Math.max(1,Math.ceil(_AA_MODE_EDGE_MAX_PX[aaModeCpu]||1));
+  const cw=dc.canvas.width,ch=dc.canvas.height;
+  const minX=Math.min(x0,x1)-maxR-pad,maxX=Math.max(x0,x1)+maxR+pad;
+  const minY=Math.min(y0,y1)-maxR-pad,maxY=Math.max(y0,y1)+maxR+pad;
+  const sx=Math.max(0,Math.floor(minX)),sy=Math.max(0,Math.floor(minY));
+  const ex=Math.min(cw,Math.ceil(maxX)),ey=Math.min(ch,Math.ceil(maxY));
+  const rw=ex-sx,rh=ey-sy;
+  if(rw<=0||rh<=0)return;
+  const cr=composite==='erase'?0:rgb[0],cg=composite==='erase'?0:rgb[1],cb=composite==='erase'?0:rgb[2];
+  const imgData=dc.getImageData(sx,sy,rw,rh);
+  const d=imgData.data;
+  const a1=(typeof alpha1==='number')?alpha1:alpha0;
+  // Small-brush divergence fix (Phase 7D): at maxR<=1 (matching the exact
+  // r<=1 threshold _dabAA already uses to switch a single dab from the
+  // fast single-sample analytic path to _dabAATinyCoverage's 4x4
+  // supersampled coverage), the single center-point sample below is no
+  // longer a reliable estimate of a pixel's true circular/capsule
+  // coverage -- a whole pixel can straddle the entire cross-section of a
+  // ~2px-diameter capsule, so sampling only its center produces a binary
+  // in/out result per pixel instead of a smooth partial-coverage edge.
+  // That is exactly the stair-stepped/blocky look at small sizes (see
+  // Phase 7D investigation): the capsule path never had the equivalent
+  // of _dabAATinyCoverage's supersampling, unlike the discrete-dab path.
+  // Mirror that same 4x4/_roundBrushFalloff supersampling here, only for
+  // capsules this small, so large-brush performance is unaffected.
+  // Single-center-point sampling (the `else` branch below) is only a safe
+  // approximation of true coverage when the edge falloff is soft enough
+  // that a pixel just outside the exact radius still gets partial alpha
+  // from neighboring samples blending smoothly. At high Hardness the edge
+  // is nearly a binary step, so a thin/diagonal capsule can miss pixel
+  // centers entirely even though it visually covers part of those pixels
+  // -- this is what produces a dashed/broken line instead of a solid one.
+  // Widen the supersample threshold with hardness so hard round brushes
+  // stay supersampled (and therefore solid) up to a larger radius, not
+  // just the sub-1px case.
+  const hardSupersampleRadius=rendererContext.brushHardness>=0.9?4:(rendererContext.brushHardness>=0.7?2:1);
+  const tinySupersample=!aliased&&maxR<=hardSupersampleRadius;
+  const tinyInner=tinySupersample?_effectiveInnerFrac(maxR,rendererContext.brushHardness,aaModeCpu):0;
+  const TINY_SAMPLES=4,TINY_INV=1/(TINY_SAMPLES*TINY_SAMPLES);
+  let p=0;
+  for(let py=0;py<rh;py++){
+    const wy=sy+py+0.5;
+    for(let px=0;px<rw;px++,p+=4){
+      const wx=sx+px+0.5;
+      let a;
+      if(tinySupersample){
+        let coverage=0;
+        for(let sampleY=0;sampleY<TINY_SAMPLES;sampleY++){
+          for(let sampleX=0;sampleX<TINY_SAMPLES;sampleX++){
+            const swx=sx+px+(sampleX+0.5)/TINY_SAMPLES;
+            const swy=sy+py+(sampleY+0.5)/TINY_SAMPLES;
+            const svx=swx-x0,svy=swy-y0;
+            let ss=(svx*dx+svy*dy)/segLenSq;
+            ss=Math.max(0,Math.min(1,ss));
+            const scx=x0+dx*ss,scy=y0+dy*ss;
+            const sddx=swx-scx,sddy=swy-scy;
+            const sdist=Math.sqrt(sddx*sddx+sddy*sddy);
+            const srAtS=r0+(r1-r0)*ss;
+            const srr=Math.max(0.05,srAtS);
+            const st=sdist/srr;
+            coverage+=_roundBrushFalloff(st,tinyInner,rendererContext.brushHardness);
+          }
+        }
+        const vx=wx-x0,vy=wy-y0;
+        let s=(vx*dx+vy*dy)/segLenSq;
+        s=Math.max(0,Math.min(1,s));
+        const alphaAtS=alpha0+(a1-alpha0)*s;
+        a=alphaAtS*coverage*TINY_INV;
+      }else{
+        const vx=wx-x0,vy=wy-y0;
+        let s=(vx*dx+vy*dy)/segLenSq;
+        s=Math.max(0,Math.min(1,s));
+        const cx=x0+dx*s,cy=y0+dy*s;
+        const ddx=wx-cx,ddy=wy-cy;
+        const dist=Math.sqrt(ddx*ddx+ddy*ddy);
+        const rAtS=r0+(r1-r0)*s;
+        const rr=Math.max(0.05,rAtS);
+        const t=dist/rr;
+        if(t>=1)continue;
+        const alphaAtS=alpha0+(a1-alpha0)*s;
+        a=aliased?alphaAtS:alphaAtS*_proceduralBrushFalloff(t,rendererContext.brushHardness,rr,aaModeCpu,isAirbrush);
+      }
+      a=Math.min(1,Math.max(0,a));
+      if(a<=0)continue;
+      if(composite==='erase'){
+        d[p+3]=d[p+3]*(1-a);
+      }else{
+        const da=d[p+3]/255;
+        const outA=a+da*(1-a);
+        if(outA<=0){d[p]=0;d[p+1]=0;d[p+2]=0;d[p+3]=0;}
+        else{
+          d[p]  =(cr*a+d[p]  *da*(1-a))/outA;
+          d[p+1]=(cg*a+d[p+1]*da*(1-a))/outA;
+          d[p+2]=(cb*a+d[p+2]*da*(1-a))/outA;
+          d[p+3]=outA*255;
+        }
+      }
+    }
+  }
+  dc.putImageData(imgData,sx,sy);
+}
+
 const CpuBrushRenderer = {
   // Verbatim body of the old _drawDabNow() rasterization branch:
   //   if(!_drawAutoHardRoundSegment(d)){
@@ -1001,6 +1128,13 @@ const CpuBrushRenderer = {
     if(_currentAAMode()!=='none') _dabAA(d.x,d.y,d.r,d.rgb,d.alpha,d.composite,d.rotation,d.roundness,rendererContext);
     else _dabAliased(d.x,d.y,d.r,d.rgb,d.alpha,d.composite,d.rotation,d.roundness,rendererContext);
     return false;
+  },
+  // Phase 7C: continuous capsule/segment primitive. See _capsuleFillCpu
+  // above for the shared coverage math (same falloff as drawDab's _dabAA,
+  // evaluated against the tapered segment instead of a single circle).
+  drawSegment(seg,rendererContext){
+    _capsuleFillCpu(seg,rendererContext,_currentAAMode()==='none');
+    return true;
   },
   // No-ops in this phase — see file header. Intentionally do nothing so
   // that wiring these calls into _ensureStrokeCanvas()/_commitStrokeCanvas()
@@ -1251,6 +1385,15 @@ const BrushRenderer = {
     return this._activeName;
   },
   drawDab(d,rendererContext){ return this.active.drawDab(d,rendererContext); },
+  // Phase 7C: hybrid capsule/segment dispatch. supportsSegments() lets
+  // brush-engine.js's _isCapsuleEligible() ask "can the ACTIVE renderer
+  // even do this" without knowing which renderer is active — mirrors the
+  // existing drawDab contract's renderer-agnostic design. Both CPU and
+  // GPU implement drawSegment() in this phase, so this is never false
+  // today, but the check keeps a future renderer that hasn't implemented
+  // it yet safely falling back to the dab path instead of throwing.
+  supportsSegments(){ return !!(this.active&&typeof this.active.drawSegment==='function'); },
+  drawSegment(seg,rendererContext){ return this.active.drawSegment(seg,rendererContext); },
   beginStroke(){ return this.active.beginStroke(); },
   endStroke(){ return this.active.endStroke(); },
   // Phase 6F.8: the single choke point CPU-readback call sites should
@@ -2075,6 +2218,40 @@ const _gpuState = {
   dabBatchCapacity: 0,
   batchesSubmitted: 0,
   failedBatches: 0,
+  // Phase 7C: continuous capsule/segment primitive -- separate pipeline,
+  // queue, and vertex buffer from the dab path above, but sharing the
+  // same accumTexture/layerTexture/compose pipeline so segment-rendered
+  // strokes composite identically to dab-rendered ones. Mirrors every
+  // dab field 1:1 (segmentPipeline <-> dabPipeline, segmentQueue <->
+  // dabQueue, etc.) so flushSegmentQueue() can reuse the exact same
+  // batched-upload/single-draw-call structure flushDabQueue() already
+  // uses -- no per-segment GPU submission.
+  segmentPipeline: null,
+  segmentShaderModule: null,
+  segmentPipelineLayout: null,
+  segmentVertexBuffer: null,
+  segmentBatchCapacity: 0,
+  segmentQueue: [],
+  segmentQueueMaxSize: 4096,
+  queuedSegments: 0,
+  segmentsReceived: 0,
+  segmentsDrawn: 0,
+  submittedSegments: 0,
+  droppedSegments: 0,
+  failedSegments: 0,
+  segmentBatchesSubmitted: 0,
+  failedSegmentBatches: 0,
+  // Phase 7C (GPU completion): a single ordered log of 'd'/'s' tags, one
+  // per successfully enqueued dab/segment (across BOTH _enqueueDab and
+  // _enqueueSegment), in the exact order those calls happened. dabQueue
+  // and segmentQueue only hold each type's own items -- this is what
+  // lets _flushAllQueues() reconstruct the true interleaving between the
+  // two queues at flush time, so a hypothetical stroke that switches
+  // capsule-eligibility mid-stroke (see _isCapsuleEligible()) still
+  // composites its dab and segment batches in the order they were
+  // actually drawn, not "all dabs then all segments" or vice versa.
+  opOrder: [],
+  opOrderMaxSize: 8192,
   // Phase 5H: flush metadata — plain diagnostic data only (a string
   // reason, a boolean result, a timestamp), never any GPU
   // resource/object. Updated by every flush attempt regardless of
@@ -2268,6 +2445,31 @@ const GpuBrushRenderer = {
       gpuTipScaleX:(tipW/tipReference)*(compressWidth?tipRoundness:1),
       gpuTipScaleY:(tipH/tipReference)*(compressWidth?1:tipRoundness),
       gpuTipRotation:tipRotation
+    }));
+  },
+  // Phase 7C (GPU completion): capsule/segment counterpart of drawDab()
+  // above -- only enqueues (see _enqueueSegment()), no immediate GPU
+  // work; a batch is submitted later by the combined flush (see
+  // flushDabQueue()/_flushAllQueues()). Computes gpuInnerFrac0/1 from
+  // each endpoint's own radius via the exact same _effectiveInnerFrac()
+  // helper drawDab() already uses for a single dab, so a capsule whose
+  // radius tapers across its length gets a correspondingly tapering
+  // hardness/AA edge rather than one fixed value for the whole segment.
+  // No custom-tip fields are set here at all -- _isCapsuleEligible()
+  // (brush-engine.js) already excludes custom/textured tips from this
+  // path entirely, so there is nothing tip-related to carry.
+  drawSegment(seg,rendererContext){
+    _gpuState.segmentsReceived+=1;
+    _gpuState.strokeComposite=seg&&seg.composite==='erase'?'erase':'paint';
+    const aaMode=_currentAAMode();
+    const hardness=rendererContext&&typeof rendererContext.brushHardness==='number'
+      ? rendererContext.brushHardness
+      : 1;
+    const innerFrac0=aaMode==='none'?1:_effectiveInnerFrac(seg&&seg.r0,hardness,aaMode);
+    const innerFrac1=aaMode==='none'?1:_effectiveInnerFrac(seg&&seg.r1,hardness,aaMode);
+    return this._enqueueSegment(Object.assign({},seg,{
+      gpuInnerFrac0:innerFrac0,
+      gpuInnerFrac1:innerFrac1,
     }));
   },
   // Phase 5C: smallest possible GPU-side dab representation — a single
@@ -2506,6 +2708,362 @@ const GpuBrushRenderer = {
     _gpuState.shaderModulesCreated++;
     _gpuState.pipelinesCreated++;
     return true;
+  },
+  // Phase 7C (GPU completion): capsule/segment pipeline. Mirrors
+  // createDabPipeline() above in structure (one shader module, one
+  // pipeline, same blend state, same triangle-list quad-per-primitive
+  // topology, drawn into the same accumTexture) but the quad this pipeline
+  // draws is an oriented bounding box around a tapered capsule (not a
+  // simple circle), and the fragment shader evaluates true
+  // "distance to nearest point on the segment" coverage instead of
+  // "distance to a single center point" -- reproducing
+  // _capsuleFillCpu()'s per-pixel math (same projection/clamp/lerp
+  // structure) in WGSL, and reusing the same inner_frac + smoothstep AA
+  // approximation createDabPipeline() already uses for hardness (rather
+  // than porting the CPU's exact _proceduralBrushFalloff curve, matching
+  // the precedent already established by the dab shader). No texture/tip
+  // sampling is needed here at all -- capsule eligibility (see
+  // _isCapsuleEligible() in brush-engine.js) excludes custom/textured
+  // tips, so this pipeline has no bind group.
+  createSegmentPipeline(){
+    if(_gpuState.segmentPipeline) return true;
+    if(!_gpuState.device || !_gpuState.canvasFormat) return false;
+    const device=_gpuState.device;
+
+    const shaderCode=`
+      struct VertexOut {
+        @builtin(position) position: vec4<f32>,
+        @location(0) color: vec3<f32>,
+        @location(1) along: f32,
+        @location(2) perp: f32,
+        @location(3) segLen: f32,
+        @location(4) r0: f32,
+        @location(5) r1: f32,
+        @location(6) alpha0: f32,
+        @location(7) alpha1: f32,
+        @location(8) innerFrac0: f32,
+        @location(9) innerFrac1: f32,
+      };
+
+      @vertex
+      fn vs_main(
+        @location(0) pos: vec2<f32>,
+        @location(1) color: vec3<f32>,
+        @location(2) along: f32,
+        @location(3) perp: f32,
+        @location(4) segLen: f32,
+        @location(5) r0: f32,
+        @location(6) r1: f32,
+        @location(7) alpha0: f32,
+        @location(8) alpha1: f32,
+        @location(9) innerFrac0: f32,
+        @location(10) innerFrac1: f32,
+      ) -> VertexOut {
+        var out: VertexOut;
+        out.position = vec4<f32>(pos, 0.0, 1.0);
+        out.color = color;
+        out.along = along;
+        out.perp = perp;
+        out.segLen = segLen;
+        out.r0 = r0;
+        out.r1 = r1;
+        out.alpha0 = alpha0;
+        out.alpha1 = alpha1;
+        out.innerFrac0 = innerFrac0;
+        out.innerFrac1 = innerFrac1;
+        return out;
+      }
+
+      @fragment
+      fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+        // Same projection _capsuleFillCpu() does: clamp the along-axis
+        // fraction s to [0,1] (this is what turns a plain tapered
+        // rectangle into a true capsule -- past each endpoint, s pins to
+        // 0 or 1 so the "nearest point on the segment" becomes that
+        // endpoint, giving a round cap for free from the same distance
+        // formula).
+        let s = clamp(in.along / in.segLen, 0.0, 1.0);
+        let rr = max(0.05, mix(in.r0, in.r1, s));
+        let projAlong = s * in.segLen;
+        let dAlong = in.along - projAlong;
+        let dist = length(vec2<f32>(dAlong, in.perp));
+        let t = dist / rr;
+        // fwidth must be called unconditionally, in uniform control
+        // flow, before any branch -- same fix/reasoning as
+        // createDabPipeline()'s fs_main (Phase 7A).
+        let px = fwidth(t);
+        let innerFracAtS = mix(in.innerFrac0, in.innerFrac1, s);
+        var coverage: f32;
+        if (innerFracAtS >= 1.0) {
+          coverage = select(0.0, 1.0, t < 1.0 + 0.5 * px);
+        } else {
+          coverage = 1.0 - smoothstep(innerFracAtS, 1.0, t);
+        }
+        if (coverage <= 0.0) {
+          discard;
+        }
+        let alphaAtS = mix(in.alpha0, in.alpha1, s);
+        let a = alphaAtS * coverage;
+        return vec4<f32>(in.color * a, a);
+      }
+    `;
+
+    const shaderModule=device.createShaderModule({code:shaderCode});
+    this._debugLogShaderCompilation(shaderModule,'segment-shader');
+    const pipelineLayout=device.createPipelineLayout({bindGroupLayouts:[]});
+
+    const pipeline=device.createRenderPipeline({
+      layout:pipelineLayout,
+      vertex:{
+        module:shaderModule,
+        entryPoint:'vs_main',
+        buffers:[{
+          arrayStride: 14*4,
+          attributes:[
+            {shaderLocation:0, offset:0*4, format:'float32x2'},  // pos
+            {shaderLocation:1, offset:2*4, format:'float32x3'},  // color
+            {shaderLocation:2, offset:5*4, format:'float32'},    // along
+            {shaderLocation:3, offset:6*4, format:'float32'},    // perp
+            {shaderLocation:4, offset:7*4, format:'float32'},    // segLen
+            {shaderLocation:5, offset:8*4, format:'float32'},    // r0
+            {shaderLocation:6, offset:9*4, format:'float32'},    // r1
+            {shaderLocation:7, offset:10*4, format:'float32'},   // alpha0
+            {shaderLocation:8, offset:11*4, format:'float32'},   // alpha1
+            {shaderLocation:9, offset:12*4, format:'float32'},   // innerFrac0
+            {shaderLocation:10, offset:13*4, format:'float32'},  // innerFrac1
+          ],
+        }],
+      },
+      fragment:{
+        module:shaderModule,
+        entryPoint:'fs_main',
+        targets:[{
+          format:_gpuState.canvasFormat,
+          blend:{
+            color:{srcFactor:'one', dstFactor:'one-minus-src-alpha', operation:'add'},
+            alpha:{srcFactor:'one', dstFactor:'one-minus-src-alpha', operation:'add'},
+          },
+        }],
+      },
+      primitive:{
+        topology:'triangle-list',
+      },
+    });
+
+    _gpuState.segmentShaderModule=shaderModule;
+    _gpuState.segmentPipelineLayout=pipelineLayout;
+    _gpuState.segmentPipeline=pipeline;
+    _gpuState.shaderModulesCreated++;
+    _gpuState.pipelinesCreated++;
+    return true;
+  },
+  // Phase 7C (GPU completion): mirrors _ensureDabBatchCapacity() exactly
+  // -- grows-only, doubling, reused buffer -- sized for segments' wider
+  // 14-float/vertex stride instead of dabs' 10.
+  _ensureSegmentBatchCapacity(segCount){
+    if(_gpuState.segmentVertexBuffer && _gpuState.segmentBatchCapacity>=segCount) return true;
+    if(!_gpuState.device) return false;
+    let capacity=_gpuState.segmentBatchCapacity||64;
+    while(capacity<segCount) capacity*=2;
+    if(_gpuState.segmentVertexBuffer){
+      _gpuState.segmentVertexBuffer.destroy();
+      _gpuState.segmentVertexBuffer=null;
+      _gpuState.vertexBuffersDestroyed++;
+    }
+    _gpuState.segmentVertexBuffer=_gpuState.device.createBuffer({
+      size: capacity*6*14*4,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
+    _gpuState.vertexBuffersCreated++;
+    _gpuState.segmentBatchCapacity=capacity;
+    return true;
+  },
+  // Phase 7C (GPU completion): builds one segment's oriented-quad vertex
+  // data (6 vertices, 2 triangles) and writes it into a caller-provided
+  // Float32Array at a given vertex offset -- same "assemble the whole
+  // batch, upload once" contract as _writeDabQuadInto(). The quad is a
+  // rectangle in (along,perp) segment-local space, padded by maxR on
+  // every side so it fully covers the tapered capsule including its
+  // round caps (fragment shader discards anything outside the true
+  // capsule via the t>=1 check); x0/y0/x1/y1/r0/r1 are pre-scaled by the
+  // same supersample factor `ss` dabs already use, so the segment's
+  // supersampled backing-store resolution matches automatically -- no
+  // separate supersampling logic needed.
+  _writeSegmentQuadInto(arr,offset,seg,w,h,ss){
+    const scale=ss||1;
+    const x0=((seg&&typeof seg.x0==='number')?seg.x0:0)*scale;
+    const y0=((seg&&typeof seg.y0==='number')?seg.y0:0)*scale;
+    const x1=((seg&&typeof seg.x1==='number')?seg.x1:0)*scale;
+    const y1=((seg&&typeof seg.y1==='number')?seg.y1:0)*scale;
+    const r0=Math.max(0.05,((seg&&typeof seg.r0==='number')?seg.r0:1)*scale);
+    const r1=Math.max(0.05,((seg&&typeof seg.r1==='number')?seg.r1:1)*scale);
+    const dx=x1-x0,dy=y1-y0;
+    let len=Math.hypot(dx,dy);
+    let ux=1,uy=0;
+    if(len>1e-4){ ux=dx/len; uy=dy/len; } else { len=1e-4; }
+    const px=-uy,py=ux;
+    const maxR=Math.max(r0,r1,0.05);
+    const pad=maxR;
+
+    const rgb=(seg&&seg.rgb)?seg.rgb:[0,0,0];
+    const cr=Math.max(0,Math.min(1,(rgb[0]||0)/255));
+    const cg=Math.max(0,Math.min(1,(rgb[1]||0)/255));
+    const cb=Math.max(0,Math.min(1,(rgb[2]||0)/255));
+    const alpha0=(seg&&typeof seg.alpha0==='number')?Math.max(0,Math.min(1,seg.alpha0)):1;
+    const alpha1=(seg&&typeof seg.alpha1==='number')?Math.max(0,Math.min(1,seg.alpha1)):alpha0;
+    const innerFrac0=(seg&&typeof seg.gpuInnerFrac0==='number')?Math.max(0,Math.min(1,seg.gpuInnerFrac0)):1;
+    const innerFrac1=(seg&&typeof seg.gpuInnerFrac1==='number')?Math.max(0,Math.min(1,seg.gpuInnerFrac1)):innerFrac0;
+
+    const toNdc=(wx,wy)=>[ (wx/w)*2-1, 1-(wy/h)*2 ];
+    const worldAt=(along,perp)=>[ x0+ux*along+px*perp, y0+uy*along+py*perp ];
+    const corner=(along,perp)=>{
+      const[wx,wy]=worldAt(along,perp);
+      const[nx,ny]=toNdc(wx,wy);
+      return {ndc:[nx,ny],along,perp};
+    };
+    const A=corner(-pad,-maxR);
+    const B=corner(len+pad,-maxR);
+    const C=corner(len+pad, maxR);
+    const D=corner(-pad, maxR);
+
+    const stride=14;
+    const writeVertex=(base,v)=>{
+      arr[base+0]=v.ndc[0]; arr[base+1]=v.ndc[1];
+      arr[base+2]=cr; arr[base+3]=cg; arr[base+4]=cb;
+      arr[base+5]=v.along; arr[base+6]=v.perp; arr[base+7]=len;
+      arr[base+8]=r0; arr[base+9]=r1;
+      arr[base+10]=alpha0; arr[base+11]=alpha1;
+      arr[base+12]=innerFrac0; arr[base+13]=innerFrac1;
+    };
+    writeVertex(offset+0*stride, A);
+    writeVertex(offset+1*stride, B);
+    writeVertex(offset+2*stride, C);
+    writeVertex(offset+3*stride, A);
+    writeVertex(offset+4*stride, C);
+    writeVertex(offset+5*stride, D);
+  },
+  // Phase 7C (GPU completion): mirrors _enqueueDab() -- raw seg object
+  // reference pushed unmodified, capped by segmentQueueMaxSize, dropped
+  // (counted) past the cap. Also appends to the shared opOrder log (see
+  // _gpuState.opOrder) so _flushAllQueues() can reconstruct true
+  // dab/segment call order.
+  _enqueueSegment(seg){
+    if(_gpuState.segmentQueue.length>=_gpuState.segmentQueueMaxSize){
+      _gpuState.droppedSegments+=1;
+      return false;
+    }
+    _gpuState.segmentQueue.push(seg);
+    _gpuState.queuedSegments=_gpuState.segmentQueue.length;
+    if(_gpuState.opOrder.length<_gpuState.opOrderMaxSize) _gpuState.opOrder.push('s');
+    return true;
+  },
+  // Phase 7C (GPU completion): mirrors _flushDabQueueImplTimed() exactly
+  // -- same guard order, same accumTexture target/loadOp:'load', same
+  // "queue left intact on failure" contract, same live-present/composite
+  // wiring -- but for _gpuState.segmentQueue/segmentPipeline/
+  // segmentVertexBuffer instead of the dab equivalents. Reads
+  // _gpuState.segmentQueue directly (not a parameter) so it composes
+  // with _flushAllQueues()'s run-splitting technique (temporarily
+  // pointing this field at a slice) without any changes here.
+  _flushSegmentQueueImplTimed(reason){
+    const flushReason=reason||'unspecified';
+    const segCount=_gpuState.segmentQueue.length;
+    if(segCount===0){
+      this._recordFlush(flushReason,true);
+      return true;
+    }
+    try{
+      if(!_gpuState.initialized){
+        this._recordFlush(flushReason,false);
+        return false;
+      }
+      if(!_gpuState.device || !_gpuState.context || !_gpuState.canvas){
+        this._recordFlush(flushReason,false);
+        return false;
+      }
+      const canvas=_gpuState.canvas;
+      if(!canvas.width || !canvas.height){
+        _gpuState.failedSegmentBatches+=1;
+        _gpuState.failedSegments+=segCount;
+        this._recordFlush(flushReason,false);
+        return false;
+      }
+      if(!this.createSegmentPipeline()){
+        _gpuState.failedSegmentBatches+=1;
+        _gpuState.failedSegments+=segCount;
+        this._recordFlush(flushReason,false);
+        return false;
+      }
+      if(!this._ensureSegmentBatchCapacity(segCount)){
+        _gpuState.failedSegmentBatches+=1;
+        _gpuState.failedSegments+=segCount;
+        this._recordFlush(flushReason,false);
+        return false;
+      }
+      if(!this._ensureAccumTexture(canvas.width,canvas.height)){
+        _gpuState.failedSegmentBatches+=1;
+        _gpuState.failedSegments+=segCount;
+        this._recordFlush(flushReason,false);
+        return false;
+      }
+
+      const verts=new Float32Array(segCount*84); // 6 verts * 14 floats
+      for(let i=0;i<segCount;i++){
+        this._writeSegmentQuadInto(verts,i*84,_gpuState.segmentQueue[i],_gpuState.accumTextureWidth,_gpuState.accumTextureHeight,_gpuState.accumSupersample);
+      }
+      _gpuState.queue.writeBuffer(_gpuState.segmentVertexBuffer,0,verts);
+
+      if(!this.createCommandEncoder()){
+        _gpuState.failedSegmentBatches+=1;
+        _gpuState.failedSegments+=segCount;
+        this._recordFlush(flushReason,false);
+        return false;
+      }
+      const currentTexture=_gpuState.context.getCurrentTexture();
+      if(!currentTexture){
+        _gpuState.commandEncoder=null;
+        _gpuState.failedSegmentBatches+=1;
+        _gpuState.failedSegments+=segCount;
+        this._recordFlush(flushReason,false);
+        return false;
+      }
+      const view=_gpuState.accumTexture.createView();
+      const pass=_gpuState.commandEncoder.beginRenderPass({
+        colorAttachments: [{
+          view,
+          loadOp: 'load',
+          storeOp: 'store',
+        }],
+      });
+      pass.setPipeline(_gpuState.segmentPipeline);
+      pass.setVertexBuffer(0,_gpuState.segmentVertexBuffer);
+      pass.draw(segCount*6);
+      pass.end();
+      if(!this.submitCommands()){
+        _gpuState.failedSegmentBatches+=1;
+        _gpuState.failedSegments+=segCount;
+        this._recordFlush(flushReason,false);
+        return false;
+      }
+      const liveOpacity=(typeof brushOpacity==='number')?brushOpacity:1;
+      this._scheduleLivePresent(liveOpacity);
+
+      _gpuState.segmentsDrawn+=segCount;
+      _gpuState.submittedSegments+=segCount;
+      _gpuState.segmentBatchesSubmitted+=1;
+      _gpuState.lastBatchTime=Date.now();
+      _gpuState.segmentQueue.length=0;
+      _gpuState.queuedSegments=0;
+      this._recordFlush(flushReason,true);
+      return true;
+    }catch(err){
+      _gpuState.failedSegmentBatches+=1;
+      _gpuState.failedSegments+=segCount;
+      _gpuState.commandEncoder=null;
+      this._recordError(err||'flush-failed');
+      this._recordFlush(flushReason,false);
+      return false;
+    }
   },
   // Phase 5F: ensures the shared batch vertex buffer can hold at least
   // `dabCount` dabs (6 vertices * 2 floats each). Reused across
@@ -3149,6 +3707,9 @@ const GpuBrushRenderer = {
     }
     _gpuState.dabQueue.push(d);
     _gpuState.queuedDabs=_gpuState.dabQueue.length;
+    // Phase 7C (GPU completion): record this push in the shared
+    // dab/segment interleave log -- see _gpuState.opOrder above.
+    if(_gpuState.opOrder.length<_gpuState.opOrderMaxSize) _gpuState.opOrder.push('d');
     // TEMP PHASE 7A DIAGNOSTIC — remove before finalizing.
     if(window.__PHASE7A_DEBUG__){
       console.log('[Phase7A][_enqueueDab] dabQueue.length =',_gpuState.dabQueue.length);
@@ -3196,16 +3757,92 @@ const GpuBrushRenderer = {
   // _flushDabQueueImplTimed verbatim and unchanged; this wrapper only
   // records elapsed time around it and accumulates the result — no
   // rendering/batching logic added, removed, or reordered.
+  // Phase 7C (GPU completion): flushDabQueue()/flushSegmentQueue() are
+  // both now thin aliases over this single combined flush so every call
+  // site (endStroke's 'stroke-end', flushPendingDabs's 'frame', a manual
+  // flush) drains BOTH the dab queue and the segment queue in one pass,
+  // in their true relative order -- see _flushAllQueues() below for why
+  // that matters and _gpuState.opOrder for how the order is tracked.
+  // Timing/flushCount bookkeeping is unchanged: still one timed entry
+  // per external flush call, regardless of how many dab/segment runs
+  // that call ends up executing internally.
   flushDabQueue(reason){
     const __t0=this._now();
     try{
-      return this._flushDabQueueImplTimed(reason);
+      return this._flushAllQueues(reason);
     }finally{
       const __duration=this._now()-__t0;
       _gpuState.lastFlushDuration=__duration;
       _gpuState.totalFlushTime+=__duration;
       _gpuState.flushCount+=1;
     }
+  },
+  // Named alias, kept distinct so segment-specific call sites read
+  // clearly -- functionally identical to flushDabQueue() above (both
+  // queues are always flushed together, in order).
+  flushSegmentQueue(reason){
+    return this.flushDabQueue(reason);
+  },
+  // Phase 7C (GPU completion): the actual combined-flush implementation.
+  // Splits _gpuState.opOrder (the true call-order log of every enqueued
+  // dab/segment) into runs of consecutive same-type ops, then flushes
+  // each run as its own batch, in order, via the existing (unmodified)
+  // _flushDabQueueImplTimed()/_flushSegmentQueueImplTimed() -- each of
+  // those still only ever reads/clears _gpuState.dabQueue /
+  // _gpuState.segmentQueue directly, so this temporarily points that
+  // field at just the run's slice, calls the existing impl unchanged,
+  // then restores the real array and (only on success) splices the
+  // consumed items off its front. This is what guarantees a
+  // hypothetical stroke that interleaves dab and segment ops (see
+  // _isCapsuleEligible()) still composites them in the order they were
+  // actually drawn -- not "all dabs then all segments" -- while the
+  // overwhelmingly common case (a stroke is ALL dabs or ALL segments,
+  // never both) collapses to exactly one run, i.e. one batch, i.e.
+  // identical behavior/perf to calling the old single-type flush
+  // directly.
+  //
+  // On a run's failure, that run's (and every later run's) items and
+  // ops are left in place, unconsumed -- mirrors the existing
+  // "queue left intact on failure" contract of both impl functions,
+  // just extended across the combined queue.
+  _flushAllQueues(reason){
+    const flushReason=reason||'unspecified';
+    if(_gpuState.opOrder.length===0){
+      this._recordFlush(flushReason,true);
+      return true;
+    }
+    const order=_gpuState.opOrder;
+    const runs=[];
+    for(let i=0;i<order.length;i++){
+      const t=order[i];
+      if(runs.length && runs[runs.length-1].type===t) runs[runs.length-1].count++;
+      else runs.push({type:t,count:1});
+    }
+    let consumedOps=0;
+    let allOk=true;
+    for(const run of runs){
+      const isDab=run.type==='d';
+      const realQueue=isDab?_gpuState.dabQueue:_gpuState.segmentQueue;
+      const slice=realQueue.slice(0,run.count);
+      if(isDab) _gpuState.dabQueue=slice; else _gpuState.segmentQueue=slice;
+      let result;
+      try{
+        result=isDab?this._flushDabQueueImplTimed(flushReason):this._flushSegmentQueueImplTimed(flushReason);
+      }finally{
+        if(isDab) _gpuState.dabQueue=realQueue; else _gpuState.segmentQueue=realQueue;
+      }
+      if(result){
+        realQueue.splice(0,run.count);
+        consumedOps+=run.count;
+      }else{
+        allOk=false;
+        break;
+      }
+    }
+    if(consumedOps>0) _gpuState.opOrder.splice(0,consumedOps);
+    _gpuState.queuedDabs=_gpuState.dabQueue.length;
+    _gpuState.queuedSegments=_gpuState.segmentQueue.length;
+    return allOk;
   },
   _flushDabQueueImplTimed(reason){
     const flushReason=reason||'unspecified';
@@ -3586,6 +4223,18 @@ const GpuBrushRenderer = {
       _gpuState.dabQueue.length=0;
       _gpuState.queuedDabs=0;
     }
+    // Phase 7C (GPU completion): same stale-leftover guard as the dab
+    // queue above, extended to the segment queue and the shared
+    // dab/segment order log -- a new stroke must never batch a prior
+    // stroke's un-flushed segments (or interleave log entries) with its
+    // own.
+    if(_gpuState.segmentQueue.length>0){
+      _gpuState.segmentQueue.length=0;
+      _gpuState.queuedSegments=0;
+    }
+    if(_gpuState.opOrder.length>0){
+      _gpuState.opOrder.length=0;
+    }
     // Reset the per-stroke accumulation surface (see
     // _clearAccumTexture()'s comment) so this stroke starts from blank,
     // exactly like _strokeCtx.clearRect() does for CpuBrushRenderer's
@@ -3663,7 +4312,12 @@ const GpuBrushRenderer = {
   // no counters touched. Delegates to the existing flushDabQueue()
   // (Phase 5F) rather than creating a second/duplicate submission path.
   flushPendingDabs(){
-    if(_gpuState.dabQueue.length===0) return true;
+    // Phase 7C (GPU completion): also skip when the segment queue is
+    // empty -- flushDabQueue() now drains both queues together (see
+    // _flushAllQueues()), so this early-out must consider both, not
+    // just dabQueue, or a stroke made entirely of capsule segments
+    // would never get its per-frame flush.
+    if(_gpuState.dabQueue.length===0 && _gpuState.segmentQueue.length===0) return true;
     return this.flushDabQueue('frame');
   },
   invalidateCaches(which){
@@ -4140,6 +4794,20 @@ const GpuBrushRenderer = {
     // pattern used for every other counter in this object.
     _gpuState.dabQueue.length=0;
     _gpuState.queuedDabs=0;
+    // Phase 7C (GPU completion): segment-pipeline resources are equally
+    // GPU-device-bound and must be dropped/recreated alongside the dab
+    // ones above; the pending segment queue and shared opOrder log are
+    // cleared for the same reason the dab queue is cleared just above --
+    // staged for a device that's being torn down, never submittable
+    // against it.
+    _gpuState.segmentPipeline=null;
+    _gpuState.segmentShaderModule=null;
+    _gpuState.segmentPipelineLayout=null;
+    _gpuState.segmentVertexBuffer=null;
+    _gpuState.segmentBatchCapacity=0;
+    _gpuState.segmentQueue.length=0;
+    _gpuState.queuedSegments=0;
+    _gpuState.opOrder.length=0;
     _gpuState.strokeComposite='paint';
     // Phase 5A/5C/5D: reset does not clear receive/draw/failure
     // counters — those are a cumulative diagnostic history, not

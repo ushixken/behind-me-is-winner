@@ -1478,6 +1478,24 @@ function _drawDabNow(d){
   if(perf)perf.measure('dab-rasterization',perfStart,{dabNumber:_strokeDabCount,radius:d.r,alpha:d.alpha,tip:!!window.brushTipCanvas,airbrush:!!window._brushAirbrush});
   if(customTrace&&customTrace.enabled){customTrace.stage(window.brushTipCanvas?'custom-tip-dab-rasterization':'procedural-dab-rasterization',customTraceStart,{radius:d.r});customTrace.endDab();}
 }
+// Phase 7C: sibling of _drawDabNow() for the continuous capsule path.
+// Deliberately narrower than _drawDabNow -- capsule eligibility already
+// excludes custom tips and textures (see _isCapsuleEligible), so this
+// skips tip rotation/roundness and texture-mask bookkeeping entirely
+// rather than carrying dead branches. Color-eraser region filtering (Smart
+// Raster style-layering) is preserved using the segment's bounding box in
+// place of a single dab's circular footprint.
+function _drawSegmentNow(seg){
+  const maxR=Math.max(seg.r0,seg.r1);
+  const cx=(seg.x0+seg.x1)/2,cy=(seg.y0+seg.y1)/2;
+  const halfLen=Math.hypot(seg.x1-seg.x0,seg.y1-seg.y0)/2;
+  const boxR=halfLen+maxR;
+  const colorEraserBefore=_captureColorEraserDab(cx,cy,boxR,boxR);
+  _lastDabRGB=seg.rgb;
+  BrushRenderer.drawSegment(seg,_capsuleRendererContext());
+  _filterColorEraserRegion(cx,cy,boxR,boxR,colorEraserBefore);
+  _growDirtyRect(cx,cy,boxR,boxR);
+}
 function _taperDistance(amount){return 320*amount;}
 function _queueDab(d){
   if(!_replayingTaper&&(_getStartTaper()>0||_getEndTaper()>0)) _strokeReplayDabs.push(Object.assign({},d,{rgb:d.rgb.slice()}));
@@ -2478,7 +2496,21 @@ function _effectiveDabStep(radius,settings){
   const screenCap=_DAB_STEP_SCREEN_CAP_SLOW_PX+
     (_DAB_STEP_SCREEN_CAP_FAST_PX-_DAB_STEP_SCREEN_CAP_SLOW_PX)*speedMix;
   const screenSpaceStep=screenCap/Math.max(0.05,zoom);
-  return Math.max(_DAB_STEP_MIN_CANVAS_PX,Math.min(brushStep,screenSpaceStep));
+  // Phase 7B.1: _DAB_STEP_MIN_CANVAS_PX is a runaway-work guard, not a
+  // density target -- it must never be allowed to exceed the dab's own
+  // diameter. At normal radii that's moot (0.25px floor << diameter), but
+  // once pressure taper shrinks the dab toward the 0.1px visibility floor
+  // (see _computeEffectiveParams) the diameter itself can drop below the
+  // old fixed 0.25px floor. When that happened the floor silently pinned
+  // the step at a WIDER distance than the dab was wide, so consecutive
+  // dabs stopped overlapping and a fast stroke's tail rendered as visibly
+  // separated dots instead of a continuous taper (see prototype's capsule
+  // renderer, which has no such per-dab floor at all). Clamping the floor
+  // to the current diameter keeps the guard's purpose (bound worst-case
+  // dab count) while guaranteeing adjacent dabs always touch, regardless
+  // of how thin the tip has tapered.
+  const minStep=Math.min(_DAB_STEP_MIN_CANVAS_PX,Math.max(0.02,radius*2));
+  return Math.max(minStep,Math.min(brushStep,screenSpaceStep));
 }
 window._resolveEffectiveDabStep=_effectiveDabStep;
 let _hardRoundTailCoverageOnly=false;
@@ -2505,6 +2537,10 @@ function _initialDabSpacingRatio(e,pressure){
   return _flowRatioForStep(step,radius);
 }
 function _walkDabArc(length,pointAt,e,startPressure,endPressure,pressureAt){
+  if(_isCapsuleEligible()){
+    _walkCapsuleArc(length,pointAt,e,startPressure,endPressure,pressureAt);
+    return;
+  }
   const pAt = pressureAt || (t=>startPressure+(endPressure-startPressure)*t);
   if(length<=0){currentPressure=pAt(1);return;}
   let distance=0;
@@ -2528,6 +2564,113 @@ function _walkDabArc(length,pointAt,e,startPressure,endPressure,pressureAt){
     finally{_flowSpacingRatio=1;}
     _strokeSegCarryOver=0;
     if(needed===0&&remaining===0) break;
+  }
+  currentPressure=pAt(1);
+}
+// Phase 7C: continuous capsule/segment stroke path -----------------------
+// Root cause of the remaining fast-release-tail separation (see Phase
+// 7B.1 report): the discrete-dab primitive fundamentally requires spacing
+// to stay <= dab diameter at every point along the taper, and no spacing
+// floor -- however low -- can guarantee that once the renderer only ever
+// emits circles. This phase adds a second, parallel stroke primitive for
+// eligible procedural round brushes: instead of walking the path in
+// spacing-derived steps and stamping independent circles, it walks the
+// path in small FIXED geometric steps (purely for curve fidelity, totally
+// decoupled from radius/pressure/spacing) and asks the renderer to fill
+// one continuous tapered capsule between each consecutive pair of
+// resolved samples. There is no minimum spacing to violate because there
+// is no gap between capsule endpoints -- each capsule's start is exactly
+// the previous capsule's end.
+//
+// Eligibility is intentionally narrow (see _isCapsuleEligible): custom
+// image tips, scatter, airbrush, and textured brushes all still use the
+// existing dab path untouched, via BrushRenderer.drawDab / _walkDabArc's
+// original branch below. This is a hybrid renderer, not a replacement.
+const _CAPSULE_SAMPLE_STEP_PX=2.5;
+let _capsuleSegCarryOver=0;
+let _lastCapsuleSample=null; // {x,y,r,alpha} of the most recently resolved capsule endpoint for the CURRENT stroke, or null at stroke start / after a reset
+function _isCapsuleEligible(){
+  if(typeof BrushRenderer==='undefined'||typeof BrushRenderer.supportsSegments!=='function'||!BrushRenderer.supportsSegments())return false;
+  if(tool!=='brush'&&tool!=='eraser')return false;
+  if(window.brushTipCanvas)return false; // custom image tip -> discrete dab path (per-dab tip rotation/roundness/masking)
+  if(window._brushAirbrush)return false; // continuous spray timer stamps repeatedly at one point, not a path
+  if(window._tsScatterEnabled)return false; // scatter needs independently jittered discrete dabs
+  if(window.brushTextureEnabled&&window.brushTextureCanvas)return false; // texture masking is dab-rect based (see _applyTextureToDabDirect)
+  return true;
+}
+// Resolves {x,y,r,alpha} at an arbitrary interpolated pressure WITHOUT
+// walking the spacing/step system at all -- same underlying computation
+// _computeEffectiveParams() already does for every dab (identical pressure
+// curve, identical min-size floor, identical flow/opacity dynamics), just
+// invoked directly for a sample point instead of through _stampDab().
+function _resolveCapsuleSample(pt,pressure,e){
+  const savedPressure=currentPressure,savedSmoothed=_smoothedPressure;
+  currentPressure=pressure;
+  const{r,alpha}=_computeEffectiveParams(e);
+  currentPressure=savedPressure;_smoothedPressure=savedSmoothed;
+  return{x:pt.x,y:pt.y,r,alpha};
+}
+function _capsuleRendererContext(){
+  return{ctx,strokeCtx:_strokeCtx,inStroke:_inStroke,flipX,flipY,tool,brushHardness};
+}
+function _emitCapsuleSegment(a,b,e){
+  if(window.__CAPSULE_DEBUG__){
+    if(window.__lastCapsuleEnd && (Math.hypot(a.x-window.__lastCapsuleEnd.x,a.y-window.__lastCapsuleEnd.y)>0.01)){
+      console.warn('[capsule gap]',{expectedStart:window.__lastCapsuleEnd,actualStart:a,jumpDist:Math.hypot(a.x-window.__lastCapsuleEnd.x,a.y-window.__lastCapsuleEnd.y)});
+    }
+    if(a.r<0.35||b.r<0.35) console.log('[capsule tiny-r]',{r0:a.r,r1:b.r,alpha0:a.alpha,alpha1:b.alpha,dist:Math.hypot(b.x-a.x,b.y-a.y)});
+    console.log('[capsule seg]',{x0:a.x.toFixed(2),y0:a.y.toFixed(2),r0:a.r.toFixed(3),x1:b.x.toFixed(2),y1:b.y.toFixed(2),r1:b.r.toFixed(3)});
+    window.__lastCapsuleEnd=b;
+  }
+  const isErase=tool==='eraser';
+  const rgb=isErase?[0,0,0]:_hexToRGB(color);
+  _drawSegmentNow({
+    x0:a.x,y0:a.y,r0:a.r,alpha0:a.alpha,
+    x1:b.x,y1:b.y,r1:b.r,alpha1:b.alpha,
+    rgb,composite:isErase?'erase':'paint'
+  });
+}
+// Mirrors _walkDabArc's carry-over discipline exactly (bank leftover
+// distance, only emit once a full sample step is available) so a
+// translucent brush never double-composites the same stretch of path
+// across two consecutive calls -- the same reason _walkDabArc never draws
+// a "preview" dab past its own carry-over either.
+function _walkCapsuleArc(length,pointAt,e,startPressure,endPressure,pressureAt){
+  const pAt=pressureAt||(t=>startPressure+(endPressure-startPressure)*t);
+  if(!_lastCapsuleSample){
+    _lastCapsuleSample=_resolveCapsuleSample(pointAt(0),pAt(0),e);
+  }
+  if(length<=0){currentPressure=pAt(1);return;}
+  const step=Math.max(0.35,_CAPSULE_SAMPLE_STEP_PX/Math.max(0.05,zoom));
+  let distance=0;
+  while(distance<length){
+    const needed=Math.max(0,step-_capsuleSegCarryOver);
+    const remaining=length-distance;
+    if(needed>remaining){_capsuleSegCarryOver+=remaining;break;}
+    distance+=needed;
+    const sample=pointAt(distance);
+    const pressure=pAt(sample.t);
+    const next=_resolveCapsuleSample(sample,pressure,e);
+    // Guard against degenerate cone segments: if the pointer barely moved
+    // but the radius changed a lot (classic pressure-ramp-while-stationary
+    // on a pen), the tangent-line capsule between the tiny old radius and
+    // the much bigger new radius at nearly the same center draws as a
+    // wedge/cone bitten out of a circle instead of a clean disc. In that
+    // case, skip emitting the segment shape and just re-stamp a plain dab
+    // at the new sample so the visible result is a circle growing in
+    // place, matching what a mouse (which never sees this micro-jitter +
+    // radius-ramp combination) would show.
+    const moveDist=Math.hypot(next.x-_lastCapsuleSample.x,next.y-_lastCapsuleSample.y);
+    const radiusDelta=Math.abs(next.r-_lastCapsuleSample.r);
+    const isDegenerateRadiusRamp=radiusDelta>0.35&&moveDist<radiusDelta*0.5;
+    if(isDegenerateRadiusRamp){
+      _stampDab(next.x,next.y,e);
+    }else{
+      _emitCapsuleSegment(_lastCapsuleSample,next,e);
+    }
+    _lastCapsuleSample=next;
+    _capsuleSegCarryOver=0;
+    currentPressure=pressure;
   }
   currentPressure=pAt(1);
 }
@@ -2938,6 +3081,7 @@ function _flushCurveTail(e){
     _strokeSegment(B.x,B.y,endPos.x,endPos.y,e,_curvePr1,0);
   }
   _strokeSegCarryOver=0;
+  _capsuleSegCarryOver=0;_lastCapsuleSample=null;
   _curveP0=null;_curveP1=null;
   _curveBaselineSamples=null;_curveBaselineNext=0;_curveBaselineRadius=0;_curveSubpixelConditioning=false;
 }
@@ -3097,6 +3241,7 @@ function _renderLineDrag(ex,ey,e,phase){
   _texPendingRect=null;
   _pendingDabs.length=0;
   _strokeSegCarryOver=0;
+  _capsuleSegCarryOver=0;_lastCapsuleSample=null;
   _strokeDistSoFar=0;
   BrushRenderer.setLineContinuity(null);
   _rotationPrevValid=false;
@@ -3365,6 +3510,7 @@ function _endStroke(pointerId){
   _pendingDabs.length=0;
   _curveP0=null;_curveP1=null;
   _strokeSegCarryOver=0;
+  _capsuleSegCarryOver=0;_lastCapsuleSample=null;
   _activeStrokePointerId=null;
   _strokeOwnerLayer=-1;_strokeOwnerFrame=-1;
 }
@@ -3457,7 +3603,8 @@ let _smoothedPressure = 1.0;
 // spikes that get capped). _prevRawPressure tracks the last accepted raw
 // reading so each new sample's jump can be limited.
 let _prevRawPressure = 1.0;
-const _MAX_PRESSURE_JUMP = 0.09; // max change allowed per raw sample Ã¢â‚¬â€ tightened from 0.15 so pressure can fall off fast enough during a flick lift without holding the dab size artificially high into the last few samples
+const _MAX_PRESSURE_JUMP_UP = 0.35;   // rising (pressing harder) can jump fast so a genuine hard press reaches full size almost immediately
+const _MAX_PRESSURE_JUMP_DOWN = 0.09; // falling stays tight -- keeps the flick release-tail taper intact
 let _strokeFirstSample = true; // true for the very first sample of a stroke (no clamping Ã¢â‚¬â€ should snap immediately)
 
 function _getPressure(e){
@@ -3481,8 +3628,8 @@ function _getPressure(e){
       _prevRawPressure = p; _strokeFirstSample = false;
     } else {
       const delta = p - _prevRawPressure;
-      if(delta > _MAX_PRESSURE_JUMP) p = _prevRawPressure + _MAX_PRESSURE_JUMP;
-      else if(delta < -_MAX_PRESSURE_JUMP) p = _prevRawPressure - _MAX_PRESSURE_JUMP;
+      if(delta > _MAX_PRESSURE_JUMP_UP) p = _prevRawPressure + _MAX_PRESSURE_JUMP_UP;
+      else if(delta < -_MAX_PRESSURE_JUMP_DOWN) p = _prevRawPressure - _MAX_PRESSURE_JUMP_DOWN;
       _prevRawPressure = p;
     }
     return p;
@@ -3656,8 +3803,15 @@ function _applyPressureCurve(p,curveKey='linear'){
 function _resolveControl(ctrl, e){
   switch(ctrl){
     case 'pressure': {
-      // Apply exponential smoothing to reduce digitizer jitter.
-      _smoothedPressure = _smoothedPressure*(1-_PRESSURE_SMOOTH) + currentPressure*_PRESSURE_SMOOTH;
+      // Apply exponential smoothing to reduce digitizer jitter. Asymmetric:
+      // rising (pressing harder) uses a much higher alpha so a genuine hard
+      // press reaches full influence almost immediately instead of being
+      // damped at the same rate as jitter -- this is what let a true max
+      // press still render noticeably under the Size slider's set value.
+      // Falling keeps the original gentle alpha so the flick release-tail
+      // taper is unaffected.
+      const _pressureSmoothAlpha = currentPressure>_smoothedPressure ? 0.75 : _PRESSURE_SMOOTH;
+      _smoothedPressure = _smoothedPressure*(1-_pressureSmoothAlpha) + currentPressure*_pressureSmoothAlpha;
       // No artificial floor here Ã¢â‚¬â€ let true light pressure reach true low
       // influence; the final dab radius is still floored to a 1px-diameter
       // minimum further downstream, so the mark never fully disappears.
@@ -3779,7 +3933,22 @@ function _computeEffectiveParams(e){
   // zero-size (which would be invisible/divide-by-zero downstream); it's
   // just set low enough now to stay out of the way of an intentional thin
   // tip instead of being the thing that defines how thin "thin" can be.
-  r=Math.max(0.1,r);
+  // Zoom-aware: 0.1 canvas-px is fine at 100%+ zoom, but at low zoom the
+  // browser has to downsample many canvas pixels into fewer screen pixels
+  // for display, so a hard clamp is needed to keep the tail visible.
+  // IMPORTANT: this must be a SMOOTH minimum, not Math.max(). A hard clamp
+  // creates a sharp corner in the radius curve exactly where the natural
+  // taper crosses the floor -- and since pressure changes in small discrete
+  // steps (_MAX_PRESSURE_JUMP), consecutive dabs cross that corner in little
+  // jumps, some landing just above the floor and some getting clamped flush
+  // to it. That alternation is what produced the jagged/"shark tooth" edge
+  // instead of a smooth fade to a point. sqrt(r^2+floor^2) has no corner:
+  // it's ~r when r>>floor (taper unaffected) and eases smoothly down to
+  // floor as r->0, so the tail narrows continuously with no discontinuity
+  // for a jump-limited pressure signal to catch on.
+  const _MIN_VISIBLE_SCREEN_PX=0.35;
+  const minVisibleCanvasPx=Math.max(0.05,_MIN_VISIBLE_SCREEN_PX/Math.max(0.05,zoom));
+  r=Math.sqrt(r*r+minVisibleCanvasPx*minVisibleCanvasPx);
 
   // Stroke-start taper: DISABLED per request Ã¢â‚¬â€ every dab now draws at its
   // full computed width/alpha from the very first point of the stroke, no
@@ -4089,6 +4258,7 @@ function _brushPointerDown(e){
   if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('pressureAndStateInitialization',diagnosticSetupStart);
   if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.event('pressure-input-initialization-complete',{pressure:currentPressure,pointerType:e.pointerType});
   _strokeSegCarryOver = 0; // reset inter-segment dab carry-over
+  _capsuleSegCarryOver = 0; _lastCapsuleSample = null; // reset Phase 7C continuous-capsule state for the new stroke
   diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
   const p=getPos(e);
   if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('coordinateMappingAndTransforms',diagnosticSetupStart);
@@ -4448,6 +4618,7 @@ function _finalizePointerEndStroke(e){
   _pendingDabs.length=0;
   _curveP0=null;_curveP1=null;
   _strokeSegCarryOver=0;
+  _capsuleSegCarryOver=0;_lastCapsuleSample=null;
   _activeStrokePointerId=null;
   _strokeOwnerLayer=-1;_strokeOwnerFrame=-1;
 }
