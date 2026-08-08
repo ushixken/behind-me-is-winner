@@ -167,6 +167,38 @@ function capsuleBounds(x0, y0, x1, y1, r0, r1) {
   };
 }
 
+// Phase 9E.3 -- pixel-square coverage test for AA-off connectivity.
+//
+// capsuleCoverage()'s 'off' branch is an exact point test (d<=0 at ONE
+// sample position). That is correct for the *edge shape*, but when a
+// renderer uses it to decide a whole output pixel's coverage from a
+// single sample at that pixel's center (see prototype-renderer.js's
+// block-center sampling, added for Phase 9E.2's pixel-perfect-resolve
+// fix), a capsule whose radius has shrunk below roughly half a pixel --
+// exactly a fast-flick stroke's tapering tail -- can pass BETWEEN
+// consecutive pixel centers along a shallow diagonal without its
+// (shrinking) width ever reaching either one. Every such pixel samples
+// "outside" even though the capsule visibly sweeps through part of it,
+// producing the dotted/gapped tail this phase fixes.
+//
+// The fix is a standard conservative-rasterization test: a pixel counts
+// as covered if the capsule reaches ANY point inside that pixel's square,
+// not just its center. Exactly testing square-vs-capsule intersection is
+// more geometry than this needs; testing against the pixel's
+// circumscribed circle (radius = half the pixel's diagonal) is a safe
+// superset (never creates a gap) and pixel-cheap: same one-sample d<=r
+// test as before, just with the radius compared against widened by the
+// pixel's half-diagonal instead of 0. This is still a hard binary
+// decision (no smoothstep, no fractional alpha) -- only the threshold
+// moves, not the shape of the test.
+function pixelCoveredByCapsule(px, py, ax, ay, r0, bx, by, r1, pixelSize) {
+  const { dist, h, isRoundDab } = capsuleAxisDistance(px, py, ax, ay, bx, by);
+  const localRadius = r0 + (r1 - r0) * h;
+  const d = isRoundDab ? (dist - r0) : (dist - localRadius);
+  const halfDiag = (pixelSize == null ? 1 : pixelSize) * Math.SQRT1_2; // side * sqrt(2)/2
+  return d <= halfDiag ? 1 : 0;
+}
+
 const HardRoundCapsuleMathExports = {
   capsuleAxisDistance,
   capsuleSignedDistance,
@@ -174,6 +206,7 @@ const HardRoundCapsuleMathExports = {
   aaBand,
   subpixelAreaFactor,
   capsuleCoverage,
+  pixelCoveredByCapsule,
   capsuleBounds,
   AA_MARGIN,
   AA_MODE_SCALE,

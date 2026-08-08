@@ -114,8 +114,17 @@
       const alpha0 = seg.alpha0 == null ? 1 : seg.alpha0;
       const alpha1 = seg.alpha1 == null ? 1 : seg.alpha1;
       const b = CapsuleMath.capsuleBounds(x0, y0, x1, y1, r0, r1);
-      const sx = Math.max(0, b.sx), sy = Math.max(0, b.sy);
-      const ex = Math.min(this.bw, b.ex), ey = Math.min(this.bh, b.ey);
+      const isAaOff = seg.aaMode === 'off' || seg.aaMode === 'none';
+      // 9E.3: pixelCoveredByCapsule()'s conservative half-diagonal test
+      // reaches slightly further out than an exact d<=0 test (see below),
+      // so the bounding box needs the same extra margin or blocks right
+      // at the edge of the plain AA_MARGIN bbox get PARTIALLY filled
+      // (clipped mid-block by this bbox) instead of uniformly -- which
+      // would silently reintroduce fractional/gray resolved pixels right
+      // where 9E.2 was trying to eliminate them.
+      const extraMargin = isAaOff ? Math.ceil(ss * Math.SQRT1_2) : 0;
+      const sx = Math.max(0, b.sx - extraMargin), sy = Math.max(0, b.sy - extraMargin);
+      const ex = Math.min(this.bw, b.ex + extraMargin), ey = Math.min(this.bh, b.ey + extraMargin);
       if (ex <= sx || ey <= sy) return;
 
       // Phase 9C.2: grow the pending dirty region to cover this segment's
@@ -133,43 +142,54 @@
 
       const cov = this.coverage;
       const bw = this.bw;
-      const isAaOff = seg.aaMode === 'off' || seg.aaMode === 'none';
-      // Phase 9E.2: AA Off must resolve to a TRUE binary output pixel, not
-      // just a binary per-subpixel sample. resolveInto()/resolveDirtyInto()
-      // box-average every ss x ss block of the backing store down to one
-      // output pixel (§ SS=4 resolve, unmodified -- see below), so even
-      // with capsuleCoverage() itself returning a hard 0/1 per subpixel,
-      // independently sampling all 16 subpixels of a block still produces
-      // fractional counts (e.g. 6/16) wherever the edge crosses that block
-      // diagonally -- i.e. the exact "still gray" bug this phase fixes.
-      // The fix is NOT to touch the resolve's box-filter math (kept
-      // identical for every aaMode, per the brief) but to make every
-      // subpixel *within one output pixel's block agree*: sample the
-      // analytic coverage ONCE at that output pixel's own center, then
-      // fill its whole ss x ss block with that single binary value. A
-      // uniform block box-averages to exactly that same value, so the
-      // resolved output is always exactly 0.0 or 1.0 -- pixel-perfect
-      // stair-stepping, matching TVPaint's AA-off reference.
+      // Phase 9E.2/9E.3: AA Off must resolve to a TRUE binary output pixel
+      // that is also always CONNECTED (no dropout on thin/fast-tapering
+      // strokes). resolveInto()/resolveDirtyInto() box-average every ss x
+      // ss block of the backing store down to one output pixel (§ SS=4
+      // resolve, unmodified -- see below), so even with capsuleCoverage()
+      // itself returning a hard 0/1 per subpixel, independently sampling
+      // all 16 subpixels of a block still produces fractional counts
+      // (e.g. 6/16) wherever the edge crosses that block diagonally --
+      // the "still gray" bug 9E.2 fixed. The fix is NOT to touch the
+      // resolve's box-filter math (kept identical for every aaMode) but
+      // to make every subpixel *within one output pixel's block agree*:
+      // sample ONCE at that output pixel's own center, then fill its
+      // whole ss x ss block with that single binary value -- a uniform
+      // block box-averages to exactly that value, so the resolved output
+      // is always exactly 0.0 or 1.0.
+      //
+      // 9E.3: that single center-point sample, by itself, can miss a
+      // capsule whose radius has shrunk below ~half a pixel (a fast
+      // flick's release tail) if it threads between pixel centers along a
+      // shallow diagonal -- producing a dotted/gapped tail. Use
+      // pixelCoveredByCapsule() (conservative pixel-square vs capsule
+      // test, see hard-round-capsule-math.js) instead of an exact d<=0
+      // point test, so any pixel the capsule visibly sweeps through --
+      // not only ones whose exact center it crosses -- gets filled.
+      // Every block this loop visits is filled OVER ITS FULL EXTENT
+      // (clamped only to the canvas, never to sx/sy/ex/ey -- that bbox
+      // already has extraMargin baked in above precisely so no block gets
+      // cut off mid-way and left non-uniform).
       if (isAaOff) {
         const ss = this.ss;
         const obx0 = Math.floor(sx / ss), oby0 = Math.floor(sy / ss);
         const obx1 = Math.ceil(ex / ss), oby1 = Math.ceil(ey / ss);
         for (let oy = oby0; oy < oby1; oy++) {
           const by0 = oy * ss, by1 = Math.min(this.bh, by0 + ss);
-          if (by1 <= sy || by0 >= ey) continue;
+          if (by1 <= 0 || by0 >= this.bh) continue;
           const wy = by0 + ss * 0.5; // output pixel's center, in backing-store units
           for (let ox = obx0; ox < obx1; ox++) {
             const bx0 = ox * ss, bx1 = Math.min(this.bw, bx0 + ss);
-            if (bx1 <= sx || bx0 >= ex) continue;
+            if (bx1 <= 0 || bx0 >= this.bw) continue;
             const wx = bx0 + ss * 0.5;
             const axis = CapsuleMath.capsuleAxisDistance(wx, wy, x0, y0, x1, y1);
-            const cov01 = CapsuleMath.capsuleCoverage(wx, wy, x0, y0, r0, x1, y1, r1, seg.aaMode);
+            const cov01 = CapsuleMath.pixelCoveredByCapsule(wx, wy, x0, y0, r0, x1, y1, r1, ss);
             if (cov01 <= 0) continue;
             const segAlpha = alpha0 + (alpha1 - alpha0) * axis.h;
             const c = cov01 * segAlpha;
             if (c <= 0) continue;
-            const fillY0 = Math.max(sy, by0), fillY1 = Math.min(ey, by1);
-            const fillX0 = Math.max(sx, bx0), fillX1 = Math.min(ex, bx1);
+            const fillY0 = Math.max(0, by0), fillY1 = Math.min(this.bh, by1);
+            const fillX0 = Math.max(0, bx0), fillX1 = Math.min(this.bw, bx1);
             for (let py = fillY0; py < fillY1; py++) {
               const rowOff = py * bw;
               for (let px = fillX0; px < fillX1; px++) {
@@ -541,7 +561,12 @@
       let samplePos = select(in.pos.xy, blockCenter, in.aaOff > 0.5);
       let d = capsuleD(samplePos, in.p0, in.p1, in.r0, in.r1);
       if (in.aaOff > 0.5) {
-        let cov = select(0.0, 1.0, d <= 0.0);
+        // Phase 9E.3: conservative pixel-square test (see
+        // hard-round-capsule-math.js's pixelCoveredByCapsule) instead of
+        // an exact d<=0 point test, so a fast-flick's shrinking-radius
+        // tail can't thread between block centers and drop pixels.
+        let halfDiag = ss * 0.70710678;
+        let cov = select(0.0, 1.0, d <= halfDiag);
         return vec4f(in.alpha * cov, 0.0, 0.0, 1.0);
       }
       let denom = dot(in.p1 - in.p0, in.p1 - in.p0);

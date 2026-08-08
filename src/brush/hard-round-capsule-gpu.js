@@ -105,7 +105,10 @@
       // fragment's own position is already pixel-perfect. Kept
       // aaMode-consistent with capsuleCoverage()/the CPU backends anyway.
       if (in.aaOff > 0.5) {
-        let cov = select(0.0, 1.0, d <= 0.0);
+        // Phase 9E.3: same conservative pixel-square test as the
+        // production GpuBackend (prototype-renderer.js), scaled for this
+        // module's native (non-supersampled) 1px output pixel.
+        let cov = select(0.0, 1.0, d <= 0.70710678);
         return vec4f(in.alpha * cov, 0.0, 0.0, 1.0);
       }
       let aa = max(fwidth(d), 1e-4);
