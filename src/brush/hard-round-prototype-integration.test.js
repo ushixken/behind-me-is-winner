@@ -44,7 +44,30 @@ function makeFakeCtx(w, h) {
   const data = new Uint8ClampedArray(w * h * 4);
   return {
     createImageData(cw, ch) { return { data: new Uint8ClampedArray(cw * ch * 4), width: cw, height: ch }; },
-    putImageData(img) { data.set(img.data); },
+    // Phase 9E fix: a real CanvasRenderingContext2D.putImageData(img, dx, dy)
+    // writes img's top-left corner at canvas position (dx, dy) -- required
+    // for resolveDirtyInto()'s partial-region resolves (see
+    // prototype-renderer.js's _resolveRegion), which this stand-in was
+    // silently ignoring (always writing to buffer offset 0 regardless of
+    // dx/dy), corrupting any test that peeks mid-stroke instead of only
+    // ever doing one full-canvas resolveInto(). This was a test-harness gap
+    // only -- production code always runs against the real 2D context.
+    putImageData(img, dx = 0, dy = 0) {
+      for (let y = 0; y < img.height; y++) {
+        const ty = dy + y;
+        if (ty < 0 || ty >= h) continue;
+        for (let x = 0; x < img.width; x++) {
+          const tx = dx + x;
+          if (tx < 0 || tx >= w) continue;
+          const si = (y * img.width + x) * 4;
+          const di = (ty * w + tx) * 4;
+          data[di] = img.data[si];
+          data[di + 1] = img.data[si + 1];
+          data[di + 2] = img.data[si + 2];
+          data[di + 3] = img.data[si + 3];
+        }
+      }
+    },
     clearRect() { data.fill(0); },
     _pixel(x, y) { const p = (y * w + x) * 4; return [data[p], data[p + 1], data[p + 2], data[p + 3]]; },
   };

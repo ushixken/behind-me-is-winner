@@ -46,14 +46,38 @@ function edgeCoverage(d, aa) {
   return Math.max(0, Math.min(1, 0.5 - d / band));
 }
 
-// CPU equivalent of prototype's fwidth(d): for a capsule (not rotated
-// per-fragment, distance gradient magnitude is ~1 in world units away from
-// the two round caps and exactly 1 radially at a cap), a constant 1px-wide
-// band reproduces the same crisp, zoom-invariant ~1px transition the
-// shader's screen-space derivative gives it. Kept as its own function so
-// the "1" can be tuned in one place if a future zoom-aware caller needs it.
-function aaBand() {
-  return 1.0;
+// CPU equivalent of prototype's fwidth(d).
+//
+// Investigation (Phase 9E): in the round-cap regions (isRoundDab, or the
+// clamped h===0/h===1 ends of a tapered capsule) d is a plain circular
+// distance field, |grad d| === 1 exactly, so a constant 1px band is
+// correct there -- this was already right.
+//
+// But in the STRAIGHT part of a tapered capsule (0 < h < 1, r0 !== r1),
+// d = perpendicularDistance - localRadius(h), and localRadius changes
+// along the axis as h advances. That extra term means d's true rate of
+// change per screen pixel -- exactly what the GPU shader's fwidth(d)
+// measures -- is sqrt(1 + taperRate^2), not 1, where taperRate =
+// (r1-r0)/len is how fast the radius shrinks/grows per pixel travelled
+// along the capsule's axis. A constant 1.0 under-estimates this for any
+// segment whose radius changes appreciably over its length -- exactly a
+// thin pressure-release tail, or any small brush where a fixed absolute
+// radius delta is a large fraction of a short tessellation step -- which
+// narrows the true AA transition into a harder, more aliased edge than
+// the prototype's shader produces there. This is the source of the
+// "small brush / thin tail" blockiness relative to prototype.html: not a
+// difference in the SDF or the coverage formula, but in the width of the
+// edge band those feed into.
+//
+// Kept as its own function, with a parameterless fallback (still exactly
+// 1.0) for callers that can't supply taper info.
+function aaBand(r0, r1, ax, ay, bx, by) {
+  if (r0 === undefined) return 1.0;
+  const dx = bx - ax, dy = by - ay;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  if (len < 1e-6) return 1.0; // degenerate/round-dab segment -- caller should use 1.0 (circular field)
+  const taperRate = (r1 - r0) / len;
+  return Math.sqrt(1 + taperRate * taperRate);
 }
 
 // Subpixel-area compensation for very small dabs/capsules (prototype
@@ -76,7 +100,11 @@ function capsuleCoverage(px, py, ax, ay, r0, bx, by, r1) {
   const { dist, h, isRoundDab } = capsuleAxisDistance(px, py, ax, ay, bx, by);
   const localRadius = r0 + (r1 - r0) * h;
   const d = isRoundDab ? (dist - r0) : (dist - localRadius);
-  const aa = aaBand();
+  // Round caps (isRoundDab, or h clamped to 0/1 at a capsule's rounded
+  // end) are a pure circular distance field -- band is exactly 1. Only
+  // the straight, unclamped part of a tapered capsule needs the wider
+  // taper-aware band (see aaBand's doc comment above).
+  const aa = (isRoundDab || h <= 0 || h >= 1) ? 1.0 : aaBand(r0, r1, ax, ay, bx, by);
   const cov = edgeCoverage(d, aa);
   const area = subpixelAreaFactor(localRadius, isRoundDab);
   return cov * area;

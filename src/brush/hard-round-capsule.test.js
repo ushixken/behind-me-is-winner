@@ -98,6 +98,40 @@ test('edgeCoverage: 1 well inside, 0 well outside, ~0.5 at the boundary', () => 
   assert.ok(Math.abs(Math_.edgeCoverage(0, 1) - 0.5) < 1e-9);
 });
 
+// Phase 9E: aaBand() taper-awareness. No-taper (r0===r1) segments and
+// round dabs/caps must be untouched (band stays exactly 1) -- only a
+// tapering straight segment should widen.
+test('aaBand: no taper (r0 === r1) keeps a 1px band, matching prior behavior', () => {
+  assert.strictEqual(Math_.aaBand(3, 3, 0, 0, 10, 0), 1);
+});
+test('aaBand: no-argument call keeps a 1px band (round-dab/back-compat fallback)', () => {
+  assert.strictEqual(Math_.aaBand(), 1);
+});
+test('aaBand: a steep taper over a short segment widens the band beyond 1px', () => {
+  const band = Math_.aaBand(3, 0.1, 0, 0, 1, 0); // taperRate = -2.9
+  assert.ok(band > 3, `expected a substantially widened band for a steep taper, got ${band}`);
+  const expected = Math.sqrt(1 + 2.9 * 2.9);
+  assert.ok(Math.abs(band - expected) < 1e-9);
+});
+test('aaBand: degenerate (zero-length) segment falls back to 1px, not divide-by-zero/NaN', () => {
+  const band = Math_.aaBand(3, 0.1, 5, 5, 5, 5);
+  assert.strictEqual(band, 1);
+});
+test('capsuleCoverage: a thin, steep taper produces a softer (wider) edge transition than a uniform capsule of the same local radius', () => {
+  // Same local radius (1.55) at the sample point in both cases, but one
+  // capsule is untapered (r0===r1===1.55) and the other tapers steeply
+  // from 3 down to 0.1 over a short 1px run (taperRate=-2.9, matching the
+  // realistic thin pressure-release-tail case verified against the
+  // reference shader math) -- the taper should read partial (non-binary)
+  // coverage further from the true boundary than the uniform capsule
+  // does, because its AA band is wider (per aaBand's doc comment above).
+  const d = 0.6; // distance just outside the boundary
+  const uniform = Math_.capsuleCoverage(0.5, 1.55 + d, 0, 0, 1.55, 1, 0, 1.55);
+  const tapered = Math_.capsuleCoverage(0.5, 1.55 + d, 0, 0, 3, 1, 0, 0.1);
+  assert.strictEqual(uniform, 0, 'uniform capsule at d=0.6 with a 1px band is fully outside');
+  assert.ok(tapered > 0, `tapered capsule should still show partial coverage at d=0.6, got ${tapered}`);
+});
+
 test('subpixelAreaFactor: sub-pixel round dab scales down by true circle area, not 1', () => {
   const tiny = Math_.subpixelAreaFactor(0.05, true); // r=0.05 -> area = pi*0.0025 ~ 0.00785
   assert.ok(tiny < 0.01, `expected tiny area factor, got ${tiny}`);
