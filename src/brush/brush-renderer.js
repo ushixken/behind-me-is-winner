@@ -1805,6 +1805,37 @@ const BrushRenderer = {
     }
     return out;
   },
+  // Phase 7A: minimal, unambiguous diagnostic. getRendererStatus()/
+  // getRendererHealth() already expose this data, but nothing previously
+  // stated the two distinct facts side by side in plain language:
+  // "GPU Available" (the gpu renderer initialized successfully at some
+  // point, i.e. _gpuState.initialized) is NOT the same thing as
+  // "Active Renderer: GPU" (BrushRenderer.active is actually
+  // GpuBrushRenderer right now, so drawDab()/flushActiveRenderer() calls
+  // are really reaching it). A renderer can be available without being
+  // active (e.g. GPU initialized fine but the user is still on CPU), and
+  // — before this phase's activation fix — GPU could even be selected in
+  // the UI without ever becoming active. Read-only; does not activate,
+  // switch, or initialize anything. Intended for quick manual/console
+  // verification: window.BrushRenderer.confirmActiveRenderer().
+  confirmActiveRenderer(){
+    const active=this.getActiveRenderer();
+    const preferred=this.getPreferredRenderer();
+    const gpuAvailable=!!_gpuState.initialized;
+    const summary={
+      'Active Renderer': active?active.toUpperCase():'UNKNOWN',
+      'Preferred Renderer': preferred?preferred.toUpperCase():'UNKNOWN',
+      'GPU Available': gpuAvailable?'yes':'no',
+      'Matches Preference': active===preferred
+    };
+    if(typeof console!=='undefined'&&typeof console.log==='function'){
+      console.log('[BrushRenderer] Active Renderer:',summary['Active Renderer'],
+        '| Preferred Renderer:',summary['Preferred Renderer'],
+        '| GPU Available:',summary['GPU Available'],
+        '| Matches Preference:',summary['Matches Preference']);
+    }
+    return summary;
+  },
   // Phase 4V: unified, read-only diagnostics snapshot combining every
   // existing diagnostics API into one object. Deep-cloned via
   // JSON round-trip (all source values are plain strings/numbers/
@@ -1955,6 +1986,16 @@ const _gpuState = {
   dabTipVersion: -1,
   dabBindGroup: null,
   dabVertexBuffer: null,
+  // Phase 6O.4: coalesces the LIVE-preview presentation step (the
+  // full-canvas copyTextureToTexture blit + 16-tap compose-resolve pass
+  // in _presentLayerToCanvas) to at most once per animation frame. Dabs
+  // themselves are still drawn into accumTexture synchronously, at full
+  // input-event rate (flushDabQueue's batch upload/draw call, above,
+  // is untouched) — only the expensive "blit the composed result to the
+  // visible canvas" step is deferred/deduped. See _scheduleLivePresent().
+  livePresentRAFPending: false,
+  livePresentRAFHandle: 0,
+  livePresentOpacity: 1,
   // Diagnostics only: counts actual submitted GPU dab draw calls, as
   // opposed to dabsReceived (Phase 5A), which counts every drawDab()
   // call regardless of whether the GPU was initialized/able to draw.
@@ -2584,6 +2625,7 @@ const GpuBrushRenderer = {
         return false;
       }
     }
+    this._cancelLivePresent();
     this._presentLayerToCanvas(false,0);
     return true;
   },
@@ -2845,6 +2887,48 @@ const GpuBrushRenderer = {
   // ...) call and endStroke()'s _presentLayerToCanvas(false,...) call
   // above) — never with accumTexture alone. This is this renderer's
   // authoritative drawing surface, the GPU counterpart of activeC.
+  // Phase 6O.4: the actual bottleneck fix. Previously flushDabQueue()
+  // called _presentLayerToCanvas(true,...) synchronously on every call —
+  // and flushDabQueue() runs once per pointermove/pointerrawupdate event
+  // (brush-engine.js's _handleMoveEvent -> BrushRenderer.flushActiveRenderer()),
+  // which fires at up to ~1000Hz for pen input, far above display refresh
+  // rate. _presentLayerToCanvas does a full-canvas copyTextureToTexture
+  // blit plus a full-screen 16-tap (4x4) box-filter resolve pass — real
+  // per-pixel GPU work sized to canvas resolution, now 16 texture loads
+  // per output pixel since the 4x supersampling change (previously a
+  // single bilinear sample). Running that full pass hundreds of times a
+  // second, most of which are never even displayed (the compositor only
+  // shows the latest one before the next vsync), was the dominant cost on
+  // fast strokes.
+  // Fix: only the PRESENT step is coalesced here, via a plain
+  // requestAnimationFrame dedup identical in spirit to brush-engine.js's
+  // existing _scheduleRecomposite() coalescer. flushDabQueue()'s dab
+  // batching/upload/draw-into-accumTexture is completely unchanged, so
+  // no dab, pressure sample, or stroke data is ever dropped -- only how
+  // often the already-composed result is re-blitted to the visible
+  // canvas. If more flushes arrive before the scheduled frame runs, they
+  // just update the stored opacity and keep reusing the same pending
+  // frame, exactly like _scheduleRecomposite()'s "reuse if pending" rule.
+  _scheduleLivePresent(opacity){
+    _gpuState.livePresentOpacity=opacity;
+    if(_gpuState.livePresentRAFPending) return;
+    _gpuState.livePresentRAFPending=true;
+    _gpuState.livePresentRAFHandle=requestAnimationFrame(()=>{
+      _gpuState.livePresentRAFPending=false;
+      _gpuState.livePresentRAFHandle=0;
+      this._presentLayerToCanvas(true,_gpuState.livePresentOpacity);
+    });
+  },
+  // Phase 6O.4: cancels any pending coalesced live-present (see
+  // _scheduleLivePresent above) without running it. Used right before an
+  // authoritative, synchronous _presentLayerToCanvas(...) call (stroke
+  // commit/end, layer load) so a stale queued live-preview frame can
+  // never land AFTER — and visually stomp — the authoritative one.
+  _cancelLivePresent(){
+    if(_gpuState.livePresentRAFHandle) cancelAnimationFrame(_gpuState.livePresentRAFHandle);
+    _gpuState.livePresentRAFHandle=0;
+    _gpuState.livePresentRAFPending=false;
+  },
   getLayerSurface(){
     return _gpuState.canvas||null;
   },
@@ -3144,7 +3228,11 @@ const GpuBrushRenderer = {
       // never written back to the committed surface". See
       // _presentLayerToCanvas()/_composeStrokeOntoLayer() above.
       const liveOpacity=(typeof brushOpacity==='number')?brushOpacity:1;
-      this._presentLayerToCanvas(true,liveOpacity);
+      // Phase 6O.4: was a synchronous _presentLayerToCanvas(true,...)
+      // call here, on every flush (i.e. every pointermove/pointerrawupdate).
+      // Now coalesced to at most once per animation frame -- see
+      // _scheduleLivePresent() above for why.
+      this._scheduleLivePresent(liveOpacity);
 
       _gpuState.dabsDrawn+=dabCount;
       _gpuState.submittedDabs+=dabCount;
@@ -3410,6 +3498,7 @@ const GpuBrushRenderer = {
     // reads via ctx.globalAlpha in _commitStrokeCanvas().
     const opacity=(typeof brushOpacity==='number')?brushOpacity:1;
     this._composeStrokeOntoLayer(opacity);
+    this._cancelLivePresent();
     this._presentLayerToCanvas(false,0);
     return flushed;
   },

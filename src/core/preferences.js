@@ -768,7 +768,47 @@ document.getElementById('pref-cursor-brush-shape').onchange=e=>{ if(e.target.che
   // codebase (e.g. site-dialog.js) — so
   // BrushRenderer.removePreferenceChanged(_prefRendererListener) is a
   // trivial one-liner if a teardown path is ever introduced.
-  function _prefRendererListener(){ renderAll(); }
+  //
+  // Phase 7A: root-cause fix. Previously this listener only called
+  // renderAll() — selectPreferredRenderer() (invoked by the radio's
+  // onchange above) only ever calls setPreferredRenderer(), which just
+  // stores a name in _preferredName/localStorage and fires this
+  // notification. Nothing in that chain ever called activateRenderer()
+  // or applyPreferredRenderer(), so BrushRenderer.active silently stayed
+  // whatever it already was (almost always CpuBrushRenderer, since that
+  // is the default set at module load — see brush-renderer.js's
+  // BrushRenderer.setActiveRenderer('cpu') call). Picking "GPU" in this
+  // picker updated the stored preference and the displayed "Preferred"
+  // label, but never actually switched the renderer that
+  // BrushRenderer.drawDab()/flushActiveRenderer() dispatch to — the user
+  // was still drawing on CPU regardless of what the radio showed.
+  // Fix: reuse the EXACT SAME activation call the existing Apply button
+  // already uses (window.BrushRenderer.applyPreferredRenderer(), which
+  // itself only delegates to the pre-existing activateRenderer() — no
+  // new activation logic is introduced here) so choosing an option in
+  // this list is no longer a silent no-op. Guarded by the same
+  // _applyInProgress flag the Apply button uses so a rapid
+  // radio-click-then-Apply-click sequence can't race two concurrent
+  // activations of different renderers.
+  async function _prefRendererListener(){
+    if(_applyInProgress){ renderAll(); return; }
+    if(typeof window.BrushRenderer.applyPreferredRenderer!=='function'){ renderAll(); return; }
+    _applyInProgress=true;
+    const originalLabel=applyBtn.textContent;
+    applyBtn.disabled=true;
+    applyBtn.textContent='Applying…';
+    try{
+      await window.BrushRenderer.applyPreferredRenderer();
+    }catch(e){
+      // Swallow — failure is reflected via renderStatus() below, not by
+      // throwing out of a preference-change notification.
+    }finally{
+      renderAll();
+      applyBtn.disabled=false;
+      applyBtn.textContent=originalLabel;
+      _applyInProgress=false;
+    }
+  }
   window._prefRendererListener=_prefRendererListener;
   if(typeof window.BrushRenderer.onPreferenceChanged==='function'){
     window.BrushRenderer.onPreferenceChanged(_prefRendererListener);
