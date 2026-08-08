@@ -115,6 +115,12 @@
       const alpha1 = seg.alpha1 == null ? 1 : seg.alpha1;
       const b = CapsuleMath.capsuleBounds(x0, y0, x1, y1, r0, r1);
       const isAaOff = seg.aaMode === 'off' || seg.aaMode === 'none';
+      // Phase 9E.4: whether this segment carries the stroke's true open
+      // start/end (set by the caller -- see hard-round-adapter.js /
+      // brush-engine.js's _hardRoundStampSegments) so the tip test below
+      // can use the strict point test only there, not on every joint.
+      const isFirstSegment = !!seg.isStrokeStart;
+      const isLastSegment = !!seg.isStrokeEnd;
       // 9E.3: pixelCoveredByCapsule()'s conservative half-diagonal test
       // reaches slightly further out than an exact d<=0 test (see below),
       // so the bounding box needs the same extra margin or blocks right
@@ -183,7 +189,9 @@
             if (bx1 <= 0 || bx0 >= this.bw) continue;
             const wx = bx0 + ss * 0.5;
             const axis = CapsuleMath.capsuleAxisDistance(wx, wy, x0, y0, x1, y1);
-            const cov01 = CapsuleMath.pixelCoveredByCapsule(wx, wy, x0, y0, r0, x1, y1, r1, ss);
+            const cov01 = CapsuleMath.pixelCoveredByCapsuleForStroke(
+              wx, wy, x0, y0, r0, x1, y1, r1, ss, isFirstSegment, isLastSegment
+            );
             if (cov01 <= 0) continue;
             const segAlpha = alpha0 + (alpha1 - alpha0) * axis.h;
             const c = cov01 * segAlpha;

@@ -199,6 +199,47 @@ function pixelCoveredByCapsule(px, py, ax, ay, r0, bx, by, r1, pixelSize) {
   return d <= halfDiag ? 1 : 0;
 }
 
+// Phase 9E.4 -- stroke-tip-aware coverage test for AA-off.
+//
+// pixelCoveredByCapsule()'s conservative half-diagonal test is what keeps
+// a stroke's INTERIOR connected across segment joints and fast-tapering
+// tails (9E.3). But investigation showed that dilation isn't confined to
+// a joint point -- it widens the ENTIRE segment's effective radius by up
+// to half a pixel's diagonal (~0.71px). For most interior segments that's
+// invisible (the segment is long relative to that dilation). But the
+// stroke's first and last segments are exactly the ones whose outer half
+// is a round cap with no neighboring segment to connect to -- there is no
+// joint there to protect -- and on a short first/last segment (the common
+// case: the very first pointer sample to the second, or the final taper
+// segment) that dilation band covers most or all of the segment's length,
+// not just its rounded tip, thickening the whole visible start/end of the
+// stroke to 2-3px instead of TVPaint's exact 1px.
+//
+// The fix: the two true open ends of the whole stroke -- the first
+// segment and the last segment -- use the strict, exact "is this pixel's
+// center inside the shape" test (the same d<=0 point test
+// capsuleCoverage()'s own 'off' branch already uses) over their ENTIRE
+// span, not just their clamped round-cap region. Every interior segment
+// (no isFirstSegment/isLastSegment flag) keeps the original conservative
+// test unchanged, so segment-to-segment joints and fast-tapering tails
+// stay connected exactly as 9E.3 left them. A segment that is both first
+// and last (a single-segment stroke) is strict throughout, matching a
+// short click/dab in TVPaint. isFirstSegment/isLastSegment default to
+// false so any caller that doesn't know its position in the stroke (e.g.
+// the standalone single-segment renderer, or pre-9E.4 tests) gets back
+// pixelCoveredByCapsule()'s original, unchanged behavior.
+function pixelCoveredByCapsuleForStroke(px, py, ax, ay, r0, bx, by, r1, pixelSize, isFirstSegmentIn, isLastSegmentIn) {
+  const isFirstSegment = !!isFirstSegmentIn, isLastSegment = !!isLastSegmentIn;
+  const { dist, h, isRoundDab } = capsuleAxisDistance(px, py, ax, ay, bx, by);
+  const localRadius = r0 + (r1 - r0) * h;
+  const d = isRoundDab ? (dist - r0) : (dist - localRadius);
+  if (isFirstSegment || isLastSegment) {
+    return d <= 0 ? 1 : 0;
+  }
+  const halfDiag = (pixelSize == null ? 1 : pixelSize) * Math.SQRT1_2;
+  return d <= halfDiag ? 1 : 0;
+}
+
 const HardRoundCapsuleMathExports = {
   capsuleAxisDistance,
   capsuleSignedDistance,
@@ -207,6 +248,7 @@ const HardRoundCapsuleMathExports = {
   subpixelAreaFactor,
   capsuleCoverage,
   pixelCoveredByCapsule,
+  pixelCoveredByCapsuleForStroke,
   capsuleBounds,
   AA_MARGIN,
   AA_MODE_SCALE,

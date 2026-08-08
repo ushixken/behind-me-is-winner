@@ -70,7 +70,9 @@
         // as PrototypeRenderer's block-center sampling -- use the same
         // conservative pixel-square test for Off/None.
         const cov01 = isAaOff
-          ? Math_.pixelCoveredByCapsule(wx, wy, x0, y0, r0, x1, y1, r1, 1)
+          ? Math_.pixelCoveredByCapsuleForStroke(
+              wx, wy, x0, y0, r0, x1, y1, r1, 1, !!seg.isStrokeStart, !!seg.isStrokeEnd
+            )
           : Math_.capsuleCoverage(wx, wy, x0, y0, r0, x1, y1, r1, aaMode);
         if (cov01 <= 0) continue;
         const segAlpha = alpha0 + (alpha1 - alpha0) * axis.h;

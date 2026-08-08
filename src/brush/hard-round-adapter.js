@@ -190,6 +190,14 @@ function resolveSegmentRenderParams(segment, opts) {
     composite: o.composite || 'paint',
     hardness: o.hardness == null ? 1 : o.hardness,
     aaMode: o.aaMode || 'normal',
+    // Phase 9E.4: passed through so the renderer can give the stroke's
+    // true open start/end a strict 1px tip instead of the conservative
+    // connectivity dilation used at interior joints. Caller (see
+    // brush-engine.js's _hardRoundStampSegments) sets these on the input
+    // segment/opts; default false so every existing caller/test that
+    // never mentions them keeps the original conservative behavior.
+    isStrokeStart: !!(seg.isStrokeStart || o.isStrokeStart),
+    isStrokeEnd: !!(seg.isStrokeEnd || o.isStrokeEnd),
   };
 }
 

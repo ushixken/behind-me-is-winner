@@ -4621,8 +4621,22 @@ function _hardRoundEligibleNow(){
 // (derived from pressure0/influence0 and pressure1/influence1 via
 // HardRoundAdapter.resolveSegmentRenderParams, the SAME radius primitive
 // used everywhere else in this module) define its continuous taper.
+let _hardRoundNextStampIsFirst = false; // Phase 9E.4 -- see _hardRoundStampSegments doc
+let _hardRoundNextStampIsLast = false;
 function _hardRoundStampSegments(segments, e){
   if(!segments || !segments.length) return;
+  // Phase 9E.4: mark the stroke's true open start/end (not just this
+  // batch's first/last -- batches are per pointermove, the stroke's own
+  // first/last segment is only ever the single beginStroke() dab and the
+  // final finishStroke() segment respectively) so the renderer can give
+  // those two tips a strict 1px point test instead of the conservative
+  // connectivity dilation used everywhere else. Callers set
+  // _hardRoundNextStampIsFirst/_hardRoundNextStampIsLast just before
+  // invoking this function (see call sites below) rather than an added
+  // parameter, so this function keeps its original two-argument
+  // signature for source-matching tests elsewhere in this suite.
+  if(_hardRoundNextStampIsFirst){ segments[0].isStrokeStart = true; _hardRoundNextStampIsFirst = false; }
+  if(_hardRoundNextStampIsLast){ segments[segments.length-1].isStrokeEnd = true; _hardRoundNextStampIsLast = false; }
   const adapter = typeof window!=='undefined' && window.HardRoundAdapter;
   const renderer = _hardRoundRenderer;
   if(!adapter || !renderer) return;
@@ -5074,6 +5088,7 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
       _hardRoundCore.updateSettings({brushSize:getBrushSize(),stabilization:_stabilizationAmount(),zoom});
       const beginSeg=_hardRoundCore.beginStroke({x:p.x,y:p.y,pressure:currentPressure,pointerType:e.pointerType,timeStamp:e.timeStamp||performance.now()});
       _hardRoundGetRenderer().beginStroke();
+      _hardRoundNextStampIsFirst = true;
       _hardRoundStampSegments([beginSeg],e);
     } else {
       _stampDab(p.x,p.y,e);
@@ -5324,6 +5339,7 @@ function _pointerEndStroke(e){
     const finalRaw=getPos(e);
     const finalPressure=_getPressure(e);
     const finish=_hardRoundCore.finishStroke({x:finalRaw.x,y:finalRaw.y,pressure:finalPressure,pointerType:e.pointerType,timeStamp:e.timeStamp||performance.now()});
+    _hardRoundNextStampIsLast = true;
     _hardRoundStampSegments(finish.segments,e);
     // Phase 9C.1 perf fix: drop any RAF-scheduled live preview now -- the
     // authoritative endStroke() resolve below supersedes it, and letting a
