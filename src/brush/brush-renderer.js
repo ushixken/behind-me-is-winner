@@ -2234,6 +2234,13 @@ const GpuBrushRenderer = {
   // still only stages the exact raw `d` object drawDab() already
   // received, unmodified.
   drawDab(d,rendererContext){
+    // TEMP PHASE 7A DIAGNOSTIC — remove before finalizing.
+    if(window.__PHASE7A_DEBUG__){
+      console.log('[Phase7A][GpuBrushRenderer.drawDab] called',{
+        x:d&&d.x, y:d&&d.y, r:d&&d.r, alpha:d&&d.alpha,
+        composite:d&&d.composite, finite:!!(d&&isFinite(d.x)&&isFinite(d.y)&&isFinite(d.r))
+      });
+    }
     _gpuState.dabsReceived+=1;
     // A stroke has one tool/composite mode. Preserve that existing dab
     // classification for the live and commit composition passes.
@@ -2337,6 +2344,30 @@ const GpuBrushRenderer = {
     _gpuState.dabTipTextureHeight=height;
     return true;
   },
+  // TEMP PHASE 7A DIAGNOSTIC — remove before finalizing. Fire-and-forget
+  // (pipeline creation here is synchronous by design; this does not
+  // block or change that) dump of every compilation message WebGPU
+  // actually produced for a shader module, keyed by a human label so
+  // multiple modules (dab/compose/erase-compose/test) are distinguishable
+  // in the console. This is the ONLY reliable source of the real WGSL
+  // compiler error/line/column — everything else (InvalidShaderModule/
+  // InvalidRenderPipeline/InvalidCommandBuffer/InvalidRenderPassEncoder)
+  // is just cascading fallout from this.
+  _debugLogShaderCompilation(shaderModule,label){
+    if(!window.__PHASE7A_DEBUG__||!shaderModule||typeof shaderModule.getCompilationInfo!=='function') return;
+    shaderModule.getCompilationInfo().then((info)=>{
+      if(!info.messages.length){
+        console.log('[Phase7A][shader-compile]',label,'— 0 messages (clean compile)');
+        return;
+      }
+      info.messages.forEach((m)=>{
+        console.log('[Phase7A][shader-compile]',label,
+          'type=',m.type,'line=',m.lineNum,'col=',m.linePos,'message=',m.message);
+      });
+    }).catch((err)=>{
+      console.log('[Phase7A][shader-compile]',label,'getCompilationInfo() failed:',err);
+    });
+  },
   createDabPipeline(){
     if(_gpuState.dabPipeline) return true;
 
@@ -2375,6 +2406,19 @@ const GpuBrushRenderer = {
         // renderer's separate, larger hardness-falloff gradient, which
         // is supplied per dab from the shared CPU falloff calculation.
         let dist = length(in.uv);
+        // Phase 7A shader-compile fix: fwidth() (a derivative builtin)
+        // must be called from uniform control flow — WGSL's uniformity
+        // analysis rejects it inside a branch whose condition depends on
+        // a per-fragment value like in.inner_frac (see the exact
+        // compiler error this replaces: "'fwidth' must only be called
+        // from uniform control flow" / "parameter 'in' of 'fs_main' may
+        // be non-uniform"). It was previously computed only inside the
+        // in.inner_frac >= 1.0 branch below. Fix: compute it here,
+        // unconditionally, before any branch — every fragment now takes
+        // this same derivative call regardless of which branch it later
+        // enters — and only its result is used conditionally below. No
+        // change to the actual coverage math in either branch.
+        let px = fwidth(dist);
         var coverage: f32;
         if (in.inner_frac >= 1.0) {
           // AA mode "none": the CPU aliased path (_getAliasedStamp) rasterizes
@@ -2389,8 +2433,8 @@ const GpuBrushRenderer = {
           // same "pixel is on if the true edge passes anywhere through it"
           // boundary the CPU rasterizer already snapped to, while staying a
           // hard 0 or 1 step (no partial-alpha fringe) exactly like the CPU
-          // pencil's pixel-quantized output.
-          let px = fwidth(dist);
+          // pencil's pixel-quantized output. px is computed above,
+          // unconditionally, outside this branch (Phase 7A fix).
           coverage = select(0.0, 1.0, dist < 1.0 + 0.5 * px);
         } else {
           coverage = 1.0 - smoothstep(in.inner_frac, 1.0, dist);
@@ -2410,6 +2454,7 @@ const GpuBrushRenderer = {
     `;
 
     const shaderModule=device.createShaderModule({code:shaderCode});
+    this._debugLogShaderCompilation(shaderModule,'dab-shader');
     const bindGroupLayout=device.createBindGroupLayout({entries:[
       {binding:0,visibility:GPUShaderStage.FRAGMENT,sampler:{type:'filtering'}},
       {binding:1,visibility:GPUShaderStage.FRAGMENT,texture:{sampleType:'float'}},
@@ -2745,6 +2790,7 @@ const GpuBrushRenderer = {
       }
     `;
     const shaderModule=device.createShaderModule({code:shaderCode});
+    this._debugLogShaderCompilation(shaderModule,'compose-shader (backs both compose + erase-compose pipelines)');
     const bindGroupLayout=device.createBindGroupLayout({
       entries:[
         {binding:0,visibility:GPUShaderStage.FRAGMENT,sampler:{type:'filtering'}},
@@ -2929,7 +2975,62 @@ const GpuBrushRenderer = {
     _gpuState.livePresentRAFHandle=0;
     _gpuState.livePresentRAFPending=false;
   },
+  // Phase 7A hotfix: getLayerSurface() is the synchronous read path every
+  // external consumer goes through (BrushRenderer.getActiveSurface() ->
+  // panels.js's recomposite(), brush-engine.js's stroke-replay/selection
+  // captures, etc.). _scheduleLivePresent() above intentionally defers the
+  // actual copyTextureToTexture+compose blit onto _gpuState.canvas to a
+  // requestAnimationFrame callback for performance (see Phase 6O.4). That
+  // RAF is scheduled independently of, and with no ordering guarantee
+  // relative to, brush-engine.js's own _scheduleRecomposite() RAF — and on
+  // the very first dab of a stroke, _scheduleRecomposite() calls
+  // recomposite() SYNCHRONOUSLY (its "immediate" first-dab-latency path),
+  // before the live-present RAF has ever had a chance to run. The result:
+  // getLayerSurface() returns a canvas that has not yet been blitted with
+  // the current stroke's content — recomposite() dutifully draws it, but
+  // there's nothing new there to see, so GPU strokes render invisible
+  // (particularly on click / short strokes, which never survive long
+  // enough for a later frame to catch up). CpuBrushRenderer has no such
+  // gap since its surface is always synchronously current.
+  // Fix: if a live-present is still pending when the surface is actually
+  // read out-of-band, run it synchronously right now (and cancel the
+  // now-redundant RAF) instead of trusting a future frame to land first.
+  // This preserves the Phase 6O.4 coalescing for the common case (many
+  // flushes between reads collapse to one blit) while guaranteeing any
+  // caller that asks for the surface always gets it caught up first.
+  // TEMP PHASE 7A DIAGNOSTIC — remove before finalizing. Reads back a
+  // single pixel from any GPU texture via copyTextureToBuffer +
+  // mapAsync, for console-driven inspection of accumTexture/
+  // layerTexture content (checklist items 6/7). Usage from DevTools
+  // console, after drawing a stroke with GPU active:
+  //   await BrushRenderer.active._debugReadPixel(BrushRenderer.active._debugAccumTexture(), x, y)
+  //   await BrushRenderer.active._debugReadPixel(BrushRenderer.active._debugLayerTexture(), x, y)
+  async _debugReadPixel(texture,x,y){
+    if(!texture||!_gpuState.device) return null;
+    const bytesPerRow=256; // min alignment; we only read 1 texel anyway
+    const readBuffer=_gpuState.device.createBuffer({
+      size:bytesPerRow,
+      usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ
+    });
+    const encoder=_gpuState.device.createCommandEncoder();
+    encoder.copyTextureToBuffer(
+      {texture,origin:{x,y,z:0}},
+      {buffer:readBuffer,bytesPerRow},
+      {width:1,height:1}
+    );
+    _gpuState.queue.submit([encoder.finish()]);
+    await readBuffer.mapAsync(GPUMapMode.READ);
+    const data=new Uint8Array(readBuffer.getMappedRange().slice(0,4));
+    readBuffer.unmap();
+    return {r:data[0],g:data[1],b:data[2],a:data[3]};
+  },
+  _debugAccumTexture(){ return _gpuState.accumTexture; },
+  _debugLayerTexture(){ return _gpuState.layerTexture; },
   getLayerSurface(){
+    if(_gpuState.livePresentRAFPending){
+      this._cancelLivePresent();
+      this._presentLayerToCanvas(true,_gpuState.livePresentOpacity);
+    }
     return _gpuState.canvas||null;
   },
   // Retained for any existing caller still asking for "the stroke
@@ -3048,6 +3149,10 @@ const GpuBrushRenderer = {
     }
     _gpuState.dabQueue.push(d);
     _gpuState.queuedDabs=_gpuState.dabQueue.length;
+    // TEMP PHASE 7A DIAGNOSTIC — remove before finalizing.
+    if(window.__PHASE7A_DEBUG__){
+      console.log('[Phase7A][_enqueueDab] dabQueue.length =',_gpuState.dabQueue.length);
+    }
     return true;
   },
   // Phase 5E: flush method. Drains the queue built up by drawDab()'s
@@ -3105,6 +3210,12 @@ const GpuBrushRenderer = {
   _flushDabQueueImplTimed(reason){
     const flushReason=reason||'unspecified';
     const dabCount=_gpuState.dabQueue.length;
+    // TEMP PHASE 7A DIAGNOSTIC — remove before finalizing.
+    if(window.__PHASE7A_DEBUG__){
+      console.log('[Phase7A][_flushDabQueueImplTimed] reason=',flushReason,'dabCount=',dabCount,
+        'gpuInitialized=',_gpuState.initialized,'hasDevice=',!!_gpuState.device,
+        'hasContext=',!!_gpuState.context,'hasCanvas=',!!_gpuState.canvas);
+    }
     if(dabCount===0){
       this._recordFlush(flushReason,true);
       return true;
@@ -3173,6 +3284,16 @@ const GpuBrushRenderer = {
         this._writeDabQuadInto(verts,i*60,_gpuState.dabQueue[i],_gpuState.accumTextureWidth,_gpuState.accumTextureHeight,_gpuState.accumSupersample);
       }
       _gpuState.queue.writeBuffer(_gpuState.dabVertexBuffer,0,verts);
+      // TEMP PHASE 7A DIAGNOSTIC — remove before finalizing.
+      if(window.__PHASE7A_DEBUG__){
+        let nonZero=0;
+        for(let vi=0;vi<verts.length;vi+=10){ if(verts[vi]!==0||verts[vi+1]!==0) nonZero++; }
+        console.log('[Phase7A][flush] vertex buffer written. floats=',verts.length,
+          'nonZeroVerts=',nonZero,'/',verts.length/10,
+          'accumTex=',_gpuState.accumTextureWidth,'x',_gpuState.accumTextureHeight,
+          'ss=',_gpuState.accumSupersample,
+          'sampleVerts(first dab, first 2 corners)=',Array.from(verts.slice(0,20)));
+      }
 
       if(!this.createCommandEncoder()){
         _gpuState.failedBatches+=1;
@@ -3206,12 +3327,21 @@ const GpuBrushRenderer = {
       pass.setPipeline(_gpuState.dabPipeline);
       pass.setBindGroup(0,_gpuState.dabBindGroup);
       pass.setVertexBuffer(0,_gpuState.dabVertexBuffer);
+      // TEMP PHASE 7A DIAGNOSTIC — remove before finalizing.
+      if(window.__PHASE7A_DEBUG__){
+        console.log('[Phase7A][flush] render pass begun. pipeline=',!!_gpuState.dabPipeline,
+          'bindGroup=',!!_gpuState.dabBindGroup,'vertexBuffer=',!!_gpuState.dabVertexBuffer,
+          'about to draw() vertexCount=',dabCount*6,'targetView=accumTexture');
+      }
       // Single draw call for the entire batch: 6 vertices per dab,
       // dabCount dabs, no indices, no instancing. Unchanged from
       // before 6O.2 — only the destination texture's resolution (and
       // the vertex positions computed against it) changed.
       pass.draw(dabCount*6);
       pass.end();
+      if(window.__PHASE7A_DEBUG__){
+        console.log('[Phase7A][flush] draw() issued and pass ended. Submitting...');
+      }
       if(!this.submitCommands()){
         _gpuState.failedBatches+=1;
         _gpuState.failedDabs+=dabCount;
@@ -3590,6 +3720,19 @@ const GpuBrushRenderer = {
         this._recordError('device-unavailable');
         return false;
       }
+      // TEMP PHASE 7A DIAGNOSTIC — remove before finalizing. Surfaces
+      // WebGPU validation/OOM/internal errors that would otherwise be
+      // silently swallowed by the browser (no console output at all
+      // unless something explicitly listens for them). This is the
+      // single most direct way to see "pipeline X is invalid" /
+      // "bind group entry Y mismatch" style errors mentioned in the
+      // Phase 7A checklist item 5.
+      device.onuncapturederror=(ev)=>{
+        console.error('[Phase7A][WebGPU uncaptured error]',ev.error && ev.error.message,ev.error);
+      };
+      device.lost.then((info)=>{
+        console.error('[Phase7A][WebGPU device lost]',info.reason,info.message);
+      });
       _gpuState.adapter=adapter;
       _gpuState.device=device;
       _gpuState.queue=device.queue;
@@ -3816,6 +3959,7 @@ const GpuBrushRenderer = {
     `;
 
     const shaderModule=device.createShaderModule({code:shaderCode});
+    this._debugLogShaderCompilation(shaderModule,'test-pipeline-shader (dead code, not wired into any draw path)');
 
     const pipelineLayout=device.createPipelineLayout({bindGroupLayouts:[]});
 
