@@ -640,7 +640,7 @@ class PrototypeStrokeCore {
   }
 }
 
-module.exports = {
+const PrototypeStrokeCoreExports = {
   PrototypeStrokeCore,
   // exported for the deterministic test harness / future callers that need
   // the pure helpers directly without a stroke instance:
@@ -650,3 +650,16 @@ module.exports = {
   HOLD_BEFORE_LIFT_MS,
   CONTACT_PRESSURE_FLOOR,
 };
+
+// Phase 8C: this module is now loaded as a plain <script> in index.html (no
+// bundler/CommonJS in the browser), in addition to being `require()`d by the
+// Node-based deterministic test harness. Export to whichever environment is
+// present instead of assuming Node, so `module.exports` doesn't throw a
+// ReferenceError in the browser.
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = PrototypeStrokeCoreExports;
+}
+if (typeof window !== 'undefined') {
+  window.PrototypeStrokeCore = PrototypeStrokeCore;
+  window.PrototypeStrokeCoreModule = PrototypeStrokeCoreExports;
+}

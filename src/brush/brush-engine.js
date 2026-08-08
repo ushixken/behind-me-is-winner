@@ -4020,7 +4020,15 @@ function _endStroke(pointerId){
   _baselineConditionerFinish(true);
   _stopAirbrushSpray();
   _autoHardRoundPrevDab=null;
-  if(drawing){drawing=false;_flushStrokeTail();if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();}
+  if(drawing){
+    drawing=false;
+    // Phase 8C: an eligible Hard Round stroke has no legacy tail to flush --
+    // every resolved segment was already stamped as it arrived -- so just
+    // discard PrototypeStrokeCore's buffered state for this aborted stroke.
+    if(_hardRoundStrokeActive && _hardRoundCore){ _hardRoundCore.cancelStroke(); }
+    else { _flushStrokeTail(); }
+    if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();
+  }
   if(lineStart&&(_lineDragging||_curveToolGesture)){
     // Line drag aborted mid-gesture (pointercancel, tab blur, etc.) -- undo
     // was never pushed and the layer was never touched, so just discard the
@@ -4354,7 +4362,15 @@ function _computeEffectiveParams(e){
   }
 
   // Size dynamics
-  if(sizeCtrl !== 'off'){
+  // Phase 8C: migrated Hard Round strokes compute `r` themselves (via
+  // PrototypeStrokeCore's resolved influence, see _hardRoundStampSegments
+  // below) and hand it in here through _hardRoundRadiusOverride so every
+  // other Size-dynamics consumer of _stampDab stays completely untouched.
+  // This is the ONLY place PrototypeStrokeCore's radius enters the shared
+  // dab rasterizer -- see Phase 8C report §2/§3.
+  if(_hardRoundRadiusOverride!=null){
+    r=_hardRoundRadiusOverride;
+  } else if(sizeCtrl !== 'off'){
     // Pressure: only auto-apply when drawing with a pen (mouse has no real pressure).
     const applySize = (sizeCtrl === 'pressure') ? isPenStroke : true;
     if(applySize){
@@ -4489,6 +4505,96 @@ function _computeSpacingRadius(e, interpolatedPressure){
   }
   const isHardRoundPressure=tool==='brush'&&_isDrawingWithPen&&!window.brushTipCanvas&&brushHardness>=0.995&&sizeCtrl==='pressure';
   return Math.max(isHardRoundPressure?0.25:0.05,r);
+}
+
+// ---------------------------------------------------------------------
+// Phase 8C — Hard Round -> PrototypeStrokeCore integration
+//
+// Scope: brush tool, pen input, Hard Round only (see _hardRoundEligibleNow
+// below for the exact procedural condition, §9). Everything else (Soft
+// Round, custom tips, texture, scatter, eraser, mouse strokes) keeps using
+// the legacy pointerdown/_handleMoveEvent/_pointerEndStroke pipeline above,
+// completely unmodified.
+//
+// Integration boundary:
+//   pointer/coalesced input -> PrototypeStrokeCore -> resolved segments
+//   -> _hardRoundStampSegments() -> the SAME _stampDab() every other brush
+//   uses (color/composite/AA/hardness/flow/opacity/scatter untouched) with
+//   only its radius source swapped out via _hardRoundRadiusOverride.
+//
+// No second/duplicate rendering path is introduced: this repo's actual
+// production Hard Round renderer is _stampDab()'s dab-walking rasterizer
+// (there is no separate capsule/segment GPU+CPU renderer from an earlier
+// phase in this codebase to reuse -- see the Phase 8C report for the note
+// on that discrepancy vs. the brief). PrototypeStrokeCore's resolved
+// samples are already densely subdivided (10 steps per quad segment, plus
+// long-jump subdivision), so stamping one dab per resolved sample point
+// reproduces a continuous stroke through the existing rasterizer without
+// inventing a new geometry pipeline.
+// ---------------------------------------------------------------------
+
+let _hardRoundCore = null;          // single PrototypeStrokeCore instance, reused across strokes
+let _hardRoundStrokeActive = false; // decided once at pointerdown, for the life of that stroke only
+let _hardRoundRadiusOverride = null; // read by _computeEffectiveParams's Size-dynamics block above
+
+function _hardRoundGetCore(){
+  if(!_hardRoundCore && typeof window!=='undefined' && window.PrototypeStrokeCore){
+    _hardRoundCore = new window.PrototypeStrokeCore();
+  }
+  return _hardRoundCore;
+}
+
+// Exact eligibility condition (Phase 8C §9). Procedural, not a preset-name
+// check: any brush whose settings match this exactly gets the migrated
+// behavior, and Hard Round itself would NOT match if the user changed any
+// of these (e.g. lowered hardness, added a custom tip, turned on scatter),
+// correctly falling back to the legacy path. See hard-round-adapter.js for
+// the pure, unit-tested implementation.
+function _hardRoundEligibleNow(){
+  const fn = typeof window!=='undefined' && window.HardRoundAdapter && window.HardRoundAdapter.isHardRoundEligible;
+  if(!fn) return false;
+  return fn({
+    tool,
+    isPen: _isDrawingWithPen,
+    hasCustomTip: !!window.brushTipCanvas,
+    hardness: brushHardness,
+    sizeControl: _getSizeControl(),
+    roundness: window.brushTipRoundness,
+    scatterEnabled: !!window._tsScatterEnabled,
+    textureEnabled: !!window.brushTextureEnabled,
+    airbrush: !!window._brushAirbrush,
+  });
+}
+
+// Stamps every PrototypeStrokeCore resolved segment via the existing
+// _stampDab rasterizer. `seg.pressure1`/`seg.influence1` are the segment's
+// trailing-edge (newest) sample -- consecutive segments share endpoints, so
+// using the trailing edge of each is equivalent to stamping at every
+// resolved point along the curve exactly once.
+function _hardRoundStampSegments(segments, e){
+  if(!segments || !segments.length) return;
+  const adapter = typeof window!=='undefined' && window.HardRoundAdapter;
+  if(!adapter) return;
+  const baseSize = getBrushSize();
+  const minSizeFrac = _getMinSize();
+  const curveKey = _getPressureCurve('size');
+  const previousFlowRatio = _flowSpacingRatio;
+  for(const seg of segments){
+    currentPressure = seg.pressure1;
+    _hardRoundRadiusOverride = adapter.resolveEffectiveRadius({
+      baseSize, minSizeFrac, curveKey,
+      pressure: seg.pressure1, influence: seg.influence1,
+      applyPressureCurve: _applyPressureCurve,
+    });
+    // The resolved-point density from PrototypeStrokeCore already tracks
+    // the current effective radius (its own subdivision/maxStep logic),
+    // so dabs are placed at unit flow ratio here -- Flow/Opacity dynamics
+    // are still fully driven by seg.pressure1 above, untouched.
+    _flowSpacingRatio = 1;
+    try{ _stampDab(seg.x1, seg.y1, e); }
+    finally{ _hardRoundRadiusOverride = null; }
+  }
+  _flowSpacingRatio = previousFlowRatio;
 }
 
 // Carry-over: leftover distance from the end of each segment so the first
@@ -4694,6 +4800,10 @@ function _brushPointerDown(e){
   const inputStateStart=latencyProfiler?performance.now():0;
   diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
   _isDrawingWithPen = (e.pointerType === 'pen');
+  // Phase 8C: decided once, for the whole stroke, right after pointerType is
+  // known. Re-evaluating mid-stroke (e.g. if the user hot-swapped a setting
+  // while held down) would risk switching renderers under a live stroke.
+  _hardRoundStrokeActive = tool==='brush' && _hardRoundEligibleNow() && !!_hardRoundGetCore();
   _strokeFirstSample = true; // this stroke's first _getPressure() call snaps immediately, no de-jitter clamping
   currentPressure=_getPressure(e);
   _smoothedPressure = currentPressure; // snap smoothing to actual pressure at stroke start (no ramp-in lag)
@@ -4794,7 +4904,19 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
   if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.finalizeSetup(performance.now());
   const diagnosticDabStart=window.FirstDabLatencyProbe?window.FirstDabLatencyProbe.firstDabStart():0;
   const firstDabStart=latencyProfiler?performance.now():0;if(latencyProfiler)latencyProfiler.point('first-dab-rasterization-start');
-  try{_stampDab(p.x,p.y,e);}
+  try{
+    if(_hardRoundStrokeActive){
+      // Phase 8C: Hard Round's initial dab comes from PrototypeStrokeCore's
+      // beginStroke() zero-length segment instead of a direct _stampDab call,
+      // so the very first mark already has this stroke's continuous-taper
+      // radius source instead of the legacy pressure-curve one.
+      _hardRoundCore.updateSettings({brushSize:getBrushSize(),stabilization:_stabilizationAmount(),zoom});
+      const beginSeg=_hardRoundCore.beginStroke({x:p.x,y:p.y,pressure:currentPressure,pointerType:e.pointerType,timeStamp:e.timeStamp||performance.now()});
+      _hardRoundStampSegments([beginSeg],e);
+    } else {
+      _stampDab(p.x,p.y,e);
+    }
+  }
   finally{_flowSpacingRatio=previousSpacingRatio;}
   if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.firstDabEnd(diagnosticDabStart);
   if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.event('first-dab-rasterization-complete');
@@ -4925,6 +5047,28 @@ function _handleMoveEvent(e){
     _scheduleLinePreview(latest.point.x,latest.point.y,latest.event);
     return;
   }
+  if(_hardRoundStrokeActive && _hardRoundCore){
+    // Phase 8C: PrototypeStrokeCore owns pressure smoothing, position
+    // stabilization, and interpolation for this stroke -- the legacy
+    // _stabilizePoint/_curveAddPoint pipeline below is intentionally
+    // skipped entirely for it (both would otherwise double-stabilize).
+    const samples=events.map(ev=>{
+      const raw=getPos(ev);
+      return{
+        x:raw.x,y:raw.y,
+        pressure:_getPressure(ev),
+        pointerType:ev.pointerType,
+        timeStamp:(Number.isFinite(ev.timeStamp)&&ev.timeStamp>0)?ev.timeStamp:performance.now(),
+      };
+    });
+    _hardRoundCore.updateSettings({brushSize:getBrushSize(),stabilization:_stabilizationAmount(),zoom});
+    const segments=_hardRoundCore.pushSamples(samples);
+    _hardRoundStampSegments(segments,e);
+    const last=samples[samples.length-1];
+    currentPressure=last.pressure;lx=last.x;ly=last.y;_lastPointerEvent=e;
+    _scheduleRecomposite();
+    return;
+  }
   for(const ev of events){
     const newPressure = _getPressure(ev);
     const raw=getPos(ev);
@@ -5009,6 +5153,19 @@ function _pointerEndStroke(e){
     _renderLineDrag(p.x,p.y,e,'commit');
     if(_inStroke){_inStroke=false;_commitStrokeCanvas();}
     _cleanupErasedSmartOwnership();_clearLinePreviewCanvas(_strokeCanvas,_strokeCtx);_clearLinePreviewCanvas(_texturedStrokeCanvas,_texturedStrokeCtx);_clearLinePreviewCanvas(_strokePreviewCanvas,_strokePreviewCtx);lineStart=null;_lineDragging=false;_linePressureSamples=[];_lineGesture=null;_linePreviewBounds=null;_linePreviewPreviousEndpoint=null;saveActiveToKey();
+  }else if(drawing && _hardRoundStrokeActive && _hardRoundCore){
+    // Phase 8C: use PrototypeStrokeCore's own finish/taper replay (natural
+    // pressure tail, §7) instead of the legacy stabilizer-finalize/taper
+    // flush path. Layer/undo/recomposite bookkeeping below is unchanged
+    // from the legacy branch -- only the source of the final dabs differs.
+    drawing=false;
+    const finalRaw=getPos(e);
+    const finalPressure=_getPressure(e);
+    const finish=_hardRoundCore.finishStroke({x:finalRaw.x,y:finalRaw.y,pressure:finalPressure,pointerType:e.pointerType,timeStamp:e.timeStamp||performance.now()});
+    _hardRoundStampSegments(finish.segments,e);
+    if(_inStroke){_inStroke=false;_commitStrokeCanvas();}
+    _restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();
+    _hardRoundStrokeActive=false;_hardRoundRadiusOverride=null;
   }else if(drawing){
     const finalRaw=getPos(e);
     const finalConditioned=_baselineConditionerPush(_baselineSampleFromEvent(e,finalRaw,currentPressure),{force:true});
@@ -5040,6 +5197,7 @@ function _pointerEndStroke(e){
   _finalizePointerEndStroke(e);
 }
 function _finalizePointerEndStroke(e){
+  _hardRoundStrokeActive=false;_hardRoundRadiusOverride=null; // Phase 8C: safety net across every exit path
   _endColorEraserStroke();
   _completePostStrokePresentation(_strokeOwnerLayer,_strokeOwnerFrame);
   const latencyProfiler=_brushPerf();if(latencyProfiler)latencyProfiler.finishStroke({tool,sourceLayer:_strokeOwnerLayer,sourceFrame:_strokeOwnerFrame});
