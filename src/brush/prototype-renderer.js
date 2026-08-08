@@ -139,7 +139,10 @@
         for (let px = sx; px < ex; px++) {
           const wx = px + 0.5;
           const axis = CapsuleMath.capsuleAxisDistance(wx, wy, x0, y0, x1, y1);
-          const cov01 = CapsuleMath.capsuleCoverage(wx, wy, x0, y0, r0, x1, y1, r1);
+          // Phase 9E.1: seg.aaMode (Off/Weak/Medium/Strong) now actually
+          // reaches the rasterizer -- see hard-round-capsule-math.js's
+          // aaModeScale for the width progression this drives.
+          const cov01 = CapsuleMath.capsuleCoverage(wx, wy, x0, y0, r0, x1, y1, r1, seg.aaMode);
           if (cov01 <= 0) continue;
           // Alpha (Flow/Opacity) is interpolated along the same `h` param
           // as radius, then folded into the accumulated value -- matches
@@ -272,7 +275,7 @@
           vertex: {
             module: shaderModule, entryPoint: 'vs',
             buffers: [{
-              arrayStride: 36,
+              arrayStride: 40,
               attributes: [
                 { format: 'float32x2', offset: 0, shaderLocation: 0 },
                 { format: 'float32x2', offset: 8, shaderLocation: 1 },
@@ -280,6 +283,7 @@
                 { format: 'float32', offset: 24, shaderLocation: 3 },
                 { format: 'float32', offset: 28, shaderLocation: 4 },
                 { format: 'float32', offset: 32, shaderLocation: 5 },
+                { format: 'float32', offset: 36, shaderLocation: 6 },
               ],
             }],
           },
@@ -344,9 +348,14 @@
 
     drawSegment(seg) {
       const ss = this.ss;
+      // Phase 9E.1: pass the same aaModeScale() the CPU backend applies
+      // (via capsuleCoverage) as a per-vertex attribute, so the GPU
+      // fragment shader widens/narrows its fwidth(d)-based band by the
+      // identical factor -- CPU and GPU interpret aaMode consistently.
+      const aaScale = CapsuleMath.aaModeScale(seg.aaMode);
       const verts = segmentVerts(
         seg.x0 * ss, seg.y0 * ss, seg.x1 * ss, seg.y1 * ss,
-        seg.r0 * ss, seg.r1 * ss, Math.max(seg.alpha0, seg.alpha1)
+        seg.r0 * ss, seg.r1 * ss, Math.max(seg.alpha0, seg.alpha1), aaScale
       );
       this.pendingVerts.push.apply(this.pendingVerts, verts);
     }
@@ -371,7 +380,7 @@
       pass.setPipeline(this.strokePipeline);
       pass.setBindGroup(0, this.strokeBindGroup);
       pass.setVertexBuffer(0, this.vertexBuf);
-      pass.draw(data.length / 9);
+      pass.draw(data.length / 10);
       pass.end();
       this.device.queue.submit([enc.finish()]);
       this.pendingVerts = [];
@@ -443,14 +452,17 @@
       @builtin(position) pos: vec4f,
       @location(0) p0: vec2f, @location(1) p1: vec2f,
       @location(2) r0: f32, @location(3) r1: f32, @location(4) alpha: f32,
+      @location(5) aaScale: f32,
     };
     @vertex
     fn vs(@location(0) position: vec2f, @location(1) p0: vec2f, @location(2) p1: vec2f,
-          @location(3) r0: f32, @location(4) r1: f32, @location(5) alpha: f32) -> VSOut {
+          @location(3) r0: f32, @location(4) r1: f32, @location(5) alpha: f32,
+          @location(6) aaScale: f32) -> VSOut {
       var out: VSOut;
       let ndc = vec2f((position.x / u.size.x) * 2.0 - 1.0, 1.0 - (position.y / u.size.y) * 2.0);
       out.pos = vec4f(ndc, 0.0, 1.0);
       out.p0 = p0; out.p1 = p1; out.r0 = r0; out.r1 = r1; out.alpha = alpha;
+      out.aaScale = aaScale;
       return out;
     }
     @fragment
@@ -465,7 +477,10 @@
       let roundDabDistance = length(pa) - in.r0;
       let segmentDistance = length(pa - ba * h) - localRadius;
       let d = select(segmentDistance, roundDabDistance, isRoundDab);
-      let aa = max(fwidth(d), 1e-4);
+      // Phase 9E.1: same aaModeScale() multiplier the CPU backend applies
+      // in hard-round-capsule-math.js's capsuleCoverage, so Off/Weak/
+      // Medium/Strong widen the band by the identical factor on GPU.
+      let aa = max(fwidth(d) * in.aaScale, 1e-4);
       let cov = clamp(0.5 - d / aa, 0.0, 1.0);
       let circleArea = min(1.0, 3.14159265 * localRadius * localRadius);
       let strokeWidth = min(1.0, 2.0 * localRadius);
@@ -504,7 +519,7 @@
   }
 
   const AA_MARGIN = 2.0;
-  function segmentVerts(x0, y0, x1, y1, r0, r1, alpha) {
+  function segmentVerts(x0, y0, x1, y1, r0, r1, alpha, aaScale) {
     const dx = x1 - x0, dy = y1 - y0;
     const len = Math.hypot(dx, dy) || 1;
     const ux = dx / len, uy = dy / len;
@@ -518,7 +533,8 @@
     const c1 = { x: p1.x + nx * hw, y: p1.y + ny * hw };
     const c2 = { x: p1.x - nx * hw, y: p1.y - ny * hw };
     const c3 = { x: p0.x - nx * hw, y: p0.y - ny * hw };
-    const v = (p) => [p.x, p.y, x0, y0, x1, y1, r0, r1, alpha];
+    const as = aaScale == null ? 1 : aaScale;
+    const v = (p) => [p.x, p.y, x0, y0, x1, y1, r0, r1, alpha, as];
     const out = [];
     out.push.apply(out, v(c0)); out.push.apply(out, v(c1)); out.push.apply(out, v(c2));
     out.push.apply(out, v(c0)); out.push.apply(out, v(c2)); out.push.apply(out, v(c3));

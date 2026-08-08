@@ -91,12 +91,42 @@ function subpixelAreaFactor(localRadius, isRoundDab) {
   return isRoundDab ? circleArea : strokeWidth;
 }
 
+// Phase 9E.1 -- Hard Round AA mode wiring.
+//
+// Legacy engine's AA mode floors (_AA_MODE_EDGE_PX in brush-engine.js:
+// none:0, weak:0.85, medium:1.6, strong:2.6) set a *relative* progression
+// of edge-band widths: weak is the narrowest non-aliased band, medium
+// ~1.9x weak, strong ~3.1x weak, off/none is a hard step. This table
+// carries that SAME relative progression (ratios preserved from the
+// legacy px floors) as a multiplier on the analytic edge band
+// (edgeCoverage's `aa` argument / the GPU shader's `fwidth(d)`), so
+// switching modes only changes how wide the antialiased rim is -- never
+// the underlying SDF, the capsule geometry, or the subpixel-area
+// compensation. 'off'/'none' scale to 0, which edgeCoverage's own
+// `Math.max(aa, 1e-4)` floor turns into a sub-pixel-fraction band --
+// i.e. a hard, aliased step, matching "AA Off remains aliased".
+// A missing/undefined mode (no caller opinion) preserves the ORIGINAL
+// unscaled behavior (scale 1, same as 'weak') so every pre-Phase-9E.1
+// caller/test that never passed a mode keeps producing identical output.
+const AA_MODE_SCALE = { off: 0, none: 0, weak: 1, medium: 1.6 / 0.85, strong: 2.6 / 0.85 };
+function aaModeScale(mode) {
+  if (mode === undefined) return 1; // no mode supplied -- legacy unscaled behavior
+  if (mode === 'off' || mode === 'none') return AA_MODE_SCALE.off;
+  if (mode === 'weak') return AA_MODE_SCALE.weak;
+  if (mode === 'strong') return AA_MODE_SCALE.strong;
+  // 'medium', and anything unrecognized (e.g. the adapter's 'normal'
+  // default) -- mirrors _normalizeAAMode's own unknown-mode fallback.
+  return AA_MODE_SCALE.medium;
+}
+
 // Full per-fragment coverage for one capsule segment, combining signed
 // distance, edge AA, and subpixel-area compensation -- the complete
 // right-hand side of the prototype fragment shader's `return vec4f(...)`
 // line, minus color/alpha (callers apply those).
+// @param {string} [aaMode] - 'off'|'none'|'weak'|'medium'|'strong'; see
+//   AA_MODE_SCALE/aaModeScale above. Omit to keep the original unscaled band.
 // @returns {number} coverage 0..1
-function capsuleCoverage(px, py, ax, ay, r0, bx, by, r1) {
+function capsuleCoverage(px, py, ax, ay, r0, bx, by, r1, aaMode) {
   const { dist, h, isRoundDab } = capsuleAxisDistance(px, py, ax, ay, bx, by);
   const localRadius = r0 + (r1 - r0) * h;
   const d = isRoundDab ? (dist - r0) : (dist - localRadius);
@@ -104,7 +134,8 @@ function capsuleCoverage(px, py, ax, ay, r0, bx, by, r1) {
   // end) are a pure circular distance field -- band is exactly 1. Only
   // the straight, unclamped part of a tapered capsule needs the wider
   // taper-aware band (see aaBand's doc comment above).
-  const aa = (isRoundDab || h <= 0 || h >= 1) ? 1.0 : aaBand(r0, r1, ax, ay, bx, by);
+  const baseAa = (isRoundDab || h <= 0 || h >= 1) ? 1.0 : aaBand(r0, r1, ax, ay, bx, by);
+  const aa = baseAa * aaModeScale(aaMode);
   const cov = edgeCoverage(d, aa);
   const area = subpixelAreaFactor(localRadius, isRoundDab);
   return cov * area;
@@ -134,6 +165,8 @@ const HardRoundCapsuleMathExports = {
   capsuleCoverage,
   capsuleBounds,
   AA_MARGIN,
+  AA_MODE_SCALE,
+  aaModeScale,
 };
 
 if (typeof module !== 'undefined' && module.exports) {

@@ -37,7 +37,7 @@
   // @param {object} seg - see module doc above
   function drawHardRoundCapsuleCPU(dc, seg) {
     if (!dc || !seg) return;
-    const { x0, y0, x1, y1, r0, r1, alpha0, alpha1, rgb, composite } = seg;
+    const { x0, y0, x1, y1, r0, r1, alpha0, alpha1, rgb, composite, aaMode } = seg;
     const maxR = Math.max(r0, r1);
     if (!(maxR > 0)) return;
     const cw = dc.canvas.width, ch = dc.canvas.height;
@@ -57,14 +57,17 @@
       const wy = sy + py + 0.5;
       for (let px = 0; px < rw; px++, p += 4) {
         const wx = sx + px + 0.5;
+        // Phase 9E.1: route through capsuleCoverage (not a hand-inlined
+        // copy of its distance/AA/area math) so this legacy standalone
+        // renderer and PrototypeRenderer's CpuBackend.drawSegment() --
+        // the actual production path -- always agree on how `aaMode`
+        // widens/narrows the edge band; a duplicated formula here would
+        // be free to drift out of sync with that one.
         const axis = Math_.capsuleAxisDistance(wx, wy, x0, y0, x1, y1);
-        const localRadius = axis.isRoundDab ? r0 : (r0 + (r1 - r0) * axis.h);
-        const sdist = axis.isRoundDab ? (axis.dist - r0) : (axis.dist - localRadius);
-        const cov = Math_.edgeCoverage(sdist, Math_.aaBand());
-        if (cov <= 0) continue;
-        const area = Math_.subpixelAreaFactor(localRadius, axis.isRoundDab);
+        const cov01 = Math_.capsuleCoverage(wx, wy, x0, y0, r0, x1, y1, r1, aaMode);
+        if (cov01 <= 0) continue;
         const segAlpha = alpha0 + (alpha1 - alpha0) * axis.h;
-        let a = cov * area * segAlpha;
+        let a = cov01 * segAlpha;
         a = Math.min(1, Math.max(0, a));
         if (a <= 0) continue;
         if (isErase) {
