@@ -868,10 +868,7 @@ const _AA_MODE_EDGE_MAX_PX = { none:0, weak:2, medium:4, strong:7 };
 // smooth curve instead of a visibly faceted ramp across the edge band.
 const _AA_MODE_STOPS = { none:2, weak:8, medium:14, strong:20 };
 function _normalizeAAMode(mode){
-  // Default AA is the strongest/highest-quality mode (Phase 6N parity with
-  // the prototype, which always renders its analytic+supersampled edge at
-  // maximum quality). weak/medium progressively reduce smoothing from here.
-  return (mode==='none'||mode==='weak'||mode==='medium'||mode==='strong')?mode:'strong';
+  return (mode==='none'||mode==='weak'||mode==='medium'||mode==='strong')?mode:'medium';
 }
 function _edgeWidthPx(r, hardness, mode){
   const m=_normalizeAAMode(mode);
@@ -3624,6 +3621,18 @@ function _evalPressureCurveY(curveKey, x){
 // Apply the user-selected pressure curve (Tool Settings Ã¢â€ â€™ Pressure Curve).
 // Falls back to true linear (identity) when none is selected, so default
 // behaviour for users who never touch this control is unchanged.
+// Phase 6O.3: prototype.html's baseline pressure->size response
+// (pressureInfluence(p) = pow(p,1.2), see prototype.html) is now the
+// shared default for EVERY brush's Size dynamics when Size Control is
+// "Pen Pressure" and the pressure curve is left at its default
+// ("Linear" -- i.e. no explicit/custom curve has been chosen). This
+// lives here, in the one shared helper _computeEffectiveParams() calls
+// for every brush (Hard Round, Soft Round, custom tips, texture
+// brushes alike), not gated on presetId anywhere. Selecting any other
+// curve (a bezier preset or a custom curve) bypasses this entirely.
+function _prototypePressureEase(p){
+  return Math.pow(Math.max(0,Math.min(1,p)),1.2);
+}
 function _applyPressureCurve(p,curveKey='linear'){
   if(curveKey==='linear') return p;
   const pressure=Math.max(0,Math.min(1,p));
@@ -3632,25 +3641,6 @@ function _applyPressureCurve(p,curveKey='linear'){
     let lo=0,hi=1;for(let i=0;i<24;i++){const mid=(lo+hi)/2;if(_bezierPointAt(curveKey,mid)[0]<pressure)lo=mid;else hi=mid;}y=_bezierPointAt(curveKey,(lo+hi)/2)[1];
   } else y=_evalPressureCurveY(curveKey,pressure);
   return Math.max(0, Math.min(1, 1-y));
-}
-
-// Phase 6O: prototype parity for the DEFAULT brush (Hard Round) only.
-// The prototype's pressureInfluence() (prototype.html) maps pressure to
-// radius influence with a mild ease-in, Math.pow(pressure, 1.2), not a
-// straight 1:1 line. The app's default Hard Round preset ships with
-// 'ts-size-pressure-curve' = 'linear', which _applyPressureCurve treats as
-// pure identity (no easing at all) -- the first mathematical divergence
-// found between the two pressure->radius pipelines. Scoped narrowly to
-// (a) the brush tool, (b) the untouched default Hard Round preset, and
-// (c) its untouched default 'linear' size curve, so every other brush
-// (custom tips, textures, Soft Round, eraser, etc.) keeps its exact
-// existing pressure response -- this only nudges the default brush's own
-// width response to match the prototype's.
-function _applyDefaultBrushPressureEase(influence){
-  if(tool==='brush' && window._activeBrushPresetId==='hard-round' && _getPressureCurve('size')==='linear'){
-    return Math.pow(Math.max(0,Math.min(1,influence)), 1.2);
-  }
-  return influence;
 }
 
 // Resolve the 0-1 influence value for a given dynamics control type.
@@ -3730,8 +3720,16 @@ function _computeEffectiveParams(e){
     // Pressure: only auto-apply when drawing with a pen (mouse has no real pressure).
     const applySize = (sizeCtrl === 'pressure') ? isPenStroke : true;
     if(applySize){
-      let influence = (sizeCtrl === 'pressure') ? _applyPressureCurve(_getPressureInfluence(),_getPressureCurve('size')) : _resolveControl(sizeCtrl, e);
-      if(sizeCtrl==='pressure') influence=_applyDefaultBrushPressureEase(influence);
+      // Phase 6O.3: when Size Control is Pen Pressure and no explicit
+      // curve has been chosen (curve==='linear', the default), use the
+      // shared prototype baseline ease instead of a literal identity
+      // mapping — one application, no presetId check, applies to every
+      // brush that reaches this shared function.
+      const sizeCurveKey=_getPressureCurve('size');
+      const rawSizeInfluence=_getPressureInfluence();
+      const influence = (sizeCtrl === 'pressure')
+        ? (sizeCurveKey==='linear' ? _prototypePressureEase(rawSizeInfluence) : _applyPressureCurve(rawSizeInfluence,sizeCurveKey))
+        : _resolveControl(sizeCtrl, e);
       const minR = (baseSize/2) * _getMinSize();
       r = minR + (baseSize/2 - minR) * influence;
     }
@@ -3835,8 +3833,10 @@ function _computeSpacingRadius(e, interpolatedPressure){
       const savedSmoothed = _smoothedPressure;
       currentPressure = interpolatedPressure;
       const rawInfluence = _resolveControl(sizeCtrl,e);
-      let influence = sizeCtrl==='pressure' ? _applyPressureCurve(rawInfluence,_getPressureCurve('size')) : rawInfluence;
-      if(sizeCtrl==='pressure') influence=_applyDefaultBrushPressureEase(influence);
+      const sizeCurveKey=_getPressureCurve('size');
+      const influence = sizeCtrl==='pressure'
+        ? (sizeCurveKey==='linear' ? _prototypePressureEase(rawInfluence) : _applyPressureCurve(rawInfluence,sizeCurveKey))
+        : rawInfluence;
       currentPressure = savedPressure;
       _smoothedPressure = savedSmoothed;
       const minR = (baseSize / 2) * _getMinSize();
