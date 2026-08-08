@@ -47,6 +47,7 @@
       @location(2) r0: f32,
       @location(3) r1: f32,
       @location(4) alpha: f32,
+      @location(5) aaOff: f32,
     };
 
     @vertex
@@ -56,7 +57,8 @@
       @location(2) p1: vec2f,
       @location(3) r0: f32,
       @location(4) r1: f32,
-      @location(5) alpha: f32
+      @location(5) alpha: f32,
+      @location(6) aaOff: f32
     ) -> VSOut {
       var out: VSOut;
       let ndc = vec2f(
@@ -69,6 +71,7 @@
       out.r0 = r0;
       out.r1 = r1;
       out.alpha = alpha;
+      out.aaOff = aaOff;
       return out;
     }
 
@@ -94,6 +97,17 @@
       let roundDabDistance = length(pa) - in.r0;
       let segmentDistance = length(pa - ba * h) - localRadius;
       let d = select(segmentDistance, roundDabDistance, isRoundDab);
+      // Phase 9E.2: this module is not attached to a live GPU device in
+      // production (see module doc above -- attach() is never called on
+      // this branch) and has no SS-supersampled backing store of its own,
+      // so unlike PrototypeRenderer's GpuBackend, AA Off here needs no
+      // block-center trick -- a direct binary distance test at this
+      // fragment's own position is already pixel-perfect. Kept
+      // aaMode-consistent with capsuleCoverage()/the CPU backends anyway.
+      if (in.aaOff > 0.5) {
+        let cov = select(0.0, 1.0, d <= 0.0);
+        return vec4f(in.alpha * cov, 0.0, 0.0, 1.0);
+      }
       let aa = max(fwidth(d), 1e-4);
       let cov = clamp(0.5 - d / aa, 0.0, 1.0);
       let circleArea = min(1.0, 3.14159265 * localRadius * localRadius);
@@ -108,7 +122,7 @@
   // Bounding-quad builder for one tapered capsule -- identical geometry to
   // prototype's segmentVerts (2 triangles, 6 verts, 9 floats/vert:
   // position.xy, p0.xy, p1.xy, r0, r1, alpha).
-  function segmentVerts(x0, y0, x1, y1, r0, r1, alpha) {
+  function segmentVerts(x0, y0, x1, y1, r0, r1, alpha, aaOff) {
     const dx = x1 - x0, dy = y1 - y0;
     const len = Math.hypot(dx, dy) || 1;
     const ux = dx / len, uy = dy / len;
@@ -122,7 +136,8 @@
     const c1 = { x: p1.x + nx * hw, y: p1.y + ny * hw };
     const c2 = { x: p1.x - nx * hw, y: p1.y - ny * hw };
     const c3 = { x: p0.x - nx * hw, y: p0.y - ny * hw };
-    const v = (p) => [p.x, p.y, x0, y0, x1, y1, r0, r1, alpha];
+    const off = aaOff ? 1 : 0;
+    const v = (p) => [p.x, p.y, x0, y0, x1, y1, r0, r1, alpha, off];
     const out = [];
     out.push.apply(out, v(c0)); out.push.apply(out, v(c1)); out.push.apply(out, v(c2));
     out.push.apply(out, v(c0)); out.push.apply(out, v(c2)); out.push.apply(out, v(c3));
@@ -149,7 +164,7 @@
       vertex: {
         module: shaderModule, entryPoint: 'vs',
         buffers: [{
-          arrayStride: 36,
+          arrayStride: 40,
           attributes: [
             { format: 'float32x2', offset: 0, shaderLocation: 0 },
             { format: 'float32x2', offset: 8, shaderLocation: 1 },
@@ -157,6 +172,7 @@
             { format: 'float32', offset: 24, shaderLocation: 3 },
             { format: 'float32', offset: 28, shaderLocation: 4 },
             { format: 'float32', offset: 32, shaderLocation: 5 },
+            { format: 'float32', offset: 36, shaderLocation: 6 },
           ],
         }],
       },
@@ -193,8 +209,9 @@
   // submitting once per segment (§6 requirement).
   function drawSegment(seg) {
     if (!seg) return;
+    const isAaOff = seg.aaMode === 'off' || seg.aaMode === 'none';
     const verts = segmentVerts(seg.x0, seg.y0, seg.x1, seg.y1, seg.r0, seg.r1,
-      Math.max(seg.alpha0, seg.alpha1));
+      Math.max(seg.alpha0, seg.alpha1), isAaOff);
     _pendingVerts.push.apply(_pendingVerts, verts);
   }
 
@@ -223,7 +240,7 @@
     pass.setPipeline(_pipeline);
     pass.setBindGroup(0, _bindGroup);
     pass.setVertexBuffer(0, _vertexBuf);
-    pass.draw(data.length / 9);
+    pass.draw(data.length / 10);
     pass.end();
     _device.queue.submit([encoder.finish()]);
     _pendingVerts = [];

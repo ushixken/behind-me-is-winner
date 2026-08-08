@@ -133,6 +133,54 @@
 
       const cov = this.coverage;
       const bw = this.bw;
+      const isAaOff = seg.aaMode === 'off' || seg.aaMode === 'none';
+      // Phase 9E.2: AA Off must resolve to a TRUE binary output pixel, not
+      // just a binary per-subpixel sample. resolveInto()/resolveDirtyInto()
+      // box-average every ss x ss block of the backing store down to one
+      // output pixel (§ SS=4 resolve, unmodified -- see below), so even
+      // with capsuleCoverage() itself returning a hard 0/1 per subpixel,
+      // independently sampling all 16 subpixels of a block still produces
+      // fractional counts (e.g. 6/16) wherever the edge crosses that block
+      // diagonally -- i.e. the exact "still gray" bug this phase fixes.
+      // The fix is NOT to touch the resolve's box-filter math (kept
+      // identical for every aaMode, per the brief) but to make every
+      // subpixel *within one output pixel's block agree*: sample the
+      // analytic coverage ONCE at that output pixel's own center, then
+      // fill its whole ss x ss block with that single binary value. A
+      // uniform block box-averages to exactly that same value, so the
+      // resolved output is always exactly 0.0 or 1.0 -- pixel-perfect
+      // stair-stepping, matching TVPaint's AA-off reference.
+      if (isAaOff) {
+        const ss = this.ss;
+        const obx0 = Math.floor(sx / ss), oby0 = Math.floor(sy / ss);
+        const obx1 = Math.ceil(ex / ss), oby1 = Math.ceil(ey / ss);
+        for (let oy = oby0; oy < oby1; oy++) {
+          const by0 = oy * ss, by1 = Math.min(this.bh, by0 + ss);
+          if (by1 <= sy || by0 >= ey) continue;
+          const wy = by0 + ss * 0.5; // output pixel's center, in backing-store units
+          for (let ox = obx0; ox < obx1; ox++) {
+            const bx0 = ox * ss, bx1 = Math.min(this.bw, bx0 + ss);
+            if (bx1 <= sx || bx0 >= ex) continue;
+            const wx = bx0 + ss * 0.5;
+            const axis = CapsuleMath.capsuleAxisDistance(wx, wy, x0, y0, x1, y1);
+            const cov01 = CapsuleMath.capsuleCoverage(wx, wy, x0, y0, r0, x1, y1, r1, seg.aaMode);
+            if (cov01 <= 0) continue;
+            const segAlpha = alpha0 + (alpha1 - alpha0) * axis.h;
+            const c = cov01 * segAlpha;
+            if (c <= 0) continue;
+            const fillY0 = Math.max(sy, by0), fillY1 = Math.min(ey, by1);
+            const fillX0 = Math.max(sx, bx0), fillX1 = Math.min(ex, bx1);
+            for (let py = fillY0; py < fillY1; py++) {
+              const rowOff = py * bw;
+              for (let px = fillX0; px < fillX1; px++) {
+                const idx = rowOff + px;
+                if (c > cov[idx]) cov[idx] = c;
+              }
+            }
+          }
+        }
+        return;
+      }
       for (let py = sy; py < ey; py++) {
         const wy = py + 0.5;
         const rowOff = py * bw;
@@ -275,7 +323,7 @@
           vertex: {
             module: shaderModule, entryPoint: 'vs',
             buffers: [{
-              arrayStride: 40,
+              arrayStride: 44,
               attributes: [
                 { format: 'float32x2', offset: 0, shaderLocation: 0 },
                 { format: 'float32x2', offset: 8, shaderLocation: 1 },
@@ -284,6 +332,7 @@
                 { format: 'float32', offset: 28, shaderLocation: 4 },
                 { format: 'float32', offset: 32, shaderLocation: 5 },
                 { format: 'float32', offset: 36, shaderLocation: 6 },
+                { format: 'float32', offset: 40, shaderLocation: 7 },
               ],
             }],
           },
@@ -353,9 +402,10 @@
       // fragment shader widens/narrows its fwidth(d)-based band by the
       // identical factor -- CPU and GPU interpret aaMode consistently.
       const aaScale = CapsuleMath.aaModeScale(seg.aaMode);
+      const isAaOff = seg.aaMode === 'off' || seg.aaMode === 'none';
       const verts = segmentVerts(
         seg.x0 * ss, seg.y0 * ss, seg.x1 * ss, seg.y1 * ss,
-        seg.r0 * ss, seg.r1 * ss, Math.max(seg.alpha0, seg.alpha1), aaScale
+        seg.r0 * ss, seg.r1 * ss, Math.max(seg.alpha0, seg.alpha1), aaScale, isAaOff ? 1 : 0
       );
       this.pendingVerts.push.apply(this.pendingVerts, verts);
     }
@@ -371,7 +421,7 @@
         this.vertexBuf = this.device.createBuffer({ size: sz, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
       }
       this.device.queue.writeBuffer(this.vertexBuf, 0, data);
-      const uniforms = new Float32Array([this.bw, this.bh, 0, 0, 0, 0, 0, 0]);
+      const uniforms = new Float32Array([this.bw, this.bh, this.ss, 0, 0, 0, 0, 0]);
       this.device.queue.writeBuffer(this.strokeUniformBuf, 0, uniforms);
       const enc = this.device.createCommandEncoder();
       const pass = enc.beginRenderPass({
@@ -446,37 +496,59 @@
   // color mix (this module's GPU output is coverage-only, same split as
   // the CPU backend above).
   const STROKE_SHADER_WGSL = `
-    struct Uniforms { size: vec2f, color: vec3f, mode: f32 };
+    struct Uniforms { size: vec2f, ss: f32, mode: f32 };
     @group(0) @binding(0) var<uniform> u: Uniforms;
     struct VSOut {
       @builtin(position) pos: vec4f,
       @location(0) p0: vec2f, @location(1) p1: vec2f,
       @location(2) r0: f32, @location(3) r1: f32, @location(4) alpha: f32,
-      @location(5) aaScale: f32,
+      @location(5) aaScale: f32, @location(6) aaOff: f32,
     };
     @vertex
     fn vs(@location(0) position: vec2f, @location(1) p0: vec2f, @location(2) p1: vec2f,
           @location(3) r0: f32, @location(4) r1: f32, @location(5) alpha: f32,
-          @location(6) aaScale: f32) -> VSOut {
+          @location(6) aaScale: f32, @location(7) aaOff: f32) -> VSOut {
       var out: VSOut;
       let ndc = vec2f((position.x / u.size.x) * 2.0 - 1.0, 1.0 - (position.y / u.size.y) * 2.0);
       out.pos = vec4f(ndc, 0.0, 1.0);
       out.p0 = p0; out.p1 = p1; out.r0 = r0; out.r1 = r1; out.alpha = alpha;
-      out.aaScale = aaScale;
+      out.aaScale = aaScale; out.aaOff = aaOff;
       return out;
     }
-    @fragment
-    fn fs(in: VSOut) -> @location(0) vec4f {
-      let pa = in.pos.xy - in.p0;
-      let ba = in.p1 - in.p0;
+    fn capsuleD(fragPos: vec2f, p0: vec2f, p1: vec2f, r0: f32, r1: f32) -> f32 {
+      let pa = fragPos - p0;
+      let ba = p1 - p0;
       let denom = dot(ba, ba);
       let rawH = dot(pa, ba) / max(denom, 1e-6);
       let h = clamp(rawH, 0.0, 1.0);
+      let localRadius = mix(r0, r1, h);
+      let isRoundDab = denom < 1e-6;
+      let roundDabDistance = length(pa) - r0;
+      let segmentDistance = length(pa - ba * h) - localRadius;
+      return select(segmentDistance, roundDabDistance, isRoundDab);
+    }
+    @fragment
+    fn fs(in: VSOut) -> @location(0) vec4f {
+      // Phase 9E.2: AA Off is a hard, pixel-perfect step -- not just a
+      // narrower fwidth() band. A per-subpixel binary test alone would
+      // still be box-averaged into fractional (gray) alpha by the SS=4
+      // resolve pass, exactly like the CPU backend's drawSegment(). So
+      // when aaOff is set, sample ONCE at this fragment's ss x ss output
+      // block center (every subpixel in the block agrees), giving a
+      // uniform 0/1 value that resolves to exactly 0.0 or 1.0.
+      let ss = max(u.ss, 1.0);
+      let blockCenter = (floor(in.pos.xy / ss) * ss) + vec2f(ss * 0.5, ss * 0.5);
+      let samplePos = select(in.pos.xy, blockCenter, in.aaOff > 0.5);
+      let d = capsuleD(samplePos, in.p0, in.p1, in.r0, in.r1);
+      if (in.aaOff > 0.5) {
+        let cov = select(0.0, 1.0, d <= 0.0);
+        return vec4f(in.alpha * cov, 0.0, 0.0, 1.0);
+      }
+      let denom = dot(in.p1 - in.p0, in.p1 - in.p0);
+      let rawH = dot(samplePos - in.p0, in.p1 - in.p0) / max(denom, 1e-6);
+      let h = clamp(rawH, 0.0, 1.0);
       let localRadius = mix(in.r0, in.r1, h);
       let isRoundDab = denom < 1e-6;
-      let roundDabDistance = length(pa) - in.r0;
-      let segmentDistance = length(pa - ba * h) - localRadius;
-      let d = select(segmentDistance, roundDabDistance, isRoundDab);
       // Phase 9E.1: same aaModeScale() multiplier the CPU backend applies
       // in hard-round-capsule-math.js's capsuleCoverage, so Off/Weak/
       // Medium/Strong widen the band by the identical factor on GPU.
@@ -519,7 +591,7 @@
   }
 
   const AA_MARGIN = 2.0;
-  function segmentVerts(x0, y0, x1, y1, r0, r1, alpha, aaScale) {
+  function segmentVerts(x0, y0, x1, y1, r0, r1, alpha, aaScale, aaOff) {
     const dx = x1 - x0, dy = y1 - y0;
     const len = Math.hypot(dx, dy) || 1;
     const ux = dx / len, uy = dy / len;
@@ -534,7 +606,12 @@
     const c2 = { x: p1.x - nx * hw, y: p1.y - ny * hw };
     const c3 = { x: p0.x - nx * hw, y: p0.y - ny * hw };
     const as = aaScale == null ? 1 : aaScale;
-    const v = (p) => [p.x, p.y, x0, y0, x1, y1, r0, r1, alpha, as];
+    const off = aaOff ? 1 : 0;
+    // Phase 9E.2: aaOff (1/0) travels alongside aaScale so the fragment
+    // shader can switch to block-center point sampling (see fs below)
+    // instead of just narrowing fwidth's band -- narrowing alone still
+    // lets the SS=4 resolve's box filter re-introduce gray edge pixels.
+    const v = (p) => [p.x, p.y, x0, y0, x1, y1, r0, r1, alpha, as, off];
     const out = [];
     out.push.apply(out, v(c0)); out.push.apply(out, v(c1)); out.push.apply(out, v(c2));
     out.push.apply(out, v(c0)); out.push.apply(out, v(c2)); out.push.apply(out, v(c3));

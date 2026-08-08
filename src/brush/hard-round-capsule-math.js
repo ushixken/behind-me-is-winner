@@ -130,6 +130,17 @@ function capsuleCoverage(px, py, ax, ay, r0, bx, by, r1, aaMode) {
   const { dist, h, isRoundDab } = capsuleAxisDistance(px, py, ax, ay, bx, by);
   const localRadius = r0 + (r1 - r0) * h;
   const d = isRoundDab ? (dist - r0) : (dist - localRadius);
+  // Phase 9E.2: 'off'/'none' is a hard, pixel-perfect step -- NOT a
+  // narrow-band approximation of one. Previously this fell through to
+  // edgeCoverage() with a floored (but nonzero) band, and to
+  // subpixelAreaFactor()'s continuous area compensation, both of which
+  // still produce fractional (gray) coverage near an edge or for a small
+  // radius. TVPaint's AA-off is a true binary in/out test, so short-
+  // circuit entirely: no band, no smoothstep, no subpixel-area
+  // compensation -- just the sign of the signed distance.
+  if (aaMode === 'off' || aaMode === 'none') {
+    return d <= 0 ? 1.0 : 0.0;
+  }
   // Round caps (isRoundDab, or h clamped to 0/1 at a capsule's rounded
   // end) are a pure circular distance field -- band is exactly 1. Only
   // the straight, unclamped part of a tapered capsule needs the wider
