@@ -172,18 +172,29 @@ function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw,rotation,roundne
   const cg=composite==='erase'?0:rgb[1];
   const cb=composite==='erase'?0:rgb[2];
 
+  // Phase 6O.2 (finalized): custom tips are now scaled+rasterized at a
+  // fixed 4x supersample factor and resolved with the SAME shared true
+  // box filter (_boxFilterResolveRGBA) every other brush stamp uses,
+  // instead of a single Canvas2D drawImage() resample straight to the
+  // final dab size. The tip's own texture/shape is unaffected — this
+  // only changes how finely it's resampled before the falloff math
+  // below runs, same as prototype.html's fixed SS=4 backing store.
+  const supersample=4;
+  const sw=w*supersample, sh=h*supersample;
   // Rasterize the tip into a mask-only canvas. The source grayscale RGB
   // never enters the output stamp canvas; only the resolved mask alpha is
   // copied into a fresh brush-coloured ImageData buffer.
   const maskCanvas=document.createElement('canvas');
-  maskCanvas.width=w; maskCanvas.height=h;
+  maskCanvas.width=sw; maskCanvas.height=sh;
   const maskCtx=maskCanvas.getContext('2d',{willReadFrequently:true});
   maskCtx.imageSmoothingEnabled=true;
   maskCtx.imageSmoothingQuality='high';
-  const scaleStart=trace&&trace.enabled?performance.now():0;maskCtx.drawImage(tipC,0,0,tipNativeW,tipNativeH,(w-dabW)/2,(h-dabH)/2,dabW,dabH);
+  const scaleStart=trace&&trace.enabled?performance.now():0;maskCtx.drawImage(tipC,0,0,tipNativeW,tipNativeH,((w-dabW)/2)*supersample,((h-dabH)/2)*supersample,dabW*supersample,dabH*supersample);
   if(trace&&trace.enabled)trace.stage('tip-scaling-resampling',scaleStart,{sourceWidth:tipNativeW,sourceHeight:tipNativeH,dabWidth:dabW,dabHeight:dabH,stampWidth:w,stampHeight:h,scaleBucket:r.toFixed(2)});
-  const maskReadStart=trace&&trace.enabled?performance.now():0,maskData=maskCtx.getImageData(0,0,w,h).data;
-  if(trace&&trace.enabled)trace.stage('get-image-data',maskReadStart,{source:'scaled-mask',width:w,height:h});
+  const maskReadStart=trace&&trace.enabled?performance.now():0,sampledMaskData=maskCtx.getImageData(0,0,sw,sh).data;
+  if(trace&&trace.enabled)trace.stage('get-image-data',maskReadStart,{source:'scaled-mask',width:sw,height:sh});
+  const maskResolved=_boxFilterResolveRGBA(sampledMaskData,sw,sh,supersample);
+  const maskData=maskResolved.data;
 
   let legacyAlphaOnlyMask=false;
   try{
@@ -263,6 +274,34 @@ function _getTipPixelsForStamp(w,h){
   if(window.CustomTipCacheTrace)window.CustomTipCacheTrace.record('direct-tip-source-read',{path:'_getTipPixelsForStamp',tipVersion:window.brushTipVersion||0,tipCanvasId:window.CustomTipCacheTrace.objectId(tipC,'tip-canvas'),width:w,height:h,getImageDataDuration:performance.now()-readStart});
   return data;
 }
+// Phase 6O.2 (finalized): shared true box-filter resolve, reused by every
+// CPU stamp builder below (_buildAAStamp for procedural round brushes incl.
+// Hard Round/Airbrush, _buildSoftRoundMask for Soft Round, _buildTipStamp
+// for custom tips) instead of each maintaining its own copy. Averages every
+// `factor`x`factor` block of `srcData` (a flat RGBA Uint8ClampedArray-like
+// array, width srcW/height srcH) into one destination pixel — the same
+// operation as prototype.html's blit shader (sum of factor^2 texels *
+// 1/factor^2), not a bilinear/mipmap approximation.
+function _boxFilterResolveRGBA(srcData,srcW,srcH,factor){
+  const outW=Math.max(1,Math.round(srcW/factor)), outH=Math.max(1,Math.round(srcH/factor));
+  const out=new Uint8ClampedArray(outW*outH*4);
+  const n=factor*factor;
+  for(let oy=0;oy<outH;oy++){
+    for(let ox=0;ox<outW;ox++){
+      let sr=0,sg=0,sb=0,sa=0;
+      const sxBase=ox*factor, syBase=oy*factor;
+      for(let sy=0;sy<factor;sy++){
+        let rowP=((syBase+sy)*srcW+sxBase)*4;
+        for(let sx=0;sx<factor;sx++,rowP+=4){
+          sr+=srcData[rowP];sg+=srcData[rowP+1];sb+=srcData[rowP+2];sa+=srcData[rowP+3];
+        }
+      }
+      const op=(oy*outW+ox)*4;
+      out[op]=sr/n; out[op+1]=sg/n; out[op+2]=sb/n; out[op+3]=sa/n;
+    }
+  }
+  return {data:out,w:outW,h:outH};
+}
 function _buildAAStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   const r=_quant(rRaw,_Q_R), alpha=_quantAlpha(alphaRaw);
   const hardness=Math.round(Math.max(0,Math.min(1,hardnessRaw))*100)/100;
@@ -288,7 +327,13 @@ function _buildAAStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   // Procedural masks are evaluated above target resolution, then reduced
   // exactly once. The cached result is already the final 1:1 dab size, so
   // fractional placement never repeatedly rescales a coarse source mask.
-  const supersample=window.brushTipCanvas?1:(rr<=64&&hardness<0.25?4:(rr<=256?2:1));
+  // Phase 6O.2 (finalized): fixed 4x supersample for EVERY procedural
+  // round dab this function serves (Hard Round, Airbrush, and — once
+  // _dabAAGpu's dispatch below is widened — every hardness in between),
+  // matching prototype.html's unconditional SS=4. No radius/hardness
+  // branching remains; only a custom tip (handled by _buildTipStamp
+  // instead) skips supersampling here.
+  const supersample=window.brushTipCanvas?1:4;
   const sampleW=w*supersample,sampleH=h*supersample;
   const sampleR=rr*supersample,cx=sampleW/2,cy=sampleH/2;
   const sampleCanvas=document.createElement('canvas');sampleCanvas.width=sampleW;sampleCanvas.height=sampleH;
@@ -322,8 +367,18 @@ function _buildAAStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   sampleCtx.putImageData(id,0,0);
   const tmp=document.createElement('canvas');tmp.width=w;tmp.height=h;
   const tc=tmp.getContext('2d');
-  tc.imageSmoothingEnabled=true;tc.imageSmoothingQuality='high';
-  tc.drawImage(sampleCanvas,0,0,sampleW,sampleH,0,0,w,h);
+  if(supersample>1){
+    // True box filter (shared helper), matching prototype.html's blit
+    // shader — NOT drawImage's bilinear/mipmap resample.
+    tc.imageSmoothingEnabled=false;
+    const resolved=_boxFilterResolveRGBA(d,sampleW,sampleH,supersample);
+    const outId=tc.createImageData(resolved.w,resolved.h);
+    outId.data.set(resolved.data);
+    tc.putImageData(outId,0,0);
+  }else{
+    tc.imageSmoothingEnabled=true;tc.imageSmoothingQuality='high';
+    tc.drawImage(sampleCanvas,0,0,sampleW,sampleH,0,0,w,h);
+  }
   const stamp={canvas:tmp,w,h};
   if(_aaDabCache.size>=_AA_DAB_CACHE_MAX) _aaDabCache.delete(_aaDabCache.keys().next().value); // evict oldest
   _aaDabCache.set(key,stamp);
@@ -347,20 +402,34 @@ function _buildSoftRoundMask(rRaw,rendererContext){
   if(cached) return cached;
   const pad=Math.max(2,Math.ceil(_AA_MODE_EDGE_MAX_PX[aaMode]||2));
   const size=Math.ceil(diameter)+pad*2+1;
-  const canvas=document.createElement('canvas'); canvas.width=size; canvas.height=size;
+  // Phase 6O.2 (finalized): Soft Round is rendered at the same fixed 4x
+  // supersample factor as every other brush, resolved with the SAME
+  // shared true box filter (_boxFilterResolveRGBA) used by
+  // _buildAAStamp/_buildTipStamp, instead of the single-sample-per-pixel
+  // analytic evaluation this previously did directly at `size`.
+  const supersample=4;
+  const sampleSize=size*supersample;
+  const canvas=document.createElement('canvas'); canvas.width=sampleSize; canvas.height=sampleSize;
   const maskContext=canvas.getContext('2d',{willReadFrequently:true});
-  const image=maskContext.createImageData(size,size),pixels=image.data,center=size/2;
-  const inner=_effectiveInnerFrac(radius,hardness,aaMode);
+  const image=maskContext.createImageData(sampleSize,sampleSize),pixels=image.data,center=sampleSize/2;
+  const sampleRadius=radius*supersample;
+  const inner=_effectiveInnerFrac(sampleRadius,hardness,aaMode);
   let offset=0;
-  for(let y=0;y<size;y++) for(let x=0;x<size;x++,offset+=4){
+  for(let y=0;y<sampleSize;y++) for(let x=0;x<sampleSize;x++,offset+=4){
     const dx=x+0.5-center,dy=y+0.5-center;
-    const coverage=_roundBrushFalloff(Math.sqrt(dx*dx+dy*dy)/radius,inner,hardness);
+    const coverage=_roundBrushFalloff(Math.sqrt(dx*dx+dy*dy)/sampleRadius,inner,hardness);
     if(coverage<=0) continue;
     pixels[offset]=pixels[offset+1]=pixels[offset+2]=255;
     pixels[offset+3]=Math.round(coverage*255);
   }
   maskContext.putImageData(image,0,0);
-  const stamp={canvas,w:size,h:size};
+  const resolved=_boxFilterResolveRGBA(pixels,sampleSize,sampleSize,supersample);
+  const outCanvas=document.createElement('canvas'); outCanvas.width=resolved.w; outCanvas.height=resolved.h;
+  const outCtx=outCanvas.getContext('2d',{willReadFrequently:true});
+  const outImage=outCtx.createImageData(resolved.w,resolved.h);
+  outImage.data.set(resolved.data);
+  outCtx.putImageData(outImage,0,0);
+  const stamp={canvas:outCanvas,w:resolved.w,h:resolved.h};
   if(_softRoundMaskCache.size>=_SOFT_ROUND_MASK_CACHE_MAX) _softRoundMaskCache.delete(_softRoundMaskCache.keys().next().value);
   _softRoundMaskCache.set(key,stamp);
   return stamp;
@@ -628,9 +697,16 @@ function _dabAAGpu(x,y,r,rgb,alpha,composite,rotation,roundness,rendererContext)
   const dc = (rendererContext.inStroke && composite !== 'erase') ? rendererContext.strokeCtx : rendererContext.ctx;
   const rr=Math.max(0.05,r);
   const isProceduralAirbrush=typeof window!=='undefined'&&!!window._brushAirbrush&&!window.brushTipCanvas;
-  // Only procedural Airbrush uses the analytic cached mask. Ordinary round
-  // brushes retain their original radial-gradient GPU renderer exactly.
-  if(isProceduralAirbrush){
+  // Phase 6O.2 (finalized): EVERY procedural round dab (any hardness,
+  // Hard Round included) with no custom tip now goes through the same
+  // cached, fixed-4x-supersampled + true-box-filtered stamp builder —
+  // not just Hard Round/Airbrush as in the previous version of this
+  // phase. This retires the old createRadialGradient()+arc().fill()
+  // path below for procedural round brushes entirely (it remains only
+  // as unreachable-but-intact code, since no caller can reach it now
+  // that this condition covers every non-custom-tip case).
+  const isProceduralRound=!window.brushTipCanvas;
+  if(isProceduralAirbrush||isProceduralRound){
     const stamp=_buildAAStamp(r,rgb,alpha,composite,rendererContext.brushHardness);
     if(stamp){
       dc.save();
@@ -1903,6 +1979,12 @@ const _gpuState = {
   dabQueue: [],
   dabQueueMaxSize: 4096,
   queuedDabs: 0,
+  // Phase 6O.2 (reworked): fixed supersample factor applied to the ONE
+  // existing accumTexture/dabPipeline/dabVertexBuffer path — matches
+  // prototype.html's constant SS=4 backing store. This is the only new
+  // piece of state; there is no second texture, pipeline, or vertex
+  // buffer.
+  accumSupersample: 4,
   // Phase 6B: persistent accumulation texture that dab batches are
   // rendered into (loadOp:'load', same texture object reused across
   // every flush) so previously drawn strokes are never lost. The
@@ -2383,7 +2465,9 @@ const GpuBrushRenderer = {
   // _flushDabQueueImplTimed) so prior strokes already drawn into it are
   // preserved rather than replayed.
   _ensureAccumTexture(width,height){
-    if(_gpuState.accumTexture && _gpuState.accumTextureWidth===width && _gpuState.accumTextureHeight===height){
+    const ss=_gpuState.accumSupersample||1;
+    const ssWidth=width*ss, ssHeight=height*ss;
+    if(_gpuState.accumTexture && _gpuState.accumTextureWidth===ssWidth && _gpuState.accumTextureHeight===ssHeight){
       return true;
     }
     if(!_gpuState.device || !_gpuState.canvasFormat) return false;
@@ -2392,7 +2476,7 @@ const GpuBrushRenderer = {
       _gpuState.accumTexture=null;
     }
     _gpuState.accumTexture=_gpuState.device.createTexture({
-      size:{width,height},
+      size:{width:ssWidth,height:ssHeight},
       format:_gpuState.canvasFormat,
       // TEXTURE_BINDING added (revised GPU integration) so
       // _composeStrokeOntoLayer()'s compose pipeline can sample this
@@ -2400,8 +2484,8 @@ const GpuBrushRenderer = {
       // onto layerTexture — a GPU render-pass read, not a CPU readback.
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING,
     });
-    _gpuState.accumTextureWidth=width;
-    _gpuState.accumTextureHeight=height;
+    _gpuState.accumTextureWidth=ssWidth;
+    _gpuState.accumTextureHeight=ssHeight;
     // Clear the freshly (re)created texture to transparent exactly once,
     // via the same helper beginStroke() uses to reset it between strokes
     // (see _clearAccumTexture() below) — a brand-new/resized texture
@@ -2592,7 +2676,25 @@ const GpuBrushRenderer = {
       @group(0) @binding(4) var textureMask: texture_2d<f32>;
       @fragment
       fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
-        let sample = textureSample(srcTexture, srcSampler, in.uv);
+        // Phase 6O.2: srcTexture (accumTexture) is rasterized at a
+        // fixed 4x supersample factor (see _gpuState.accumSupersample)
+        // — the SAME single accumulation texture every dab (any brush)
+        // is drawn into. Reading it here with a true 4x4/16-tap box
+        // filter (rather than the single bilinear textureSample() this
+        // replaced) is what resolves that supersampled coverage down
+        // to the compose target's resolution, exactly matching
+        // prototype.html's blit shader (sum of 16 texels * 1/16). No
+        // second pipeline/pass was added — this is the SAME compose
+        // pipeline already used for both stroke-commit and live-preview
+        // blending, unconditionally, for every brush.
+        let origin = vec2i(in.position.xy) * 4;
+        var sum = vec4<f32>(0.0);
+        for(var y = 0; y < 4; y++){
+          for(var x = 0; x < 4; x++){
+            sum += textureLoad(srcTexture, origin + vec2i(x, y), 0);
+          }
+        }
+        let sample = sum * (1.0 / 16.0);
         let grain = textureSample(textureMask, textureSampler, in.uv * params.texture_repeat).r;
         let texture_factor = mix(1.0, grain, params.texture_strength);
         // Hardness/tip coverage is already baked into the premultiplied
@@ -2698,7 +2800,8 @@ const GpuBrushRenderer = {
   // result of the stroke, matching CpuBrushRenderer's contract of
   // "committed strokes live on the renderer's own surface".
   _composeStrokeOntoLayer(opacity){
-    const w=_gpuState.accumTextureWidth,h=_gpuState.accumTextureHeight;
+    const canvas=_gpuState.canvas;
+    const w=canvas&&canvas.width||0, h=canvas&&canvas.height||0;
     if(!w||!h) return false;
     if(!this._ensureLayerTexture(w,h)) return false;
     if(!_gpuState.accumTexture||!_gpuState.layerTexture) return false;
@@ -2791,10 +2894,15 @@ const GpuBrushRenderer = {
   // a fraction of its radius, letting the fragment shader mask the
   // quad into a circle (length(uv) <= 1). Color writes (Phase 6E) and
   // position/NDC math are unchanged.
-  _writeDabQuadInto(arr,offset,d,w,h){
-    const r=(d&&typeof d.r==='number')?d.r:1;
-    const cx=(d&&typeof d.x==='number')?d.x:0;
-    const cy=(d&&typeof d.y==='number')?d.y:0;
+  // Phase 6O.2: added trailing `ss` (supersample) parameter, default 1
+  // for backward compatibility. Same vertex format/stride as before —
+  // only x/y/r get scaled before the existing NDC math runs, so this
+  // one function still serves every dab (any brush), same as before.
+  _writeDabQuadInto(arr,offset,d,w,h,ss){
+    const scale=ss||1;
+    const r=((d&&typeof d.r==='number')?d.r:1)*scale;
+    const cx=((d&&typeof d.x==='number')?d.x:0)*scale;
+    const cy=((d&&typeof d.y==='number')?d.y:0)*scale;
     const rgb=(d&&d.rgb)?d.rgb:[0,0,0];
     const cr=Math.max(0,Math.min(1,(rgb[0]||0)/255));
     const cg=Math.max(0,Math.min(1,(rgb[1]||0)/255));
@@ -2948,6 +3056,10 @@ const GpuBrushRenderer = {
       // Phase 6B: ensure the persistent accumulation texture (see
       // _gpuState.accumTexture) exists and matches the canvas's current
       // size before drawing into it.
+      // Phase 6O.2 (reworked): _ensureAccumTexture now allocates this
+      // texture at a fixed 4x supersample factor internally — same
+      // call, same signature, same single texture; see
+      // _ensureAccumTexture() for the resolution change itself.
       if(!this._ensureAccumTexture(canvas.width,canvas.height)){
         _gpuState.failedBatches+=1;
         _gpuState.failedDabs+=dabCount;
@@ -2966,9 +3078,15 @@ const GpuBrushRenderer = {
       // Phase 6I: 60 floats/dab (6 vertices * 10 floats) carries the
       // existing position/color/UV/hardness data plus custom-tip mode.
       // Batch-per-draw-call structure is unchanged.
+      // Phase 6O.2 (reworked): every dab (Hard Round and every other
+      // brush alike — no per-dab branching, no separate group) is
+      // written against accumTexture's real (now 4x) dimensions, with
+      // its x/y/r scaled by the SAME fixed factor, via the SS
+      // parameter added to _writeDabQuadInto(). One batch, one vertex
+      // buffer, one draw call — identical structure to before 6O.2.
       const verts=new Float32Array(dabCount*60);
       for(let i=0;i<dabCount;i++){
-        this._writeDabQuadInto(verts,i*60,_gpuState.dabQueue[i],canvas.width,canvas.height);
+        this._writeDabQuadInto(verts,i*60,_gpuState.dabQueue[i],_gpuState.accumTextureWidth,_gpuState.accumTextureHeight,_gpuState.accumSupersample);
       }
       _gpuState.queue.writeBuffer(_gpuState.dabVertexBuffer,0,verts);
 
@@ -3005,7 +3123,9 @@ const GpuBrushRenderer = {
       pass.setBindGroup(0,_gpuState.dabBindGroup);
       pass.setVertexBuffer(0,_gpuState.dabVertexBuffer);
       // Single draw call for the entire batch: 6 vertices per dab,
-      // dabCount dabs, no indices, no instancing.
+      // dabCount dabs, no indices, no instancing. Unchanged from
+      // before 6O.2 — only the destination texture's resolution (and
+      // the vertex positions computed against it) changed.
       pass.draw(dabCount*6);
       pass.end();
       if(!this.submitCommands()){

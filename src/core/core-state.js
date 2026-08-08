@@ -57,8 +57,10 @@ let brushAA=true;
 // pixel coverage / subpixel smoothing width. brushAA (legacy boolean) is
 // kept in sync for old code paths/UI: brushAA === (brushAAMode !== 'none').
 // Backward compatibility: old saved settings with ts-aa=false map to
-// 'none', ts-aa=true maps to 'medium' (also the default for Hard Round).
-window.brushAAMode='medium';
+// 'none', ts-aa=true maps to 'strong' -- the strongest/highest-quality AA
+// is the default (Phase 6N: parity with the prototype's always-maximal
+// analytic + supersampled edge); weak/medium progressively reduce it.
+window.brushAAMode='strong';
 let undoStack=[],redoStack=[],clipboard=null,styleClipboard=null;
 const LCOLORS=['#7F77DD','#1D9E75','#EF9F27','#e24b4a','#D4537E','#378ADD'];
 

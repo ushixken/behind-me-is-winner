@@ -223,7 +223,7 @@ function updateBlendModeUI(){
   // Last non-'none' AA mode -- restored when the AA checkbox
   // is toggled back on (Requirement 11: AA toggles 'none' <-> the
   // last enabled mode; the dropdown itself only ever chooses weak/medium/strong).
-  let _lastEnabledAAMode=(window.brushAAMode&&window.brushAAMode!=='none')?window.brushAAMode:'medium';
+  let _lastEnabledAAMode=(window.brushAAMode&&window.brushAAMode!=='none')?window.brushAAMode:'strong';
   function _syncAAModeUI(){
     const select=document.getElementById('ts-aa-mode');
     if(select) select.value=_lastEnabledAAMode;
@@ -271,7 +271,7 @@ function updateBlendModeUI(){
   // ON (matches Requirement 11); it never sets 'none' itself -- that's only
   // reachable via the Tool Settings checkbox.
   function _setBrushAAMode(mode){
-    const m=(mode==='weak'||mode==='medium'||mode==='strong')?mode:'medium';
+    const m=(mode==='weak'||mode==='medium'||mode==='strong')?mode:'strong';
     _lastEnabledAAMode=m;
     window.brushAAMode=m;
     if(!brushAA) _setBrushAA(true); else { BrushRenderer.invalidateCaches({aa:true,stamp:true,tip:true}); }
@@ -1351,7 +1351,7 @@ function getToolPreset(options){
     if(el) out[id]=(el.type==='checkbox'?el.checked:el.value);
   });
   out['ts-aa']=document.getElementById('ts-aa').checked;
-  out['ts-aa-mode']=window.brushAAMode&&window.brushAAMode!=='none'?window.brushAAMode:'medium';
+  out['ts-aa-mode']=window.brushAAMode&&window.brushAAMode!=='none'?window.brushAAMode:'strong';
   out['ts-pressure-curves']=JSON.parse(JSON.stringify(window._tsCustomPressureCurves||{}));
 
   //  Brush tip & texture image data (stored as data URLs for JSON export)
@@ -1500,7 +1500,7 @@ function applyToolPreset(json){
     'ts-scatter-count':1,
     'ts-stabilization':0,
     'ts-aa':true,
-    'ts-aa-mode':'medium',
+    'ts-aa-mode':'strong',
     'ts-size-control':'pressure',
     // Was 1 (a hidden 1% minimum-size floor). Hard Round was the only
     // preset that explicitly overrode this down to 0, which is why it
@@ -2084,7 +2084,7 @@ function applyToolPreset(json){
       const radius=Math.max(dab.width,dab.height)/2,gradient=dc.createRadialGradient(dab.width/2,dab.height/2,0,dab.width/2,dab.height/2,radius);
       const isAirbrush=!!settings['ts-airbrush'];
       const previewFalloff=typeof window._proceduralBrushFalloff==='function'
-        ? t=>window._proceduralBrushFalloff(t,hardness,diameter/2,settings['ts-aa-mode']||'medium',isAirbrush)
+        ? t=>window._proceduralBrushFalloff(t,hardness,diameter/2,settings['ts-aa-mode']||'strong',isAirbrush)
         : t=>(t<=hardness?1:Math.max(0,1-(t-hardness)/Math.max(.0001,1-hardness)));
       const PREVIEW_STOPS=24;
       for(let stop=0;stop<=PREVIEW_STOPS;stop++){
@@ -2780,7 +2780,7 @@ function applyToolPreset(json){
       }
       if(key==='ts-aa'){
         // Backward compatibility: legacy boolean. false -> AA mode 'none',
-        // true -> AA mode 'medium' (unless a ts-aa-mode value elsewhere in
+        // true -> AA mode 'strong' (unless a ts-aa-mode value elsewhere in
         // this same settings object overrides it -- handled by relying on
         // object key order: modern saves always include both keys, so
         // ts-aa-mode is processed too and simply wins by being applied
@@ -3142,7 +3142,7 @@ function applyToolPreset(json){
     const preset = {
       id, name, custom:true,
       preview:{ shape: roundness<60?'ellipse':'circle', hardness: hardness/100, aliased:!brushAA },
-      settings:{ 'ts-size':size, 'ts-hardness':hardness, 'ts-opacity':opacity, 'ts-flow':flow, 'ts-spacing':spacing, 'ts-spacing-mode':document.getElementById('ts-spacing-mode')?.value||'fixed', 'ts-rotation-mode':document.getElementById('ts-rotation-mode')?.value||'fixed-rotation', 'ts-angle':+(document.getElementById('ts-angle')?.value||0), 'ts-tip-roundness':+(document.getElementById('ts-tip-roundness')?.value||100), 'ts-tip-flip-x':!!document.getElementById('ts-tip-flip-x')?.checked, 'ts-tip-flip-y':!!document.getElementById('ts-tip-flip-y')?.checked, 'ts-scatter-enabled':!!document.getElementById('ts-scatter-enabled')?.checked, 'ts-scatter-amount':+(document.getElementById('ts-scatter-amount')?.value||0), 'ts-scatter-count':+(document.getElementById('ts-scatter-count')?.value||1), 'ts-roundness':roundness, 'ts-aa':!!brushAA, 'ts-aa-mode':(window.brushAAMode&&window.brushAAMode!=='none'?window.brushAAMode:'medium') }
+      settings:{ 'ts-size':size, 'ts-hardness':hardness, 'ts-opacity':opacity, 'ts-flow':flow, 'ts-spacing':spacing, 'ts-spacing-mode':document.getElementById('ts-spacing-mode')?.value||'fixed', 'ts-rotation-mode':document.getElementById('ts-rotation-mode')?.value||'fixed-rotation', 'ts-angle':+(document.getElementById('ts-angle')?.value||0), 'ts-tip-roundness':+(document.getElementById('ts-tip-roundness')?.value||100), 'ts-tip-flip-x':!!document.getElementById('ts-tip-flip-x')?.checked, 'ts-tip-flip-y':!!document.getElementById('ts-tip-flip-y')?.checked, 'ts-scatter-enabled':!!document.getElementById('ts-scatter-enabled')?.checked, 'ts-scatter-amount':+(document.getElementById('ts-scatter-amount')?.value||0), 'ts-scatter-count':+(document.getElementById('ts-scatter-count')?.value||1), 'ts-roundness':roundness, 'ts-aa':!!brushAA, 'ts-aa-mode':(window.brushAAMode&&window.brushAAMode!=='none'?window.brushAAMode:'strong') }
     };
     _customPresets.push(preset);
     _seedPresetSettings(preset); // give it its own settings slot immediately
