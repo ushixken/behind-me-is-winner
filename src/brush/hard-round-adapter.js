@@ -111,7 +111,13 @@ function isHardRoundEligible(ctx) {
 function resolveEffectiveRadius(opts) {
   const o = opts || {};
   const baseSize = Math.max(0, o.baseSize || 0);
-  const minSizeFrac = clamp01(o.minSizeFrac == null ? 0.05 : o.minSizeFrac);
+  // Phase 9F.1: the migrated Hard Round may request the prototype's exact
+  // pressure-only radius mapping. The prototype has no relative minimum
+  // size, keeps only a 0.05 logical-pixel raster floor, and halves the
+  // full-pressure radius of the nominal 1px preset. This changes geometry
+  // only; alpha/flow are resolved independently below.
+  const matchPrototypePressure = !!o.matchPrototypePressure;
+  const minSizeFrac = matchPrototypePressure ? 0 : clamp01(o.minSizeFrac == null ? 0.05 : o.minSizeFrac);
   const curveKey = o.curveKey || 'linear';
   const influence = clamp01(o.influence == null ? 1 : o.influence);
 
@@ -124,13 +130,14 @@ function resolveEffectiveRadius(opts) {
     effectiveInfluence = clamp01(o.applyPressureCurve(pressure, curveKey));
   }
 
-  const maxR = baseSize / 2;
+  const onePixelScale = matchPrototypePressure && baseSize <= 1 ? 0.5 : 1;
+  const maxR = baseSize / 2 * onePixelScale;
   const minR = maxR * minSizeFrac;
   const r = minR + (maxR - minR) * effectiveInfluence;
   // Same-spirit absolute visibility floor as the legacy engine's
   // _computeEffectiveParams (never literally zero-size / non-finite
   // downstream), not a taper -- see module doc above.
-  return Math.max(0.1, r);
+  return Math.max(matchPrototypePressure ? 0.05 : 0.1, r);
 }
 
 // ---------------------------------------------------------------------
@@ -173,11 +180,13 @@ function resolveSegmentRenderParams(segment, opts) {
   const getAlpha = typeof o.getEffectiveAlpha === 'function' ? o.getEffectiveAlpha : () => 1;
   const r0 = resolveEffectiveRadius({
     baseSize: o.baseSize, minSizeFrac: o.minSizeFrac, curveKey: o.curveKey,
+    matchPrototypePressure: o.matchPrototypePressure,
     pressure: seg.pressure0, influence: seg.influence0,
     applyPressureCurve: o.applyPressureCurve,
   });
   const r1 = resolveEffectiveRadius({
     baseSize: o.baseSize, minSizeFrac: o.minSizeFrac, curveKey: o.curveKey,
+    matchPrototypePressure: o.matchPrototypePressure,
     pressure: seg.pressure1, influence: seg.influence1,
     applyPressureCurve: o.applyPressureCurve,
   });

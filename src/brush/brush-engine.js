@@ -4685,6 +4685,7 @@ function _hardRoundStampSegments(segments, e){
 
     renderSegs.push(adapter.resolveSegmentRenderParams(seg, {
       baseSize, minSizeFrac, curveKey, applyPressureCurve: _applyPressureCurve,
+      matchPrototypePressure: true,
       rgb, composite, hardness: brushHardness, aaMode,
       getEffectiveAlpha: (pressure) => (pressure===seg.pressure0 ? alpha0 : alpha1),
     }));
