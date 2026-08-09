@@ -139,12 +139,37 @@ test('pixelCoveredByCapsuleForStroke: strict at an open stroke end (no half-diag
   assert.strictEqual(conservative, 1, 'sanity check: the old conservative test accepts this same point');
 });
 
-test('pixelCoveredByCapsuleForStroke: interior joints keep the conservative (dilated) test', () => {
+test('pixelCoveredByCapsuleForStroke: a TAPERING interior cap (shrinking tail) keeps the conservative (dilated) test', () => {
+  // Phase 9E.6: the conservative halfDiag dilation is scoped to a
+  // cap-adjacent sample on an actually-TAPERING segment (r0 !== r1) --
+  // exactly the fast-shrinking-tail-thread-between-centers case 9E.3 was
+  // fixing. Sampled near the start cap (h clamps to 0), just outside the
+  // true radius (0.3) but inside the old half-diagonal (~0.707) band.
+  const missedByExact = CapsuleMath.capsuleCoverage(-0.5, 0.5, 0, 0, 0.3, 10, 0, 0.05, 'off');
+  assert.strictEqual(missedByExact, 0);
+  const covered = CapsuleMath.pixelCoveredByCapsuleForStroke(-0.5, 0.5, 0, 0, 0.3, 10, 0, 0.05, 1);
+  assert.strictEqual(covered, 1, 'expected a tapering cap to still use the conservative sweep test');
+});
+
+test('pixelCoveredByCapsuleForStroke: a CONSTANT-radius interior joint is NOT dilated (9E.6 -- no periodic bump)', () => {
+  // Same geometry but r0 === r1 (no taper -- an ordinary low-pressure
+  // interior joint). Neighboring segments' caps already share this exact
+  // point in a real stroke, so no extra dilation is needed; without this
+  // distinction the fix would leave a periodic ~2px bump at every joint
+  // along an otherwise 1px-wide low-pressure stroke.
+  const covered = CapsuleMath.pixelCoveredByCapsuleForStroke(-0.5, 0.5, 0, 0, 0.3, 10, 0, 0.3, 1);
+  assert.strictEqual(covered, 0, 'expected a constant-radius joint to use the floored (not dilated) test');
+});
+
+test('pixelCoveredByCapsuleForStroke: interior segment BODY (away from caps) is NOT dilated (9E.6)', () => {
+  // Same segment/radius/pixel size as the joint test above, but sampled at
+  // the segment's midpoint (h=0.5, far from either cap) -- this is the
+  // case that was overwidening a thin/low-pressure stroke's body to ~1.4px
+  // before the fix. It must now use the floored-not-added radius test.
   const missedByExact = CapsuleMath.capsuleCoverage(5, 5, 0, 5.6, 0.3, 10, 5.6, 0.3, 'off');
   assert.strictEqual(missedByExact, 0);
-  // isFirstSegment/isLastSegment both false (default) -- an interior joint.
   const covered = CapsuleMath.pixelCoveredByCapsuleForStroke(5, 5, 0, 5.6, 0.3, 10, 5.6, 0.3, 1);
-  assert.strictEqual(covered, 1, 'expected interior joints to still use the conservative sweep test');
+  assert.strictEqual(covered, 0, 'expected the interior body test to no longer dilate by the full half-diagonal');
 });
 
 test('PrototypeRenderer CPU pipeline: stroke start row is exactly 1 pixel wide', async () => {

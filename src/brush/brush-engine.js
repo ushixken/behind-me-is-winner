@@ -4146,6 +4146,26 @@ let _prevRawPressure = 1.0;
 const _MAX_PRESSURE_JUMP = 0.09; // max change allowed per raw sample Ã¢â‚¬â€ tightened from 0.15 so pressure can fall off fast enough during a flick lift without holding the dab size artificially high into the last few samples
 let _strokeFirstSample = true; // true for the very first sample of a stroke (no clamping Ã¢â‚¬â€ should snap immediately)
 
+// Phase 9E.5: stateless prototype-equivalent pressure read for the migrated
+// Hard Round path ONLY. Ported exactly from prototype/prototype.html's
+// `getPressure(e)` -- clamp/normalize the raw hardware sample and nothing
+// else. Deliberately does NOT hold last-known-value on a 0 reading and does
+// NOT rate-limit sample-to-sample change (see _getPressure below, which does
+// both): PrototypeStrokeCore already has its own, faithfully-ported
+// release-artifact handling (CONTACT_PRESSURE_FLOOR / isReleaseTailSample /
+// pushPressureBuf moving average) that is designed to run on the true raw
+// signal. Feeding it through _getPressure's legacy hold+clamp first was
+// hiding the real near-zero release samples that classifier depends on, and
+// stacking an extra unrelated smoothing pass on top of the core's own.
+// Do not use this for any non-Hard-Round path -- those still need
+// _getPressure's legacy behavior.
+function _getPrototypePressure(e){
+  if(e.pointerType === 'pen' && typeof e.pressure === 'number')
+    return Math.max(0, Math.min(1, e.pressure));
+  if(e.pointerType === 'mouse') return 1;
+  return typeof e.pressure === 'number' ? Math.max(0, Math.min(1, e.pressure)) : 1;
+}
+
 function _getPressure(e){
   // e.pressure: 0 = pen hovering or just lifted (NOT zero pressure contact)
   //             0.5 = mouse or device with no pressure support
@@ -5086,7 +5106,11 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
       // (see _hardRoundStrokeActive's assignment above), so this is a plain
       // reset of that existing instance, not a fallible lookup.
       _hardRoundCore.updateSettings({brushSize:getBrushSize(),stabilization:_stabilizationAmount(),zoom});
-      const beginSeg=_hardRoundCore.beginStroke({x:p.x,y:p.y,pressure:currentPressure,pointerType:e.pointerType,timeStamp:e.timeStamp||performance.now()});
+      // Phase 9E.5: feed PrototypeStrokeCore the stateless prototype-
+      // equivalent pressure read, not the legacy _getPressure-derived
+      // currentPressure (hold-last-known + rate-limited) used above for the
+      // non-Hard-Round pointerdown path -- see _getPrototypePressure doc.
+      const beginSeg=_hardRoundCore.beginStroke({x:p.x,y:p.y,pressure:_getPrototypePressure(e),pointerType:e.pointerType,timeStamp:e.timeStamp||performance.now()});
       _hardRoundGetRenderer().beginStroke();
       _hardRoundNextStampIsFirst = true;
       _hardRoundStampSegments([beginSeg],e);
@@ -5229,11 +5253,15 @@ function _handleMoveEvent(e){
     // stabilization, and interpolation for this stroke -- the legacy
     // _stabilizePoint/_curveAddPoint pipeline below is intentionally
     // skipped entirely for it (both would otherwise double-stabilize).
+    // Phase 9E.5: raw prototype-equivalent pressure, not the legacy
+    // hold-last-known + rate-limited _getPressure -- PrototypeStrokeCore's
+    // own CONTACT_PRESSURE_FLOOR/isReleaseTailSample/moving-average handle
+    // release artifacts and jitter on the true raw signal, same as prototype.
     const samples=events.map(ev=>{
       const raw=getPos(ev);
       return{
         x:raw.x,y:raw.y,
-        pressure:_getPressure(ev),
+        pressure:_getPrototypePressure(ev),
         pointerType:ev.pointerType,
         timeStamp:(Number.isFinite(ev.timeStamp)&&ev.timeStamp>0)?ev.timeStamp:performance.now(),
       };
@@ -5337,7 +5365,11 @@ function _pointerEndStroke(e){
     // from the legacy branch -- only the source of the final dabs differs.
     drawing=false;
     const finalRaw=getPos(e);
-    const finalPressure=_getPressure(e);
+    // Phase 9E.5: same rationale as beginStroke/pushSamples above -- the
+    // prototype's endStroke freezes finishPressure from the true raw
+    // signal (via lastContactPressure/lastInputPressure, themselves fed by
+    // raw getPressure()), not a pre-held/rate-limited value.
+    const finalPressure=_getPrototypePressure(e);
     const finish=_hardRoundCore.finishStroke({x:finalRaw.x,y:finalRaw.y,pressure:finalPressure,pointerType:e.pointerType,timeStamp:e.timeStamp||performance.now()});
     _hardRoundNextStampIsLast = true;
     _hardRoundStampSegments(finish.segments,e);
