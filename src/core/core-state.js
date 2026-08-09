@@ -237,6 +237,14 @@ const compC=document.getElementById('composite-canvas');
 const displayC=document.getElementById('display-canvas');
 const onionC=document.getElementById('onion-canvas');
 const activeC=document.getElementById('active-canvas');
+// Phase 11A.3: the live Hard Round GPU preview surface (see
+// prototype-renderer.js's GpuBackend / brush-engine.js's
+// _hardRoundGpuOverlay()). It sits in the same canvas-wrap stack as
+// activeC and shares its exact backing-store resolution, so it must also
+// share applyTransform()'s zoom-dependent image-rendering below -- see
+// that function's comment for why this canvas being left out of that list
+// is exactly what made the live stroke look softer than the committed one.
+const hardRoundOverlayC=document.getElementById('hard-round-gpu-overlay');
 // Transparent current-frame composite used only for display ordering. compC
 // remains the exact background + artwork composite used by export and sampling.
 const artworkCompositeC=document.createElement('canvas');
@@ -428,10 +436,25 @@ function applyTransform(){
   // TVPaint behaviour: nearest-neighbour (crisp) once zoomed in enough,
   // bilinear (soft) below that. At exact/high zoom this preserves the true
   // hard-edged pixels instead of applying a second display blur.
+  //
+  // Phase 11A.3: hardRoundOverlayC MUST be in this list. It's a sibling
+  // canvas in the same canvas-wrap stack, scaled by the exact same
+  // wrap.style.transform (including this zoom factor) as every canvas
+  // below it -- but being a WebGPU canvas, it was never touched by this
+  // function before, so it silently kept the browser's default
+  // image-rendering:auto (bilinear) at every zoom level. At zoom>=1.5,
+  // every other canvas here switched to crisp 'pixelated' scaling while
+  // this one alone stayed bilinear-softened by the CSS transform scale --
+  // which is the entire live-preview-looks-blurry bug: the live stroke is
+  // shown through this overlay while drawing, then instantly looks sharp
+  // the moment pointerup hides it and reveals the (correctly 'pixelated')
+  // committed pixels on activeC/displayC underneath. No shader, coverage,
+  // or compositing-order change fixes this -- only matching this CSS
+  // property across every canvas in the stack does.
   const useNN=zoom>=1.5;
   const transformC=document.getElementById('transform-canvas');
-  [displayC,onionC,activeC,transformC].forEach(c=>{
-    c.style.imageRendering=useNN?'pixelated':'auto';
+  [displayC,onionC,activeC,hardRoundOverlayC,transformC].forEach(c=>{
+    if(c)c.style.imageRendering=useNN?'pixelated':'auto';
   });
   const previousDisplayBlur=_displayBlurPx;
   _updateDisplayBlur();

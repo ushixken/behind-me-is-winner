@@ -862,9 +862,45 @@
     }
   `;
 
+  // Phase 11A.2: SS=4 box-filter/coverage-average core, shared verbatim by
+  // both the commit-time resolve pass (RESOLVE_SHADER_WGSL) and the live
+  // preview present pass (PRESENT_SHADER_WGSL). Before this phase, each
+  // shader carried its own hand-copied version of this loop; the copies
+  // happened to agree at the time (verified by the Phase 11A investigation
+  // -- same sample offsets, same normalization, same source texture) but
+  // had no mechanism keeping them that way, which is exactly the kind of
+  // drift that must not be able to happen silently again. `resolveCoverage`
+  // is now the single source of truth for "what fraction of this output
+  // pixel's ss x ss block is covered" -- neither shader below computes
+  // coverage any other way, so a future change to AA/SS/box-filter math
+  // only has one place to be made, and live/final can never disagree on
+  // the coverage value itself (only on what happens to it afterward, which
+  // is intentionally still different -- see each shader's own comment).
+  function COVERAGE_CORE_WGSL(ss) {
+    return `
+      fn resolveCoverage(tex: texture_2d<f32>, outPos: vec2i) -> f32 {
+        let origin = outPos * ${ss};
+        var sum = 0.0;
+        for (var y = 0; y < ${ss}; y = y + 1) {
+          for (var x = 0; x < ${ss}; x = x + 1) {
+            sum = sum + textureLoad(tex, origin + vec2i(x, y), 0).r;
+          }
+        }
+        return sum * (1.0 / ${(ss * ss).toFixed(1)});
+      }
+    `;
+  }
+
   // Ported from prototype's blitShader, minus the *16 4x4 hardcode -- this
   // module parameterizes the box size by `ss` so it isn't silently wrong
   // if this renderer is ever constructed with a non-4 supersample factor.
+  //
+  // Deliberately does NOT apply opacity or premultiplication: this pass
+  // feeds the commit/readback path, whose result is colorized (in JS, on
+  // readback) and opacity-composited once, downstream, by
+  // _commitStrokeCanvas()'s Canvas2D globalAlpha -- unchanged by Phase
+  // 11A.2. Coverage is written raw into all four channels; only .r is
+  // ever read back (see resolveInto()).
   function RESOLVE_SHADER_WGSL(ss) {
     return `
       struct VSOut { @builtin(position) pos: vec4f };
@@ -876,21 +912,23 @@
         return out;
       }
       @group(0) @binding(0) var tex: texture_2d<f32>;
+      ${COVERAGE_CORE_WGSL(ss)}
       @fragment
       fn fs(in: VSOut) -> @location(0) vec4f {
-        let sourceOrigin = vec2i(in.pos.xy) * ${ss};
-        var sum = 0.0;
-        for (var y = 0; y < ${ss}; y = y + 1) {
-          for (var x = 0; x < ${ss}; x = x + 1) {
-            sum = sum + textureLoad(tex, sourceOrigin + vec2i(x, y), 0).r;
-          }
-        }
-        let cov = sum * (1.0 / ${(ss * ss).toFixed(1)});
+        let cov = resolveCoverage(tex, vec2i(in.pos.xy));
         return vec4f(cov, cov, cov, cov);
       }
     `;
   }
 
+  // Live preview pass: same resolveCoverage() core as the commit path
+  // above (Phase 11A.2 -- see its comment), then opacity + premultiply +
+  // color, which stay in-shader here because this pass writes directly to
+  // the visible swapchain (alphaMode:'premultiplied') with no further
+  // downstream compositing stage to apply them -- unlike the resolve pass,
+  // there is no Canvas2D step coming after this one. This is the same
+  // opacity-application behavior as before Phase 11A.2; only the coverage
+  // computation itself was deduplicated.
   function PRESENT_SHADER_WGSL(ss) {
     return `
       struct VSOut { @builtin(position) pos: vec4f };
@@ -901,13 +939,9 @@
       }
       @group(0) @binding(0) var mask: texture_2d<f32>;
       @group(0) @binding(1) var<uniform> color: ColorUniform;
+      ${COVERAGE_CORE_WGSL(ss)}
       @fragment fn fs(in: VSOut) -> @location(0) vec4f {
-        let origin = vec2i(in.pos.xy) * ${ss};
-        var sum = 0.0;
-        for (var y = 0; y < ${ss}; y = y + 1) {
-          for (var x = 0; x < ${ss}; x = x + 1) { sum += textureLoad(mask, origin + vec2i(x,y), 0).r; }
-        }
-        let cov = sum * (1.0 / ${(ss * ss).toFixed(1)}) * color.opacity;
+        let cov = resolveCoverage(mask, vec2i(in.pos.xy)) * color.opacity;
         return vec4f(color.rgb * cov, cov);
       }
     `;
