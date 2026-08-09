@@ -4839,7 +4839,24 @@ function _hardRoundRequestLivePreview(renderer){
 // Cancels any pending RAF-scheduled live preview. Called on stroke
 // end/cancel so a preview resolve never fires (or races the final
 // endStroke() resolve) after the stroke it was for is already done.
-function _hardRoundCancelLivePreview(){
+//
+// hideOverlay controls whether the GPU overlay is hidden immediately.
+// Default true is correct for a genuine abort (the stroke is being thrown
+// away, so there is nothing pending to show and the overlay should
+// disappear right away). The normal pointerup finish path, however, calls
+// this with hideOverlay=false: at that point the final segments have
+// already been pushed into the renderer's backing store but NOT yet
+// presented anywhere (the live-preview RAF that would have shown them is
+// exactly what this function just cancelled), and the authoritative
+// resolved pixels won't reach the real artwork layer until the async
+// renderer.endStroke() promise resolves and _commitStrokeCanvas() runs.
+// Hiding the overlay here, before that commit, blanks the on-screen stroke
+// for however long that promise takes to settle -- an empty gap between
+// "overlay hidden" and "layer painted" that reads as a blink/flicker. The
+// caller is responsible for hiding the overlay itself once the commit is
+// actually in hand, in the same synchronous step, so there is never a
+// frame where neither surface shows the finished stroke.
+function _hardRoundCancelLivePreview(hideOverlay=true){
   if(_hardRoundPreviewRAF !== null){
     cancelAnimationFrame(_hardRoundPreviewRAF);
     _hardRoundPreviewRAF = null;
@@ -4850,7 +4867,7 @@ function _hardRoundCancelLivePreview(){
   }
   _hardRoundPreviewSession = null;
   _hardRoundPreviewNotBefore = 0;
-  _hardRoundSetGpuOverlayVisible(false);
+  if(hideOverlay)_hardRoundSetGpuOverlayVisible(false);
 }
 
 // Carry-over: leftover distance from the end of each segment so the first
@@ -5462,7 +5479,19 @@ function _pointerEndStroke(e){
     // authoritative endStroke() resolve below supersedes it, and letting a
     // stray preview RAF fire afterward would race a now-inactive (or
     // already-committed) renderer for nothing.
-    _hardRoundCancelLivePreview();
+    //
+    // Phase 11A.4 fix: pass hideOverlay=false here. The final segments were
+    // just flushed into the renderer's backing store above but have not
+    // been presented anywhere yet (that's the RAF this call is cancelling),
+    // and the real artwork layer won't have this stroke's pixels until the
+    // renderer.endStroke() promise below resolves and _commitStrokeCanvas()
+    // runs. Hiding the overlay here -- before that commit exists -- opened
+    // a blank gap between the overlay disappearing and the layer being
+    // painted, which is exactly the pointer-up blink. The overlay is now
+    // hidden in the .then() below, in the same synchronous step as the
+    // commit, so the transition from "live overlay" to "committed layer"
+    // is atomic.
+    _hardRoundCancelLivePreview(false);
     _hardRoundStrokeActive=false;
     // Phase 9C: PrototypeRenderer.endStroke() resolves the whole stroke's
     // SS=4 backing store down to one finished logical-resolution canvas.
