@@ -4599,11 +4599,30 @@ function _hardRoundGetCore(){
 // Recreated whenever that size changes (canvas resize), exactly like
 // _ensureStrokeCanvas's own allocatedOrResized check.
 let _hardRoundRenderer = null;
+// Phase 10.1: raw pen input can arrive near 1000Hz. Core stabilization and
+// adapter mapping still run for every event immediately, but render-ready
+// segments wait for the next presentation frame and are then submitted in
+// their original order. PrototypeRenderer.drawSegments already performs a
+// sequential max-blend loop, so one array call is mathematically identical
+// to N one-segment calls while avoiding N synchronous raster stalls in the
+// input handler.
+const _hardRoundPendingRenderSegments = [];
+function _hardRoundFlushPending(renderer){
+  if(!renderer||!_hardRoundPendingRenderSegments.length)return 0;
+  const pending=_hardRoundPendingRenderSegments.splice(0,_hardRoundPendingRenderSegments.length);
+  renderer.drawSegments(pending);
+  return pending.length;
+}
 function _hardRoundGetRenderer(){
   if(typeof window==='undefined' || !window.PrototypeRenderer) return null;
   const w = activeC.width, h = activeC.height;
   if(!_hardRoundRenderer || _hardRoundRenderer.width!==w || _hardRoundRenderer.height!==h){
-    _hardRoundRenderer = new window.PrototypeRenderer({width:w, height:h});
+    // The app's live stroke surface is Canvas2D. A WebGPU canvas is not a
+    // reliable immediate drawImage source across browsers/tablet drivers;
+    // the pen-only migrated route could therefore render correctly on the
+    // GPU yet present a blank stroke. Keep the verified CPU accumulator
+    // until presentation can remain GPU-native through final compositing.
+    _hardRoundRenderer = new window.PrototypeRenderer({width:w, height:h, preferGpu:false});
   }
   return _hardRoundRenderer;
 }
@@ -4700,7 +4719,7 @@ function _hardRoundStampSegments(segments, e){
   // continuously visible while drawing, matching prototype/prototype.html's
   // own per-batch present(). The final, authoritative resolve still happens
   // once via endStroke() at pointerup (see the pointerup call site below).
-  renderer.drawSegments(renderSegs);
+  _hardRoundPendingRenderSegments.push(...renderSegs);
   currentPressure = savedPressure;
   _flowSpacingRatio = previousFlowRatio;
   _hardRoundRequestLivePreview(renderer);
@@ -4743,8 +4762,15 @@ function _hardRoundPresentLivePreview(renderer){
   renderer.peekStroke().then(result=>{
     if(session!==_activeStrokeSession || !_inStroke || !_strokeCtx || !_strokeCanvas) return;
     if(!result || !result.canvas) return;
-    _strokeCtx.clearRect(0,0,_strokeCanvas.width,_strokeCanvas.height);
-    _strokeCtx.drawImage(result.canvas,0,0);
+    const dirty=result.dirtyRegion;
+    if(dirty){
+      if(dirty.width<=0||dirty.height<=0)return;
+      _strokeCtx.clearRect(dirty.x,dirty.y,dirty.width,dirty.height);
+      _strokeCtx.drawImage(result.canvas,dirty.x,dirty.y,dirty.width,dirty.height,dirty.x,dirty.y,dirty.width,dirty.height);
+    }else{
+      _strokeCtx.clearRect(0,0,_strokeCanvas.width,_strokeCanvas.height);
+      _strokeCtx.drawImage(result.canvas,0,0);
+    }
     _scheduleRecomposite();
   });
 }
@@ -4761,20 +4787,41 @@ function _hardRoundPresentLivePreview(renderer){
 // peekStroke()/_resolveToOutput() happens for it -- matching
 // prototype.html's present-once-per-frame cadence.
 let _hardRoundPreviewRAF = null;
+let _hardRoundPreviewTimer = null;
 let _hardRoundPreviewSession = null;
+let _hardRoundPreviewNotBefore = 0;
+function _hardRoundSchedulePreviewFrame(renderer){
+  if(_hardRoundPreviewRAF!==null)return;
+  _hardRoundPreviewRAF=requestAnimationFrame(()=>{
+    _hardRoundPreviewRAF=null;
+    if(_hardRoundPreviewSession!==_activeStrokeSession||!_inStroke)return;
+    const started=performance.now();
+    _hardRoundFlushPending(renderer);
+    const rasterMs=performance.now()-started;
+    // A full-pressure 700px+ capsule can consume more than one display
+    // frame on the CPU. Immediately starting another such frame starves
+    // wheel/pan/key input for the whole stroke. Preserve every queued
+    // segment, but give the browser an input window after expensive
+    // raster work. Cheap/light-pressure frames retain normal RAF cadence.
+    _hardRoundPreviewNotBefore=performance.now()+(rasterMs>8?Math.min(50,rasterMs):0);
+    _hardRoundPresentLivePreview(renderer);
+    if(_hardRoundPendingRenderSegments.length)_hardRoundRequestLivePreview(renderer);
+  });
+}
 function _hardRoundRequestLivePreview(renderer){
   if(!renderer || !_inStroke || !_strokeCtx || !_strokeCanvas) return;
-  if(_hardRoundPreviewRAF !== null) return; // already scheduled for this frame
+  if(_hardRoundPreviewRAF !== null||_hardRoundPreviewTimer!==null) return;
   _hardRoundPreviewSession = _activeStrokeSession;
-  _hardRoundPreviewRAF = requestAnimationFrame(()=>{
-    _hardRoundPreviewRAF = null;
-    // Stroke may have ended/changed between scheduling and this frame
-    // actually running -- endStroke's own final resolve (via endStroke(),
-    // not peekStroke()) is the authoritative one in that case, so just
-    // drop this stale preview rather than resolving a dead/changed stroke.
-    if(_hardRoundPreviewSession !== _activeStrokeSession || !_inStroke) return;
-    _hardRoundPresentLivePreview(renderer);
-  });
+  const delay=Math.max(0,_hardRoundPreviewNotBefore-performance.now());
+  if(delay>0){
+    _hardRoundPreviewTimer=setTimeout(()=>{
+      _hardRoundPreviewTimer=null;
+      if(_hardRoundPreviewSession!==_activeStrokeSession||!_inStroke)return;
+      _hardRoundSchedulePreviewFrame(renderer);
+    },delay);
+    return;
+  }
+  _hardRoundSchedulePreviewFrame(renderer);
 }
 
 // Cancels any pending RAF-scheduled live preview. Called on stroke
@@ -4785,7 +4832,12 @@ function _hardRoundCancelLivePreview(){
     cancelAnimationFrame(_hardRoundPreviewRAF);
     _hardRoundPreviewRAF = null;
   }
+  if(_hardRoundPreviewTimer !== null){
+    clearTimeout(_hardRoundPreviewTimer);
+    _hardRoundPreviewTimer = null;
+  }
   _hardRoundPreviewSession = null;
+  _hardRoundPreviewNotBefore = 0;
 }
 
 // Carry-over: leftover distance from the end of each segment so the first
@@ -5112,9 +5164,18 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
       // currentPressure (hold-last-known + rate-limited) used above for the
       // non-Hard-Round pointerdown path -- see _getPrototypePressure doc.
       const beginSeg=_hardRoundCore.beginStroke({x:p.x,y:p.y,pressure:_getPrototypePressure(e),pointerType:e.pointerType,timeStamp:e.timeStamp||performance.now()});
-      _hardRoundGetRenderer().beginStroke();
+      const hardRoundRenderer=_hardRoundGetRenderer();
+      // Stylus and mouse must both present through the application's
+      // established Canvas2D live-stroke surface. GPU-native presentation
+      // needs an end-to-end compositor migration, not a WebGPU->2D copy.
+      hardRoundRenderer.preferGpu=false;
+      hardRoundRenderer.beginStroke();
+      _hardRoundPendingRenderSegments.length=0;
       _hardRoundNextStampIsFirst = true;
       _hardRoundStampSegments([beginSeg],e);
+      // Preserve the original immediate first-dab behavior; only movement
+      // segments are frame-batched.
+      _hardRoundFlushPending(_hardRoundRenderer);
     } else {
       _stampDab(p.x,p.y,e);
     }
@@ -5374,6 +5435,7 @@ function _pointerEndStroke(e){
     const finish=_hardRoundCore.finishStroke({x:finalRaw.x,y:finalRaw.y,pressure:finalPressure,pointerType:e.pointerType,timeStamp:e.timeStamp||performance.now()});
     _hardRoundNextStampIsLast = true;
     _hardRoundStampSegments(finish.segments,e);
+    _hardRoundFlushPending(_hardRoundRenderer);
     // Phase 9C.1 perf fix: drop any RAF-scheduled live preview now -- the
     // authoritative endStroke() resolve below supersedes it, and letting a
     // stray preview RAF fire afterward would race a now-inactive (or

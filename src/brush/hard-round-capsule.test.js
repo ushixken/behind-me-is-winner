@@ -278,7 +278,8 @@ test('_hardRoundStampSegments source no longer calls _stampDab()', () => {
   assert.ok(bodyEnd > start, 'could not find end of _hardRoundStampSegments body');
   const body = src.slice(start, bodyEnd + 1);
   assert.ok(!/_stampDab\(/.test(body), 'Hard Round segment stamping must not call _stampDab()');
-  assert.ok(/renderer\.drawSegments\(/.test(body), 'expected PrototypeRenderer.drawSegments() to be used instead (Phase 9C)');
+  assert.ok(/_hardRoundPendingRenderSegments\.push\(/.test(body) && /renderer\.drawSegments\(pending\)/.test(src),
+    'expected segments to route through the frame-batched PrototypeRenderer.drawSegments() path');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

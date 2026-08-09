@@ -114,6 +114,9 @@
       // instead of creating a second permanent winner namespace.
       this._stationBuckets = new Map();
       this._nextStationLaneId = 1;
+      this._coverageTileSize = 16;
+      this._coverageTileCols = Math.ceil(this.bw / this._coverageTileSize);
+      this._coverageFullCounts = new Uint16Array(this._coverageTileCols * Math.ceil(this.bh / this._coverageTileSize));
     }
 
     reset() {
@@ -125,11 +128,23 @@
       this._winnerPixels.clear();
       this._stationBuckets.clear();
       this._nextStationLaneId = 1;
+      this._coverageFullCounts.fill(0);
     }
 
     _markOutputPixelDirty(ox, oy) {
       const ss = this.ss;
       const sx = ox * ss, sy = oy * ss, ex = sx + ss, ey = sy + ss;
+      if (!this._dirty) this._dirty = { sx, sy, ex, ey };
+      else {
+        if (sx < this._dirty.sx) this._dirty.sx = sx;
+        if (sy < this._dirty.sy) this._dirty.sy = sy;
+        if (ex > this._dirty.ex) this._dirty.ex = ex;
+        if (ey > this._dirty.ey) this._dirty.ey = ey;
+      }
+    }
+
+    _markBackingDirty(sx, sy, ex, ey) {
+      if (ex <= sx || ey <= sy) return;
       if (!this._dirty) this._dirty = { sx, sy, ex, ey };
       else {
         if (sx < this._dirty.sx) this._dirty.sx = sx;
@@ -242,21 +257,14 @@
       const ex = Math.min(this.bw, b.ex + extraMargin), ey = Math.min(this.bh, b.ey + extraMargin);
       if (ex <= sx || ey <= sy) return;
 
-      // Phase 9C.2: grow the pending dirty region to cover this segment's
-      // bounds too -- same bbox already computed above for rasterization,
-      // just unioned into the running total instead of thrown away.
-      if (this._dirty === null) {
-        this._dirty = { sx, sy, ex, ey };
-      } else {
-        const d = this._dirty;
-        if (sx < d.sx) d.sx = sx;
-        if (sy < d.sy) d.sy = sy;
-        if (ex > d.ex) d.ex = ex;
-        if (ey > d.ey) d.ey = ey;
-      }
-
       const cov = this.coverage;
       const bw = this.bw;
+      // Phase 10.0: max blending can never increase a sample already at
+      // least max(alpha0,alpha1), because capsule coverage is <=1 and the
+      // interpolated segment alpha cannot exceed that endpoint maximum.
+      // Skip those saturated samples before any distance/SDF math.
+      const maxSegmentAlpha = Math.max(alpha0, alpha1);
+      const maxStoredAlpha = Math.fround(maxSegmentAlpha);
       // Phase 9E.2/9E.3: AA Off must resolve to a TRUE binary output pixel
       // that is also always CONNECTED (no dropout on thin/fast-tapering
       // strokes). resolveInto()/resolveDirtyInto() box-average every ss x
@@ -296,6 +304,14 @@
           for (let ox = obx0; ox < obx1; ox++) {
             const bx0 = ox * ss, bx1 = Math.min(this.bw, bx0 + ss);
             if (bx1 <= 0 || bx0 >= this.bw) continue;
+            let blockSaturated = true;
+            for (let py = Math.max(0, by0); py < Math.min(this.bh, by1) && blockSaturated; py++) {
+              const rowOff = py * bw;
+              for (let px = Math.max(0, bx0); px < Math.min(this.bw, bx1); px++) {
+                if (cov[rowOff + px] < maxStoredAlpha) { blockSaturated = false; break; }
+              }
+            }
+            if (blockSaturated) continue;
             const wx = bx0 + ss * 0.5;
             const axis = CapsuleMath.capsuleAxisDistance(wx, wy, x0, y0, x1, y1);
             const stationCandidate = CapsuleMath.floorRegimeStationCandidate(
@@ -323,39 +339,95 @@
             if (c <= 0) continue;
             const fillY0 = Math.max(0, by0), fillY1 = Math.min(this.bh, by1);
             const fillX0 = Math.max(0, bx0), fillX1 = Math.min(this.bw, bx1);
+            let changed = false;
             for (let py = fillY0; py < fillY1; py++) {
               const rowOff = py * bw;
               for (let px = fillX0; px < fillX1; px++) {
                 const idx = rowOff + px;
-                if (c > cov[idx]) cov[idx] = c;
+                const next = Math.fround(c);
+                if (next > cov[idx]) { cov[idx] = next; changed = true; }
               }
             }
+            if (changed) this._markOutputPixelDirty(ox, oy);
           }
         }
         return;
       }
-      for (let py = sy; py < ey; py++) {
-        const wy = py + 0.5;
-        const rowOff = py * bw;
-        for (let px = sx; px < ex; px++) {
-          const wx = px + 0.5;
-          const axis = CapsuleMath.capsuleAxisDistance(wx, wy, x0, y0, x1, y1);
+      let changedSx = ex, changedSy = ey, changedEx = sx, changedEy = sy;
+      const tileSize = this._coverageTileSize, tileCols = this._coverageTileCols;
+      const fullCounts = this._coverageFullCounts;
+      const maxAaBand = CapsuleMath.aaBand(r0, r1, x0, y0, x1, y1) * CapsuleMath.aaModeScale(seg.aaMode);
+      const maxCoverageRadius = Math.max(r0, r1) + maxAaBand * 0.5;
+      const guaranteedOpaqueCoreRadius = Math.min(r0, r1) - maxAaBand * 0.5;
+      for (let tileY = Math.floor(sy / tileSize); tileY <= Math.floor((ey - 1) / tileSize); tileY++) {
+        const py0 = Math.max(sy, tileY * tileSize), py1 = Math.min(ey, (tileY + 1) * tileSize);
+        for (let tileX = Math.floor(sx / tileSize); tileX <= Math.floor((ex - 1) / tileSize); tileX++) {
+          const px0 = Math.max(sx, tileX * tileSize), px1 = Math.min(ex, (tileX + 1) * tileSize);
+          const tileW = Math.min(tileSize, this.bw - tileX * tileSize);
+          const tileH = Math.min(tileSize, this.bh - tileY * tileSize);
+          const tileIndex = tileY * tileCols + tileX;
+          if (fullCounts[tileIndex] === tileW * tileH) continue;
+          // Conservative tile rejection: every sample in the tile lies
+          // within its center's half diagonal. If even that expanded
+          // circle cannot reach the capsule's maximum radius + AA band,
+          // every per-pixel coverage result is provably zero.
+          const tileCenterX = tileX * tileSize + tileW * 0.5;
+          const tileCenterY = tileY * tileSize + tileH * 0.5;
+          const tileHalfDiag = Math.hypot(tileW, tileH) * 0.5;
+          const tileAxisDistance = CapsuleMath.capsuleAxisDistance(tileCenterX, tileCenterY, x0, y0, x1, y1).dist;
+          if (tileAxisDistance > maxCoverageRadius + tileHalfDiag) continue;
+          // For an opaque constant-alpha segment, a tile wholly inside the
+          // guaranteed coverage=1 core has one exact result for every
+          // sample. Bulk-fill its rows instead of repeating identical SDF,
+          // sqrt, interpolation, and max-blend work per backing pixel.
+          if (maxStoredAlpha >= 1 && alpha0 === 1 && alpha1 === 1 &&
+              tileAxisDistance + tileHalfDiag <= guaranteedOpaqueCoreRadius) {
+            for (let py = py0; py < py1; py++) cov.fill(1, py * bw + px0, py * bw + px1);
+            fullCounts[tileIndex] = tileW * tileH;
+            if (px0 < changedSx) changedSx = px0;
+            if (py0 < changedSy) changedSy = py0;
+            if (px1 > changedEx) changedEx = px1;
+            if (py1 > changedEy) changedEy = py1;
+            continue;
+          }
+          for (let py = py0; py < py1; py++) {
+            const wy = py + 0.5;
+            const rowOff = py * bw;
+            for (let px = px0; px < px1; px++) {
+              const wx = px + 0.5;
+              const idx = rowOff + px;
+              if (cov[idx] >= maxStoredAlpha) continue;
+              // Hard Round pressure normally changes radius while alpha is
+              // constant. capsuleCoverage() already computes the axis
+              // projection internally, so only compute a separate one when
+              // alpha actually needs h interpolation.
+              const axis = alpha0 === alpha1 ? null : CapsuleMath.capsuleAxisDistance(wx, wy, x0, y0, x1, y1);
           // Phase 9E.1: seg.aaMode (Off/Weak/Medium/Strong) now actually
           // reaches the rasterizer -- see hard-round-capsule-math.js's
           // aaModeScale for the width progression this drives.
-          const cov01 = CapsuleMath.capsuleCoverage(wx, wy, x0, y0, r0, x1, y1, r1, seg.aaMode);
-          if (cov01 <= 0) continue;
+              const cov01 = CapsuleMath.capsuleCoverage(wx, wy, x0, y0, r0, x1, y1, r1, seg.aaMode);
+              if (cov01 <= 0) continue;
           // Alpha (Flow/Opacity) is interpolated along the same `h` param
           // as radius, then folded into the accumulated value -- matches
           // the GPU fragment shader's `in.alpha * cov * subpixelArea`
           // (see hard-round-capsule-gpu.js's STROKE_SHADER_WGSL `fs`).
-          const segAlpha = alpha0 + (alpha1 - alpha0) * axis.h;
-          const c = cov01 * segAlpha;
-          if (c <= 0) continue;
-          const idx = rowOff + px;
-          if (c > cov[idx]) cov[idx] = c; // max blend, matches GPU strokeMaskTex
+              const segAlpha = axis ? alpha0 + (alpha1 - alpha0) * axis.h : alpha0;
+              const next = Math.fround(cov01 * segAlpha);
+              if (next <= 0) continue;
+              if (next > cov[idx]) {
+                const wasFull = cov[idx] >= 1;
+                cov[idx] = next; // max blend, matches GPU strokeMaskTex
+                if (!wasFull && next >= 1) fullCounts[tileIndex]++;
+                if (px < changedSx) changedSx = px;
+                if (py < changedSy) changedSy = py;
+                if (px + 1 > changedEx) changedEx = px + 1;
+                if (py + 1 > changedEy) changedEy = py + 1;
+              }
+            }
+          }
         }
       }
+      this._markBackingDirty(changedSx, changedSy, changedEx, changedEy);
     }
 
     // Box-downsamples the backing store by `ss` and paints the resolved
@@ -392,7 +464,7 @@
       this._dirty = null;
       if (ox1 <= ox0 || oy1 <= oy0) return false;
       this._resolveRegion(outCtx, rgb, composite, ox0, oy0, ox1 - ox0, oy1 - oy0);
-      return true;
+      return { x: ox0, y: oy0, width: ox1 - ox0, height: oy1 - oy0 };
     }
 
     // Shared box-filter/color-mix core for both resolveInto() (full
@@ -459,6 +531,11 @@
       this.vertexBuf = null;
       this.pendingVerts = [];
       this.ready = false;
+      this.outputCanvas = null;
+      this.outputContext = null;
+      this.presentPipeline = null;
+      this.presentUniformBuf = null;
+      this.presentBindGroup = null;
     }
 
     // Lazily creates its own device/textures. Callers must not assume this
@@ -472,6 +549,14 @@
         if (!adapter) return false;
         const device = await adapter.requestDevice();
         this.device = device;
+
+        this.outputCanvas = document.createElement('canvas');
+        this.outputCanvas.width = this.w;
+        this.outputCanvas.height = this.h;
+        this.outputContext = this.outputCanvas.getContext('webgpu');
+        if (!this.outputContext) return false;
+        const outputFormat = navigator.gpu.getPreferredCanvasFormat();
+        this.outputContext.configure({ device, format: outputFormat, alphaMode: 'premultiplied' });
 
         const shaderModule = device.createShaderModule({ code: STROKE_SHADER_WGSL });
         this.strokePipeline = device.createRenderPipeline({
@@ -527,6 +612,22 @@
         this.blitBindGroup = device.createBindGroup({
           layout: this.blitPipeline.getBindGroupLayout(0),
           entries: [{ binding: 0, resource: this.strokeMaskTex.createView() }],
+        });
+
+        const presentShader = device.createShaderModule({ code: PRESENT_SHADER_WGSL(this.ss) });
+        this.presentPipeline = device.createRenderPipeline({
+          layout: 'auto',
+          vertex: { module: presentShader, entryPoint: 'vs' },
+          fragment: { module: presentShader, entryPoint: 'fs', targets: [{ format: outputFormat }] },
+          primitive: { topology: 'triangle-list' },
+        });
+        this.presentUniformBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        this.presentBindGroup = device.createBindGroup({
+          layout: this.presentPipeline.getBindGroupLayout(0),
+          entries: [
+            { binding: 0, resource: this.strokeMaskTex.createView() },
+            { binding: 1, resource: { buffer: this.presentUniformBuf } },
+          ],
         });
 
         this.ready = true;
@@ -586,10 +687,38 @@
       pass.setPipeline(this.strokePipeline);
       pass.setBindGroup(0, this.strokeBindGroup);
       pass.setVertexBuffer(0, this.vertexBuf);
-      pass.draw(data.length / 10);
+      pass.draw(data.length / 11);
       pass.end();
       this.device.queue.submit([enc.finish()]);
       this.pendingVerts = [];
+    }
+
+    // Prototype-equivalent live presentation: resolve SS=4 and color the
+    // coverage directly into a WebGPU canvas. Unlike resolveInto(), this
+    // performs no texture-to-buffer copy, mapAsync stall, ImageData
+    // allocation, JavaScript pixel loop, or Canvas2D upload.
+    async present(rgb, composite) {
+      if (!this.ready || !this.outputContext) return null;
+      const isErase = composite === 'erase';
+      const cr = isErase ? 0 : rgb[0] / 255;
+      const cg = isErase ? 0 : rgb[1] / 255;
+      const cb = isErase ? 0 : rgb[2] / 255;
+      this.device.queue.writeBuffer(this.presentUniformBuf, 0, new Float32Array([cr, cg, cb, isErase ? 1 : 0]));
+      const enc = this.device.createCommandEncoder();
+      const pass = enc.beginRenderPass({
+        colorAttachments: [{ view: this.outputContext.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } }],
+      });
+      pass.setPipeline(this.presentPipeline);
+      pass.setBindGroup(0, this.presentBindGroup);
+      pass.draw(3);
+      pass.end();
+      this.device.queue.submit([enc.finish()]);
+      // The caller immediately drawImage()s this WebGPU canvas into the
+      // app's established 2D preview/commit surface. Command submission is
+      // asynchronous; without this fence that copy can observe the prior
+      // (freshly cleared) canvas frame and make the live stroke invisible.
+      await this.device.queue.onSubmittedWorkDone();
+      return this.outputCanvas;
     }
 
     // Resolves the backing-store coverage texture down to a logical-
@@ -751,6 +880,28 @@
     `;
   }
 
+  function PRESENT_SHADER_WGSL(ss) {
+    return `
+      struct VSOut { @builtin(position) pos: vec4f };
+      struct ColorUniform { rgb: vec3f, erase: f32 };
+      @vertex fn vs(@builtin(vertex_index) i: u32) -> VSOut {
+        var p = array<vec2f,3>(vec2f(-1.0,-1.0), vec2f(3.0,-1.0), vec2f(-1.0,3.0));
+        var out: VSOut; out.pos = vec4f(p[i], 0.0, 1.0); return out;
+      }
+      @group(0) @binding(0) var mask: texture_2d<f32>;
+      @group(0) @binding(1) var<uniform> color: ColorUniform;
+      @fragment fn fs(in: VSOut) -> @location(0) vec4f {
+        let origin = vec2i(in.pos.xy) * ${ss};
+        var sum = 0.0;
+        for (var y = 0; y < ${ss}; y = y + 1) {
+          for (var x = 0; x < ${ss}; x = x + 1) { sum += textureLoad(mask, origin + vec2i(x,y), 0).r; }
+        }
+        let cov = sum * (1.0 / ${(ss * ss).toFixed(1)});
+        return vec4f(color.rgb * cov, cov);
+      }
+    `;
+  }
+
   const AA_MARGIN = 2.0;
   function segmentVerts(x0, y0, x1, y1, r0, r1, alpha, aaScale, aaOff) {
     const dx = x1 - x0, dy = y1 - y0;
@@ -779,6 +930,36 @@
     return out;
   }
 
+  // Phase 10.1: the union/max-blend of contiguous, collinear capsules with
+  // one constant radius and alpha is exactly the capsule from the first
+  // endpoint to the last. This removes raw-stylus tessellation redundancy
+  // without discarding an input sample or approximating any geometry.
+  function mergeEquivalentConstantCapsules(segments) {
+    const out = [];
+    for (const source of segments) {
+      if (!source) continue;
+      const seg = source;
+      const previous = out[out.length - 1];
+      const aaOff = seg.aaMode === 'off' || seg.aaMode === 'none';
+      if (previous && !aaOff && previous.aaMode === seg.aaMode &&
+          previous.composite === seg.composite && previous.hardness === seg.hardness &&
+          previous.r0 === previous.r1 && seg.r0 === seg.r1 && previous.r1 === seg.r0 &&
+          previous.alpha0 === previous.alpha1 && seg.alpha0 === seg.alpha1 && previous.alpha1 === seg.alpha0 &&
+          previous.x1 === seg.x0 && previous.y1 === seg.y0) {
+        const ax = previous.x1 - previous.x0, ay = previous.y1 - previous.y0;
+        const bx = seg.x1 - seg.x0, by = seg.y1 - seg.y0;
+        const scale = Math.max(1, Math.hypot(ax, ay) * Math.hypot(bx, by));
+        if (Math.abs(ax * by - ay * bx) <= 1e-10 * scale && ax * bx + ay * by >= 0) {
+          previous.x1 = seg.x1; previous.y1 = seg.y1;
+          previous.isStrokeEnd = !!seg.isStrokeEnd;
+          continue;
+        }
+      }
+      out.push(Object.assign({}, seg));
+    }
+    return out;
+  }
+
   // -----------------------------------------------------------------------
   // PrototypeRenderer -- the five-method public surface (peekStroke added
   // Phase 9C.1, see module doc above).
@@ -801,7 +982,7 @@
 
       this.cpu = new CpuBackend(this.width, this.height, this.ss);
       this.gpu = new GpuBackend(this.width, this.height, this.ss);
-      this._gpuInitPromise = null;
+      this._gpuInitPromise = this.preferGpu ? this.gpu.init() : null;
 
       this._active = false;
       this._usingGpu = false;
@@ -858,15 +1039,16 @@
     // app already batches segment dispatch.
     drawSegments(segments) {
       if (!this._active || !segments || !segments.length) return;
-      for (let i = 0; i < segments.length; i++) {
-        const seg = segments[i];
+      const dispatchSegments = this._usingGpu ? segments : mergeEquivalentConstantCapsules(segments);
+      for (let i = 0; i < dispatchSegments.length; i++) {
+        const seg = dispatchSegments[i];
         if (!seg) continue;
         this._rgb = seg.rgb || this._rgb;
         this._composite = seg.composite || this._composite;
         if (this._usingGpu) this.gpu.drawSegment(seg);
         else this.cpu.drawSegment(seg);
-        this._segmentCount++;
       }
+      this._segmentCount += segments.reduce((count, seg) => count + (seg ? 1 : 0), 0);
       if (this._usingGpu) this.gpu.flush();
     }
 
@@ -877,17 +1059,14 @@
     // preview-only pixel path exists to drift out of sync with the real one.
     async _resolveToOutput() {
       if (this._usingGpu) {
-        const ok = await this.gpu.resolveInto(this._outCtx, this._rgb, this._composite);
-        if (!ok) {
-          // GPU resolve failed unexpectedly mid-stroke -- there is no CPU
-          // accumulation to fall back to for THIS stroke (segments already
-          // went to the GPU path only), so surface an empty result rather
-          // than silently drawing nothing believable.
-          this._outCtx && this._outCtx.clearRect(0, 0, this.width, this.height);
-        }
+        await this.gpu.present(this._rgb, this._composite);
       } else {
         this.cpu.resolveInto(this._outCtx, this._rgb, this._composite);
       }
+    }
+
+    _resultCanvas() {
+      return this._usingGpu && this.gpu.outputCanvas ? this.gpu.outputCanvas : this._outCanvas;
     }
 
     // Resolves the accumulated backing store down to logical resolution
@@ -899,10 +1078,10 @@
     //
     // @returns {Promise<{canvas: HTMLCanvasElement|OffscreenCanvas, composite: string, segmentCount: number}>}
     async endStroke() {
-      if (!this._active) return { canvas: this._outCanvas, composite: this._composite, segmentCount: 0 };
+      if (!this._active) return { canvas: this._resultCanvas(), composite: this._composite, segmentCount: 0 };
       this._active = false;
       await this._resolveToOutput();
-      return { canvas: this._outCanvas, composite: this._composite, segmentCount: this._segmentCount };
+      return { canvas: this._resultCanvas(), composite: this._composite, segmentCount: this._segmentCount };
     }
 
     // Phase 9C.1: resolves the CURRENT in-progress accumulation to the
@@ -940,13 +1119,14 @@
     //
     // @returns {Promise<{canvas: HTMLCanvasElement|OffscreenCanvas, composite: string, segmentCount: number}>}
     async peekStroke() {
-      if (!this._active) return { canvas: this._outCanvas, composite: this._composite, segmentCount: this._segmentCount };
+      if (!this._active) return { canvas: this._resultCanvas(), composite: this._composite, segmentCount: this._segmentCount };
       if (this._usingGpu) {
         await this._resolveToOutput();
       } else {
-        this.cpu.resolveDirtyInto(this._outCtx, this._rgb, this._composite);
+        const dirtyRegion = this.cpu.resolveDirtyInto(this._outCtx, this._rgb, this._composite);
+        return { canvas: this._outCanvas, composite: this._composite, segmentCount: this._segmentCount, dirtyRegion: dirtyRegion || null };
       }
-      return { canvas: this._outCanvas, composite: this._composite, segmentCount: this._segmentCount };
+      return { canvas: this._resultCanvas(), composite: this._composite, segmentCount: this._segmentCount };
     }
 
     // Abandons the in-progress stroke's accumulation without resolving.

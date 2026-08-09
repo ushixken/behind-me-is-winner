@@ -238,7 +238,8 @@ test('migrated Hard Round path does not call _stampDab()', () => {
   assert.ok(end > start, 'could not locate end of _hardRoundStampSegments');
   const body = src.slice(start, end);
   assert.ok(!/_stampDab\s*\(/.test(body), '_hardRoundStampSegments must not call _stampDab()');
-  assert.ok(/renderer\.drawSegments\(/.test(body), '_hardRoundStampSegments must route segments through PrototypeRenderer.drawSegments()');
+  assert.ok(/_hardRoundPendingRenderSegments\.push\(/.test(body) && /renderer\.drawSegments\(pending\)/.test(src),
+    '_hardRoundStampSegments must route segments through frame-batched PrototypeRenderer.drawSegments()');
 });
 
 // Phase 9C.1: guards against the exact regression that was just fixed --
