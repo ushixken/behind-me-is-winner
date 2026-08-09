@@ -429,7 +429,7 @@ function _dominantAxisPerpendicularDistance(px, py, ax, ay, bx, by, hintDx, hint
     // Phase 9E.8: slack, in parameter units, worth half an output pixel
     // of extra chord length on either end -- see the doc comment above.
     const slack = segLen > 1e-9 ? _ANISOTROPIC_SLACK_PX / segLen : 0;
-    if (t < -slack || t > 1 + slack) return null;
+    if (t < -slack - 1e-9 || t > 1 + slack + 1e-9) return null;
     const rawSlope = (hasHint && Math.abs(hintDx) > 1e-9) ? (hintDy / hintDx) : (dy / dx);
     const slope = _quantizeSlope(rawSlope);
     const lineY = ay + slope * (px - ax);
@@ -518,7 +518,6 @@ function pixelCoveredByCapsuleForStroke(px, py, ax, ay, r0, bx, by, r1, pixelSiz
 // station winner pass owns the decision; null means the caller must retain
 // the pre-existing cap/tip/above-floor/connectivity path.
 function floorRegimeStationCandidate(px, py, ax, ay, r0, bx, by, r1, pixelSize, isFirstSegmentIn, isLastSegmentIn, hintDx, hintDy) {
-  if (isFirstSegmentIn || isLastSegmentIn) return null;
   const axis = capsuleAxisDistance(px, py, ax, ay, bx, by);
   const localRadius = r0 + (r1 - r0) * axis.h;
   const size = pixelSize == null ? 1 : pixelSize;
@@ -527,32 +526,35 @@ function floorRegimeStationCandidate(px, py, ax, ay, r0, bx, by, r1, pixelSize, 
   if (isTaperingCap) return null;
   const dx = bx - ax, dy = by - ay;
   if (Math.abs(dx) < 1e-9 && Math.abs(dy) < 1e-9) return null;
-  const hasHint = Number.isFinite(hintDx) && Number.isFinite(hintDy) &&
-    (Math.abs(hintDx) > 1e-9 || Math.abs(hintDy) > 1e-9);
-  let majorAxis = (hasHint ? Math.abs(hintDx) >= Math.abs(hintDy) : Math.abs(dx) >= Math.abs(dy)) ? 'x' : 'y';
+  // Station identity and projection must be traversal invariant. Negating
+  // a segment vector on reversal leaves |dx|/|dy| and dy/dx unchanged;
+  // the historical smoothed hint does not have that property at a turn.
+  let majorAxis = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
   if (majorAxis === 'x' && Math.abs(dx) < 1e-9) majorAxis = 'y';
   else if (majorAxis === 'y' && Math.abs(dy) < 1e-9) majorAxis = 'x';
-  let axisDist = _dominantAxisPerpendicularDistance(px, py, ax, ay, bx, by, hintDx, hintDy);
-  if (axisDist === null) {
-    // A station is a pixel-wide slice, so adjacent dense segments must be
-    // allowed to submit candidates for the same slice. Extend only the
-    // major-axis domain by half a station; this changes no radius/coverage
-    // threshold and is bounded to the two neighboring station edges.
-    if (majorAxis === 'x') {
-      const t = (px - ax) / dx, slack = size * 0.5 / Math.abs(dx);
-      if (t < -slack || t > 1 + slack) return null;
-      const rawSlope = (hasHint && Math.abs(hintDx) > 1e-9) ? hintDy / hintDx : dy / dx;
-      axisDist = Math.abs(py - (ay + _quantizeSlope(rawSlope) * (px - ax)));
-    } else {
-      const t = (py - ay) / dy, slack = size * 0.5 / Math.abs(dy);
-      if (t < -slack || t > 1 + slack) return null;
-      const rawInvSlope = (hasHint && Math.abs(hintDy) > 1e-9) ? hintDx / hintDy : dx / dy;
-      axisDist = Math.abs(px - (ax + _quantizeSlope(rawInvSlope) * (py - ay)));
-    }
+  // A station is a pixel-wide slice, so adjacent dense segments submit to
+  // the same slice with half a station of bounded major-axis overlap.
+  // `centerlineMinor` is direction-independent: traversing B->A produces
+  // the same projected line coordinate as A->B. Phase 9F.2 uses it to
+  // identify the same physical lane across a reversal.
+  let centerlineMinor, axisDist;
+  if (majorAxis === 'x') {
+    const t = (px - ax) / dx, slack = size * 0.5 / Math.abs(dx);
+    if (t < -slack - 1e-9 || t > 1 + slack + 1e-9) return null;
+    const rawSlope = dy / dx;
+    centerlineMinor = ay + _quantizeSlope(rawSlope) * (px - ax);
+    axisDist = Math.abs(py - centerlineMinor);
+  } else {
+    const t = (py - ay) / dy, slack = size * 0.5 / Math.abs(dy);
+    if (t < -slack || t > 1 + slack) return null;
+    const rawInvSlope = dx / dy;
+    centerlineMinor = ax + _quantizeSlope(rawInvSlope) * (py - ay);
+    axisDist = Math.abs(px - centerlineMinor);
   }
   return {
     accepted: axisDist <= size * 0.5,
     majorAxis,
+    centerlineMinor,
     axisDistance: axisDist,
     centerlineDistanceSq: axis.dist * axis.dist,
   };

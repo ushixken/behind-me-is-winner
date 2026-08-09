@@ -109,9 +109,11 @@
       // centerline stations. Ordinary coverage remains in `coverage`.
       this._stationWinners = new Map();
       this._winnerPixels = new Map();
-      this._stationRun = 0;
-      this._stationAxisAndSign = '';
-      this._segmentOrdinal = 0;
+      // Phase 9F.2: direction-independent spatial lanes for each axis /
+      // station. Reversing over the same centerline finds the same lane
+      // instead of creating a second permanent winner namespace.
+      this._stationBuckets = new Map();
+      this._nextStationLaneId = 1;
     }
 
     reset() {
@@ -121,9 +123,8 @@
       this._axisHintDy = 0;
       this._stationWinners.clear();
       this._winnerPixels.clear();
-      this._stationRun = 0;
-      this._stationAxisAndSign = '';
-      this._segmentOrdinal = 0;
+      this._stationBuckets.clear();
+      this._nextStationLaneId = 1;
     }
 
     _markOutputPixelDirty(ox, oy) {
@@ -166,6 +167,29 @@
       this._markOutputPixelDirty(candidate.ox, candidate.oy);
     }
 
+    _submitStationCandidate(axis, station, candidate) {
+      const bucketKey = axis + ':' + station;
+      let lanes = this._stationBuckets.get(bucketKey);
+      if (!lanes) this._stationBuckets.set(bucketKey, lanes = []);
+      // Candidate pixels one row/column apart can represent the two
+      // nearest raster choices for one subpixel centerline. Group by the
+      // projected centerline itself, not travel direction or chosen pixel.
+      let lane = null, bestDelta = Infinity;
+      for (const item of lanes) {
+        const delta = Math.abs(item.centerlineMinor - candidate.centerlineMinor);
+        if (delta <= this.ss * 0.5 + 1e-9 && delta < bestDelta) {
+          lane = item; bestDelta = delta;
+        }
+      }
+      if (!lane) {
+        lane = { key: 'lane:' + this._nextStationLaneId++, centerlineMinor: candidate.centerlineMinor };
+        lanes.push(lane);
+      }
+      this._setStationWinner(lane.key, candidate);
+      const winner = this._stationWinners.get(lane.key);
+      if (winner) lane.centerlineMinor = winner.centerlineMinor;
+    }
+
     // Rasterizes one render-ready segment's coverage into the backing
     // store at (x*ss, y*ss) scale, max-blended against whatever is
     // already accumulated there (never additive -- overlapping dabs in a
@@ -206,12 +230,6 @@
           }
         }
       }
-      const runAxis = Math.abs(this._axisHintDx) >= Math.abs(this._axisHintDy) ? 'x' : 'y';
-      const runSign = runAxis === 'x' ? Math.sign(this._axisHintDx) : Math.sign(this._axisHintDy);
-      const axisAndSign = runAxis + ':' + runSign;
-      if (this._stationAxisAndSign && this._stationAxisAndSign !== axisAndSign) this._stationRun++;
-      this._stationAxisAndSign = axisAndSign;
-      const segmentOrdinal = this._segmentOrdinal++;
       // 9E.3: pixelCoveredByCapsule()'s conservative half-diagonal test
       // reaches slightly further out than an exact d<=0 test (see below),
       // so the bounding box needs the same extra margin or blocks right
@@ -288,9 +306,9 @@
               if (stationCandidate.accepted) {
                 const segAlpha = alpha0 + (alpha1 - alpha0) * axis.h;
                 const station = stationCandidate.majorAxis === 'x' ? ox : oy;
-                this._setStationWinner(`${this._stationRun}:${stationCandidate.majorAxis}:${station}`, {
+                this._submitStationCandidate(stationCandidate.majorAxis, station, {
                   ox, oy, alpha: segAlpha, distance: stationCandidate.centerlineDistanceSq,
-                  segmentOrdinal,
+                  centerlineMinor: stationCandidate.centerlineMinor,
                 });
               }
               continue;
