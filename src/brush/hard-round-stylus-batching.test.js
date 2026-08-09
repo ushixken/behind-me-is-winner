@@ -18,4 +18,19 @@ test('movement rasterization flushes at RAF while first/final segments flush exp
 test('expensive live frames yield an input window without dropping queued segments',()=>{const src=fs.readFileSync(path.join(__dirname,'brush-engine.js'),'utf8');assert.ok(/rasterMs>8\?Math\.min\(50,rasterMs\):0/.test(src));assert.ok(/setTimeout\(\(\)=>\{[\s\S]*?_hardRoundSchedulePreviewFrame\(renderer\)/.test(src));assert.ok(/if\(_hardRoundPendingRenderSegments\.length\)_hardRoundRequestLivePreview\(renderer\)/.test(src));assert.ok(/splice\(0,_hardRoundPendingRenderSegments\.length\)/.test(src));});
 test('stroke completion cancels both preview scheduling mechanisms',()=>{const src=fs.readFileSync(path.join(__dirname,'brush-engine.js'),'utf8');const start=src.indexOf('function _hardRoundCancelLivePreview(');const body=src.slice(start,src.indexOf('\n}',start)+2);assert.ok(/cancelAnimationFrame/.test(body));assert.ok(/clearTimeout/.test(body));});
 test('cancelLivePreview only hides the GPU overlay when explicitly asked, and pointerup finish defers the hide to commit time',()=>{const src=fs.readFileSync(path.join(__dirname,'brush-engine.js'),'utf8');const start=src.indexOf('function _hardRoundCancelLivePreview(');const body=src.slice(start,src.indexOf('\n}',start)+2);assert.ok(/hideOverlay/.test(body),'cancelLivePreview should take a hideOverlay flag');assert.ok(/if\(hideOverlay\)_hardRoundSetGpuOverlayVisible\(false\)/.test(body),'overlay hide must be conditional');assert.ok(/_hardRoundCancelLivePreview\(false\)/.test(src),'pointerup finish path must defer the overlay hide');});
+test('a stale in-flight peekStroke() resolve cannot re-show the overlay after cancelLivePreview has already run (prevents post-commit duplicate)',()=>{
+  const src=fs.readFileSync(path.join(__dirname,'brush-engine.js'),'utf8');
+  // _activeStrokeSession only advances on the next pointerdown and _inStroke
+  // only flips false partway through the async commit -- neither guard is
+  // set at the moment cancelLivePreview runs. A dedicated generation token,
+  // bumped there and checked before ANY of those guards inside the
+  // peekStroke().then() callback, is what actually closes the race.
+  const presentStart=src.indexOf('function _hardRoundPresentLivePreview(');
+  const presentBody=src.slice(presentStart,src.indexOf('\n}',presentStart)+2);
+  assert.ok(/const previewGeneration\s*=\s*_hardRoundPreviewGeneration/.test(presentBody),'must snapshot the generation before the async call');
+  assert.ok(/if\(previewGeneration!==_hardRoundPreviewGeneration\)\s*return;/.test(presentBody),'resolved callback must bail on a stale generation');
+  const cancelStart=src.indexOf('function _hardRoundCancelLivePreview(');
+  const cancelBody=src.slice(cancelStart,src.indexOf('\n}',cancelStart)+2);
+  assert.ok(/_hardRoundPreviewGeneration\+\+/.test(cancelBody),'cancelLivePreview must invalidate the generation so in-flight previews cannot land after it');
+});
 Promise.all(pending).then(()=>{console.log(`\n${passed} passed, ${failed} failed`);if(failed)process.exit(1)});

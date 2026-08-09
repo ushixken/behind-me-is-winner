@@ -4765,7 +4765,12 @@ function _hardRoundStampSegments(segments, e){
 function _hardRoundPresentLivePreview(renderer){
   if(!renderer || !_inStroke || !_strokeCtx || !_strokeCanvas) return;
   const session = _activeStrokeSession;
+  // Phase 11A.5: capture the current preview generation. See
+  // _hardRoundPreviewGeneration below for why this check exists in
+  // addition to the session/_inStroke checks already here.
+  const previewGeneration = _hardRoundPreviewGeneration;
   renderer.peekStroke().then(result=>{
+    if(previewGeneration!==_hardRoundPreviewGeneration) return;
     if(session!==_activeStrokeSession || !_inStroke || !_strokeCtx || !_strokeCanvas) return;
     if(!result || !result.canvas) return;
     if(renderer.isGpuActive&&renderer.isGpuActive()){
@@ -4856,7 +4861,25 @@ function _hardRoundRequestLivePreview(renderer){
 // caller is responsible for hiding the overlay itself once the commit is
 // actually in hand, in the same synchronous step, so there is never a
 // frame where neither surface shows the finished stroke.
+// Phase 11A.5: independent invalidation token for the live-preview loop's
+// async peekStroke() calls. session (_activeStrokeSession) only changes on
+// the NEXT pointerdown, and _inStroke only flips false partway through the
+// async commit itself -- neither one is set at the moment we actually want
+// to stop trusting old previews, which is the instant pointerup begins
+// finishing/committing the stroke. A peekStroke() that was already in
+// flight at that instant (its RAF had already fired before pointerup, so
+// cancelling the *next* RAF here doesn't touch it) would otherwise resolve
+// later, sail past both of those stale guards, and call
+// _hardRoundSetGpuOverlayVisible(true) with pre-final pixels -- showing the
+// overlay's old content stacked on top of the artwork layer that already
+// has the finished stroke committed into it. That reads as the stroke
+// being duplicated. Bumping this counter in _hardRoundCancelLivePreview
+// (called at the very start of both the finish and the abort paths, before
+// the commit) guarantees any such stale resolve is a no-op, regardless of
+// how the two promises happen to interleave.
+let _hardRoundPreviewGeneration = 0;
 function _hardRoundCancelLivePreview(hideOverlay=true){
+  _hardRoundPreviewGeneration++;
   if(_hardRoundPreviewRAF !== null){
     cancelAnimationFrame(_hardRoundPreviewRAF);
     _hardRoundPreviewRAF = null;
@@ -4868,6 +4891,28 @@ function _hardRoundCancelLivePreview(hideOverlay=true){
   _hardRoundPreviewSession = null;
   _hardRoundPreviewNotBefore = 0;
   if(hideOverlay)_hardRoundSetGpuOverlayVisible(false);
+}
+
+// Present the renderer state after finishStroke() has supplied its catch-up
+// geometry, then leave that exact frame visible for one browser paint before
+// endStroke() reads it back and the overlay is exchanged for committed pixels.
+// Two RAF boundaries are intentional: RAF callbacks run before paint, so the
+// first boundary makes the submitted final frame paintable and the second is
+// the earliest safe point at which commit may replace it.
+function _hardRoundPresentFinishedFrame(renderer){
+  if(!renderer)return Promise.resolve();
+  return renderer.peekStroke().then(result=>{
+    if(result&&result.canvas){
+      if(renderer.isGpuActive&&renderer.isGpuActive()){
+        _hardRoundSetGpuOverlayVisible(true);
+      }else if(_strokeCtx&&_strokeCanvas){
+        _strokeCtx.clearRect(0,0,_strokeCanvas.width,_strokeCanvas.height);
+        _strokeCtx.drawImage(result.canvas,0,0);
+        _scheduleRecomposite();
+      }
+    }
+    return new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+  });
 }
 
 // Carry-over: leftover distance from the end of each segment so the first
@@ -5472,9 +5517,19 @@ function _pointerEndStroke(e){
     // raw getPressure()), not a pre-held/rate-limited value.
     const finalPressure=_getPrototypePressure(e);
     const finish=_hardRoundCore.finishStroke({x:finalRaw.x,y:finalRaw.y,pressure:finalPressure,pointerType:e.pointerType,timeStamp:e.timeStamp||performance.now()});
-    _hardRoundNextStampIsLast = true;
-    _hardRoundStampSegments(finish.segments,e);
-    _hardRoundFlushPending(_hardRoundRenderer);
+    // Phase 11A.8: finishStroke() must still run exactly once to close and
+    // reset PrototypeStrokeCore, but its accelerated post-release positional
+    // replay is not new stylus input and was never part of the last visible
+    // renderer state. Appending it here made Hard Round uniquely change shape
+    // after pointer-up (even with stabilization=0); the shared commit then
+    // faithfully committed that already-widened mask once. Commit the exact
+    // live accumulation instead. Real pressure/tail samples received while
+    // the pen was down have already entered the renderer unchanged.
+    _traceStrokeLifecycle('hardround-finishStroke',{segmentCount:finish.segments?finish.segments.length:0,submittedSegmentCount:0,mode:finish.mode});
+    _hardRoundNextStampIsLast = false;
+    _traceStrokeLifecycle('hardround-stampSegments',{queuedSegments:_hardRoundPendingRenderSegments.length,previewRAFPending:_hardRoundPreviewRAF,previewTimerPending:_hardRoundPreviewTimer});
+    const flushedCount=_hardRoundFlushPending(_hardRoundRenderer);
+    _traceStrokeLifecycle('hardround-flushPending',{flushedSegments:flushedCount,overlayVisible:_hardRoundGpuOverlay()?!_hardRoundGpuOverlay().hidden:null});
     // Phase 9C.1 perf fix: drop any RAF-scheduled live preview now -- the
     // authoritative endStroke() resolve below supersedes it, and letting a
     // stray preview RAF fire afterward would race a now-inactive (or
@@ -5491,8 +5546,16 @@ function _pointerEndStroke(e){
     // hidden in the .then() below, in the same synchronous step as the
     // commit, so the transition from "live overlay" to "committed layer"
     // is atomic.
+    //
+    // Phase 11A.8: finishStroke's synthetic positional replay is deliberately
+    // not submitted above. The flush therefore contains only real pen-down
+    // segments that were still waiting for their scheduled live frame. The
+    // finished preview below exposes those last legitimate segments before
+    // the same renderer accumulation is resolved and committed.
+    const previewGenerationAtFinish=_hardRoundPreviewGeneration;
     _hardRoundCancelLivePreview(false);
     _hardRoundStrokeActive=false;
+    _traceStrokeLifecycle('hardround-cancelLivePreview',{previewGenerationAtFinish,previewGenerationAfterCancel:_hardRoundPreviewGeneration,overlayVisible:_hardRoundGpuOverlay()?!_hardRoundGpuOverlay().hidden:null});
     // Phase 9C: PrototypeRenderer.endStroke() resolves the whole stroke's
     // SS=4 backing store down to one finished logical-resolution canvas.
     // That canvas is this stroke's entire visible output -- draw it into
@@ -5509,10 +5572,19 @@ function _pointerEndStroke(e){
     const finishHardRoundStroke=()=>{
       _restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();
       _finalizePointerEndStroke(e);
+      _traceStrokeLifecycle('hardround-recomposite-after-finalize',{overlayVisible:_hardRoundGpuOverlay()?!_hardRoundGpuOverlay().hidden:null});
     };
     if(renderer){
       const gpuCommit=!!(renderer.isGpuActive&&renderer.isGpuActive());
-      renderer.endStroke({readback:gpuCommit}).then(result=>{
+      const finishedPreviewCalledAt=performance.now();
+      _traceStrokeLifecycle('hardround-finished-preview-call',{gpuActive:gpuCommit,overlayVisible:_hardRoundGpuOverlay()?!_hardRoundGpuOverlay().hidden:null});
+      _hardRoundPresentFinishedFrame(renderer).then(()=>{
+        _traceStrokeLifecycle('hardround-finished-preview-presented',{elapsedMs:performance.now()-finishedPreviewCalledAt,overlayVisible:_hardRoundGpuOverlay()?!_hardRoundGpuOverlay().hidden:null});
+        const endStrokeCalledAt=performance.now();
+        _traceStrokeLifecycle('hardround-endStroke-call',{gpuActive:gpuCommit,readback:gpuCommit,overlayVisible:_hardRoundGpuOverlay()?!_hardRoundGpuOverlay().hidden:null});
+        return renderer.endStroke({readback:gpuCommit}).then(result=>({result,endStrokeCalledAt}));
+      }).then(({result,endStrokeCalledAt})=>{
+        _traceStrokeLifecycle('hardround-endStroke-resolve',{elapsedMs:performance.now()-endStrokeCalledAt,hasCanvas:!!(result&&result.canvas),segmentCount:result&&result.segmentCount,overlayVisibleBeforeHide:_hardRoundGpuOverlay()?!_hardRoundGpuOverlay().hidden:null,inStroke:_inStroke});
         _hardRoundSetGpuOverlayVisible(false);
         if(_inStroke){
           if(result&&result.canvas&&_strokeCtx&&_strokeCanvas){
@@ -5521,6 +5593,7 @@ function _pointerEndStroke(e){
           }
           _inStroke=false;_commitStrokeCanvas();
         }
+        _traceStrokeLifecycle('hardround-committed',{overlayVisible:_hardRoundGpuOverlay()?!_hardRoundGpuOverlay().hidden:null});
         finishHardRoundStroke();
       });
     } else {

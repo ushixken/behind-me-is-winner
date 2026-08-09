@@ -1,0 +1,58 @@
+// Phase 11A.6 -- finish geometry must be presented before pointer-up commit.
+'use strict';
+const assert=require('assert');
+const fs=require('fs');
+const path=require('path');
+const {PrototypeStrokeCore}=require('./prototype-stroke-core');
+let passed=0,failed=0;
+function test(name,fn){try{fn();passed++;console.log(`  ok - ${name}`)}catch(e){failed++;console.error(`  FAIL - ${name}\n    ${e.stack||e}`)}}
+function sample(x,y,p,t){return{x,y,pressure:p,timeStamp:t,pointerType:'pen'}}
+function run(points,{pressure=.5,holdTicks=0}={}){
+  const core=new PrototypeStrokeCore({brushSize:700,stabilization:.65,zoom:1});
+  let t=0;
+  const live=[core.beginStroke(sample(points[0][0],points[0][1],pressure,t),{})];
+  for(let i=1;i<points.length;i++){t+=8;live.push(...core.pushSamples([sample(points[i][0],points[i][1],pressure,t)]));}
+  const held=[];
+  for(let i=0;i<holdTicks;i++)held.push(...core.tickHold(16.7));
+  t+=8;
+  const finish=core.finishStroke(sample(points.at(-1)[0],points.at(-1)[1],pressure,t));
+  const lastLive=held.at(-1)||live.at(-1),lastFinish=finish.segments.at(-1);
+  const extension=lastLive&&lastFinish?Math.hypot(lastFinish.x1-lastLive.x1,lastFinish.y1-lastLive.y1):0;
+  return{live,held,finish,extension};
+}
+
+const scenarios={
+  stationary:[[0,0],[50,0]],
+  slow:[[0,0],[5,1],[10,2],[15,3],[20,4]],
+  fast:[[0,0],[40,5],[90,12],[150,20]],
+  flick:[[0,0],[80,8],[180,18]],
+};
+for(const [name,points] of Object.entries(scenarios))test(`${name} release emits geometry absent from the last live frame`,()=>{
+  const r=run(points);
+  assert.ok(r.finish.segments.length>0,'finish must emit catch-up segments');
+  assert.ok(r.extension>1,`expected visible endpoint extension, got ${r.extension}`);
+});
+test('live hold ticks drain stabilization catch-up before release',()=>{
+  const without=run(scenarios.stationary),withHold=run(scenarios.stationary,{holdTicks:90});
+  assert.ok(withHold.held.length>0);
+  assert.ok(withHold.extension<without.extension/100,`${withHold.extension} vs ${without.extension}`);
+});
+test('constant input pressure remains constant through finish geometry',()=>{
+  const r=run(scenarios.fast,{pressure:.5});
+  for(const s of r.finish.segments){assert.ok(Math.abs(s.pressure0-.5)<1e-12);assert.ok(Math.abs(s.pressure1-.5)<1e-12);}
+});
+test('pointer-up lifecycle presents finished renderer state before endStroke and commit',()=>{
+  const src=fs.readFileSync(path.join(__dirname,'brush-engine.js'),'utf8');
+  const finish=src.indexOf('const finish=_hardRoundCore.finishStroke');
+  const flush=src.indexOf('_hardRoundFlushPending(_hardRoundRenderer)',finish);
+  const present=src.indexOf('_hardRoundPresentFinishedFrame(renderer)',flush);
+  const end=src.indexOf('renderer.endStroke({readback:gpuCommit})',present);
+  const hide=src.indexOf('_hardRoundSetGpuOverlayVisible(false)',end);
+  const commit=src.indexOf('_commitStrokeCanvas()',hide);
+  assert.ok(finish<flush&&flush<present&&present<end&&end<hide&&hide<commit,{finish,flush,present,end,hide,commit});
+});
+test('finished frame survives a browser paint before overlay exchange',()=>{
+  const src=fs.readFileSync(path.join(__dirname,'brush-engine.js'),'utf8');
+  assert.ok(/function _hardRoundPresentFinishedFrame[\s\S]*?requestAnimationFrame\(\(\)=>requestAnimationFrame\(resolve\)\)/.test(src));
+});
+console.log(`\n${passed} passed, ${failed} failed`);if(failed)process.exit(1);
