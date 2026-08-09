@@ -381,7 +381,7 @@ function _quantizeSlope(slope) {
   if (!Number.isFinite(slope)) return slope;
   return Math.round(slope / _SLOPE_QUANT_STEP) * _SLOPE_QUANT_STEP;
 }
-function _dominantAxisPerpendicularDistance(px, py, ax, ay, bx, by) {
+function _dominantAxisPerpendicularDistance(px, py, ax, ay, bx, by, hintDx, hintDy) {
   const dx = bx - ax, dy = by - ay;
   if (Math.abs(dx) < 1e-9 && Math.abs(dy) < 1e-9) {
     // Degenerate/round-dab segment: no direction to be anisotropic
@@ -389,7 +389,37 @@ function _dominantAxisPerpendicularDistance(px, py, ax, ay, bx, by) {
     return Math.sqrt((px - ax) * (px - ax) + (py - ay) * (py - ay));
   }
   const segLen = Math.sqrt(dx * dx + dy * dy);
-  if (Math.abs(dx) >= Math.abs(dy)) {
+  // Phase 9E.9: which axis is "dominant" is decided from a caller-supplied,
+  // STROKE-LEVEL smoothed direction hint when one is available, not from
+  // this one tiny segment's own (dx,dy) -- see the doc comment above this
+  // function for why. The projection itself still uses this segment's own
+  // exact endpoints/slope; only the x-dominant-vs-y-dominant CHOICE moves.
+  const hasHint = Number.isFinite(hintDx) && Number.isFinite(hintDy) && (Math.abs(hintDx) > 1e-9 || Math.abs(hintDy) > 1e-9);
+  let xDominant = hasHint ? (Math.abs(hintDx) >= Math.abs(hintDy)) : (Math.abs(dx) >= Math.abs(dy));
+  // Guard: never let the hint pick an axis this segment's OWN geometry is
+  // degenerate along (would divide by ~0 below). Only possible right at a
+  // hint/segment disagreement, which only happens within a few segments of
+  // a genuine axis crossing -- fall back to this segment's own axis there.
+  if (xDominant && Math.abs(dx) < 1e-9) xDominant = false;
+  else if (!xDominant && Math.abs(dy) < 1e-9) xDominant = true;
+  // Phase 9E.9: the SLOPE itself, not just the axis choice, is also taken
+  // from the smoothed hint when one is available. Near a 45-degree
+  // tangent a fixed absolute slope error is most sensitive (a small
+  // per-segment noise in slope swings the projected line-value by close
+  // to a full pixel over one column/row of travel), and each tiny
+  // tessellated segment estimates its own slope from only its own two
+  // (sub-pixel-spaced, therefore noisy) endpoints. Two overlapping
+  // neighbor segments along the same smooth arc can therefore each
+  // compute a slightly different quantized slope and disagree on which
+  // single row/column is nearest at a shared pixel -- exactly the
+  // remaining 1px/2px breathing 9E.8's axis/slack fix alone didn't
+  // reach. Using the stroke-level hint's slope instead makes every
+  // segment overlapping a given pixel agree, the same way the hint
+  // already makes them agree on which axis is dominant. Still anchored
+  // at THIS segment's own (ax,ay) -- only the direction comes from the
+  // hint -- so the line stays positioned on the real curve, just with a
+  // shared, stable direction.
+  if (xDominant) {
     // x-dominant (horizontal-ish): one sample per output COLUMN, so the
     // minor axis is y. Find the line's true y at this pixel's x and
     // measure only the vertical offset from it, using the QUANTIZED
@@ -400,7 +430,8 @@ function _dominantAxisPerpendicularDistance(px, py, ax, ay, bx, by) {
     // of extra chord length on either end -- see the doc comment above.
     const slack = segLen > 1e-9 ? _ANISOTROPIC_SLACK_PX / segLen : 0;
     if (t < -slack || t > 1 + slack) return null;
-    const slope = _quantizeSlope(dy / dx);
+    const rawSlope = (hasHint && Math.abs(hintDx) > 1e-9) ? (hintDy / hintDx) : (dy / dx);
+    const slope = _quantizeSlope(rawSlope);
     const lineY = ay + slope * (px - ax);
     return Math.abs(py - lineY);
   }
@@ -408,12 +439,13 @@ function _dominantAxisPerpendicularDistance(px, py, ax, ay, bx, by) {
   const t = (py - ay) / dy;
   const slack = segLen > 1e-9 ? _ANISOTROPIC_SLACK_PX / segLen : 0;
   if (t < -slack || t > 1 + slack) return null;
-  const invSlope = _quantizeSlope(dx / dy);
+  const rawInvSlope = (hasHint && Math.abs(hintDy) > 1e-9) ? (hintDx / hintDy) : (dx / dy);
+  const invSlope = _quantizeSlope(rawInvSlope);
   const lineX = ax + invSlope * (py - ay);
   return Math.abs(px - lineX);
 }
 
-function pixelCoveredByCapsuleForStroke(px, py, ax, ay, r0, bx, by, r1, pixelSize, isFirstSegmentIn, isLastSegmentIn) {
+function pixelCoveredByCapsuleForStroke(px, py, ax, ay, r0, bx, by, r1, pixelSize, isFirstSegmentIn, isLastSegmentIn, hintDx, hintDy) {
   const isFirstSegment = !!isFirstSegmentIn, isLastSegment = !!isLastSegmentIn;
   const { dist, h, isRoundDab } = capsuleAxisDistance(px, py, ax, ay, bx, by);
   const localRadius = r0 + (r1 - r0) * h;
@@ -451,7 +483,7 @@ function pixelCoveredByCapsuleForStroke(px, py, ax, ay, r0, bx, by, r1, pixelSiz
   // the pixel is beyond the segment's own extent along its major axis
   // (see _dominantAxisPerpendicularDistance's null case), so endpoint/
   // cap-adjacent rejection behaves exactly as before 9E.7.
-  const axisDist = _dominantAxisPerpendicularDistance(px, py, ax, ay, bx, by);
+  const axisDist = _dominantAxisPerpendicularDistance(px, py, ax, ay, bx, by, hintDx, hintDy);
   if (axisDist === null) {
     // Phase 9E.8: a real curved stroke tessellates into segments far
     // SHORTER than one output pixel (dense dab spacing). When this
@@ -481,6 +513,51 @@ function pixelCoveredByCapsuleForStroke(px, py, ax, ay, r0, bx, by, r1, pixelSiz
   return axisDist <= halfPixel ? 1 : 0;
 }
 
+// Phase 9E.11: classify a sample that belongs to the thin, straight-body
+// floor regime.  Returning a record (including accepted:false) means the
+// station winner pass owns the decision; null means the caller must retain
+// the pre-existing cap/tip/above-floor/connectivity path.
+function floorRegimeStationCandidate(px, py, ax, ay, r0, bx, by, r1, pixelSize, isFirstSegmentIn, isLastSegmentIn, hintDx, hintDy) {
+  if (isFirstSegmentIn || isLastSegmentIn) return null;
+  const axis = capsuleAxisDistance(px, py, ax, ay, bx, by);
+  const localRadius = r0 + (r1 - r0) * axis.h;
+  const size = pixelSize == null ? 1 : pixelSize;
+  if (localRadius > size * 0.5) return null;
+  const isTaperingCap = (axis.isRoundDab || axis.h <= 0 || axis.h >= 1) && r0 !== r1;
+  if (isTaperingCap) return null;
+  const dx = bx - ax, dy = by - ay;
+  if (Math.abs(dx) < 1e-9 && Math.abs(dy) < 1e-9) return null;
+  const hasHint = Number.isFinite(hintDx) && Number.isFinite(hintDy) &&
+    (Math.abs(hintDx) > 1e-9 || Math.abs(hintDy) > 1e-9);
+  let majorAxis = (hasHint ? Math.abs(hintDx) >= Math.abs(hintDy) : Math.abs(dx) >= Math.abs(dy)) ? 'x' : 'y';
+  if (majorAxis === 'x' && Math.abs(dx) < 1e-9) majorAxis = 'y';
+  else if (majorAxis === 'y' && Math.abs(dy) < 1e-9) majorAxis = 'x';
+  let axisDist = _dominantAxisPerpendicularDistance(px, py, ax, ay, bx, by, hintDx, hintDy);
+  if (axisDist === null) {
+    // A station is a pixel-wide slice, so adjacent dense segments must be
+    // allowed to submit candidates for the same slice. Extend only the
+    // major-axis domain by half a station; this changes no radius/coverage
+    // threshold and is bounded to the two neighboring station edges.
+    if (majorAxis === 'x') {
+      const t = (px - ax) / dx, slack = size * 0.5 / Math.abs(dx);
+      if (t < -slack || t > 1 + slack) return null;
+      const rawSlope = (hasHint && Math.abs(hintDx) > 1e-9) ? hintDy / hintDx : dy / dx;
+      axisDist = Math.abs(py - (ay + _quantizeSlope(rawSlope) * (px - ax)));
+    } else {
+      const t = (py - ay) / dy, slack = size * 0.5 / Math.abs(dy);
+      if (t < -slack || t > 1 + slack) return null;
+      const rawInvSlope = (hasHint && Math.abs(hintDy) > 1e-9) ? hintDx / hintDy : dx / dy;
+      axisDist = Math.abs(px - (ax + _quantizeSlope(rawInvSlope) * (py - ay)));
+    }
+  }
+  return {
+    accepted: axisDist <= size * 0.5,
+    majorAxis,
+    axisDistance: axisDist,
+    centerlineDistanceSq: axis.dist * axis.dist,
+  };
+}
+
 const HardRoundCapsuleMathExports = {
   capsuleAxisDistance,
   capsuleSignedDistance,
@@ -490,6 +567,7 @@ const HardRoundCapsuleMathExports = {
   capsuleCoverage,
   pixelCoveredByCapsule,
   pixelCoveredByCapsuleForStroke,
+  floorRegimeStationCandidate,
   _dominantAxisPerpendicularDistance,
   capsuleBounds,
   AA_MARGIN,

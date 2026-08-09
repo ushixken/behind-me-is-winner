@@ -232,7 +232,9 @@ test('migrated Hard Round path does not call _stampDab()', () => {
   const src = fs.readFileSync(path.join(__dirname, 'brush-engine.js'), 'utf8');
   const start = src.indexOf('function _hardRoundStampSegments(segments, e){');
   assert.ok(start >= 0, '_hardRoundStampSegments not found in brush-engine.js');
-  const end = src.indexOf('\n}\n', start);
+  // Accept either LF or CRLF working-tree line endings.
+  const relativeEnd = src.slice(start).search(/\r?\n}\r?\n/);
+  const end = relativeEnd < 0 ? -1 : start + relativeEnd;
   assert.ok(end > start, 'could not locate end of _hardRoundStampSegments');
   const body = src.slice(start, end);
   assert.ok(!/_stampDab\s*\(/.test(body), '_hardRoundStampSegments must not call _stampDab()');

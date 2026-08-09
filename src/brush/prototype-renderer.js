@@ -95,11 +95,75 @@
       // rasterize -- it was simply being discarded before; nothing new is
       // computed here, it's just retained.
       this._dirty = null;
+      // Phase 9E.9: stroke-level smoothed direction, used ONLY to pick the
+      // x-dominant-vs-y-dominant axis in the floor-regime anisotropic test
+      // (see hard-round-capsule-math.js's _dominantAxisPerpendicularDistance
+      // doc comment). Persists across drawSegment() calls for the whole
+      // stroke -- NOT per segment -- so a real curve's many short,
+      // independently-noisy tessellated segments all agree on which axis
+      // is dominant near a 45-degree tangent, instead of each one flipping
+      // on its own tiny (and largely arbitrary, at that scale) dx/dy.
+      this._axisHintDx = 0;
+      this._axisHintDy = 0;
+      // Phase 9E.11: replaceable, stroke-local winners for thin AA-Off
+      // centerline stations. Ordinary coverage remains in `coverage`.
+      this._stationWinners = new Map();
+      this._winnerPixels = new Map();
+      this._stationRun = 0;
+      this._stationAxisAndSign = '';
+      this._segmentOrdinal = 0;
     }
 
     reset() {
       this.coverage.fill(0);
       this._dirty = null;
+      this._axisHintDx = 0;
+      this._axisHintDy = 0;
+      this._stationWinners.clear();
+      this._winnerPixels.clear();
+      this._stationRun = 0;
+      this._stationAxisAndSign = '';
+      this._segmentOrdinal = 0;
+    }
+
+    _markOutputPixelDirty(ox, oy) {
+      const ss = this.ss;
+      const sx = ox * ss, sy = oy * ss, ex = sx + ss, ey = sy + ss;
+      if (!this._dirty) this._dirty = { sx, sy, ex, ey };
+      else {
+        if (sx < this._dirty.sx) this._dirty.sx = sx;
+        if (sy < this._dirty.sy) this._dirty.sy = sy;
+        if (ex > this._dirty.ex) this._dirty.ex = ex;
+        if (ey > this._dirty.ey) this._dirty.ey = ey;
+      }
+    }
+
+    _removeStationOwner(stationKey, winner) {
+      const pixelKey = winner.oy * this.w + winner.ox;
+      const owners = this._winnerPixels.get(pixelKey);
+      if (!owners) return;
+      owners.delete(stationKey);
+      if (!owners.size) this._winnerPixels.delete(pixelKey);
+      this._markOutputPixelDirty(winner.ox, winner.oy);
+    }
+
+    _setStationWinner(stationKey, candidate) {
+      const previous = this._stationWinners.get(stationKey);
+      const eps = 1e-12;
+      candidate.contenders = previous ? (previous.contenders || 1) + 1 : 1;
+      if (previous && (candidate.distance > previous.distance + eps ||
+        (Math.abs(candidate.distance - previous.distance) <= eps &&
+          (candidate.oy > previous.oy || (candidate.oy === previous.oy && candidate.ox >= previous.ox))))) {
+        previous.contenders = candidate.contenders;
+        return;
+      }
+      if (previous) this._removeStationOwner(stationKey, previous);
+      this._stationWinners.set(stationKey, candidate);
+      const pixelKey = candidate.oy * this.w + candidate.ox;
+      let owners = this._winnerPixels.get(pixelKey);
+      if (!owners) this._winnerPixels.set(pixelKey, owners = new Map());
+      owners.set(stationKey, candidate.alpha);
+      this._markOutputPixelDirty(candidate.ox, candidate.oy);
     }
 
     // Rasterizes one render-ready segment's coverage into the backing
@@ -121,6 +185,33 @@
       // can use the strict point test only there, not on every joint.
       const isFirstSegment = !!seg.isStrokeStart;
       const isLastSegment = !!seg.isStrokeEnd;
+      // Phase 9E.9: update this stroke's smoothed axis-hint direction with
+      // THIS segment's own raw (unquantized) vector, normalized so wildly
+      // different segment lengths (dense curve dabs vs. a fast flick's
+      // longer chords) don't skew the smoothing -- then blend it into the
+      // running hint with a fixed weight. A real curve's tangent turns
+      // gradually from one short segment to the next, so this hint tracks
+      // it smoothly and crosses any axis boundary (45 degrees) exactly
+      // ONCE for the whole stroke, instead of once per tiny segment.
+      {
+        const rawLen = Math.sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
+        if (rawLen > 1e-9) {
+          const ndx = (x1 - x0) / rawLen, ndy = (y1 - y0) / rawLen;
+          const w = 0.25; // smoothing weight -- see comment above
+          if (this._axisHintDx === 0 && this._axisHintDy === 0) {
+            this._axisHintDx = ndx; this._axisHintDy = ndy;
+          } else {
+            this._axisHintDx = this._axisHintDx * (1 - w) + ndx * w;
+            this._axisHintDy = this._axisHintDy * (1 - w) + ndy * w;
+          }
+        }
+      }
+      const runAxis = Math.abs(this._axisHintDx) >= Math.abs(this._axisHintDy) ? 'x' : 'y';
+      const runSign = runAxis === 'x' ? Math.sign(this._axisHintDx) : Math.sign(this._axisHintDy);
+      const axisAndSign = runAxis + ':' + runSign;
+      if (this._stationAxisAndSign && this._stationAxisAndSign !== axisAndSign) this._stationRun++;
+      this._stationAxisAndSign = axisAndSign;
+      const segmentOrdinal = this._segmentOrdinal++;
       // 9E.3: pixelCoveredByCapsule()'s conservative half-diagonal test
       // reaches slightly further out than an exact d<=0 test (see below),
       // so the bounding box needs the same extra margin or blocks right
@@ -189,8 +280,24 @@
             if (bx1 <= 0 || bx0 >= this.bw) continue;
             const wx = bx0 + ss * 0.5;
             const axis = CapsuleMath.capsuleAxisDistance(wx, wy, x0, y0, x1, y1);
+            const stationCandidate = CapsuleMath.floorRegimeStationCandidate(
+              wx, wy, x0, y0, r0, x1, y1, r1, ss, isFirstSegment, isLastSegment,
+              this._axisHintDx, this._axisHintDy
+            );
+            if (stationCandidate) {
+              if (stationCandidate.accepted) {
+                const segAlpha = alpha0 + (alpha1 - alpha0) * axis.h;
+                const station = stationCandidate.majorAxis === 'x' ? ox : oy;
+                this._setStationWinner(`${this._stationRun}:${stationCandidate.majorAxis}:${station}`, {
+                  ox, oy, alpha: segAlpha, distance: stationCandidate.centerlineDistanceSq,
+                  segmentOrdinal,
+                });
+              }
+              continue;
+            }
             const cov01 = CapsuleMath.pixelCoveredByCapsuleForStroke(
-              wx, wy, x0, y0, r0, x1, y1, r1, ss, isFirstSegment, isLastSegment
+              wx, wy, x0, y0, r0, x1, y1, r1, ss, isFirstSegment, isLastSegment,
+              this._axisHintDx, this._axisHintDy
             );
             if (cov01 <= 0) continue;
             const segAlpha = alpha0 + (alpha1 - alpha0) * axis.h;
@@ -294,7 +401,10 @@
             const rowOff = (srcY + by) * bw + srcX;
             for (let bx = 0; bx < ss; bx++) sum += cov[rowOff + bx];
           }
-          const a = Math.max(0, Math.min(1, sum * norm));
+          let winnerAlpha = 0;
+          const owners = this._winnerPixels.get((oy + y) * this.w + (ox + x));
+          if (owners) for (const alpha of owners.values()) if (alpha > winnerAlpha) winnerAlpha = alpha;
+          const a = Math.max(0, Math.min(1, Math.max(sum * norm, winnerAlpha)));
           d[p] = cr; d[p + 1] = cg; d[p + 2] = cb; d[p + 3] = Math.round(a * 255);
         }
       }
