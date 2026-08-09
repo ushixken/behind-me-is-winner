@@ -4617,15 +4617,21 @@ function _hardRoundGetRenderer(){
   if(typeof window==='undefined' || !window.PrototypeRenderer) return null;
   const w = activeC.width, h = activeC.height;
   if(!_hardRoundRenderer || _hardRoundRenderer.width!==w || _hardRoundRenderer.height!==h){
-    // The app's live stroke surface is Canvas2D. A WebGPU canvas is not a
-    // reliable immediate drawImage source across browsers/tablet drivers;
-    // the pen-only migrated route could therefore render correctly on the
-    // GPU yet present a blank stroke. Keep the verified CPU accumulator
-    // until presentation can remain GPU-native through final compositing.
-    _hardRoundRenderer = new window.PrototypeRenderer({width:w, height:h, preferGpu:false});
+    _hardRoundRenderer = new window.PrototypeRenderer({width:w, height:h, preferGpu:true});
   }
   return _hardRoundRenderer;
 }
+function _hardRoundGpuOverlay(){return document.getElementById('hard-round-gpu-overlay');}
+function _hardRoundSetGpuOverlayVisible(visible){
+  const overlay=_hardRoundGpuOverlay();
+  if(!overlay)return;
+  overlay.hidden=!visible;
+  overlay.style.display=visible?'block':'none';
+}
+// Give device/pipeline creation the hover interval before pointer-down.
+activeC.addEventListener('pointerenter',()=>{
+  if(tool==='brush'&&typeof window!=='undefined'&&window.PrototypeRenderer)_hardRoundGetRenderer();
+},{passive:true});
 
 // Exact eligibility condition (Phase 8C §9). Procedural, not a preset-name
 // check: any brush whose settings match this exactly gets the migrated
@@ -4762,6 +4768,12 @@ function _hardRoundPresentLivePreview(renderer){
   renderer.peekStroke().then(result=>{
     if(session!==_activeStrokeSession || !_inStroke || !_strokeCtx || !_strokeCanvas) return;
     if(!result || !result.canvas) return;
+    if(renderer.isGpuActive&&renderer.isGpuActive()){
+      // The WebGPU canvas is already a visible document-space overlay in
+      // canvas-wrap. Never copy its live pixels through Canvas2D.
+      _hardRoundSetGpuOverlayVisible(true);
+      return;
+    }
     const dirty=result.dirtyRegion;
     if(dirty){
       if(dirty.width<=0||dirty.height<=0)return;
@@ -4838,6 +4850,7 @@ function _hardRoundCancelLivePreview(){
   }
   _hardRoundPreviewSession = null;
   _hardRoundPreviewNotBefore = 0;
+  _hardRoundSetGpuOverlayVisible(false);
 }
 
 // Carry-over: leftover distance from the end of each segment so the first
@@ -5165,11 +5178,20 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
       // non-Hard-Round pointerdown path -- see _getPrototypePressure doc.
       const beginSeg=_hardRoundCore.beginStroke({x:p.x,y:p.y,pressure:_getPrototypePressure(e),pointerType:e.pointerType,timeStamp:e.timeStamp||performance.now()});
       const hardRoundRenderer=_hardRoundGetRenderer();
-      // Stylus and mouse must both present through the application's
-      // established Canvas2D live-stroke surface. GPU-native presentation
-      // needs an end-to-end compositor migration, not a WebGPU->2D copy.
-      hardRoundRenderer.preferGpu=false;
+      const hardRoundAaMode=_currentAAMode();
+      // Phase 11A: AA-On owns a direct WebGPU overlay. AA Off retains the
+      // exact CPU station-winner implementation until GPU parity exists.
+      // Blend modes, selection clipping, and Smart Raster need their own
+      // GPU compositor parity; keep them on the established CPU preview so
+      // the visible stroke cannot disagree with the pointer-up commit.
+      const gpuLiveCompatible=hardRoundAaMode!=='off'&&hardRoundAaMode!=='none'&&
+        (!window.brushBlendMode||window.brushBlendMode==='normal')&&
+        !(window.SelectionScope&&SelectionScope.isRestricted&&SelectionScope.isRestricted())&&
+        !(layers[curLayer]&&layers[curLayer].type==='smart-raster');
+      hardRoundRenderer.preferGpu=gpuLiveCompatible;
+      hardRoundRenderer.presentationOpacity=Math.max(0,Math.min(1,brushOpacity));
       hardRoundRenderer.beginStroke();
+      _hardRoundSetGpuOverlayVisible(!!(hardRoundRenderer.isGpuActive&&hardRoundRenderer.isGpuActive()));
       _hardRoundPendingRenderSegments.length=0;
       _hardRoundNextStampIsFirst = true;
       _hardRoundStampSegments([beginSeg],e);
@@ -5254,7 +5276,7 @@ function _scheduleLinePreview(x,y,e){
     _linePreviewRAFPending=false;_linePreviewRAFHandle=0;
     if(!lineStart||(!_lineDragging&&!(_curveToolGesture&&_curveToolGesture.phase==='bending'))) return;
     _renderLineDrag(_linePreviewLatestX,_linePreviewLatestY,_linePreviewLatestEvent,'preview');
-    _scheduleRecomposite();
+    if(!(_hardRoundRenderer&&_hardRoundRenderer.isGpuActive&&_hardRoundRenderer.isGpuActive()))_scheduleRecomposite();
   });
 }
 function _cancelLinePreview(){
@@ -5333,7 +5355,7 @@ function _handleMoveEvent(e){
     _hardRoundStampSegments(segments,e);
     const last=samples[samples.length-1];
     currentPressure=last.pressure;lx=last.x;ly=last.y;_lastPointerEvent=e;
-    _scheduleRecomposite();
+    if(!(_hardRoundRenderer&&_hardRoundRenderer.isGpuActive&&_hardRoundRenderer.isGpuActive()))_scheduleRecomposite();
     return;
   }
   for(const ev of events){
@@ -5460,7 +5482,9 @@ function _pointerEndStroke(e){
       _finalizePointerEndStroke(e);
     };
     if(renderer){
-      renderer.endStroke().then(result=>{
+      const gpuCommit=!!(renderer.isGpuActive&&renderer.isGpuActive());
+      renderer.endStroke({readback:gpuCommit}).then(result=>{
+        _hardRoundSetGpuOverlayVisible(false);
         if(_inStroke){
           if(result&&result.canvas&&_strokeCtx&&_strokeCanvas){
             _strokeCtx.clearRect(0,0,_strokeCanvas.width,_strokeCanvas.height);

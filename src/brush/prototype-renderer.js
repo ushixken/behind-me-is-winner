@@ -550,7 +550,7 @@
         const device = await adapter.requestDevice();
         this.device = device;
 
-        this.outputCanvas = document.createElement('canvas');
+        this.outputCanvas = document.getElementById('hard-round-gpu-overlay') || document.createElement('canvas');
         this.outputCanvas.width = this.w;
         this.outputCanvas.height = this.h;
         this.outputContext = this.outputCanvas.getContext('webgpu');
@@ -564,7 +564,7 @@
           vertex: {
             module: shaderModule, entryPoint: 'vs',
             buffers: [{
-              arrayStride: 44,
+              arrayStride: 48,
               attributes: [
                 { format: 'float32x2', offset: 0, shaderLocation: 0 },
                 { format: 'float32x2', offset: 8, shaderLocation: 1 },
@@ -574,6 +574,7 @@
                 { format: 'float32', offset: 32, shaderLocation: 5 },
                 { format: 'float32', offset: 36, shaderLocation: 6 },
                 { format: 'float32', offset: 40, shaderLocation: 7 },
+                { format: 'float32', offset: 44, shaderLocation: 8 },
               ],
             }],
           },
@@ -662,7 +663,7 @@
       const isAaOff = seg.aaMode === 'off' || seg.aaMode === 'none';
       const verts = segmentVerts(
         seg.x0 * ss, seg.y0 * ss, seg.x1 * ss, seg.y1 * ss,
-        seg.r0 * ss, seg.r1 * ss, Math.max(seg.alpha0, seg.alpha1), aaScale, isAaOff ? 1 : 0
+        seg.r0 * ss, seg.r1 * ss, seg.alpha0, seg.alpha1, aaScale, isAaOff ? 1 : 0
       );
       this.pendingVerts.push.apply(this.pendingVerts, verts);
     }
@@ -687,7 +688,7 @@
       pass.setPipeline(this.strokePipeline);
       pass.setBindGroup(0, this.strokeBindGroup);
       pass.setVertexBuffer(0, this.vertexBuf);
-      pass.draw(data.length / 11);
+      pass.draw(data.length / 12);
       pass.end();
       this.device.queue.submit([enc.finish()]);
       this.pendingVerts = [];
@@ -697,13 +698,14 @@
     // coverage directly into a WebGPU canvas. Unlike resolveInto(), this
     // performs no texture-to-buffer copy, mapAsync stall, ImageData
     // allocation, JavaScript pixel loop, or Canvas2D upload.
-    async present(rgb, composite) {
+    async present(rgb, composite, opacity) {
       if (!this.ready || !this.outputContext) return null;
       const isErase = composite === 'erase';
       const cr = isErase ? 0 : rgb[0] / 255;
       const cg = isErase ? 0 : rgb[1] / 255;
       const cb = isErase ? 0 : rgb[2] / 255;
-      this.device.queue.writeBuffer(this.presentUniformBuf, 0, new Float32Array([cr, cg, cb, isErase ? 1 : 0]));
+      const strokeOpacity = Math.max(0, Math.min(1, opacity == null ? 1 : opacity));
+      this.device.queue.writeBuffer(this.presentUniformBuf, 0, new Float32Array([cr, cg, cb, strokeOpacity]));
       const enc = this.device.createCommandEncoder();
       const pass = enc.beginRenderPass({
         colorAttachments: [{ view: this.outputContext.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } }],
@@ -786,17 +788,20 @@
     struct VSOut {
       @builtin(position) pos: vec4f,
       @location(0) p0: vec2f, @location(1) p1: vec2f,
-      @location(2) r0: f32, @location(3) r1: f32, @location(4) alpha: f32,
-      @location(5) aaScale: f32, @location(6) aaOff: f32,
+      @location(2) r0: f32, @location(3) r1: f32,
+      @location(4) alpha0: f32, @location(5) alpha1: f32,
+      @location(6) aaScale: f32, @location(7) aaOff: f32,
     };
     @vertex
     fn vs(@location(0) position: vec2f, @location(1) p0: vec2f, @location(2) p1: vec2f,
-          @location(3) r0: f32, @location(4) r1: f32, @location(5) alpha: f32,
-          @location(6) aaScale: f32, @location(7) aaOff: f32) -> VSOut {
+          @location(3) r0: f32, @location(4) r1: f32,
+          @location(5) alpha0: f32, @location(6) alpha1: f32,
+          @location(7) aaScale: f32, @location(8) aaOff: f32) -> VSOut {
       var out: VSOut;
       let ndc = vec2f((position.x / u.size.x) * 2.0 - 1.0, 1.0 - (position.y / u.size.y) * 2.0);
       out.pos = vec4f(ndc, 0.0, 1.0);
-      out.p0 = p0; out.p1 = p1; out.r0 = r0; out.r1 = r1; out.alpha = alpha;
+      out.p0 = p0; out.p1 = p1; out.r0 = r0; out.r1 = r1;
+      out.alpha0 = alpha0; out.alpha1 = alpha1;
       out.aaScale = aaScale; out.aaOff = aaOff;
       return out;
     }
@@ -825,6 +830,9 @@
       let blockCenter = (floor(in.pos.xy / ss) * ss) + vec2f(ss * 0.5, ss * 0.5);
       let samplePos = select(in.pos.xy, blockCenter, in.aaOff > 0.5);
       let d = capsuleD(samplePos, in.p0, in.p1, in.r0, in.r1);
+      let denom = dot(in.p1 - in.p0, in.p1 - in.p0);
+      let rawH = dot(samplePos - in.p0, in.p1 - in.p0) / max(denom, 1e-6);
+      let h = clamp(rawH, 0.0, 1.0);
       if (in.aaOff > 0.5) {
         // Phase 9E.3: conservative pixel-square test (see
         // hard-round-capsule-math.js's pixelCoveredByCapsule) instead of
@@ -832,22 +840,25 @@
         // tail can't thread between block centers and drop pixels.
         let halfDiag = ss * 0.70710678;
         let cov = select(0.0, 1.0, d <= halfDiag);
-        return vec4f(in.alpha * cov, 0.0, 0.0, 1.0);
+        return vec4f(mix(in.alpha0, in.alpha1, h) * cov, 0.0, 0.0, 1.0);
       }
-      let denom = dot(in.p1 - in.p0, in.p1 - in.p0);
-      let rawH = dot(samplePos - in.p0, in.p1 - in.p0) / max(denom, 1e-6);
-      let h = clamp(rawH, 0.0, 1.0);
       let localRadius = mix(in.r0, in.r1, h);
       let isRoundDab = denom < 1e-6;
       // Phase 9E.1: same aaModeScale() multiplier the CPU backend applies
       // in hard-round-capsule-math.js's capsuleCoverage, so Off/Weak/
       // Medium/Strong widen the band by the identical factor on GPU.
-      let aa = max(fwidth(d) * in.aaScale, 1e-4);
+      let segmentLength = sqrt(max(denom, 1e-6));
+      let taperRate = (in.r1 - in.r0) / segmentLength;
+      let taperBand = sqrt(1.0 + taperRate * taperRate);
+      let insideBody = rawH > 0.0 && rawH < 1.0 && !isRoundDab;
+      let analyticBand = select(1.0, taperBand, insideBody);
+      let aa = max(analyticBand * in.aaScale, 1e-4);
       let cov = clamp(0.5 - d / aa, 0.0, 1.0);
       let circleArea = min(1.0, 3.14159265 * localRadius * localRadius);
       let strokeWidth = min(1.0, 2.0 * localRadius);
       let subpixelArea = select(strokeWidth, circleArea, isRoundDab);
-      return vec4f(in.alpha * cov * subpixelArea, 0.0, 0.0, 1.0);
+      let alpha = mix(in.alpha0, in.alpha1, h);
+      return vec4f(alpha * cov * subpixelArea, 0.0, 0.0, 1.0);
     }
   `;
 
@@ -883,7 +894,7 @@
   function PRESENT_SHADER_WGSL(ss) {
     return `
       struct VSOut { @builtin(position) pos: vec4f };
-      struct ColorUniform { rgb: vec3f, erase: f32 };
+      struct ColorUniform { rgb: vec3f, opacity: f32 };
       @vertex fn vs(@builtin(vertex_index) i: u32) -> VSOut {
         var p = array<vec2f,3>(vec2f(-1.0,-1.0), vec2f(3.0,-1.0), vec2f(-1.0,3.0));
         var out: VSOut; out.pos = vec4f(p[i], 0.0, 1.0); return out;
@@ -896,14 +907,14 @@
         for (var y = 0; y < ${ss}; y = y + 1) {
           for (var x = 0; x < ${ss}; x = x + 1) { sum += textureLoad(mask, origin + vec2i(x,y), 0).r; }
         }
-        let cov = sum * (1.0 / ${(ss * ss).toFixed(1)});
+        let cov = sum * (1.0 / ${(ss * ss).toFixed(1)}) * color.opacity;
         return vec4f(color.rgb * cov, cov);
       }
     `;
   }
 
   const AA_MARGIN = 2.0;
-  function segmentVerts(x0, y0, x1, y1, r0, r1, alpha, aaScale, aaOff) {
+  function segmentVerts(x0, y0, x1, y1, r0, r1, alpha0, alpha1, aaScale, aaOff) {
     const dx = x1 - x0, dy = y1 - y0;
     const len = Math.hypot(dx, dy) || 1;
     const ux = dx / len, uy = dy / len;
@@ -923,7 +934,7 @@
     // shader can switch to block-center point sampling (see fs below)
     // instead of just narrowing fwidth's band -- narrowing alone still
     // lets the SS=4 resolve's box filter re-introduce gray edge pixels.
-    const v = (p) => [p.x, p.y, x0, y0, x1, y1, r0, r1, alpha, as, off];
+    const v = (p) => [p.x, p.y, x0, y0, x1, y1, r0, r1, alpha0, alpha1, as, off];
     const out = [];
     out.push.apply(out, v(c0)); out.push.apply(out, v(c1)); out.push.apply(out, v(c2));
     out.push.apply(out, v(c0)); out.push.apply(out, v(c2)); out.push.apply(out, v(c3));
@@ -989,6 +1000,7 @@
       this._composite = 'paint';
       this._rgb = [0, 0, 0];
       this._segmentCount = 0;
+      this.presentationOpacity = 1;
 
       // Output canvas: logical resolution, reused across strokes.
       this._outCanvas = (typeof document !== 'undefined')
@@ -1057,9 +1069,10 @@
     // also deactivates the stroke) and peekStroke() (which does not), so
     // there is exactly one resolve code path for both -- no separate
     // preview-only pixel path exists to drift out of sync with the real one.
-    async _resolveToOutput() {
+    async _resolveToOutput(readback) {
       if (this._usingGpu) {
-        await this.gpu.present(this._rgb, this._composite);
+        if (readback) await this.gpu.resolveInto(this._outCtx, this._rgb, this._composite);
+        else await this.gpu.present(this._rgb, this._composite, this.presentationOpacity);
       } else {
         this.cpu.resolveInto(this._outCtx, this._rgb, this._composite);
       }
@@ -1077,11 +1090,12 @@
     // canvas.
     //
     // @returns {Promise<{canvas: HTMLCanvasElement|OffscreenCanvas, composite: string, segmentCount: number}>}
-    async endStroke() {
+    async endStroke(options) {
       if (!this._active) return { canvas: this._resultCanvas(), composite: this._composite, segmentCount: 0 };
+      const readback = !!(options && options.readback);
       this._active = false;
-      await this._resolveToOutput();
-      return { canvas: this._resultCanvas(), composite: this._composite, segmentCount: this._segmentCount };
+      await this._resolveToOutput(readback);
+      return { canvas: readback ? this._outCanvas : this._resultCanvas(), composite: this._composite, segmentCount: this._segmentCount };
     }
 
     // Phase 9C.1: resolves the CURRENT in-progress accumulation to the
@@ -1121,7 +1135,7 @@
     async peekStroke() {
       if (!this._active) return { canvas: this._resultCanvas(), composite: this._composite, segmentCount: this._segmentCount };
       if (this._usingGpu) {
-        await this._resolveToOutput();
+        await this._resolveToOutput(false);
       } else {
         const dirtyRegion = this.cpu.resolveDirtyInto(this._outCtx, this._rgb, this._composite);
         return { canvas: this._outCanvas, composite: this._composite, segmentCount: this._segmentCount, dirtyRegion: dirtyRegion || null };
@@ -1139,6 +1153,8 @@
       if (this._usingGpu) this.gpu.reset();
       this._usingGpu = false;
     }
+
+    isGpuActive() { return this._usingGpu; }
   }
 
   const PrototypeRendererExports = { PrototypeRenderer, DEFAULT_SS };
