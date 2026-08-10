@@ -211,6 +211,34 @@
     // single stroke must not darken past one segment's own coverage,
     // matching the GPU pipeline's max blend op).
     drawSegment(seg) {
+      // TEMP DIAGNOSTIC (Phase 11A.23): log exactly what CpuBackend
+      // receives, in call order, before any of this function's own math
+      // runs. Read-only -- appends to window.HardRoundSegmentLog.cpu only.
+      if (typeof window !== 'undefined' && window.HardRoundSegmentLog) {
+        if (!seg.__hrDebugId) seg.__hrDebugId = ++window.HardRoundSegmentLog._nextId;
+        window.HardRoundSegmentLog.cpu.push({
+          index: window.HardRoundSegmentLog.cpu.length,
+          identity: seg.__hrDebugId,
+          start: { x: seg.x0, y: seg.y0 },
+          end: { x: seg.x1, y: seg.y1 },
+          radius: { r0: seg.r0, r1: seg.r1 },
+          alpha: { alpha0: seg.alpha0, alpha1: seg.alpha1 },
+          composite: seg.composite,
+          hardness: seg.hardness,
+          aaMode: seg.aaMode,
+          // Phase 11A.23 finding: render-ready segments (see
+          // hard-round-adapter.js's resolveSegmentRenderParams()) no
+          // longer carry a `pressure` field -- pressure was already
+          // resolved into r0/r1/alpha0/alpha1 upstream, in
+          // brush-engine.js's _hardRoundStampSegments(), before either
+          // backend ever sees the segment. Logged as `undefined` here
+          // rather than omitted so that fact is visible in the log
+          // itself instead of silently absent.
+          pressure: seg.pressure,
+          isStrokeStart: !!seg.isStrokeStart,
+          isStrokeEnd: !!seg.isStrokeEnd,
+        });
+      }
       const ss = this.ss;
       const x0 = seg.x0 * ss, y0 = seg.y0 * ss, x1 = seg.x1 * ss, y1 = seg.y1 * ss;
       const r0 = seg.r0 * ss, r1 = seg.r1 * ss;
@@ -556,6 +584,7 @@
         this.outputContext = this.outputCanvas.getContext('webgpu');
         if (!this.outputContext) return false;
         const outputFormat = navigator.gpu.getPreferredCanvasFormat();
+        this.outputFormat = outputFormat;
         this.outputContext.configure({ device, format: outputFormat, alphaMode: 'premultiplied' });
 
         const shaderModule = device.createShaderModule({ code: STROKE_SHADER_WGSL });
@@ -654,6 +683,28 @@
     }
 
     drawSegment(seg) {
+      // TEMP DIAGNOSTIC (Phase 11A.23): log exactly what GpuBackend
+      // receives, in call order, before any of this function's own vertex
+      // math runs. Read-only -- appends to window.HardRoundSegmentLog.gpu
+      // only; does not touch pendingVerts, the vertex buffer, or the
+      // shader pipeline.
+      if (typeof window !== 'undefined' && window.HardRoundSegmentLog) {
+        if (!seg.__hrDebugId) seg.__hrDebugId = ++window.HardRoundSegmentLog._nextId;
+        window.HardRoundSegmentLog.gpu.push({
+          index: window.HardRoundSegmentLog.gpu.length,
+          identity: seg.__hrDebugId,
+          start: { x: seg.x0, y: seg.y0 },
+          end: { x: seg.x1, y: seg.y1 },
+          radius: { r0: seg.r0, r1: seg.r1 },
+          alpha: { alpha0: seg.alpha0, alpha1: seg.alpha1 },
+          composite: seg.composite,
+          hardness: seg.hardness,
+          aaMode: seg.aaMode,
+          pressure: seg.pressure,
+          isStrokeStart: !!seg.isStrokeStart,
+          isStrokeEnd: !!seg.isStrokeEnd,
+        });
+      }
       const ss = this.ss;
       // Phase 9E.1: pass the same aaModeScale() the CPU backend applies
       // (via capsuleCoverage) as a per-vertex attribute, so the GPU
@@ -698,13 +749,49 @@
     // coverage directly into a WebGPU canvas. Unlike resolveInto(), this
     // performs no texture-to-buffer copy, mapAsync stall, ImageData
     // allocation, JavaScript pixel loop, or Canvas2D upload.
-    async present(rgb, composite, opacity) {
+    async present(rgb, composite, opacity, meta) {
       if (!this.ready || !this.outputContext) return null;
       const isErase = composite === 'erase';
       const cr = isErase ? 0 : rgb[0] / 255;
       const cg = isErase ? 0 : rgb[1] / 255;
       const cb = isErase ? 0 : rgb[2] / 255;
       const strokeOpacity = Math.max(0, Math.min(1, opacity == null ? 1 : opacity));
+      // --- DIAGNOSTIC (Phase 11A.39): opt-in (window.HardRoundGpuPresentDiag),
+      // read-only instrumentation at the REAL present() call site. The
+      // out-of-order-preview hypothesis has already been ruled out
+      // (provesOutOfOrderCompletion: false); this exists solely to check
+      // whether the fast-stroke blink/cut instead correlates with GPU
+      // presentation backlog/stalls -- i.e. the submit->onSubmittedWorkDone
+      // duration, and how many other present() calls are in flight at once.
+      // Purely additive bookkeeping around the existing submit/fence calls
+      // below. Does NOT change rendering behavior, ordering, throttling,
+      // pressure, stabilization, AA, shaders, commit, pointerup, or segment
+      // generation.
+      const _diagOn = typeof window !== 'undefined' && !!window.HardRoundGpuPresentDiag;
+      let _diagEntry = null;
+      if (_diagOn) {
+        if (!window.HardRoundGpuPresentLog) window.HardRoundGpuPresentLog = [];
+        GpuBackend._presentIdCounter = (GpuBackend._presentIdCounter || 0) + 1;
+        GpuBackend._inFlightCount = GpuBackend._inFlightCount || 0;
+        _diagEntry = {
+          presentationId: GpuBackend._presentIdCounter,
+          strokeId: (meta && meta.strokeId != null) ? meta.strokeId : null,
+          segmentCount: (meta && meta.segmentCount != null) ? meta.segmentCount : null,
+          canvasWidth: this.w,
+          canvasHeight: this.h,
+          enterPresentTime: performance.now(),
+          beforeSubmitTime: null,
+          afterSubmitTime: null,
+          workDoneTime: null,
+          submitToWorkDoneMs: null,
+          // Other present() calls already between their own submit() and
+          // onSubmittedWorkDone() resolution at the moment THIS call
+          // entered present() -- i.e. concurrently in-flight GPU work.
+          otherPresentsInFlightAtEnter: GpuBackend._inFlightCount,
+        };
+        GpuBackend._inFlightCount++;
+      }
+      // --- end diagnostic setup ---
       this.device.queue.writeBuffer(this.presentUniformBuf, 0, new Float32Array([cr, cg, cb, strokeOpacity]));
       const enc = this.device.createCommandEncoder();
       const pass = enc.beginRenderPass({
@@ -714,12 +801,24 @@
       pass.setBindGroup(0, this.presentBindGroup);
       pass.draw(3);
       pass.end();
+      if (_diagEntry) _diagEntry.beforeSubmitTime = performance.now();
       this.device.queue.submit([enc.finish()]);
+      if (_diagEntry) _diagEntry.afterSubmitTime = performance.now();
       // The caller immediately drawImage()s this WebGPU canvas into the
       // app's established 2D preview/commit surface. Command submission is
       // asynchronous; without this fence that copy can observe the prior
       // (freshly cleared) canvas frame and make the live stroke invisible.
       await this.device.queue.onSubmittedWorkDone();
+      // --- DIAGNOSTIC (Phase 11A.39): resolve-time bookkeeping ---
+      if (_diagEntry) {
+        _diagEntry.workDoneTime = performance.now();
+        _diagEntry.submitToWorkDoneMs = _diagEntry.workDoneTime - _diagEntry.afterSubmitTime;
+        GpuBackend._inFlightCount = Math.max(0, GpuBackend._inFlightCount - 1);
+        window.HardRoundGpuPresentLog.push(_diagEntry);
+        // Bounded window: keep memory flat during long diagnostic sessions.
+        if (window.HardRoundGpuPresentLog.length > 500) window.HardRoundGpuPresentLog.shift();
+      }
+      // --- end diagnostic resolve-time bookkeeping ---
       return this.outputCanvas;
     }
 
@@ -775,6 +874,133 @@
       readBuf.destroy();
       resolveTex.destroy();
       return true;
+    }
+
+    // TEMP DIAGNOSTIC (Phase 11A.25): renders the CURRENT strokeMaskTex
+    // through the real PRESENT_SHADER_WGSL pipeline (same presentPipeline/
+    // presentBindGroup present() uses) into a fresh off-screen COPY_SRC
+    // texture instead of the visible swapchain, then reads it back to a
+    // plain RGBA byte array. Output is PREMULTIPLIED alpha (rgb already
+    // scaled by coverage*opacity), matching exactly what present() writes
+    // to the swapchain -- this method changes only the render target
+    // (scratch texture vs. swapchain) and the post-render readback step;
+    // the shader, uniforms, and bind group are identical to production.
+    // Never touches strokeMaskTex (read-only binding), outputContext, or
+    // the swapchain.
+    async diagPresentIntoBuffer(rgb, composite, opacity) {
+      if (!this.ready) return null;
+      const device = this.device;
+      const isErase = composite === 'erase';
+      const cr = isErase ? 0 : rgb[0] / 255;
+      const cg = isErase ? 0 : rgb[1] / 255;
+      const cb = isErase ? 0 : rgb[2] / 255;
+      const strokeOpacity = Math.max(0, Math.min(1, opacity == null ? 1 : opacity));
+      device.queue.writeBuffer(this.presentUniformBuf, 0, new Float32Array([cr, cg, cb, strokeOpacity]));
+      // Phase 11A.25.1 fix: presentPipeline's fragment target was created
+      // with `format: this.outputFormat` (navigator.gpu.getPreferredCanvasFormat(),
+      // e.g. 'bgra8unorm' on most desktop browsers) -- NOT 'rgba8unorm'.
+      // A render pass's color attachment format must exactly match its
+      // pipeline's declared target format; using a mismatched scratch
+      // texture format here is a WebGPU validation error that drops the
+      // draw silently, leaving the texture at its cleared (fully
+      // transparent) state. That produced the all-zero LIVE_PRESENT_DIAG
+      // seen in the first run -- a bug in this diagnostic method, not a
+      // real present-vs-resolve difference. The scratch texture below now
+      // matches presentPipeline's actual target format.
+      const scratchFormat = this.outputFormat || 'rgba8unorm';
+      const scratchTex = device.createTexture({
+        size: [this.w, this.h], format: scratchFormat,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
+      });
+      const enc = device.createCommandEncoder();
+      const pass = enc.beginRenderPass({
+        colorAttachments: [{ view: scratchTex.createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } }],
+      });
+      pass.setPipeline(this.presentPipeline);
+      pass.setBindGroup(0, this.presentBindGroup);
+      pass.draw(3);
+      pass.end();
+      const bytesPerRow = Math.ceil((this.w * 4) / 256) * 256;
+      const readBuf = device.createBuffer({ size: bytesPerRow * this.h, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+      enc.copyTextureToBuffer({ texture: scratchTex }, { buffer: readBuf, bytesPerRow }, [this.w, this.h]);
+      device.queue.submit([enc.finish()]);
+      await readBuf.mapAsync(GPUMapMode.READ);
+      const mapped = new Uint8Array(readBuf.getMappedRange());
+      const out = new Uint8ClampedArray(this.w * this.h * 4);
+      // copyTextureToBuffer copies raw texel bytes in the texture's native
+      // channel order. 'bgra8unorm' stores B,G,R,A per texel; every other
+      // format WebGPU's getPreferredCanvasFormat() can return is
+      // 'rgba8unorm' (R,G,B,A already). Swizzle only in the bgra8unorm
+      // case so the returned buffer is always RGBA, matching
+      // diagResolveIntoBuffer()'s output and this module's comparison
+      // utilities.
+      const isBgra = scratchFormat === 'bgra8unorm';
+      for (let y = 0; y < this.h; y++) {
+        const srcRow = y * bytesPerRow;
+        const dstRow = y * this.w * 4;
+        if (!isBgra) {
+          out.set(mapped.subarray(srcRow, srcRow + this.w * 4), dstRow);
+        } else {
+          for (let x = 0; x < this.w; x++) {
+            const s = srcRow + x * 4, d = dstRow + x * 4;
+            out[d] = mapped[s + 2];     // R <- B
+            out[d + 1] = mapped[s + 1]; // G
+            out[d + 2] = mapped[s];     // B <- R
+            out[d + 3] = mapped[s + 3]; // A
+          }
+        }
+      }
+      readBuf.unmap();
+      readBuf.destroy();
+      scratchTex.destroy();
+      return { data: out, w: this.w, h: this.h, premultiplied: true, source: 'PRESENT_SHADER_WGSL', renderedFormat: scratchFormat };
+    }
+
+    // TEMP DIAGNOSTIC (Phase 11A.25): renders the CURRENT strokeMaskTex
+    // through the real RESOLVE_SHADER_WGSL pipeline (same blitPipeline/
+    // blitBindGroup resolveInto() uses) into a fresh off-screen COPY_SRC
+    // texture, reads it back, then applies the SAME coloring step
+    // resolveInto() applies on readback (fixed rgb, coverage -> alpha,
+    // straight/non-premultiplied). This is the exact byte-for-byte
+    // equivalent of what resolveInto() produces, just returned as a raw
+    // buffer instead of written into a 2D context. Never touches
+    // strokeMaskTex (read-only binding).
+    async diagResolveIntoBuffer(rgb, composite) {
+      if (!this.ready) return null;
+      const device = this.device;
+      const scratchTex = device.createTexture({
+        size: [this.w, this.h], format: 'rgba8unorm',
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
+      });
+      const enc = device.createCommandEncoder();
+      const pass = enc.beginRenderPass({
+        colorAttachments: [{ view: scratchTex.createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } }],
+      });
+      pass.setPipeline(this.blitPipeline);
+      pass.setBindGroup(0, this.blitBindGroup);
+      pass.draw(3);
+      pass.end();
+      const bytesPerRow = Math.ceil((this.w * 4) / 256) * 256;
+      const readBuf = device.createBuffer({ size: bytesPerRow * this.h, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+      enc.copyTextureToBuffer({ texture: scratchTex }, { buffer: readBuf, bytesPerRow }, [this.w, this.h]);
+      device.queue.submit([enc.finish()]);
+      await readBuf.mapAsync(GPUMapMode.READ);
+      const mapped = new Uint8Array(readBuf.getMappedRange());
+      const isErase = composite === 'erase';
+      const cr = isErase ? 0 : rgb[0], cg = isErase ? 0 : rgb[1], cb = isErase ? 0 : rgb[2];
+      const out = new Uint8ClampedArray(this.w * this.h * 4);
+      for (let y = 0; y < this.h; y++) {
+        for (let x = 0; x < this.w; x++) {
+          const srcOff = y * bytesPerRow + x * 4;
+          const dstOff = (y * this.w + x) * 4;
+          const coverage = mapped[srcOff] / 255; // resolve shader writes coverage into .r (and g/b/a identically)
+          out[dstOff] = cr; out[dstOff + 1] = cg; out[dstOff + 2] = cb; out[dstOff + 3] = Math.round(coverage * 255);
+        }
+      }
+      readBuf.unmap();
+      readBuf.destroy();
+      scratchTex.destroy();
+      return { data: out, w: this.w, h: this.h, premultiplied: false, source: 'RESOLVE_SHADER_WGSL' };
     }
   }
 
@@ -1069,6 +1295,14 @@
       this._segmentCount = 0;
       this._composite = 'paint';
       this._rgb = [0, 0, 0];
+      // TEMP DIAGNOSTIC (Phase 11A.23): fresh, empty per-backend segment
+      // log for this stroke. `_nextId` is NOT reset -- identity tags stay
+      // unique across the whole session so a duplicate-submission check
+      // can't collide with a previous stroke's ids.
+      if (typeof window !== 'undefined') {
+        const prevNextId = window.HardRoundSegmentLog ? window.HardRoundSegmentLog._nextId : 0;
+        window.HardRoundSegmentLog = { cpu: [], gpu: [], dispatchCalls: [], _nextId: prevNextId };
+      }
       this.cpu.reset();
       if (this._outCtx) this._outCtx.clearRect(0, 0, this.width, this.height);
 
@@ -1085,7 +1319,45 @@
     // app already batches segment dispatch.
     drawSegments(segments) {
       if (!this._active || !segments || !segments.length) return;
+      // TEMP DIAGNOSTIC (Phase 11A.24): when armed, deep-clone this exact
+      // batch (BEFORE the merge/no-merge branch below, i.e. the true
+      // render-ready segment stream as produced upstream) into
+      // window.HardRoundCapturedStream.batches, preserving batch
+      // boundaries (mergeEquivalentConstantCapsules() only merges within
+      // a single drawSegments() call, so batch boundaries matter for a
+      // faithful replay). Read-only w.r.t. `segments`/`dispatchSegments`
+      // and does not affect which backend this live call uses.
+      if (typeof window !== 'undefined' && window.HardRoundCaptureArmed && window.HardRoundCapturedStream) {
+        window.HardRoundCapturedStream.batches.push(segments.map(s => (s ? Object.assign({}, s) : s)));
+      }
+      // TEMP DIAGNOSTIC (Phase 11A.23): record exactly what drawSegments()
+      // received (pre-dispatch) and which branch it took, before any
+      // backend-specific transformation (merge, unit conversion, etc.)
+      // happens. Read-only bookkeeping -- does not alter `segments`,
+      // `dispatchSegments`, or which backend gets called.
+      if (typeof window !== 'undefined' && window.HardRoundSegmentLog) {
+        window.HardRoundSegmentLog.dispatchCalls.push({
+          usingGpu: this._usingGpu,
+          inputCount: segments.length,
+          willMerge: !this._usingGpu,
+        });
+      }
       const dispatchSegments = this._usingGpu ? segments : mergeEquivalentConstantCapsules(segments);
+      // TEMP DIAGNOSTIC (Phase 11A.23): CPU is handed the OUTPUT of
+      // mergeEquivalentConstantCapsules(segments) (collinear/constant-radius
+      // runs merged into one capsule); GPU is handed `segments` completely
+      // unmerged. This is the actual, provable first divergence between
+      // what the two backends are asked to draw for the same stroke input
+      // -- it happens here, before either drawSegment() below is ever
+      // called. Both backends' blend pipelines use order-independent max
+      // blending (see CpuBackend's Phase 10.0 comment and GpuBackend's
+      // `operation: 'max'` fragment blend state), so this merge is
+      // documented as a CPU-side perf optimization that should be a no-op
+      // on final coverage -- this diagnostic exists to make that claim
+      // checkable rather than assumed.
+      if (typeof window !== 'undefined' && window.HardRoundSegmentLog) {
+        window.HardRoundSegmentLog.dispatchCalls[window.HardRoundSegmentLog.dispatchCalls.length - 1].mergedCount = dispatchSegments.length;
+      }
       for (let i = 0; i < dispatchSegments.length; i++) {
         const seg = dispatchSegments[i];
         if (!seg) continue;
@@ -1103,10 +1375,14 @@
     // also deactivates the stroke) and peekStroke() (which does not), so
     // there is exactly one resolve code path for both -- no separate
     // preview-only pixel path exists to drift out of sync with the real one.
-    async _resolveToOutput(readback) {
+    async _resolveToOutput(readback, meta) {
       if (this._usingGpu) {
         if (readback) await this.gpu.resolveInto(this._outCtx, this._rgb, this._composite);
-        else await this.gpu.present(this._rgb, this._composite, this.presentationOpacity);
+        // meta (optional; e.g. {strokeId, segmentCount}) is passed through
+        // untouched to GpuBackend.present() purely for the Phase 11A.39
+        // opt-in present() diagnostic below -- it has no effect on what
+        // gets drawn or when.
+        else await this.gpu.present(this._rgb, this._composite, this.presentationOpacity, meta);
       } else {
         this.cpu.resolveInto(this._outCtx, this._rgb, this._composite);
       }
@@ -1166,10 +1442,14 @@
     // resolve, as the single authoritative commit-time result.
     //
     // @returns {Promise<{canvas: HTMLCanvasElement|OffscreenCanvas, composite: string, segmentCount: number}>}
-    async peekStroke() {
+    async peekStroke(meta) {
       if (!this._active) return { canvas: this._resultCanvas(), composite: this._composite, segmentCount: this._segmentCount };
       if (this._usingGpu) {
-        await this._resolveToOutput(false);
+        // Phase 11A.39: fill in segmentCount for the present() diagnostic
+        // from the renderer's own counter when the caller didn't supply one,
+        // so window.HardRoundGpuPresentLog entries aren't left null.
+        const _diagMeta = Object.assign({ segmentCount: this._segmentCount }, meta || {});
+        await this._resolveToOutput(false, _diagMeta);
       } else {
         const dirtyRegion = this.cpu.resolveDirtyInto(this._outCtx, this._rgb, this._composite);
         return { canvas: this._outCanvas, composite: this._composite, segmentCount: this._segmentCount, dirtyRegion: dirtyRegion || null };
@@ -1191,7 +1471,11 @@
     isGpuActive() { return this._usingGpu; }
   }
 
-  const PrototypeRendererExports = { PrototypeRenderer, DEFAULT_SS };
+  // TEMP DIAGNOSTIC (Phase 11A.24): exposed read-only so the A/B/C
+  // diagnostic harness below can build a "GPU + merge" variant without
+  // duplicating the merge algorithm. Not called anywhere in the
+  // production dispatch path except drawSegments() itself, unchanged.
+  const PrototypeRendererExports = { PrototypeRenderer, DEFAULT_SS, mergeEquivalentConstantCapsules };
 
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = PrototypeRendererExports;
@@ -1199,5 +1483,367 @@
   if (typeof window !== 'undefined') {
     window.PrototypeRenderer = PrototypeRenderer;
     window.PrototypeRendererModule = PrototypeRendererExports;
+    // TEMP DIAGNOSTIC (Phase 11A.23): compares window.HardRoundSegmentLog.cpu
+    // and .gpu after a stroke. Since PrototypeRenderer.drawSegments()
+    // dispatches to exactly one backend per stroke (this._usingGpu), a
+    // single normal stroke only ever populates one of the two arrays --
+    // this helper is meant to be run after two otherwise-identical strokes
+    // (e.g. one with window.HardRoundDebugForceBackend='cpu', one with
+    // 'gpu'), or after a manual test harness that calls both backends'
+    // drawSegment() directly with the same input list. Read-only: does not
+    // draw, clear, or reset anything.
+    window.HardRoundCompareSegmentLogs = function () {
+      const log = window.HardRoundSegmentLog || { cpu: [], gpu: [], dispatchCalls: [] };
+      const cpu = log.cpu, gpu = log.gpu;
+      const report = {
+        cpuCount: cpu.length,
+        gpuCount: gpu.length,
+        countsMatch: cpu.length === gpu.length,
+        dispatchCalls: log.dispatchCalls,
+        firstDifference: null,
+        duplicateIdentitiesOnGpu: [],
+        duplicateIdentitiesOnCpu: [],
+      };
+      const seenGpu = new Map();
+      gpu.forEach(entry => {
+        seenGpu.set(entry.identity, (seenGpu.get(entry.identity) || 0) + 1);
+      });
+      seenGpu.forEach((count, id) => { if (count > 1) report.duplicateIdentitiesOnGpu.push({ identity: id, count }); });
+      const seenCpu = new Map();
+      cpu.forEach(entry => {
+        seenCpu.set(entry.identity, (seenCpu.get(entry.identity) || 0) + 1);
+      });
+      seenCpu.forEach((count, id) => { if (count > 1) report.duplicateIdentitiesOnCpu.push({ identity: id, count }); });
+      const n = Math.max(cpu.length, gpu.length);
+      for (let i = 0; i < n; i++) {
+        const a = cpu[i], b = gpu[i];
+        if (!a || !b) {
+          report.firstDifference = { index: i, reason: !a ? 'missing-on-cpu' : 'missing-on-gpu', cpu: a || null, gpu: b || null };
+          break;
+        }
+        const fieldsToCompare = ['start', 'end', 'radius', 'alpha', 'composite', 'hardness', 'aaMode'];
+        const mismatched = fieldsToCompare.filter(f => JSON.stringify(a[f]) !== JSON.stringify(b[f]));
+        if (mismatched.length) {
+          report.firstDifference = { index: i, reason: 'value-mismatch', fields: mismatched, cpu: a, gpu: b };
+          break;
+        }
+      }
+      return report;
+    };
+
+    // ------------------------------------------------------------------
+    // TEMP DIAGNOSTIC (Phase 11A.24): deterministic CPU/GPU A/B/C harness.
+    //
+    // Opt-in only -- nothing here runs unless explicitly called. Every
+    // renderer instance created below is brand new and isolated; the
+    // production `_hardRoundRenderer` singleton, its live stroke state,
+    // and _commitStrokeCanvas()/saveActiveToKey()/recomposite() are never
+    // touched. This answers exactly one question: given IDENTICAL input
+    // geometry, does GPU rasterization differ from CPU, and does
+    // CPU-equivalent merging make GPU match CPU?
+    // ------------------------------------------------------------------
+
+    // Call once, before drawing a stroke, to start capturing that stroke's
+    // exact render-ready segment stream (per-batch, deep-cloned, captured
+    // in drawSegments() above before the merge/no-merge branch runs).
+    window.HardRoundArmSegmentCapture = function () {
+      window.HardRoundCaptureArmed = true;
+      window.HardRoundCapturedStream = { batches: [] };
+    };
+    // Call after the stroke's pointerup (or whenever no more batches
+    // should be captured). Capturing more than one stroke into the same
+    // buffer would silently corrupt the A/B/C comparison, so this must be
+    // called before the diagnostic harness runs.
+    window.HardRoundDisarmSegmentCapture = function () {
+      window.HardRoundCaptureArmed = false;
+    };
+
+    function _hrDeepCloneBatches(batches) {
+      return batches.map(batch => batch.map(seg => (seg ? Object.assign({}, seg) : seg)));
+    }
+
+    // Hashes/measures a canvas the same way _hrCaptureCanvas() does in
+    // brush-engine.js (kept independent here so this module has no
+    // dependency on brush-engine.js), plus a full pixel-by-pixel diff
+    // against a second canvas of the same size.
+    function _hrDiagCaptureCanvas(canvas) {
+      const w = canvas.width, h = canvas.height;
+      const cctx = canvas.getContext('2d');
+      const data = cctx.getImageData(0, 0, w, h).data;
+      let minX = w, minY = h, maxX = -1, maxY = -1, nonTransparent = 0, maxAlpha = 0, hash = 0;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const idx = (y * w + x) * 4, a = data[idx + 3];
+          if (a > 0) {
+            nonTransparent++;
+            if (a > maxAlpha) maxAlpha = a;
+            if (x < minX) minX = x; if (x > maxX) maxX = x;
+            if (y < minY) minY = y; if (y > maxY) maxY = y;
+          }
+          hash = (hash * 31 + data[idx] + data[idx + 1] * 3 + data[idx + 2] * 7 + a * 13) | 0;
+        }
+      }
+      return { w, h, data, bounds: maxX >= minX ? { minX, minY, maxX, maxY } : null, nonTransparent, maxAlpha, hash };
+    }
+
+    function _hrDiagCompareCaptures(a, b) {
+      if (a.w !== b.w || a.h !== b.h) {
+        return { sizeMismatch: true, aSize: [a.w, a.h], bSize: [b.w, b.h] };
+      }
+      let differingPixelCount = 0, maxChannelDiff = 0;
+      const n = a.w * a.h * 4;
+      for (let i = 0; i < n; i += 4) {
+        let pixelDiffers = false;
+        for (let c = 0; c < 4; c++) {
+          const d = Math.abs(a.data[i + c] - b.data[i + c]);
+          if (d > maxChannelDiff) maxChannelDiff = d;
+          if (d !== 0) pixelDiffers = true;
+        }
+        if (pixelDiffers) differingPixelCount++;
+      }
+      return {
+        hashEqual: a.hash === b.hash,
+        boundsA: a.bounds, boundsB: b.bounds,
+        boundsEqual: JSON.stringify(a.bounds) === JSON.stringify(b.bounds),
+        nonTransparentA: a.nonTransparent, nonTransparentB: b.nonTransparent,
+        nonTransparentDelta: b.nonTransparent - a.nonTransparent,
+        maxAlphaA: a.maxAlpha, maxAlphaB: b.maxAlpha,
+        maxAlphaDelta: b.maxAlpha - a.maxAlpha,
+        differingPixelCount,
+        maxChannelDiff,
+        pixelPerfectMatch: differingPixelCount === 0,
+      };
+    }
+
+    // Runs the captured stream through:
+    //   A = a fresh CpuBackend via PrototypeRenderer's own production
+    //       drawSegments() dispatch (preferGpu:false -> merge branch taken,
+    //       exactly as production CPU strokes do today)
+    //   B = a fresh GpuBackend via PrototypeRenderer's own production
+    //       drawSegments() dispatch (preferGpu:true -> no-merge branch
+    //       taken, exactly as production GPU strokes do today)
+    //   C = a fresh GpuBackend, but bypassing drawSegments()'s dispatch to
+    //       manually apply mergeEquivalentConstantCapsules() to each batch
+    //       before calling the SAME gpu.drawSegment()/gpu.flush() production
+    //       methods B uses -- this is the diagnostic-only variant, and the
+    //       ONLY place in this harness that doesn't call production
+    //       drawSegments() unmodified.
+    // Each variant is resolved via the SAME endStroke({readback:true}) call
+    // production Hard Round GPU commit already uses (see brush-engine.js's
+    // _pointerEndStroke Hard Round branch), so the resolve path itself is
+    // identical to what ships today -- this harness only controls what
+    // segments go in, never how they're resolved.
+    // TEMP DIAGNOSTIC (Phase 11A.25): same bounds/nonTransparent/maxAlpha/
+    // hash bookkeeping as _hrDiagCaptureCanvas() (Phase 11A.24), but
+    // operating directly on a {data,w,h} buffer -- diagPresentIntoBuffer()/
+    // diagResolveIntoBuffer() never touch a canvas, so there is nothing to
+    // getImageData() from.
+    function _hrDiagCaptureBuffer(buf) {
+      const { data, w, h } = buf;
+      let minX = w, minY = h, maxX = -1, maxY = -1, nonTransparent = 0, maxAlpha = 0, hash = 0;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const idx = (y * w + x) * 4, a = data[idx + 3];
+          if (a > 0) {
+            nonTransparent++;
+            if (a > maxAlpha) maxAlpha = a;
+            if (x < minX) minX = x; if (x > maxX) maxX = x;
+            if (y < minY) minY = y; if (y > maxY) maxY = y;
+          }
+          hash = (hash * 31 + data[idx] + data[idx + 1] * 3 + data[idx + 2] * 7 + a * 13) | 0;
+        }
+      }
+      return { w, h, data, bounds: maxX >= minX ? { minX, minY, maxX, maxY } : null, nonTransparent, maxAlpha, hash };
+    }
+
+    // Un-premultiplies a PRESENT_SHADER_WGSL buffer (rgb was written as
+    // color*cov*opacity, alpha as cov*opacity) back to straight alpha
+    // (rgb, alpha) -- the same final-displayed-RGBA semantics
+    // RESOLVE_SHADER_WGSL's buffer already uses (fixed rgb, coverage in
+    // alpha). Where alpha is 0 there is no color information to recover,
+    // so rgb is left at 0 (matches the fully-transparent pixel it already
+    // represents either way -- doesn't affect nonTransparent/bounds/hash
+    // comparisons, which are alpha-gated).
+    function _hrDiagUnpremultiply(buf) {
+      const { data, w, h } = buf;
+      const out = new Uint8ClampedArray(w * h * 4);
+      for (let i = 0; i < data.length; i += 4) {
+        const a = data[i + 3];
+        if (a === 0) { out[i] = 0; out[i + 1] = 0; out[i + 2] = 0; out[i + 3] = 0; continue; }
+        out[i] = Math.round(data[i] * 255 / a);
+        out[i + 1] = Math.round(data[i + 1] * 255 / a);
+        out[i + 2] = Math.round(data[i + 2] * 255 / a);
+        out[i + 3] = a;
+      }
+      return { data: out, w, h };
+    }
+
+    // Runs LIVE_PRESENT_DIAG and FINAL_RESOLVE_DIAG back-to-back against
+    // whatever the current strokeMaskTex holds RIGHT NOW, with no
+    // drawSegments()/reset() call permitted in between by the caller (both
+    // diagnostic methods only read strokeMaskTex, so nothing here can
+    // itself introduce one). Opt-in, read-only, does not call
+    // present()/resolveInto()/endStroke() or touch the swapchain.
+    window.HardRoundRunPresentVsResolveDiagnostic = async function (renderer) {
+      if (!renderer || !renderer.gpu || !renderer.gpu.ready) {
+        return { error: 'GPU renderer unavailable -- cannot run PRESENT vs RESOLVE diagnostic here.' };
+      }
+      const gpu = renderer.gpu;
+      const rgb = renderer._rgb;
+      const composite = renderer._composite;
+      const opacity = renderer.presentationOpacity == null ? 1 : renderer.presentationOpacity;
+
+      let livePresentRaw, finalResolveRaw;
+      try {
+        // Back-to-back, no drawSegments()/reset() between them.
+        livePresentRaw = await gpu.diagPresentIntoBuffer(rgb, composite, opacity);
+        finalResolveRaw = await gpu.diagResolveIntoBuffer(rgb, composite);
+      } catch (err) {
+        return { error: 'Diagnostic GPU pass failed: ' + (err && err.message ? err.message : String(err)) };
+      }
+      if (!livePresentRaw || !finalResolveRaw) {
+        return { error: 'One or both diagnostic passes returned null (GPU not ready).' };
+      }
+
+      // Normalize PRESENT (premultiplied, color*opacity baked in) to the
+      // same straight-alpha semantics RESOLVE already uses, so a
+      // premultiplication difference isn't misreported as a geometry
+      // difference. At opacity=1 this recovers color.rgb exactly (up to
+      // 8-bit rounding); at opacity<1 it recovers color.rgb still, since
+      // un-premultiplying divides out cov*opacity from both channels.
+      const livePresentNormalized = _hrDiagUnpremultiply(livePresentRaw);
+
+      const capLive = _hrDiagCaptureBuffer(livePresentNormalized);
+      const capFinal = _hrDiagCaptureBuffer(finalResolveRaw);
+
+      return {
+        opacityUsed: opacity,
+        compositeUsed: composite,
+        rgbUsed: rgb,
+        LIVE_PRESENT_DIAG: {
+          source: livePresentRaw.source,
+          wasPremultiplied: true,
+          normalizedForComparison: true,
+          bounds: capLive.bounds,
+          nonTransparent: capLive.nonTransparent,
+          maxAlpha: capLive.maxAlpha,
+          hash: capLive.hash,
+        },
+        FINAL_RESOLVE_DIAG: {
+          source: finalResolveRaw.source,
+          wasPremultiplied: false,
+          normalizedForComparison: false,
+          bounds: capFinal.bounds,
+          nonTransparent: capFinal.nonTransparent,
+          maxAlpha: capFinal.maxAlpha,
+          hash: capFinal.hash,
+        },
+        LIVE_vs_FINAL: _hrDiagCompareCaptures(capLive, capFinal),
+      };
+    };
+
+    window.HardRoundRunSegmentABDiagnostic = async function (opts) {
+      const o = opts || {};
+      const captured = window.HardRoundCapturedStream;
+      if (!captured || !captured.batches.length) {
+        return { error: 'No captured segment stream. Call window.HardRoundArmSegmentCapture() before drawing the stroke, draw it, then window.HardRoundDisarmSegmentCapture(), then run this.' };
+      }
+      const width = o.width || (window._hardRoundRenderer && window._hardRoundRenderer.width);
+      const height = o.height || (window._hardRoundRenderer && window._hardRoundRenderer.height);
+      if (!width || !height) {
+        return { error: 'width/height not provided and no production renderer found to infer them from.' };
+      }
+      const ss = o.ss || DEFAULT_SS;
+
+      const result = { segmentCounts: {}, A: null, B: null, C: null, AvB: null, AvC: null, BvC: null };
+      // Phase 11A.24.1 fix: capA/capB/capC were previously declared with
+      // `const` inside their own if/else block (e.g. `const capB = ...`
+      // inside the B else-branch). That scopes them to that block only --
+      // referencing capB later, inside C's block, threw
+      // "ReferenceError: capB is not defined" and aborted the function
+      // before it ever reached `return result`. Hoisting all three to
+      // function-level `let`s (initialized null, assigned once each
+      // variant actually produces a capture) lets every later comparison
+      // see whichever ones succeeded, regardless of which block set them.
+      let capA = null, capB = null, capC = null;
+
+      // --- A: CPU, production dispatch ---
+      try {
+        const rA = new PrototypeRenderer({ width, height, ss, preferGpu: false });
+        rA.beginStroke();
+        const batchesA = _hrDeepCloneBatches(captured.batches);
+        let submittedA = 0;
+        batchesA.forEach(batch => { submittedA += batch.length; rA.drawSegments(batch); });
+        const outA = await rA.endStroke({ readback: true });
+        capA = _hrDiagCaptureCanvas(outA.canvas);
+        result.A = { backend: 'cpu-production', usingGpu: false, ...capA, data: undefined };
+        result.segmentCounts.cpuSubmittedRaw = submittedA;
+        result.segmentCounts.cpuFinalSegmentCount = outA.segmentCount;
+      } catch (err) {
+        result.A = { error: 'CPU variant failed: ' + (err && err.message ? err.message : String(err)) };
+      }
+
+      // --- B: GPU, production dispatch (unmerged) ---
+      try {
+        const rB = new PrototypeRenderer({ width, height, ss, preferGpu: true });
+        if (rB._gpuInitPromise) await rB._gpuInitPromise;
+        rB.beginStroke();
+        if (!rB._usingGpu) {
+          result.B = { error: 'GPU unavailable in this environment -- cannot run the GPU-production variant here.' };
+        } else {
+          const batchesB = _hrDeepCloneBatches(captured.batches);
+          let submittedB = 0;
+          batchesB.forEach(batch => { submittedB += batch.length; rB.drawSegments(batch); });
+          const outB = await rB.endStroke({ readback: true });
+          capB = _hrDiagCaptureCanvas(outB.canvas);
+          result.B = { backend: 'gpu-production-unmerged', usingGpu: true, ...capB, data: undefined };
+          result.segmentCounts.gpuUnmergedSubmittedRaw = submittedB;
+          result.segmentCounts.gpuUnmergedFinalSegmentCount = outB.segmentCount;
+        }
+      } catch (err) {
+        result.B = { error: 'GPU-production variant failed: ' + (err && err.message ? err.message : String(err)) };
+      }
+      if (capA && capB) result.AvB = _hrDiagCompareCaptures(capA, capB);
+
+      // --- C: GPU, diagnostic dispatch (merged before gpu.drawSegment()) ---
+      try {
+        const rC = new PrototypeRenderer({ width, height, ss, preferGpu: true });
+        if (rC._gpuInitPromise) await rC._gpuInitPromise;
+        rC.beginStroke();
+        if (!rC._usingGpu) {
+          result.C = { error: 'GPU unavailable in this environment -- cannot run the GPU-merged-diagnostic variant here.' };
+        } else {
+          const batchesC = _hrDeepCloneBatches(captured.batches);
+          let submittedC = 0;
+          batchesC.forEach(batch => {
+            if (!batch.length) return;
+            const merged = mergeEquivalentConstantCapsules(batch);
+            submittedC += merged.length;
+            for (const seg of merged) {
+              if (!seg) continue;
+              rC._rgb = seg.rgb || rC._rgb;
+              rC._composite = seg.composite || rC._composite;
+              rC.gpu.drawSegment(seg);
+            }
+            rC._segmentCount += batch.reduce((n, s) => n + (s ? 1 : 0), 0);
+            rC.gpu.flush();
+          });
+          const outC = await rC.endStroke({ readback: true });
+          capC = _hrDiagCaptureCanvas(outC.canvas);
+          result.C = { backend: 'gpu-diagnostic-merged', usingGpu: true, ...capC, data: undefined };
+          result.segmentCounts.gpuMergedSubmitted = submittedC;
+          result.segmentCounts.gpuMergedFinalSegmentCount = outC.segmentCount;
+        }
+      } catch (err) {
+        result.C = { error: 'GPU-merged-diagnostic variant failed: ' + (err && err.message ? err.message : String(err)) };
+      }
+      // capA/capB/capC are now function-scoped, so both comparisons below
+      // can see whichever pair actually succeeded, independent of block
+      // boundaries -- this is the direct fix for the reported crash.
+      if (capA && capC) result.AvC = _hrDiagCompareCaptures(capA, capC);
+      if (capB && capC) result.BvC = _hrDiagCompareCaptures(capB, capC);
+
+      return result;
+    };
   }
 })(typeof window !== 'undefined' ? window : globalThis);

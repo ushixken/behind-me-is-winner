@@ -257,9 +257,12 @@ function refreshDisplayComposite(){
   displayCtx.imageSmoothingEnabled=true;
   displayCtx.imageSmoothingQuality='high';
   displayCtx.filter=_displayBlurPx>0.05?('blur('+_displayBlurPx+'px)'):'none';
-  displayCtx.drawImage(compC,0,0);
+  // Phase 11A.39 fix: see matching fix in panels.js recomposite(). compC
+  // already contains artworkCompositeC baked in, so drawing
+  // artworkCompositeC here again double-composited the active stroke.
+  // Onion now draws under compC instead of artwork drawing over it twice.
   displayCtx.drawImage(onionC,0,0);
-  displayCtx.drawImage(artworkCompositeC,0,0);
+  displayCtx.drawImage(compC,0,0);
   displayCtx.filter='none';
   if(window.DisplayBackend)window.DisplayBackend.scheduleUpload();
   if(window.CameraView)window.CameraView.invalidate();

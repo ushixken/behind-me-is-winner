@@ -450,6 +450,511 @@ function _drawBrushComposite(targetCtx,src){
 }
 
 
+// TEMP DIAGNOSTIC (Phase 11A.16) -- four-point GPU capture, read-only.
+// Hashes/bounds a canvas without mutating renderer state. Removed with the
+// rest of the HR-DEBUG instrumentation once the merge hypothesis is
+// resolved.
+function _hrCaptureCanvas(canvas,label){
+  if(!canvas)return null;
+  const w=canvas.width,h=canvas.height;
+  let data;
+  try{
+    const cctx=canvas.getContext&&(canvas.getContext('2d')||canvas.getContext('webgpu')&&null);
+    if(cctx&&cctx.getImageData){data=cctx.getImageData(0,0,w,h).data;}
+    else{
+      const tmp=document.createElement('canvas');tmp.width=w;tmp.height=h;
+      const tctx=tmp.getContext('2d');tctx.drawImage(canvas,0,0);
+      data=tctx.getImageData(0,0,w,h).data;
+    }
+  }catch(err){
+    console.warn('[HR-CAPTURE] failed to read',label,err);
+    return {label,w,h,error:String(err)};
+  }
+  let minX=w,minY=h,maxX=-1,maxY=-1,nonTransparent=0,maxAlpha=0,hash=0;
+  for(let y=0;y<h;y++){
+    for(let x=0;x<w;x++){
+      const idx=(y*w+x)*4,a=data[idx+3];
+      if(a>0){
+        nonTransparent++;
+        if(a>maxAlpha)maxAlpha=a;
+        if(x<minX)minX=x; if(x>maxX)maxX=x;
+        if(y<minY)minY=y; if(y>maxY)maxY=y;
+      }
+      hash=(hash*31+data[idx]+data[idx+1]*3+data[idx+2]*7+a*13)|0;
+    }
+  }
+  return {
+    label,w,h,
+    bounds:maxX>=minX?{minX,minY,maxX,maxY}:null,
+    nonTransparent,maxAlpha,hash,
+  };
+}
+function _hrDiffCaptures(a,b){
+  if(!a||!b)return null;
+  if(a.w!==b.w||a.h!==b.h)return {sizeMismatch:true,aSize:[a.w,a.h],bSize:[b.w,b.h]};
+  return {
+    hashEqual:a.hash===b.hash,
+    nonTransparentDelta:(b.nonTransparent||0)-(a.nonTransparent||0),
+    maxAlphaDelta:(b.maxAlpha||0)-(a.maxAlpha||0),
+    boundsA:a.bounds,boundsB:b.bounds,
+  };
+}
+// Phase 11A.37 -- real pixel-level diff, read-only. _hrDiffCaptures above
+// only compares the summary numbers (hash/bounds/counts) already produced
+// by _hrCaptureCanvas; it cannot report differingPixelCount or
+// maxChannelDiff because those require the actual pixel buffers, not just
+// their summary. This re-reads both canvases (getImageData only, no
+// writes) purely to produce those two numbers for the D/E1/E2/E3 compare
+// requested for Stage E. Canvases of mismatched size are reported as such
+// instead of compared pixel-by-pixel.
+function _hrStageDiagPixelDiff(canvasA,canvasB){
+  if(!canvasA||!canvasB)return null;
+  if(canvasA.width!==canvasB.width||canvasA.height!==canvasB.height){
+    return {sizeMismatch:true,aSize:[canvasA.width,canvasA.height],bSize:[canvasB.width,canvasB.height]};
+  }
+  const w=canvasA.width,h=canvasA.height;
+  let da,db;
+  try{
+    const ra=document.createElement('canvas');ra.width=w;ra.height=h;
+    const rb=document.createElement('canvas');rb.width=w;rb.height=h;
+    const rca=ra.getContext('2d'),rcb=rb.getContext('2d');
+    rca.drawImage(canvasA,0,0);rcb.drawImage(canvasB,0,0);
+    da=rca.getImageData(0,0,w,h).data;db=rcb.getImageData(0,0,w,h).data;
+  }catch(err){
+    return {error:String(err)};
+  }
+  let differingPixelCount=0,maxChannelDiff=0;
+  for(let i=0;i<da.length;i+=4){
+    const dr=Math.abs(da[i]-db[i]),dg=Math.abs(da[i+1]-db[i+1]),
+          dbch=Math.abs(da[i+2]-db[i+2]),dal=Math.abs(da[i+3]-db[i+3]);
+    const pixelMax=Math.max(dr,dg,dbch,dal);
+    if(pixelMax>0)differingPixelCount++;
+    if(pixelMax>maxChannelDiff)maxChannelDiff=pixelMax;
+  }
+  return {differingPixelCount,maxChannelDiff,w,h};
+}
+// Combines the existing summary diff with the new pixel-level diff so each
+// D/E1/E2/E3 comparison reports bounds/nonTransparent/maxAlpha/hash deltas
+// AND differingPixelCount/maxChannelDiff in one object.
+function _hrStageDiagFullCompare(labelA,captureA,canvasA,labelB,captureB,canvasB){
+  return {
+    from:labelA,to:labelB,
+    summary:_hrDiffCaptures(captureA,captureB),
+    pixels:_hrStageDiagPixelDiff(canvasA,canvasB),
+  };
+}
+// Phase 11A.37 -- capture points for E1/E2/E3, called directly from the
+// REAL recomposite() implementation in panels.js (not via monkey-patch --
+// see comment above _hrStageDiagPatchRecomposite for why that approach is
+// unreliable, now superseded by these direct call sites). Each is a
+// guarded no-op unless window.HardRoundStageDiag is on and a commit is
+// pending (cap.pendingE, set by _hrStageDiagCaptureD).
+function _hrStageDiagCaptureE1(artworkCompositeCanvas){
+  if(!_hrStageDiagEnabled())return;
+  const cap=window.HardRoundStageCapture;
+  if(!cap||!cap.pendingE)return;
+  cap.E1=_hrStageCaptureFull(artworkCompositeCanvas,'E1-artworkCompositeC-post-layer-draw');
+  cap._E1canvas=artworkCompositeCanvas;
+}
+function _hrStageDiagCaptureE2(compCanvas){
+  if(!_hrStageDiagEnabled())return;
+  const cap=window.HardRoundStageCapture;
+  if(!cap||!cap.pendingE||!cap.E1)return;
+  cap.E2=_hrStageCaptureFull(compCanvas,'E2-compC-post-artwork-composite');
+  cap._E2canvas=compCanvas;
+}
+function _hrStageDiagCaptureE3(displayCanvas){
+  if(!_hrStageDiagEnabled())return;
+  const cap=window.HardRoundStageCapture;
+  if(!cap||!cap.pendingE||!cap.E2)return;
+  cap.pendingE=false;
+  cap.E3=_hrStageCaptureFull(displayCanvas,'E3-displayC-final-visible');
+  cap._E3canvas=displayCanvas;
+  // D was captured as a REGION (see _hrStageDiagCaptureD/_hrStageCaptureRegion),
+  // E1/E2/E3 above are captured FULL-canvas, so D's capture object can't be
+  // pixel-diffed against a full canvas without re-reading D's own source
+  // canvas at full size. We only have D's already-read summary object here
+  // (activeC region), so D-vs-E1 below uses the summary-only comparison
+  // (bounds/nonTransparent/maxAlpha/hash); pixel-level
+  // differingPixelCount/maxChannelDiff are reported for E1->E2 and E2->E3,
+  // which are full-canvas-to-full-canvas.
+  cap.diffsE={
+    DtoE1:{from:'D-activeC-post-commit',to:'E1-artworkCompositeC-post-layer-draw',summary:_hrDiffCaptures(cap.D,cap.E1)},
+    E1toE2:_hrStageDiagFullCompare('E1-artworkCompositeC-post-layer-draw',cap.E1,cap._E1canvas,'E2-compC-post-artwork-composite',cap.E2,cap._E2canvas),
+    E2toE3:_hrStageDiagFullCompare('E2-compC-post-artwork-composite',cap.E2,cap._E2canvas,'E3-displayC-final-visible',cap.E3,cap._E3canvas),
+  };
+  console.log('[HR-STAGE-DIAG 11A.37] D->E1->E2->E3 captured. Inspect window.HardRoundStageCapture (E1/E2/E3/diffsE) or call window.HardRoundStageDiagSummary().');
+  // Phase 11A.38 -- one-shot, read-only follow-up. E2->E3 showed 602
+  // differing pixels across the FULL 1920x1080 canvas; this narrows that
+  // down to just the real stroke bounds (from D/E1, +4px pad) so we can
+  // tell whether the brush's own appearance changes between compC and
+  // displayC, or whether those 602 pixels are unrelated to the stroke
+  // (e.g. onionC content, or displayCtx.filter blur touching non-stroke
+  // pixels). Reuses cap._E2canvas/_E3canvas already captured above --
+  // no new capture call sites, no writes, nothing auto-logged beyond one
+  // line pointing at where to inspect the result.
+  try{_hrStageDiagE2E3BrushRegion(cap);}catch(err){console.warn('[HR-STAGE-DIAG 11A.38] brush-region compare failed',err);}
+}
+function _hrStageDiagE2E3BrushRegion(cap){
+  cap=cap||window.HardRoundStageCapture;
+  if(!cap||!cap._E2canvas||!cap._E3canvas)return null;
+  // Real stroke bounds: prefer D (activeC post-commit region, proven
+  // identical to A/B/E1), fall back to E1's own full-canvas bounds.
+  const boundsSrc=(cap.D&&cap.D.bounds)?cap.D:(cap.E1&&cap.E1.bounds?cap.E1:null);
+  if(!boundsSrc||!boundsSrc.bounds){console.warn('[HR-STAGE-DIAG 11A.38] no stroke bounds available on D/E1');return null;}
+  // D is a REGION capture (relative to its own rect), so its bounds are
+  // region-local; D's region.rx/ry (set by _hrStageCaptureRegion) must be
+  // added back to get full-canvas coordinates. E1 is captured FULL-canvas,
+  // so its bounds need no offset.
+  const off=(boundsSrc.region)?{x:boundsSrc.region.rx,y:boundsSrc.region.ry}:{x:0,y:0};
+  const b=boundsSrc.bounds;
+  const pad=4;
+  const e2c=cap._E2canvas,e3c=cap._E3canvas;
+  const W=e2c.width,H=e2c.height;
+  const rx=Math.max(0,off.x+b.minX-pad);
+  const ry=Math.max(0,off.y+b.minY-pad);
+  const rMaxX=Math.min(W-1,off.x+b.maxX+pad);
+  const rMaxY=Math.min(H-1,off.y+b.maxY+pad);
+  const rw=rMaxX-rx+1,rh=rMaxY-ry+1;
+  if(rw<=0||rh<=0){console.warn('[HR-STAGE-DIAG 11A.38] empty brush region');return null;}
+  let e2Data,e3Data;
+  try{
+    const ta=document.createElement('canvas');ta.width=rw;ta.height=rh;
+    const tb=document.createElement('canvas');tb.width=rw;tb.height=rh;
+    ta.getContext('2d').drawImage(e2c,rx,ry,rw,rh,0,0,rw,rh);
+    tb.getContext('2d').drawImage(e3c,rx,ry,rw,rh,0,0,rw,rh);
+    e2Data=ta.getContext('2d').getImageData(0,0,rw,rh).data;
+    e3Data=tb.getContext('2d').getImageData(0,0,rw,rh).data;
+  }catch(err){console.warn('[HR-STAGE-DIAG 11A.38] region read failed',err);return null;}
+  let differingPixelCount=0,maxChannelDiff=0;
+  let minX=rw,minY=rh,maxX=-1,maxY=-1;
+  const first10=[];
+  for(let yy=0;yy<rh;yy++){
+    for(let xx=0;xx<rw;xx++){
+      const idx=(yy*rw+xx)*4;
+      const dr=Math.abs(e2Data[idx]-e3Data[idx]),dg=Math.abs(e2Data[idx+1]-e3Data[idx+1]),
+            dbch=Math.abs(e2Data[idx+2]-e3Data[idx+2]),dal=Math.abs(e2Data[idx+3]-e3Data[idx+3]);
+      const pixelMax=Math.max(dr,dg,dbch,dal);
+      if(pixelMax>0){
+        differingPixelCount++;
+        if(pixelMax>maxChannelDiff)maxChannelDiff=pixelMax;
+        const gx=rx+xx,gy=ry+yy;
+        if(xx<minX)minX=xx; if(xx>maxX)maxX=xx;
+        if(yy<minY)minY=yy; if(yy>maxY)maxY=yy;
+        if(first10.length<10){
+          first10.push({
+            x:gx,y:gy,
+            e2:[e2Data[idx],e2Data[idx+1],e2Data[idx+2],e2Data[idx+3]],
+            e3:[e3Data[idx],e3Data[idx+1],e3Data[idx+2],e3Data[idx+3]],
+          });
+        }
+      }
+    }
+  }
+  const diffBoundsGlobal=maxX>=minX?{minX:rx+minX,minY:ry+minY,maxX:rx+maxX,maxY:ry+maxY}:null;
+  // Cross-check against the already-known full-canvas E2->E3 diff count
+  // (602, per the 11A.37 run) to see whether the brush region accounts
+  // for all of it, some of it, or none of it.
+  const fullCanvasCount=(cap.diffsE&&cap.diffsE.E2toE3&&cap.diffsE.E2toE3.pixels)?cap.diffsE.E2toE3.pixels.differingPixelCount:null;
+  const allDiffsInBrushRegion=(fullCanvasCount!=null)?(differingPixelCount===fullCanvasCount):null;
+  // Requirement 4: E1 (transparent) can't be compared raw against E2
+  // (opaque, has background under it). The one fair, read-only check we
+  // CAN do without recomputing compositing: wherever E1 is fully opaque
+  // (alpha===255) inside this same region, no background can show through,
+  // so E2's RGB there must equal E1's RGB regardless of what's underneath.
+  // That isolates "did the opaque core of the stroke change" from "did the
+  // background/edges change", without simulating compositing math.
+  let e1OpaqueCheck=null;
+  if(cap._E1canvas){
+    try{
+      const t1=document.createElement('canvas');t1.width=rw;t1.height=rh;
+      t1.getContext('2d').drawImage(cap._E1canvas,rx,ry,rw,rh,0,0,rw,rh);
+      const e1Data=t1.getContext('2d').getImageData(0,0,rw,rh).data;
+      let opaquePixels=0,opaqueMismatches=0,opaqueMaxDiff=0;
+      for(let i=0;i<e1Data.length;i+=4){
+        if(e1Data[i+3]===255){
+          opaquePixels++;
+          const dr=Math.abs(e1Data[i]-e2Data[i]),dg=Math.abs(e1Data[i+1]-e2Data[i+1]),dbc=Math.abs(e1Data[i+2]-e2Data[i+2]);
+          const m=Math.max(dr,dg,dbc);
+          if(m>0)opaqueMismatches++;
+          if(m>opaqueMaxDiff)opaqueMaxDiff=m;
+        }
+      }
+      e1OpaqueCheck={opaquePixels,opaqueMismatches,opaqueMaxDiff,note:'Compares E1 vs E2 RGB only where E1 alpha=255 (background cannot show through there, so this is a valid raw comparison; partial-alpha edge pixels are excluded since those genuinely need background compositing to compare fairly).'};
+    }catch(err){e1OpaqueCheck={error:String(err)};}
+  }
+  window.HardRoundStageCapture=window.HardRoundStageCapture||{};
+  window.HardRoundStageCapture.brushRegionE2E3={
+    region:{x:rx,y:ry,w:rw,h:rh,pad},
+    differingPixelCount,
+    maxChannelDiff,
+    diffBounds:diffBoundsGlobal,
+    first10DifferingPixels:first10,
+    fullCanvasE2toE3Count:fullCanvasCount,
+    allFullCanvasDiffsInsideBrushRegion:allDiffsInBrushRegion,
+    e1OpaqueVsE2Check:e1OpaqueCheck,
+  };
+  console.log('[HR-STAGE-DIAG 11A.38] brush-region E2->E3 compare done. Print with: window.HardRoundStageCapture.brushRegionE2E3');
+  return window.HardRoundStageCapture.brushRegionE2E3;
+}
+window.HardRoundDebugCapture=window.HardRoundDebugCapture||{};
+// TEMP DIAGNOSTIC (Phase 11A.19): hashes a rectangular region of activeC's
+// real backing store via ctx.getImageData -- read-only, no writes. Reuses
+// the same hash/bounds/count formula as _hrCaptureCanvas so results are
+// directly comparable across phases.
+function _hrHashActiveCRegion(x,y,w,h,label){
+  let data;
+  try{ data=ctx.getImageData(x,y,w,h).data; }
+  catch(err){ console.warn('[HR-ACTIVEC-PROBE] read failed',label,err); return {label,error:String(err)}; }
+  let minX=w,minY=h,maxX=-1,maxY=-1,nonTransparent=0,maxAlpha=0,hash=0;
+  for(let yy=0;yy<h;yy++){
+    for(let xx=0;xx<w;xx++){
+      const idx=(yy*w+xx)*4,a=data[idx+3];
+      if(a>0){
+        nonTransparent++;
+        if(a>maxAlpha)maxAlpha=a;
+        if(xx<minX)minX=xx; if(xx>maxX)maxX=xx;
+        if(yy<minY)minY=yy; if(yy>maxY)maxY=yy;
+      }
+      hash=(hash*31+data[idx]+data[idx+1]*3+data[idx+2]*7+a*13)|0;
+    }
+  }
+  return {label,x,y,w,h,bounds:maxX>=minX?{minX,minY,maxX,maxY}:null,nonTransparent,maxAlpha,hash};
+}
+// TEMP DIAGNOSTIC (Phase 11A.20): hashes an off-DOM canvas the same way
+// _hrHashActiveCRegion hashes a live activeC region, so results from a
+// resolveInto()-produced scratch canvas (PRE_END/FINAL_GPU) are directly
+// comparable to a committed-layer capture (COMMITTED). Read-only, no
+// writes to the passed canvas.
+function _hrHashCanvas(canvas,label){
+  if(!canvas)return{label,error:'no-canvas'};
+  let data;
+  try{ data=canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height).data; }
+  catch(err){ console.warn('[11A.20] hash failed',label,err); return {label,error:String(err)}; }
+  const w=canvas.width,h=canvas.height;
+  let minX=w,minY=h,maxX=-1,maxY=-1,nonTransparent=0,maxAlpha=0,hash=0;
+  for(let yy=0;yy<h;yy++){
+    for(let xx=0;xx<w;xx++){
+      const idx=(yy*w+xx)*4,a=data[idx+3];
+      if(a>0){
+        nonTransparent++;
+        if(a>maxAlpha)maxAlpha=a;
+        if(xx<minX)minX=xx; if(xx>maxX)maxX=xx;
+        if(yy<minY)minY=yy; if(yy>maxY)maxY=yy;
+      }
+      hash=(hash*31+data[idx]+data[idx+1]*3+data[idx+2]*7+a*13)|0;
+    }
+  }
+  return {label,w,h,bounds:maxX>=minX?{minX,minY,maxX,maxY}:null,nonTransparent,maxAlpha,hash};
+}
+// Same comparison shape as _hrDiffCaptures, kept as its own named function
+// per the Phase 11A.20 patch spec (does not replace or alias the existing
+// _hrDiffCaptures used by the 11A.19 B/C/D summary).
+// TEMP DIAGNOSTIC (Phase 11A.27): hashes a raw {data,w,h} buffer (as
+// returned by GpuBackend.diagResolveIntoBuffer(), reused unmodified from
+// Phase 11A.25) using the exact same formula as _hrHashCanvas/
+// _hrHashActiveCRegion, so a LAST_LIVE capture (buffer) is directly
+// comparable to a PRE_END capture (canvas) without a second hashing
+// scheme to reconcile. Read-only.
+function _hrHashBuffer(buf,label){
+  if(!buf||!buf.data)return{label,error:'no-buffer'};
+  const {data,w,h}=buf;
+  let minX=w,minY=h,maxX=-1,maxY=-1,nonTransparent=0,maxAlpha=0,hash=0;
+  for(let yy=0;yy<h;yy++){
+    for(let xx=0;xx<w;xx++){
+      const idx=(yy*w+xx)*4,a=data[idx+3];
+      if(a>0){
+        nonTransparent++;
+        if(a>maxAlpha)maxAlpha=a;
+        if(xx<minX)minX=xx; if(xx>maxX)maxX=xx;
+        if(yy<minY)minY=yy; if(yy>maxY)maxY=yy;
+      }
+      hash=(hash*31+data[idx]+data[idx+1]*3+data[idx+2]*7+a*13)|0;
+    }
+  }
+  return {label,w,h,bounds:maxX>=minX?{minX,minY,maxX,maxY}:null,nonTransparent,maxAlpha,hash};
+}
+function _hrDiffHashes(a,b){
+  if(!a||!b)return null;
+  if(a.error||b.error)return {error:true,aError:a.error,bError:b.error};
+  if(a.w!==b.w||a.h!==b.h)return {sizeMismatch:true,aSize:[a.w,a.h],bSize:[b.w,b.h]};
+  return {
+    hashEqual:a.hash===b.hash,
+    nonTransparentDelta:(b.nonTransparent||0)-(a.nonTransparent||0),
+    maxAlphaDelta:(b.maxAlpha||0)-(a.maxAlpha||0),
+    boundsA:a.bounds,boundsB:b.bounds,
+  };
+}
+function _hrRunCaptureSummary(){
+  const c=window.HardRoundDebugCapture;
+  const bc=_hrDiffCaptures(c.B,c.C),cd=_hrDiffCaptures(c.C,c.D),presentVsResolve=_hrDiffCaptures(c.A1_present,c.A2_resolve);
+  c.diffs={BtoC:bc,CtoD:cd,presentVsResolve};
+  // Phase 11A.30: this used to unconditionally console.log('[HR-CAPTURE]', ...)
+  // on every GPU-committed stroke -- routine console noise left over from
+  // earlier Phase 11A experiments, no longer needed for this investigation.
+  // The full diagnostic object (c, including c.diffs) remains on
+  // window.HardRoundDebugCapture for manual inspection; only the automatic
+  // print was removed.
+}
+
+// ============================================================================
+// PHASE 11A.36 -- opt-in A/B/C/D/E commit-pipeline stage diagnostic.
+//
+// Off by default. Enable with:
+//   window.HardRoundStageDiag = true;
+// before drawing a stroke on an EMPTY normal-raster layer (bounds tracking
+// is written to be correct for that case first -- see note on stage C/D).
+//
+// Captures, per user's Phase 11A.36 spec:
+//   A = final GPU-resolved stroke result immediately before it is
+//       copied/committed (result.canvas from renderer.endStroke(), BEFORE
+//       it is drawn into _strokeCanvas).
+//   B = the actual stroke source canvas (_strokeCanvas) immediately before
+//       _commitStrokeCanvas() runs.
+//   C = activeC immediately BEFORE _commitStrokeCanvas()'s composite draw.
+//   D = activeC immediately AFTER _commitStrokeCanvas()'s composite draw.
+//   E = the display/composite canvas immediately after recomposite() next
+//       runs following commit.
+//
+// Each stage is hashed/measured with the existing _hrCaptureCanvas() helper
+// (bounds, nonTransparent count, maxAlpha, hash) -- no new pixel-reading
+// logic, just new call sites. Results land on window.HardRoundStageCapture
+// and window.HardRoundStageCapture.diffs; nothing is logged automatically
+// to avoid reintroducing console spam -- inspect manually or call
+// window.HardRoundStageDiagSummary().
+//
+// IMPORTANT: this diagnostic only READS canvases (getImageData/drawImage
+// into throwaway scratch canvases). It never mutates _strokeCanvas, activeC,
+// or renderer state, and it does not change: pressure, stabilization, AA,
+// segment generation, GPU shaders, finishStroke geometry, or backend
+// selection. It is a pure observer bolted onto existing call sites.
+// ============================================================================
+function _hrStageCaptureFull(canvas,label){
+  // Thin wrapper around the existing capture helper, kept separate so this
+  // diagnostic's call sites read clearly and can be grepped/removed as a
+  // unit later.
+  return _hrCaptureCanvas(canvas,label);
+}
+// Stage C/D capture a REGION of activeC, not the whole canvas, because
+// activeC can already contain other artwork (explicitly called out in the
+// Phase 11A.36 request). On an empty normal-raster layer this region is
+// irrelevant (whole canvas is empty anyway), but the region-based capture
+// is written now so it stays correct once this is pointed at a non-empty
+// layer later. Region defaults to the full canvas unless a rect is given.
+function _hrStageCaptureRegion(canvas,label,rect){
+  if(!canvas)return null;
+  const w=canvas.width,h=canvas.height;
+  const rx=rect?Math.max(0,Math.floor(rect.minX)):0;
+  const ry=rect?Math.max(0,Math.floor(rect.minY)):0;
+  const rw=rect?Math.min(w,Math.ceil(rect.maxX)+1)-rx:w;
+  const rh=rect?Math.min(h,Math.ceil(rect.maxY)+1)-ry:h;
+  if(rw<=0||rh<=0)return {label,w:0,h:0,bounds:null,nonTransparent:0,maxAlpha:0,hash:0,region:{rx,ry,rw,rh}};
+  const tmp=document.createElement('canvas');tmp.width=rw;tmp.height=rh;
+  try{
+    tmp.getContext('2d').drawImage(canvas,rx,ry,rw,rh,0,0,rw,rh);
+  }catch(err){
+    return {label,error:String(err)};
+  }
+  const capture=_hrCaptureCanvas(tmp,label);
+  if(capture)capture.region={rx,ry,rw,rh};
+  return capture;
+}
+function _hrStageDiagEnabled(){return !!window.HardRoundStageDiag;}
+function _hrStageDiagReset(){
+  window.HardRoundStageCapture={A:null,B:null,C:null,D:null,E:null,
+    E1:null,E2:null,E3:null,diffsE:null,
+    commitDetail:null,diffs:null,pendingE:false};
+}
+function _hrStageDiagCaptureA(canvas){
+  if(!_hrStageDiagEnabled())return;
+  if(!window.HardRoundStageCapture)_hrStageDiagReset();
+  window.HardRoundStageCapture.A=_hrStageCaptureFull(canvas,'A-gpu-resolved-pre-copy');
+}
+function _hrStageDiagCaptureB(canvas){
+  if(!_hrStageDiagEnabled())return;
+  if(!window.HardRoundStageCapture)_hrStageDiagReset();
+  window.HardRoundStageCapture.B=_hrStageCaptureFull(canvas,'B-strokeCanvas-pre-commit');
+}
+// Called from inside _commitStrokeCanvas(), before/after its composite draw.
+// `rect` is the stroke's dirty rect if available (undefined -> full canvas,
+// which is the correct/easiest case for an empty test layer per the request).
+function _hrStageDiagCaptureC(activeCanvas,rect){
+  if(!_hrStageDiagEnabled())return;
+  if(!window.HardRoundStageCapture)_hrStageDiagReset();
+  window.HardRoundStageCapture.C=_hrStageCaptureRegion(activeCanvas,'C-activeC-pre-commit',rect);
+}
+function _hrStageDiagCaptureD(activeCanvas,rect,detail){
+  if(!_hrStageDiagEnabled())return;
+  if(!window.HardRoundStageCapture)_hrStageDiagReset();
+  window.HardRoundStageCapture.D=_hrStageCaptureRegion(activeCanvas,'D-activeC-post-commit',rect);
+  window.HardRoundStageCapture.commitDetail=detail;
+  window.HardRoundStageCapture.pendingE=true; // next recomposite() call should capture E
+}
+// SUPERSEDED as of Phase 11A.37 -- see _hrStageDiagCaptureE1/E2/E3 above,
+// which are called DIRECTLY from inside the real recomposite() in
+// panels.js instead of relying on this monkey-patch. Left in place
+// (harmless, still read-only) as a fallback for cap.E only. Root cause of
+// why this wrapper alone was unreliable: panels.js and brush-engine.js are
+// both plain classic (non-module) top-level scripts sharing one global
+// object, so `function recomposite(li,fi,dirtyRect){...}` in panels.js IS
+// a real global -- but this IIFE below runs synchronously at PARSE time of
+// brush-engine.js. If brush-engine.js's <script> tag executes before
+// panels.js's does (script tag order in the HTML host page, which is not
+// part of these four files), `typeof recomposite` is `'undefined'` at the
+// moment this IIFE runs, line below silently returns, and the whole patch
+// never attaches -- no error, cap.E just stays null forever. That silent
+// failure mode is exactly why Stage E previously produced nothing to
+// compare: it never depended on what recomposite() actually does
+// internally, only on load order of two unrelated <script> tags.
+//
+// Monkey-patch recomposite() exactly once, purely to capture E right after
+// the NEXT call following a commit (pendingE flag). Every other call
+// behaves completely unchanged -- this wrapper always calls straight
+// through to the original and returns its result untouched.
+function _hrStageDiagMaybeCaptureE(){
+  if(!_hrStageDiagEnabled())return;
+  const cap=window.HardRoundStageCapture;
+  if(!cap||!cap.pendingE)return;
+  cap.pendingE=false;
+  const displayCanvas=(typeof window.HardRoundStageDiagDisplayCanvas==='function')
+    ?window.HardRoundStageDiagDisplayCanvas()
+    :(window.HardRoundStageDiagDisplayCanvas||document.getElementById('display-canvas')||document.getElementById('displayCanvas')||activeC);
+  cap.E=_hrStageCaptureFull(displayCanvas,'E-display-post-recomposite');
+  cap.diffs={
+    AtoB:_hrDiffCaptures(cap.A,cap.B),
+    CtoD:_hrDiffCaptures(cap.C,cap.D),
+    DtoE:_hrDiffCaptures(cap.D,cap.E),
+  };
+}
+(function _hrStageDiagPatchRecomposite(){
+  if(typeof recomposite!=='function')return; // not reachable as a bare global here
+  if(recomposite.__hrStageWrapped)return;
+  const _origRecomposite=recomposite;
+  const wrapped=function(...args){
+    const result=_origRecomposite.apply(this,args);
+    try{_hrStageDiagMaybeCaptureE();}catch(err){console.warn('[HR-STAGE-DIAG] stage E capture failed',err);}
+    return result;
+  };
+  wrapped.__hrStageWrapped=true;
+  try{recomposite=wrapped;}catch(err){/* recomposite may be const in some builds */}
+  try{window.recomposite=wrapped;}catch(err){}
+})();
+window.HardRoundStageDiagSummary=function(){
+  const cap=window.HardRoundStageCapture;
+  if(!cap){console.log('[HR-STAGE-DIAG] no capture yet -- enable window.HardRoundStageDiag and draw a stroke');return null;}
+  console.log('[HR-STAGE-DIAG] A (gpu resolved, pre-copy):',cap.A);
+  console.log('[HR-STAGE-DIAG] B (strokeCanvas, pre-commit):',cap.B);
+  console.log('[HR-STAGE-DIAG] C (activeC, pre-commit):',cap.C);
+  console.log('[HR-STAGE-DIAG] D (activeC, post-commit):',cap.D);
+  console.log('[HR-STAGE-DIAG] E (display, post-recomposite, legacy monkey-patch path):',cap.E);
+  console.log('[HR-STAGE-DIAG 11A.37] E1 (artworkCompositeC, post layer-draw):',cap.E1);
+  console.log('[HR-STAGE-DIAG 11A.37] E2 (compC, post artwork-composite):',cap.E2);
+  console.log('[HR-STAGE-DIAG 11A.37] E3 (displayC, final visible surface):',cap.E3);
+  console.log('[HR-STAGE-DIAG] commit detail (globalAlpha/compositeOp/etc used by _commitStrokeCanvas):',cap.commitDetail);
+  console.log('[HR-STAGE-DIAG] diffs A->B / C->D / D->E (legacy):',cap.diffs);
+  console.log('[HR-STAGE-DIAG 11A.37] diffs D->E1 / E1->E2 / E2->E3:',cap.diffsE);
+  return cap;
+};
 function _commitStrokeCanvas(){
   if(!_strokeCanvas) return;
   const commitSession=_activeStrokeSession,commitLayer=curLayer,commitFrame=curFrame;
@@ -467,10 +972,37 @@ function _commitStrokeCanvas(){
     layers[curLayer]&&layers[curLayer].type==='smart-raster';
   const ownershipDirtyRect=smartOwnership?_consumeStrokeDirtyRect():null;
   const ownershipBefore=smartOwnership?(ownershipDirtyRect?ctx.getImageData(ownershipDirtyRect.x,ownershipDirtyRect.y,ownershipDirtyRect.w,ownershipDirtyRect.h):ctx.getImageData(0,0,CW,CH)):null;
+  // Phase 11A.36 stage C: activeC immediately BEFORE this function's
+  // composite draw touches it. rect is the stroke's dirty rect when known
+  // (undefined -> _hrStageCaptureRegion falls back to the whole canvas,
+  // which is what the request asked for as the easy/reliable case on an
+  // empty test layer).
+  const _hrStage36Rect=_strokeDirty?{minX:_strokeDirty.minX,minY:_strokeDirty.minY,maxX:_strokeDirty.maxX,maxY:_strokeDirty.maxY}:null;
+  _hrStageDiagCaptureC(activeC,_hrStage36Rect);
   ctx.save();
   ctx.globalAlpha = Math.max(0, Math.min(1, brushOpacity));
+  // Phase 11A.36: record exactly what this commit draw used, answering the
+  // "is brushOpacity applied here even though the GPU result may already
+  // have opacity baked in" / "what composite op" questions directly from
+  // the real values in play, on the real stroke, without guessing.
+  if(_hrStageDiagEnabled()){
+    window.HardRoundStageCapture=window.HardRoundStageCapture||{};
+    window.HardRoundStageCapture.commitDetail={
+      globalAlphaApplied:ctx.globalAlpha,
+      brushOpacityValue:brushOpacity,
+      compositeOperation:_brushPaintCompositeOperation(),
+      blendMode:window.brushBlendMode,
+      usesBrushPaintPipeline:_usesBrushPaintPipeline(),
+      smartOwnership:!!smartOwnership,
+      srcW:src&&src.width,srcH:src&&src.height,
+    };
+  }
   _drawBrushComposite(ctx,src);
   ctx.restore();
+  // Phase 11A.36 stage D: activeC immediately AFTER the composite draw.
+  // Sets pendingE so the next recomposite() call (whichever call site
+  // triggers it) captures stage E.
+  _hrStageDiagCaptureD(activeC,_hrStage36Rect,window.HardRoundStageCapture&&window.HardRoundStageCapture.commitDetail);
   if(smartOwnership&&typeof commitSmartRasterBrush==='function'){
     _traceStrokeLifecycle('smart-metadata-start',{sessionId:commitSession,sourceLayer:commitLayer,sourceFrame:commitFrame,dirtyRect:ownershipDirtyRect});
     commitSmartRasterBrush(src,styleId,brushOpacity,ownershipDirtyRect,ownershipBefore,brushBlendMode);
@@ -2603,17 +3135,8 @@ function _stabilizePoint(x,y,t){
   _stabilizerX=avg.x;_stabilizerY=avg.y;
   _stabilizerSmoothedPressure=_stabilizerPressureAverage();
 
-  if(t-_stabilizerDebugLastLogT>500){
-    _stabilizerDebugLastLogT=t;
-    console.log('[stabilizer debug]',{
-      sliderPercent:Math.round(amount*100),
-      amount,
-      windowLen,
-      bufferedSamples:_stabilizerBuf.length,
-      lagScreenPx:(Math.hypot(_stabilizerRawX-avg.x,_stabilizerRawY-avg.y)*Math.max(0.05,zoom)).toFixed(2),
-      zoom
-    });
-  }
+  // Phase 11A.30: routine [stabilizer debug] console spam (unrelated to
+  // this investigation, left over from earlier stabilizer work) removed.
 
   _stabilizerLastAdvanceT=performance.now();
   _stabilizerSchedule();
@@ -4607,10 +5130,107 @@ let _hardRoundRenderer = null;
 // to N one-segment calls while avoiding N synchronous raster stalls in the
 // input handler.
 const _hardRoundPendingRenderSegments = [];
+// Phase 11A.30: single master flag for this diagnostic phase. Default
+// false = no routine Phase 11A.30 console logging. When true, only the
+// concise [11A.30] ... results are printed (see _pointerEndStroke and
+// _hardRoundPresentLivePreview below). This replaces the now-removed,
+// completed Phase 11A.29 experiment flag
+// (window.HardRoundDebugSkipPointerUpPendingFlush) -- see item 8/§8 of the
+// Phase 11A.30 plan: that causality experiment concluded (skip=false and
+// skip=true both reproduced the bug), so its flag, special pointerup
+// behavior, and window.HardRoundLastSkippedPointerUpFlush have all been
+// removed; normal pointerup pending-flush behavior is restored exactly as
+// it was before that experiment.
+if(typeof window!=='undefined' && window.HardRoundDebugPhase11A30===undefined){
+  window.HardRoundDebugPhase11A30 = false;
+}
+// Phase 11A.32: causal test only. When true AND the active Hard Round
+// renderer is GPU-active, pointerup skips _hardRoundPresentFinishedFrame()
+// entirely (no peekStroke()/gpu.present() of the flushed catch-up
+// segments, no two-RAF wait) and goes straight from the normal pending
+// flush to renderer.endStroke({readback:true}) and the existing commit
+// path. This is expected to reintroduce the old pointerup blink -- that is
+// the whole point of the experiment, and is deliberately NOT compensated
+// for here. Does NOT touch the CPU path (the CPU branch never reaches this
+// bypass -- see the gpuCommit guard at the call site below), pending-
+// segment semantics, finishStroke, pressure, stabilization, AA, shaders,
+// opacity, or commit. Default false.
+if(typeof window!=='undefined' && window.HardRoundDebugBypassFinishedGpuPreview===undefined){
+  window.HardRoundDebugBypassFinishedGpuPreview = false;
+}
+// Gates the single [11A.32 BYPASS RESULT] console line below. Default
+// false -- no routine console output even while the bypass itself is
+// active, unless explicitly opted into.
+if(typeof window!=='undefined' && window.HardRoundDebugPhase11A32===undefined){
+  window.HardRoundDebugPhase11A32 = false;
+}
+// Phase 11A.33: causal test only. When true AND the active Hard Round
+// renderer is GPU-active, the normal endStroke/_commitStrokeCanvas/
+// saveActiveToKey/recomposite sequence at pointerup runs completely
+// unchanged -- only the #hard-round-gpu-overlay hide step (normally the
+// very next line after endStroke resolves) is suppressed, so the last GPU
+// overlay frame stays visible on top of the freshly committed layer.
+// Default false.
+if(typeof window!=='undefined' && window.HardRoundDebugKeepGpuOverlayAfterCommit===undefined){
+  window.HardRoundDebugKeepGpuOverlayAfterCommit = false;
+}
+// Gates the single [11A.33 HANDOFF] console line. Default false.
+if(typeof window!=='undefined' && window.HardRoundDebugPhase11A33===undefined){
+  window.HardRoundDebugPhase11A33 = false;
+}
+// Phase 11A.33: read-only geometry snapshot for the surfaces involved in
+// the WebGPU-overlay -> Canvas2D handoff, for the "ALSO RECORD DOM/CANVAS
+// GEOMETRY" deliverable. Never called automatically; call
+// window.HardRoundDebugHandoffGeometry() from the console during Test A or
+// Test B. Purely diagnostic -- reads DOM/canvas state, mutates nothing.
+// NOTE: `activeC` is defined elsewhere (not in this file) and is used
+// as-is. This module does not define or know the id of a separate
+// "display canvas" if one exists distinctly from activeC -- pass it in
+// explicitly (displayCanvasEl) if the app has one, otherwise that field
+// reports null rather than guessing at an id.
+if(typeof window!=='undefined'){
+  window.HardRoundDebugHandoffGeometry = function(displayCanvasEl){
+    const report=(el)=>{
+      if(!el) return null;
+      const rect=el.getBoundingClientRect();
+      const cs=typeof getComputedStyle==='function'?getComputedStyle(el):null;
+      return {
+        canvasWidth: el.width, canvasHeight: el.height,
+        rectWidth: rect.width, rectHeight: rect.height,
+        styleTransform: el.style && el.style.transform,
+        styleImageRendering: el.style && el.style.imageRendering,
+        styleOpacity: el.style && el.style.opacity,
+        computedTransform: cs && cs.transform,
+        computedImageRendering: cs && cs.imageRendering,
+        computedOpacity: cs && cs.opacity,
+      };
+    };
+    return {
+      devicePixelRatio: typeof window!=='undefined'?window.devicePixelRatio:null,
+      overlay: report(typeof document!=='undefined'?document.getElementById('hard-round-gpu-overlay'):null),
+      activeCanvas: typeof activeC!=='undefined'?report(activeC):null,
+      displayCanvas: displayCanvasEl?report(displayCanvasEl):null,
+    };
+  };
+}
 function _hardRoundFlushPending(renderer){
   if(!renderer||!_hardRoundPendingRenderSegments.length)return 0;
   const pending=_hardRoundPendingRenderSegments.splice(0,_hardRoundPendingRenderSegments.length);
   renderer.drawSegments(pending);
+  // Bookkeeping only (no console output -- see Phase 11A.30 console
+  // cleanup). Logs exactly what this flush dispatched into
+  // renderer.drawSegments() -- this function is the sole path from
+  // _hardRoundPendingRenderSegments into the renderer, so this log entry is
+  // a complete record of every drawSegments() call this phase asked for.
+  if(window.HardRoundDebugCaptureLastLiveFrame&&window.HardRoundGeometryMutationLog){
+    window.HardRoundGeometryMutationLog.push({
+      fn:'_hardRoundFlushPending',
+      timestamp:performance.now(),
+      dispatchedCount:pending.length,
+      pendingQueueLengthAfter:_hardRoundPendingRenderSegments.length,
+      flushedIntoRenderer:true,
+    });
+  }
   return pending.length;
 }
 function _hardRoundGetRenderer(){
@@ -4621,12 +5241,75 @@ function _hardRoundGetRenderer(){
   }
   return _hardRoundRenderer;
 }
+// TEMP DIAGNOSTIC (Phase 11A routing probe). Purely visual, appended once,
+// never read by any other code path. Safe to delete wholesale once the
+// routing matrix is confirmed.
+function _hrDebugBadge(info){
+  if(typeof document==='undefined') return;
+  let el=document.getElementById('hr-debug-badge');
+  if(!el){
+    el=document.createElement('div');
+    el.id='hr-debug-badge';
+    el.style.cssText='position:fixed;bottom:8px;left:8px;z-index:99999;font:11px monospace;'+
+      'background:rgba(0,0,0,0.75);color:#0f0;padding:4px 8px;border-radius:4px;pointer-events:none;white-space:pre;';
+    document.body.appendChild(el);
+  }
+  el.textContent='HR#'+info.strokeId+' route='+info.route+' backend='+info.backend+
+    ' tip='+info.hasCustomTip+' tex='+info.textureEnabled;
+}
 function _hardRoundGpuOverlay(){return document.getElementById('hard-round-gpu-overlay');}
 function _hardRoundSetGpuOverlayVisible(visible){
   const overlay=_hardRoundGpuOverlay();
   if(!overlay)return;
   overlay.hidden=!visible;
   overlay.style.display=visible?'block':'none';
+}
+// TEMP DIAGNOSTIC (Phase 11A.35): one concise timestamped surface-state log,
+// plus optional two-rAF-boundary checkpoints to sample what the browser has
+// actually painted (as opposed to what the DOM currently says). Opt-in via
+// window.HardRoundDebug1135 (default off). Read-only: never touches
+// geometry, pressure, stabilization, AA, shaders, opacity math,
+// finishStroke, segment generation, or commit behavior.
+function _hr1135Snapshot(event){
+  const overlay=_hardRoundGpuOverlay();
+  return {
+    tag:'[11A.35 SURFACES]',
+    time:performance.now(),
+    event,
+    overlayVisible:overlay?!overlay.hidden&&overlay.style.display!=='none':null,
+    overlayOpacity:overlay?getComputedStyle(overlay).opacity:null,
+    displayBackend:(window.DisplayBackend&&window.DisplayBackend.mode)||'canvas2d',
+    activeCanvasOpacity:(typeof activeC!=='undefined'&&activeC)?activeC.style.opacity:null,
+    strokeId:_activeStrokeSession,
+  };
+}
+// Persistent ring buffer of the last 30 [11A.35 SURFACES] entries, kept
+// independently of whether console logging is enabled, so a stroke can be
+// captured and inspected after the fact via window.HardRound1135Log.
+window.HardRound1135Log = window.HardRound1135Log || [];
+window.HardRoundReset1135Log = function(){
+  window.HardRound1135Log = [];
+};
+function _hr1135Store(snap){
+  window.HardRound1135Log.push(snap);
+  if(window.HardRound1135Log.length>30)window.HardRound1135Log.splice(0,window.HardRound1135Log.length-30);
+}
+function _hr1135Log(event){
+  const snap=_hr1135Snapshot(event);
+  _hr1135Store(snap);
+  if(window.HardRoundDebug1135)console.log(snap.tag,snap);
+}
+// Samples the same snapshot after two rAF boundaries (i.e. after the
+// browser has had the chance to actually paint the DOM state as it stands
+// right now), so we can tell whether a given synchronous state was ever
+// the thing the browser composited, not just a value that existed in the
+// DOM for zero frames.
+function _hr1135LogAfterPaint(event){
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    const snap=_hr1135Snapshot(event+'-post-paint');
+    _hr1135Store(snap);
+    if(window.HardRoundDebug1135)console.log(snap.tag,snap);
+  }));
 }
 // Give device/pipeline creation the hover interval before pointer-down.
 activeC.addEventListener('pointerenter',()=>{
@@ -4726,6 +5409,19 @@ function _hardRoundStampSegments(segments, e){
   // own per-batch present(). The final, authoritative resolve still happens
   // once via endStroke() at pointerup (see the pointerup call site below).
   _hardRoundPendingRenderSegments.push(...renderSegs);
+  // TEMP DIAGNOSTIC (Phase 11A.27): opt-in only. Logs how many render-ready
+  // segments this call added to the pending queue, and the queue's total
+  // length afterward -- the two numbers the phase asks for
+  // ("_hardRoundStampSegments count" and "_hardRoundPendingRenderSegments
+  // count").
+  if(window.HardRoundDebugCaptureLastLiveFrame&&window.HardRoundGeometryMutationLog){
+    window.HardRoundGeometryMutationLog.push({
+      fn:'_hardRoundStampSegments',
+      timestamp:performance.now(),
+      addedCount:renderSegs.length,
+      pendingQueueLengthAfter:_hardRoundPendingRenderSegments.length,
+    });
+  }
   currentPressure = savedPressure;
   _flowSpacingRatio = previousFlowRatio;
   _hardRoundRequestLivePreview(renderer);
@@ -4762,6 +5458,109 @@ function _hardRoundStampSegments(segments, e){
 // place that composites/presents, at most once per display frame. This
 // function is now only the "do the resolve" half; the per-event path
 // calls _hardRoundRequestLivePreview() (below) instead.
+//
+// ---------------------------------------------------------------------
+// Phase 11A.30 -- generation-safe LAST_LIVE bookkeeping.
+//
+// _hardRoundLiveFrameGeneration is a monotonically increasing counter
+// representing PRESENTATION order (the order frames are accepted below),
+// NOT asynchronous readback-completion order. It is bumped once per
+// accepted frame, for every stroke/session, and never reset -- so a
+// generation number alone is enough to tell two accepted frames apart
+// regardless of which stroke they belong to.
+//
+// _hardRoundLastAcceptedLiveMetadataBySession records, per stroke/session
+// id, the metadata for the newest frame that has been ACCEPTED (passed the
+// session/generation/result checks below) -- updated synchronously at
+// accept time, before any GPU diagnostic readback starts. This is what
+// _pointerEndStroke's synchronous freeze (window.HardRoundFrozenLiveMetadata)
+// reads, so that freeze never has to wait on an in-flight readback.
+//
+// window.HardRoundLiveCaptureLog keeps only the most recent ~25 accepted
+// entries, each recording generation, strokeId/sessionId,
+// segmentCountAtAccept, acceptedAt, readbackStartedAt, readbackCompletedAt,
+// becameLastLive, wasStale, and staleReason -- enough to prove whether
+// diagnostic readbacks complete out of presentation order.
+// ---------------------------------------------------------------------
+let _hardRoundLiveFrameGeneration = 0;
+const _hardRoundLastAcceptedLiveMetadataBySession = {};
+if(typeof window!=='undefined' && !window.HardRoundLiveCaptureLog){
+  window.HardRoundLiveCaptureLog = [];
+}
+function _hardRoundPushLiveCaptureLogEntry(entry){
+  const log = window.HardRoundLiveCaptureLog || (window.HardRoundLiveCaptureLog=[]);
+  log.push(entry);
+  if(log.length>25) log.splice(0, log.length-25);
+}
+// ---------------------------------------------------------------------
+// Phase 11A.31 (DIAGNOSTIC ONLY -- no behavior change) -- fast-stroke
+// live-preview blink investigation.
+//
+// Opt-in via window.HardRoundDebugPreviewOrder = true. When off (default),
+// every line this block adds is a no-op (a single boolean check) and the
+// original scheduling/present/overlay logic below is untouched byte-for-
+// byte in its control flow -- this only ADDS observation points, it never
+// changes what runs, when it runs, or what it returns.
+//
+// Purpose: prove or disprove whether an older peekStroke()/present() call
+// can complete (and show its pixels) AFTER a newer one, i.e. whether
+// presentation COMPLETION order can differ from presentation REQUEST
+// order. That would explain "already-visible live GPU stroke disappears
+// for a frame, then recovers" without touching segment generation,
+// pressure, stabilization, AA, commit, or finishStroke.
+//
+// Each request to _hardRoundPresentLivePreview gets one monotonically
+// increasing generation number, assigned at REQUEST time (i.e. request
+// order == generation order, by construction). We then log, per
+// generation: segment counts at request/submit/resolve, the three
+// timestamps, whether this resolve was already stale by generation/
+// session at resolve time, and whether it ended up actually showing
+// pixels (overlayShown). window.HardRoundAnalyzePreviewOrder() then
+// checks whether any generation's resolveTime is later than a
+// numerically-later generation's resolveTime that already committed
+// pixels -- i.e. completion order differing from request order.
+// ---------------------------------------------------------------------
+let _hardRoundPreviewOrderGeneration = 0;
+if (typeof window !== 'undefined' && !window.HardRoundPreviewOrderLog) {
+  window.HardRoundPreviewOrderLog = [];
+}
+function _hardRoundPreviewOrderPush(entry) {
+  const log = window.HardRoundPreviewOrderLog || (window.HardRoundPreviewOrderLog = []);
+  log.push(entry);
+  if (log.length > 300) log.splice(0, log.length - 300);
+}
+if (typeof window !== 'undefined') {
+  // Summarizes window.HardRoundPreviewOrderLog for the CURRENT (or most
+  // recent) stroke and reports whether any accepted (overlayShown=true)
+  // entry resolved after a numerically later generation had already been
+  // accepted -- i.e. proof of out-of-order presentation completion.
+  window.HardRoundAnalyzePreviewOrder = function () {
+    const log = (window.HardRoundPreviewOrderLog || []).slice();
+    const accepted = log.filter(e => e.overlayShown).sort((a, b) => a.resolveTime - b.resolveTime);
+    let outOfOrder = [];
+    let highestGenSoFar = -1;
+    for (const e of accepted) {
+      if (e.generation < highestGenSoFar) {
+        outOfOrder.push({
+          generation: e.generation,
+          resolvedAfterGeneration: highestGenSoFar,
+          segmentCountAtResolve: e.segmentCountAtResolve,
+          resolveTime: e.resolveTime,
+        });
+      } else {
+        highestGenSoFar = e.generation;
+      }
+    }
+    return {
+      totalEntries: log.length,
+      acceptedEntries: accepted.length,
+      outOfOrderCount: outOfOrder.length,
+      outOfOrderEvents: outOfOrder,
+      provesOutOfOrderCompletion: outOfOrder.length > 0,
+      log,
+    };
+  };
+}
 function _hardRoundPresentLivePreview(renderer){
   if(!renderer || !_inStroke || !_strokeCtx || !_strokeCanvas) return;
   const session = _activeStrokeSession;
@@ -4769,25 +5568,132 @@ function _hardRoundPresentLivePreview(renderer){
   // _hardRoundPreviewGeneration below for why this check exists in
   // addition to the session/_inStroke checks already here.
   const previewGeneration = _hardRoundPreviewGeneration;
-  renderer.peekStroke().then(result=>{
-    if(previewGeneration!==_hardRoundPreviewGeneration) return;
-    if(session!==_activeStrokeSession || !_inStroke || !_strokeCtx || !_strokeCanvas) return;
-    if(!result || !result.canvas) return;
+  // --- diagnostic (11A.31): request-time bookkeeping, opt-in, read-only ---
+  const _dbgOrderOn = typeof window!=='undefined' && !!window.HardRoundDebugPreviewOrder;
+  let _dbgOrderEntry = null;
+  if (_dbgOrderOn) {
+    _dbgOrderEntry = {
+      generation: ++_hardRoundPreviewOrderGeneration,
+      strokeId: session,
+      segmentCountAtRequest: renderer._segmentCount,
+      segmentCountAtPresentSubmit: null,
+      segmentCountAtResolve: null,
+      requestTime: performance.now(),
+      presentSubmitTime: performance.now(), // peekStroke() call below is the submit point
+      resolveTime: null,
+      staleAtResolve: false,
+      staleReason: null,
+      overlayShown: false,
+      isGpu: !!(renderer.isGpuActive && renderer.isGpuActive()),
+    };
+  }
+  // --- end diagnostic request-time bookkeeping ---
+  // Phase 11A.39: pass this call's strokeId (session) through to
+  // peekStroke() -> GpuBackend.present() purely so the opt-in
+  // window.HardRoundGpuPresentLog diagnostic can attribute each real
+  // present()/submit() to the stroke that requested it. Read-only; does not
+  // change which frame is requested, resolved, or accepted below.
+  renderer.peekStroke({ strokeId: session, segmentCount: renderer._segmentCount }).then(async result=>{
+    // --- diagnostic (11A.31): resolve-time bookkeeping, opt-in, read-only.
+    // Runs BEFORE the real guards below so we see every resolve, including
+    // ones the real logic is about to reject as stale -- that rejection
+    // path is exactly what we're trying to characterize (does it reject
+    // correctly, or does a stale frame ever slip past because nothing here
+    // re-checks completion order against a numerically newer generation
+    // that already got shown)?
+    if (_dbgOrderEntry) {
+      _dbgOrderEntry.resolveTime = performance.now();
+      _dbgOrderEntry.segmentCountAtResolve = renderer._segmentCount;
+      if (previewGeneration!==_hardRoundPreviewGeneration) { _dbgOrderEntry.staleAtResolve=true; _dbgOrderEntry.staleReason='preview-generation-cancelled'; }
+      else if (session!==_activeStrokeSession) { _dbgOrderEntry.staleAtResolve=true; _dbgOrderEntry.staleReason='session-changed'; }
+      else if (!_inStroke || !_strokeCtx || !_strokeCanvas) { _dbgOrderEntry.staleAtResolve=true; _dbgOrderEntry.staleReason='stroke-ended'; }
+      else if (!result || !result.canvas) { _dbgOrderEntry.staleAtResolve=true; _dbgOrderEntry.staleReason='no-result'; }
+    }
+    // --- end diagnostic resolve-time bookkeeping (pre-guard) ---
+    if(previewGeneration!==_hardRoundPreviewGeneration) { if(_dbgOrderEntry)_hardRoundPreviewOrderPush(_dbgOrderEntry); return; }
+    if(session!==_activeStrokeSession || !_inStroke || !_strokeCtx || !_strokeCanvas) { if(_dbgOrderEntry)_hardRoundPreviewOrderPush(_dbgOrderEntry); return; }
+    if(!result || !result.canvas) { if(_dbgOrderEntry)_hardRoundPreviewOrderPush(_dbgOrderEntry); return; }
     if(renderer.isGpuActive&&renderer.isGpuActive()){
+      // Phase 11A.30: this is the exact point a real live-preview frame has
+      // been ACCEPTED for the current stroke session (session/generation/
+      // result checks above all passed) and is about to be shown
+      // (present() already ran inside peekStroke()/_resolveToOutput()
+      // above). This accept-time bookkeeping runs whenever
+      // window.HardRoundDebugCaptureLastLiveFrame is on (default off/
+      // undefined -- normal live-preview behavior, overlay visibility and
+      // timing, is completely unchanged either way). Never updated during
+      // pointerup/finalization -- that path calls
+      // _hardRoundPresentFinishedFrame(), a different function, which is
+      // NOT hooked here.
+      if(window.HardRoundDebugCaptureLastLiveFrame&&renderer.gpu&&renderer.gpu.ready){
+        // Assign this frame's generation and record it as the newest
+        // accepted generation for this session THE INSTANT presentation
+        // order accepts it -- before the (asynchronous) diagnostic
+        // readback below even starts. This is what makes the freeze in
+        // _pointerEndStroke race-free: it never has to wait on a readback,
+        // and any earlier generation's readback that completes later can
+        // check against this value to detect it has been superseded.
+        const generation = ++_hardRoundLiveFrameGeneration;
+        const acceptedAt = performance.now();
+        const segmentCountAtAccept = renderer._segmentCount;
+        _hardRoundLastAcceptedLiveMetadataBySession[session] = {generation,strokeId:session,segmentCountAtAccept,acceptedAt};
+        const logEntry = {generation,strokeId:session,segmentCountAtAccept,acceptedAt,readbackStartedAt:null,readbackCompletedAt:null,becameLastLive:false,wasStale:false,staleReason:null};
+        _hardRoundPushLiveCaptureLogEntry(logEntry);
+        try{
+          logEntry.readbackStartedAt=performance.now();
+          const buf=await renderer.gpu.diagResolveIntoBuffer(renderer._rgb,renderer._composite);
+          logEntry.readbackCompletedAt=performance.now();
+          const hashed=_hrHashBuffer(buf,'LAST_LIVE');
+          // Generation-safe overwrite guard (Phase 11A.30 §2): only accept
+          // this readback into window.HardRoundLastLiveFrame if (a) it
+          // still belongs to the CURRENT stroke/session, AND (b) its
+          // generation is still the latest accepted generation for that
+          // session -- i.e. no newer frame was accepted while this
+          // readback was in flight. A readback that resolves out of order
+          // is marked stale and explicitly does NOT overwrite LAST_LIVE.
+          const stillCurrentSession = session===_activeStrokeSession;
+          const latestGenerationForSession = _hardRoundLastAcceptedLiveMetadataBySession[session]&&_hardRoundLastAcceptedLiveMetadataBySession[session].generation;
+          const isLatestGeneration = generation===latestGenerationForSession;
+          if(stillCurrentSession && isLatestGeneration){
+            window.HardRoundLastLiveFrame={
+              timestamp:performance.now(),
+              strokeId:session,
+              generation,
+              segmentCount:segmentCountAtAccept,
+              bounds:hashed.bounds,
+              nonTransparent:hashed.nonTransparent,
+              maxAlpha:hashed.maxAlpha,
+              hash:hashed.hash,
+            };
+            logEntry.becameLastLive=true;
+          } else {
+            logEntry.wasStale=true;
+            logEntry.staleReason=!stillCurrentSession?'old-session':'superseded-generation';
+          }
+        }catch(err){
+          logEntry.wasStale=true;
+          logEntry.staleReason='readback-error';
+          console.warn('[11A.27] LAST_LIVE capture failed',err);
+        }
+      }
       // The WebGPU canvas is already a visible document-space overlay in
       // canvas-wrap. Never copy its live pixels through Canvas2D.
       _hardRoundSetGpuOverlayVisible(true);
+      // --- diagnostic (11A.31): this generation's pixels were actually shown ---
+      if(_dbgOrderEntry){ _dbgOrderEntry.overlayShown=true; _hardRoundPreviewOrderPush(_dbgOrderEntry); }
       return;
     }
     const dirty=result.dirtyRegion;
     if(dirty){
-      if(dirty.width<=0||dirty.height<=0)return;
+      if(dirty.width<=0||dirty.height<=0){ if(_dbgOrderEntry)_hardRoundPreviewOrderPush(_dbgOrderEntry); return; }
       _strokeCtx.clearRect(dirty.x,dirty.y,dirty.width,dirty.height);
       _strokeCtx.drawImage(result.canvas,dirty.x,dirty.y,dirty.width,dirty.height,dirty.x,dirty.y,dirty.width,dirty.height);
     }else{
       _strokeCtx.clearRect(0,0,_strokeCanvas.width,_strokeCanvas.height);
       _strokeCtx.drawImage(result.canvas,0,0);
     }
+    // --- diagnostic (11A.31): this generation's pixels were actually shown ---
+    if(_dbgOrderEntry){ _dbgOrderEntry.overlayShown=true; _hardRoundPreviewOrderPush(_dbgOrderEntry); }
     _scheduleRecomposite();
   });
 }
@@ -5251,9 +6157,89 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
         !(window.SelectionScope&&SelectionScope.isRestricted&&SelectionScope.isRestricted())&&
         !(layers[curLayer]&&layers[curLayer].type==='smart-raster');
       hardRoundRenderer.preferGpu=gpuLiveCompatible;
+      // TEMP DIAGNOSTIC (Phase 11A.14) -- manual backend override for
+      // isolation testing only. Does not touch eligibility; route stays
+      // 'migrated' either way. Remove alongside the rest of the HR-DEBUG
+      // instrumentation once the routing matrix is resolved.
+      if(window.HardRoundDebugForceBackend==='cpu') hardRoundRenderer.preferGpu=false;
+      else if(window.HardRoundDebugForceBackend==='gpu') hardRoundRenderer.preferGpu=true;
       hardRoundRenderer.presentationOpacity=Math.max(0,Math.min(1,brushOpacity));
+      // TEMP DIAGNOSTIC (Phase 11A.19): read-only activeC hash immediately
+      // before beginStroke() touches anything. Whole-canvas region since
+      // stroke 1's bounding box isn't tracked separately here.
+      const _hrProbeBefore=_hrHashActiveCRegion(0,0,activeC.width,activeC.height,'beforeBeginStroke');
       hardRoundRenderer.beginStroke();
-      _hardRoundSetGpuOverlayVisible(!!(hardRoundRenderer.isGpuActive&&hardRoundRenderer.isGpuActive()));
+      // TEMP DIAGNOSTIC (Phase 11A.19): same region, immediately after
+      // beginStroke() returns, before the overlay is toggled visible.
+      const _hrProbeAfter=_hrHashActiveCRegion(0,0,activeC.width,activeC.height,'afterBeginStroke');
+      // TEMP DIAGNOSTIC (Phase 11A.22): this call shows the GPU overlay
+      // immediately after beginStroke() -- before this stroke's first
+      // drawSegments()/peekStroke() has resolved, i.e. before any new
+      // frame has actually been presented for THIS stroke. If the overlay
+      // canvas/swapchain still holds the previous stroke's last presented
+      // pixels at this point (gpu.reset() is only proven to clear
+      // strokeMaskTex, not necessarily force a cleared present), showing
+      // it here can briefly reveal stale Stroke N-1 pixels stacked on top
+      // of the already-committed Stroke N-1 result -- reading as a
+      // doubled/duplicated stroke. window.HardRoundDebugDelayOverlayShow
+      // is an opt-in diagnostic toggle (default off = unchanged behavior)
+      // that skips this early show and instead relies solely on the
+      // existing gated reveal in _hardRoundPresentLivePreview (shows the
+      // overlay only once this stroke's own peekStroke() has resolved a
+      // real frame) and _hardRoundPresentFinishedFrame (pointerdown-only
+      // strokes with no intervening pointermove). No other behavior is
+      // changed; this does not touch brush math, geometry, or the commit
+      // path. Remove once Phase 11A.22 is resolved either way.
+      _hr1135Log('next-stroke-pre-overlay-show');
+      if(!window.HardRoundDebugDelayOverlayShow){
+        _hardRoundSetGpuOverlayVisible(!!(hardRoundRenderer.isGpuActive&&hardRoundRenderer.isGpuActive()));
+        _hr1135Log('next-stroke-post-overlay-show');
+        _hr1135LogAfterPaint('next-stroke-post-overlay-show');
+      }else{
+        _traceStrokeLifecycle('hardround-overlay-show-deferred',{gpuActive:!!(hardRoundRenderer.isGpuActive&&hardRoundRenderer.isGpuActive())});
+      }
+      // TEMP DIAGNOSTIC (Phase 11A.19): same region, immediately after the
+      // GPU overlay has been made visible for this new stroke (or, under
+      // the 11A.22 delayed-show diagnostic, immediately after the decision
+      // to defer that visibility).
+      const _hrProbeAfterOverlay=_hrHashActiveCRegion(0,0,activeC.width,activeC.height,'afterOverlayVisible');
+      window.HardRoundActiveCProbe={
+        beforeBeginStroke:_hrProbeBefore,
+        afterBeginStroke:_hrProbeAfter,
+        afterOverlayVisible:_hrProbeAfterOverlay,
+        beforeToAfterBeginStrokeChanged:_hrProbeBefore.hash!==_hrProbeAfter.hash,
+        afterBeginStrokeToOverlayChanged:_hrProbeAfter.hash!==_hrProbeAfterOverlay.hash,
+        beforeToOverlayChanged:_hrProbeBefore.hash!==_hrProbeAfterOverlay.hash,
+      };
+      // Phase 11A.30: routine [HR-ACTIVEC-PROBE] console spam from Phase
+      // 11A.19 removed. window.HardRoundActiveCProbe is still populated
+      // every stroke for manual inspection.
+      // TEMP DIAGNOSTIC (Phase 11A.17 fix): the capture bucket must exist
+      // BEFORE drawSegments() runs during the stroke (pointermove), not
+      // just at pointerup -- that's why segment/vertex counters were
+      // reading 0 previously (the bucket was created too late, at
+      // finalize time, after all the real accumulation already happened).
+      window.HardRoundDebugCapture={rawSegmentCount:0,cpuEquivalentMergedCount:0,gpuDispatchedCount:0,
+        gpuDrawSegmentCalls:0,gpuFlushCalls:0,vertexCountGenerated:0,vertexCountUploaded:0,vertexCountDrawn:0};
+      // TEMP DIAGNOSTIC (Phase 11A routing probe) -- read-only, does not
+      // affect eligibility, backend selection, or any excluded subsystem.
+      // Remove after the routing matrix is confirmed.
+      (function(){
+        window._hrDebugStrokeId = (window._hrDebugStrokeId||0)+1;
+        const usingGpu = !!(hardRoundRenderer._usingGpu);
+        window.HardRoundDebug = {
+          strokeId: window._hrDebugStrokeId,
+          route: 'migrated',
+          backend: usingGpu ? 'GPU' : 'CPU',
+          gpuLiveCompatible: !!gpuLiveCompatible,
+          preferGpuFlagAtBeginStroke: !!gpuLiveCompatible,
+          hasCustomTip: !!window.brushTipCanvas,
+          textureEnabled: !!window.brushTextureEnabled,
+        };
+        // Phase 11A.30: routine [HR-DEBUG] console spam removed.
+        // window.HardRoundDebug and the on-screen badge are unaffected.
+        _hrDebugBadge(window.HardRoundDebug);
+      })();
       _hardRoundPendingRenderSegments.length=0;
       _hardRoundNextStampIsFirst = true;
       _hardRoundStampSegments([beginSeg],e);
@@ -5261,6 +6247,17 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
       // segments are frame-batched.
       _hardRoundFlushPending(_hardRoundRenderer);
     } else {
+      // TEMP DIAGNOSTIC (Phase 11A routing probe) -- read-only.
+      window._hrDebugStrokeId = (window._hrDebugStrokeId||0)+1;
+      window.HardRoundDebug = {
+        strokeId: window._hrDebugStrokeId,
+        route: 'legacy',
+        backend: 'LEGACY',
+        hasCustomTip: !!window.brushTipCanvas,
+        textureEnabled: !!window.brushTextureEnabled,
+      };
+      // Phase 11A.30: routine [HR-DEBUG] console spam removed.
+      _hrDebugBadge(window.HardRoundDebug);
       _stampDab(p.x,p.y,e);
     }
   }
@@ -5477,6 +6474,33 @@ if(_hasRawUpdate){
   });
 }
 function _pointerEndStroke(e){
+  // Phase 11A.30 §3: must be the very first thing this function does --
+  // synchronously copies the metadata for the newest ACCEPTED live frame
+  // (generation, strokeId/sessionId, segmentCountAtAccept, acceptedAt) into
+  // window.HardRoundFrozenLiveMetadata, before ANY of finishStroke(), final
+  // stamping, pending flush, _hardRoundPresentFinishedFrame(), peekStroke(),
+  // or endStroke() run below. This freeze is race-free by construction: it
+  // reads only the synchronous accept-time bookkeeping recorded by
+  // _hardRoundPresentLivePreview at the moment presentation order accepted
+  // that frame -- it never waits on (or depends on) that frame's GPU
+  // diagnostic readback, which can still be in flight or may finish out of
+  // order (see _hardRoundLastAcceptedLiveMetadataBySession below).
+  //
+  // Also retained: the legacy HardRoundFrozenLastLiveFrame snapshot (of
+  // whatever window.HardRoundLastLiveFrame -- the generation-safe corrected
+  // value -- last held) and a fresh mutation log, both still used by the
+  // LIVE_VS_PRE_END_SUMMARY comparison further down in this function.
+  // Opt-in (window.HardRoundDebugCaptureLastLiveFrame, default off) -- a
+  // no-op property read/write when off, no effect on control flow.
+  if(window.HardRoundDebugCaptureLastLiveFrame){
+    const frozenSource=_hardRoundLastAcceptedLiveMetadataBySession[_activeStrokeSession];
+    window.HardRoundFrozenLiveMetadata=frozenSource?Object.assign({},frozenSource):null;
+    window.HardRoundFrozenLastLiveFrame=window.HardRoundLastLiveFrame?Object.assign({},window.HardRoundLastLiveFrame):null;
+    window.HardRoundGeometryMutationLog=[];
+    if(window.HardRoundDebugPhase11A30){
+      console.log('[11A.30] FROZEN_LIVE_METADATA',window.HardRoundFrozenLiveMetadata);
+    }
+  }
   if(_strokeCompletionStarted) return;
   if(_activeStrokePointerId!=null&&e.pointerId!==_activeStrokePointerId) return;
   _strokeCompletionStarted=true;
@@ -5526,8 +6550,27 @@ function _pointerEndStroke(e){
     // live accumulation instead. Real pressure/tail samples received while
     // the pen was down have already entered the renderer unchanged.
     _traceStrokeLifecycle('hardround-finishStroke',{segmentCount:finish.segments?finish.segments.length:0,submittedSegmentCount:0,mode:finish.mode});
+    if(window.HardRoundDebugCaptureLastLiveFrame&&window.HardRoundGeometryMutationLog){
+      window.HardRoundGeometryMutationLog.push({
+        fn:'finishStroke',
+        timestamp:performance.now(),
+        finishSegmentCount:finish.segments?finish.segments.length:0,
+        // Per the existing Phase 11A.8 fix (see comment above), these
+        // segments are never flushed into the renderer -- logged here so
+        // that fact is directly verifiable from this diagnostic's own
+        // data rather than only from the surrounding comment.
+        flushedIntoRenderer:false,
+      });
+    }
     _hardRoundNextStampIsLast = false;
     _traceStrokeLifecycle('hardround-stampSegments',{queuedSegments:_hardRoundPendingRenderSegments.length,previewRAFPending:_hardRoundPreviewRAF,previewTimerPending:_hardRoundPreviewTimer});
+    // Phase 11A.30 §8: the Phase 11A.29 pointer-up-flush-skip causality
+    // experiment is complete (skip=false -> bug YES, skip=true -> bug YES,
+    // so the pending flush was ruled out as the cause). Its diagnostic
+    // switch, special pointerup behavior, and
+    // window.HardRoundLastSkippedPointerUpFlush have been removed; normal
+    // pointerup pending flushing is restored exactly as production did
+    // before that experiment.
     const flushedCount=_hardRoundFlushPending(_hardRoundRenderer);
     _traceStrokeLifecycle('hardround-flushPending',{flushedSegments:flushedCount,overlayVisible:_hardRoundGpuOverlay()?!_hardRoundGpuOverlay().hidden:null});
     // Phase 9C.1 perf fix: drop any RAF-scheduled live preview now -- the
@@ -5576,25 +6619,208 @@ function _pointerEndStroke(e){
     };
     if(renderer){
       const gpuCommit=!!(renderer.isGpuActive&&renderer.isGpuActive());
+      // TEMP DIAGNOSTIC (Phase 11A.17): do NOT reset window.HardRoundDebugCapture
+      // here -- it was created at beginStroke (pointerdown) and has been
+      // accumulating real segment/vertex counts throughout the stroke.
+      // Resetting it here would wipe that data right before we read it.
+      if(gpuCommit)window.HardRoundDebugCapture=window.HardRoundDebugCapture||{};
       const finishedPreviewCalledAt=performance.now();
       _traceStrokeLifecycle('hardround-finished-preview-call',{gpuActive:gpuCommit,overlayVisible:_hardRoundGpuOverlay()?!_hardRoundGpuOverlay().hidden:null});
-      _hardRoundPresentFinishedFrame(renderer).then(()=>{
-        _traceStrokeLifecycle('hardround-finished-preview-presented',{elapsedMs:performance.now()-finishedPreviewCalledAt,overlayVisible:_hardRoundGpuOverlay()?!_hardRoundGpuOverlay().hidden:null});
+      // Phase 11A.32 causal test: when the bypass flag is on AND this
+      // stroke is GPU-active, skip _hardRoundPresentFinishedFrame()
+      // entirely -- go straight to the same .then() continuation that
+      // normally runs after it. Resolve to undefined immediately (no
+      // peekStroke()/gpu.present() of the flushed catch-up segments, no
+      // two-RAF wait). CPU strokes (gpuCommit===false) always take the
+      // unmodified _hardRoundPresentFinishedFrame() path below, regardless
+      // of this flag -- see the gpuCommit condition.
+      const hr32Bypass=!!(gpuCommit&&window.HardRoundDebugBypassFinishedGpuPreview);
+      const hr32FinishedFramePromise=hr32Bypass?Promise.resolve():_hardRoundPresentFinishedFrame(renderer);
+      if(hr32Bypass&&window.HardRoundDebugPhase11A32){
+        console.log('[11A.32 BYPASS RESULT]','skipping _hardRoundPresentFinishedFrame(); going straight to endStroke({readback:true})');
+      }
+      hr32FinishedFramePromise.then(async ()=>{
+        _traceStrokeLifecycle('hardround-finished-preview-presented',{elapsedMs:performance.now()-finishedPreviewCalledAt,overlayVisible:_hardRoundGpuOverlay()?!_hardRoundGpuOverlay().hidden:null,hr32Bypassed:hr32Bypass});
         const endStrokeCalledAt=performance.now();
         _traceStrokeLifecycle('hardround-endStroke-call',{gpuActive:gpuCommit,readback:gpuCommit,overlayVisible:_hardRoundGpuOverlay()?!_hardRoundGpuOverlay().hidden:null});
-        return renderer.endStroke({readback:gpuCommit}).then(result=>({result,endStrokeCalledAt}));
-      }).then(({result,endStrokeCalledAt})=>{
+        // TEMP DIAGNOSTIC (Phase 11A.17): capture B via the SAME resolve
+        // pipeline endStroke's readback uses (gpu.resolveInto(), i.e.
+        // RESOLVE_SHADER_WGSL -> copyTextureToBuffer -> mapAsync), called
+        // directly against a scratch context instead of the app's real
+        // _outCtx. This is non-mutating (resolveInto() only reads
+        // strokeMaskTex) and happens strictly before endStroke() below, so
+        // it cannot influence what endStroke() itself resolves.
+        // TEMP DIAGNOSTIC (Phase 11A.20): PRE_END capture. Uses only the
+        // real, existing renderer.gpu.resolveInto() method -- no
+        // diagPresentToBuffer()/diagCoverageToBuffer() or any other
+        // nonexistent GPU method. Entirely wrapped in try/catch: a failure
+        // here only skips logging and can never block or alter the real
+        // endStroke()/commit path below.
+        let hr20PreEnd=null;
+        if(gpuCommit&&renderer.gpu&&renderer.gpu.ready){
+          try{
+            const preEndCanvas=document.createElement('canvas');
+            preEndCanvas.width=renderer.width;preEndCanvas.height=renderer.height;
+            await renderer.gpu.resolveInto(preEndCanvas.getContext('2d'),renderer._rgb,renderer._composite);
+            hr20PreEnd=_hrHashCanvas(preEndCanvas,'PRE_END');
+            // Phase 11A.30: routine [11A.20] PRE_END console spam removed.
+            // hr20PreEnd still feeds LIVE_VS_PRE_END_SUMMARY below and the
+            // FINAL_GPU comparison further down.
+            if(window.HardRoundDebugPhase11A30) console.log('[11A.30] PRE_END',hr20PreEnd);
+          }catch(err){console.warn('[11A.20] PRE_END capture failed',err);}
+        }
+        // Phase 11A.30 §4: keep the frozen live metadata (captured
+        // race-free/synchronously at _pointerEndStroke entry, before
+        // finishStroke()/stamping/flush/_hardRoundPresentFinishedFrame()/
+        // peekStroke()/endStroke() ran) and PRE_END (captured just above,
+        // via the same resolveInto() pipeline production's own readback
+        // uses), and build ONE concise, generation-safe comparison result.
+        // Read-only, wrapped in try/catch, cannot affect endStroke()/commit
+        // below.
+        if(gpuCommit&&window.HardRoundDebugCaptureLastLiveFrame){
+          try{
+            const frozenMeta=window.HardRoundFrozenLiveMetadata;
+            const lastLive=window.HardRoundLastLiveFrame;
+            const captureLog=window.HardRoundLiveCaptureLog||[];
+            const staleReadbackCount=captureLog.filter(entry=>entry.wasStale).length;
+            const newestGeneration=frozenMeta?frozenMeta.generation:null;
+            const newestGenerationReadbackCompleted=!!(lastLive&&newestGeneration!=null&&lastLive.generation===newestGeneration);
+            const pixelPerfectMatch=(lastLive&&hr20PreEnd&&!hr20PreEnd.error)?(lastLive.hash===hr20PreEnd.hash):null;
+            const boundsEqual=(lastLive&&hr20PreEnd&&!hr20PreEnd.error)?(JSON.stringify(lastLive.bounds)===JSON.stringify(hr20PreEnd.bounds)):null;
+            const preEndSegmentCount=(hr20PreEnd&&renderer)?renderer._segmentCount:null;
+            const segmentCountDelta=(frozenMeta&&renderer)?(renderer._segmentCount-frozenMeta.segmentCountAtAccept):null;
+            let conclusion;
+            if(!frozenMeta) conclusion='no-live-metadata-captured-for-this-stroke';
+            else if(!newestGenerationReadbackCompleted) conclusion='newest-generation-readback-not-completed-in-time';
+            else if(segmentCountDelta) conclusion='segment-counts-differ-renderer-state-genuinely-changed-after-newest-live-frame';
+            else if(pixelPerfectMatch===false) conclusion='segment-counts-equal-pixels-differ-investigate-diagnostic-readback-presentation-timing';
+            else if(pixelPerfectMatch===true) conclusion='match';
+            else conclusion='incomplete-data';
+            const summary={
+              newestGeneration,
+              frozenLiveSegmentCount:frozenMeta?frozenMeta.segmentCountAtAccept:null,
+              preEndSegmentCount,
+              segmentCountDelta,
+              pixelPerfectMatch,
+              hashEqual:pixelPerfectMatch,
+              nonTransparentDelta:(lastLive&&hr20PreEnd&&!hr20PreEnd.error)?((hr20PreEnd.nonTransparent||0)-(lastLive.nonTransparent||0)):null,
+              maxAlphaDelta:(lastLive&&hr20PreEnd&&!hr20PreEnd.error)?((hr20PreEnd.maxAlpha||0)-(lastLive.maxAlpha||0)):null,
+              boundsEqual,
+              staleReadbackCount,
+              newestGenerationReadbackCompleted,
+              conclusion,
+            };
+            window.HardRoundLiveVsPreEndSummary=summary;
+            if(window.HardRoundDebugPhase11A30){
+              console.log('[11A.30] LAST_LIVE_CORRECTED',lastLive);
+              console.log('[11A.30] LIVE_CAPTURE_LOG',captureLog);
+              console.log('[11A.30] LIVE_VS_PRE_END_SUMMARY',summary);
+              console.log('[11A.30] STALE_READBACKS_SUMMARY',{staleReadbackCount,totalLoggedEntries:captureLog.length,staleEntries:captureLog.filter(entry=>entry.wasStale)});
+            }
+          }catch(err){console.warn('[11A.30] LIVE_VS_PRE_END_SUMMARY failed',err);}
+        }
+        // TEMP DIAGNOSTIC (Phase 11A.25): opt-in only (window.
+        // HardRoundDebugCapturePresentVsResolve, default off/undefined --
+        // normal pointerup timing and the real endStroke() call directly
+        // below are completely unchanged either way). Runs
+        // LIVE_PRESENT_DIAG then FINAL_RESOLVE_DIAG back-to-back against
+        // the SAME strokeMaskTex this stroke is about to commit from --
+        // no drawSegments() call happens between them or before
+        // endStroke() below, matching the "immediately before pointerup
+        // finalization mutates anything" requirement. Both diagnostic
+        // passes are read-only (they render strokeMaskTex into their own
+        // scratch textures, never writing to strokeMaskTex, _outCtx, or
+        // the swapchain), so this cannot influence what endStroke()
+        // itself resolves or commits.
+        if(gpuCommit&&window.HardRoundDebugCapturePresentVsResolve&&renderer.gpu&&renderer.gpu.ready){
+          try{
+            window.HardRoundPresentVsResolveResult=await window.HardRoundRunPresentVsResolveDiagnostic(renderer);
+            console.log('[11A.25] LIVE_PRESENT_DIAG vs FINAL_RESOLVE_DIAG',window.HardRoundPresentVsResolveResult);
+          }catch(err){console.warn('[11A.25] present-vs-resolve diagnostic failed',err);}
+        }
+        // Real production call -- exactly once, unchanged.
+        return renderer.endStroke({readback:gpuCommit}).then(result=>({result,endStrokeCalledAt,hr20PreEnd}));
+      }).then(({result,endStrokeCalledAt,hr20PreEnd})=>{
         _traceStrokeLifecycle('hardround-endStroke-resolve',{elapsedMs:performance.now()-endStrokeCalledAt,hasCanvas:!!(result&&result.canvas),segmentCount:result&&result.segmentCount,overlayVisibleBeforeHide:_hardRoundGpuOverlay()?!_hardRoundGpuOverlay().hidden:null,inStroke:_inStroke});
-        _hardRoundSetGpuOverlayVisible(false);
+        if(gpuCommit)window.HardRoundDebugCapture.C=_hrCaptureCanvas(result&&result.canvas,'C-endStroke-readback');
+        // TEMP DIAGNOSTIC (Phase 11A.20): FINAL_GPU capture + comparisons.
+        // Wrapped in try/catch so a diagnostic failure never affects the
+        // real result object or the commit flow below.
+        let hr20FinalGpu=null;
+        if(gpuCommit){
+          try{
+            hr20FinalGpu=result&&result.canvas?_hrHashCanvas(result.canvas,'FINAL_GPU'):null;
+            // Phase 11A.30: routine [11A.20] FINAL_GPU / PRE_END vs
+            // FINAL_GPU / vertex accounting console spam removed. Values
+            // are still computed (available via hr20FinalGpu / the
+            // existing window.HardRoundDebugCapture bucket) in case a
+            // later phase needs them again.
+            if(window.HardRoundDebugPhase11A30){
+              console.log('[11A.30] FINAL_GPU',hr20FinalGpu);
+              console.log('[11A.30] PRE_END vs FINAL_GPU',_hrDiffHashes(hr20PreEnd,hr20FinalGpu));
+            }
+          }catch(err){console.warn('[11A.20] FINAL_GPU capture failed',err);}
+        }
+        // Phase 11A.33 causal test: window.HardRoundDebugKeepGpuOverlayAfterCommit
+        // (default false), gates ONLY this overlay-hide call. When true and
+        // this is a GPU-committed stroke, endStroke/_commitStrokeCanvas/
+        // saveActiveToKey/recomposite below all still run completely
+        // normally -- only the act of hiding #hard-round-gpu-overlay is
+        // suppressed, leaving the last-presented GPU overlay frame visibly
+        // on top of (not instead of) the freshly committed Canvas2D layer.
+        // Nothing is redrawn or re-presented into the overlay here.
+        const hr33KeepOverlay=!!(gpuCommit&&window.HardRoundDebugKeepGpuOverlayAfterCommit);
+        _hr1135Log('pre-overlay-hide');
+        if(!hr33KeepOverlay){
+          _hardRoundSetGpuOverlayVisible(false);
+        } else if(window.HardRoundDebugPhase11A33){
+          console.log('[11A.33 HANDOFF]','overlay-hide suppressed after commit; run document.getElementById(\'hard-round-gpu-overlay\').style.display=\'none\' manually to observe the handoff');
+        }
         if(_inStroke){
+          // Phase 11A.36 stage A: the GPU-resolved result exactly as
+          // returned by renderer.endStroke(), BEFORE it is copied into
+          // _strokeCanvas. Captured here (not earlier) so it reflects
+          // whatever endStroke({readback:gpuCommit}) actually produced --
+          // no assumptions about which internal shader path was used.
+          if(gpuCommit&&result&&result.canvas)_hrStageDiagCaptureA(result.canvas);
           if(result&&result.canvas&&_strokeCtx&&_strokeCanvas){
+            // NOTE (11A.36 diagnostic note, not a fix): this drawImage runs
+            // with WHATEVER globalAlpha/globalCompositeOperation _strokeCtx
+            // currently has -- there is no ctx.save()/reset here. If a
+            // prior CPU-path stroke left _strokeCtx.globalAlpha or
+            // globalCompositeOperation non-default (_strokeCanvas is not
+            // guaranteed to be recreated between strokes, only resized when
+            // dimensions change), this copy would silently inherit that
+            // stale state. Left unchanged per Phase 11A.36 scope (no fix
+            // yet) -- but stage A vs stage B below will reveal it directly:
+            // if A and B differ in anything other than the clearRect
+            // region, that stale-ctx-state path is a live suspect.
             _strokeCtx.clearRect(0,0,_strokeCanvas.width,_strokeCanvas.height);
             _strokeCtx.drawImage(result.canvas,0,0);
           }
+          // Phase 11A.36 stage B: the actual stroke source canvas exactly
+          // as _commitStrokeCanvas() -> _getTexturedStrokeCanvas() will
+          // read it.
+          if(gpuCommit)_hrStageDiagCaptureB(_strokeCanvas);
           _inStroke=false;_commitStrokeCanvas();
+          // TEMP DIAGNOSTIC (Phase 11A.16): capture D -- the affected
+          // active-layer region right after commit. Reads only; does not
+          // modify ctx/activeC.
+          if(gpuCommit&&result&&result.canvas){
+            try{
+              const w=result.canvas.width,h=result.canvas.height;
+              const tmp=document.createElement('canvas');tmp.width=w;tmp.height=h;
+              tmp.getContext('2d').drawImage(activeC,0,0,w,h,0,0,w,h);
+              window.HardRoundDebugCapture.D=_hrCaptureCanvas(tmp,'D-committed-layer-region');
+            }catch(err){console.warn('[HR-CAPTURE] D failed',err);}
+            _hrRunCaptureSummary();
+          }
         }
         _traceStrokeLifecycle('hardround-committed',{overlayVisible:_hardRoundGpuOverlay()?!_hardRoundGpuOverlay().hidden:null});
+        _hr1135Log('post-commit-pre-recomposite');
         finishHardRoundStroke();
+        _hr1135Log('post-recomposite');
+        _hr1135LogAfterPaint('post-recomposite');
       });
     } else {
       if(_inStroke){_inStroke=false;_commitStrokeCanvas();}

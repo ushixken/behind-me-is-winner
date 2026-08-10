@@ -456,10 +456,23 @@ function recomposite(li,fi,dirtyRect){
   }
   if(presentationStart)latencyProfiler.measure('persistent-layers-masks-and-clipping',layersStart,{persistentLayerDraws,livePreviewDraws,maskPasses,layerCount:layers.length,clip});
   artworkCompositeCtx.globalAlpha=1;
+  // Phase 11A.37 Stage E1: artworkCompositeC immediately after the
+  // per-layer draw loop above (which includes the active layer's draw at
+  // idx===li) has finished, and before drawBg()/compositing into compC.
+  // Read-only capture, guarded no-op unless window.HardRoundStageDiag is
+  // on -- see _hrStageDiagCaptureE1 in brush-engine.js. Called directly
+  // here (not via monkey-patch) so it can't miss due to script load order.
+  if(typeof _hrStageDiagCaptureE1==='function')_hrStageDiagCaptureE1(artworkCompositeC);
   drawBg();
   if(window.LightTable&&typeof window.LightTable.render==='function') window.LightTable.render(compCtx);
   compCtx.globalAlpha=1;
   compCtx.drawImage(artworkCompositeC,0,0);
+  // Phase 11A.37 Stage E2: compC immediately after artworkCompositeC has
+  // been composited into it (bg fill + optional LightTable render already
+  // applied above, artwork now drawn on top). Read-only, guarded no-op
+  // unless diagnostic is on -- see _hrStageDiagCaptureE2 in
+  // brush-engine.js.
+  if(typeof _hrStageDiagCaptureE2==='function')_hrStageDiagCaptureE2(compC);
   // activeC's content is already baked into compC at the correct stack position
   // by the loop above, so keep it hidden — showing it again here (it's always the
   // topmost DOM canvas) made mask-source layers render in front of whatever was
@@ -487,11 +500,35 @@ function recomposite(li,fi,dirtyRect){
   displayCtx.imageSmoothingQuality='high';
   displayCtx.filter = _displayBlurPx>0.05 ? `blur(${_displayBlurPx}px)` : 'none';
   const firstDabDisplayBlitStart=firstDabDiagnosticStart?performance.now():0;
-  displayCtx.drawImage(compC,0,0);
+  // Phase 11A.39 fix: artworkCompositeC was ALREADY composited into compC
+  // above (line ~469: `compCtx.drawImage(artworkCompositeC,0,0)`), so compC
+  // already contains the full, correctly-stacked artwork (including the
+  // active/in-progress stroke). The old code then drew artworkCompositeC
+  // into displayC a THIRD time (after compC and after onionC), which
+  // re-applied source-over compositing of every partial-alpha/AA pixel of
+  // the active stroke a second time. That double source-over is exactly
+  // what darkened committed strokes relative to the live GPU preview
+  // (opaque core pixels were unaffected by design -- opaque-over-opaque
+  // does not change -- only AA/partial-alpha edges visibly darkened),
+  // matching the E2->E3 diagnostic exactly.
+  //
+  // Fix: draw onionC UNDERNEATH compC instead of drawing artworkCompositeC
+  // on top a second time. compC already has the artwork on top of bg/other
+  // layers, so onion skin must render below it (onion is reference-only and
+  // should never cover the active artwork). This preserves the original
+  // visual intent (current work drawn over onion skin) without the
+  // duplicate artwork composite.
   displayCtx.drawImage(onionC,0,0);
-  displayCtx.drawImage(artworkCompositeC,0,0);
+  displayCtx.drawImage(compC,0,0);
   const firstDabDisplayBlitDuration=firstDabDisplayBlitStart?performance.now()-firstDabDisplayBlitStart:0;
   displayCtx.filter='none';
+  // Phase 11A.37 Stage E3: displayC is the final visible Canvas2D surface
+  // -- this is the last point at which its pixels change for this
+  // recomposite() call (compC + onionC + artworkCompositeC all drawn in,
+  // filter reset). Read-only, guarded no-op unless diagnostic is on -- see
+  // _hrStageDiagCaptureE3 in brush-engine.js. This call also finalizes
+  // cap.diffsE (D->E1->E2->E3).
+  if(typeof _hrStageDiagCaptureE3==='function')_hrStageDiagCaptureE3(displayC);
   if(window.DisplayBackend)window.DisplayBackend.scheduleUpload();
   if(presentationStart)latencyProfiler.point('display-upload-finishes');
   if(presentationStart){latencyProfiler.measure('canvas-display-upload',displayUploadStart,{width:CW,height:CH,blur:typeof _displayBlurPx==='number'?_displayBlurPx:null});latencyProfiler.presentationEnd(presentationStart,{dirty:!!clip});}
