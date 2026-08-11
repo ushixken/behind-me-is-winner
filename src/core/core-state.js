@@ -657,6 +657,10 @@ function _isNavBlocked(t){
 }
 
 const rotPivotEl=document.getElementById('rotation-pivot');
+function _writeNavigationCursor(element,value,source){
+  element.style.cursor=value;
+  if(window.BrushCursorNativeFlashNoteWrite)window.BrushCursorNativeFlashNoteWrite(element,value,'core-state:'+source);
+}
 function _updateRotPivotVisibility(){
   if(!rotPivotEl) return;
   const show=_rotateDrag||(spaceHeld&&shiftHeld&&!ctrlHeld);
@@ -673,7 +677,7 @@ function _updateRotPivotVisibility(){
 window.addEventListener('keydown',e=>{
   if(e.key==='Control'||e.code==='ControlLeft'||e.code==='ControlRight'){
     ctrlHeld=true;
-    if(spaceHeld&&!panning&&!_zoomDrag&&!_rotateDrag) activeC.style.cursor='zoom-in';
+    if(spaceHeld&&!panning&&!_zoomDrag&&!_rotateDrag) _writeNavigationCursor(activeC,'zoom-in','control-down');
   }
   if(e.code==='ShiftLeft'||e.code==='ShiftRight'){ shiftHeld=true; _updateRotPivotVisibility(); }
   if(e.code==='Space'&&!_isTextEntryTarget(e.target)){
@@ -683,20 +687,20 @@ window.addEventListener('keydown',e=>{
     // it now. Otherwise a focus-visible ring can latch onto that control
     // and never clear, since nothing else would blur it afterwards.
     if(document.activeElement&&document.activeElement!==document.body&&document.activeElement.blur) document.activeElement.blur();
-    if(!panning&&!_zoomDrag&&!_rotateDrag) activeC.style.cursor=ctrlHeld?'zoom-in':(shiftHeld?'alias':'grab');
+    if(!panning&&!_zoomDrag&&!_rotateDrag) _writeNavigationCursor(activeC,ctrlHeld?'zoom-in':(shiftHeld?'alias':'grab'),'space-down');
     _updateRotPivotVisibility();
   }
 },{capture:true});
 window.addEventListener('keyup',e=>{
   if(e.key==='Control'||e.code==='ControlLeft'||e.code==='ControlRight'){
     ctrlHeld=false;
-    if(spaceHeld&&!panning&&!_zoomDrag&&!_rotateDrag) activeC.style.cursor=shiftHeld?'alias':'grab';
+    if(spaceHeld&&!panning&&!_zoomDrag&&!_rotateDrag) _writeNavigationCursor(activeC,shiftHeld?'alias':'grab','control-up');
   }
   if(e.code==='ShiftLeft'||e.code==='ShiftRight'){ shiftHeld=false; _updateRotPivotVisibility(); }
   if(e.code==='Space'){
     e.preventDefault();e.stopPropagation();
     spaceHeld=false;
-    if(!panning&&!_zoomDrag&&!_rotateDrag) activeC.style.cursor=activeGroupId?'not-allowed':_baseCursorCSS();
+    if(!panning&&!_zoomDrag&&!_rotateDrag) _writeNavigationCursor(activeC,activeGroupId?'not-allowed':_baseCursorCSS(),'space-up');
     _updateRotPivotVisibility();
   }
 },{capture:true});
@@ -704,17 +708,17 @@ window.addEventListener('keyup',e=>{
 function _spaceDragStart(clientX,isCtrl){
   if(isCtrl||ctrlHeld){
     _zoomDrag=true;_zoomDragSX=clientX;_zoomDragStartZoom=zoom;
-    canvasArea.style.cursor='zoom-in';
+    _writeNavigationCursor(canvasArea,'zoom-in','space-zoom-start');
   } else if(shiftHeld){
     const p=getNavPivot();
     _rotateDrag=true;_rotateDragSX=clientX;_rotateDragSY=0;
     _rotateDragStartRot=rotation;
     _rotateDragCX=p.cx;_rotateDragCY=p.cy;_rotateDragGCX=p.gcx;_rotateDragGCY=p.gcy;
-    canvasArea.style.cursor='alias';
+    _writeNavigationCursor(canvasArea,'alias','space-rotate-start');
     _updateRotPivotVisibility();
   } else {
     panning=true;panSX=clientX;panSY=0;panSPX=panX;panSPY=panY;
-    canvasArea.style.cursor='grabbing';
+    _writeNavigationCursor(canvasArea,'grabbing','space-pan-start');
   }
 }
 function _spaceDragStartXY(clientX,clientY,isCtrl){
@@ -726,17 +730,17 @@ function _spaceDragStartXY(clientX,clientY,isCtrl){
     const r=canvasArea.getBoundingClientRect();
     const navPoint=_toUnflippedNavPoint(clientX-r.left,clientY-r.top);
     _zoomDragCX=navPoint.x;_zoomDragCY=navPoint.y;
-    canvasArea.style.cursor='zoom-in';
+    _writeNavigationCursor(canvasArea,'zoom-in','space-zoom-start-xy');
   } else if(shiftHeld){
     const p=getNavPivot();
     _rotateDrag=true;_rotateDragSX=clientX;_rotateDragSY=clientY;
     _rotateDragStartRot=rotation;
     _rotateDragCX=p.cx;_rotateDragCY=p.cy;_rotateDragGCX=p.gcx;_rotateDragGCY=p.gcy;
-    canvasArea.style.cursor='alias';
+    _writeNavigationCursor(canvasArea,'alias','space-rotate-start-xy');
     _updateRotPivotVisibility();
   } else {
     panning=true;panSX=clientX;panSY=clientY;panSPX=panX;panSPY=panY;
-    canvasArea.style.cursor='grabbing';
+    _writeNavigationCursor(canvasArea,'grabbing','space-pan-start-xy');
   }
 }
 function _spaceDragMove(clientX,clientY){
@@ -774,9 +778,9 @@ function _spaceDragMove(clientX,clientY){
   }
 }
 function _spaceDragEnd(){
-  if(panning){panning=false;canvasArea.style.cursor='';activeC.style.cursor=activeGroupId?'not-allowed':_baseCursorCSS();}
-  if(_zoomDrag){_zoomDrag=false;canvasArea.style.cursor='';activeC.style.cursor=activeGroupId?'not-allowed':_baseCursorCSS();}
-  if(_rotateDrag){_rotateDrag=false;canvasArea.style.cursor='';activeC.style.cursor=activeGroupId?'not-allowed':_baseCursorCSS();_updateRotPivotVisibility();}
+  if(panning){panning=false;_writeNavigationCursor(canvasArea,'','pan-end');_writeNavigationCursor(activeC,activeGroupId?'not-allowed':_baseCursorCSS(),'pan-end-active');}
+  if(_zoomDrag){_zoomDrag=false;_writeNavigationCursor(canvasArea,'','zoom-end');_writeNavigationCursor(activeC,activeGroupId?'not-allowed':_baseCursorCSS(),'zoom-end-active');}
+  if(_rotateDrag){_rotateDrag=false;_writeNavigationCursor(canvasArea,'','rotate-end');_writeNavigationCursor(activeC,activeGroupId?'not-allowed':_baseCursorCSS(),'rotate-end-active');_updateRotPivotVisibility();}
 }
 
 // Mouse (and trackpad) — bound to window (capture) rather than just

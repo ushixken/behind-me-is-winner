@@ -43,6 +43,7 @@ function _refreshActiveCursor(){
   if(panning||_zoomDrag||_rotateDrag||spaceHeld) return;
   const layerGroupSelected=typeof activeGroupId!=='undefined'&&!!activeGroupId;
   activeC.style.cursor=layerGroupSelected?'not-allowed':_baseCursorCSS();
+  if(window.BrushCursorNativeFlashNoteWrite)window.BrushCursorNativeFlashNoteWrite(activeC,activeC.style.cursor,'cursor-prefs:_refreshActiveCursor');
 }
 
 // Apply on load, since the CSS default (crosshair) is only a fallback for

@@ -1597,6 +1597,7 @@ const FloatPanels=(function(){
         // Lock the cursor on <body> so it stays visible even when the pointer
         // drifts outside the narrow resize handle strip during fast drags.
         document.body.style.cursor=cursorMap[side]||'default';
+        if(window.BrushCursorNativeFlashNoteWrite)window.BrushCursorNativeFlashNoteWrite(document.body,document.body.style.cursor,'panels:floating-resize-start');
         sx=e.clientX;sy=e.clientY;
         const r=floatRect[key]||{x:panel.offsetLeft,y:panel.offsetTop};
         startRect={x:r.x,y:r.y,w:panel.offsetWidth,h:panel.offsetHeight};
@@ -1623,7 +1624,7 @@ const FloatPanels=(function(){
         if(r.h!=null) panel.style.height=r.h+'px';
         if(typeof centerCanvas==='function') centerCanvas();
       });
-      function end(){ if(!active) return; active=false; el.classList.remove('dragging'); document.body.style.cursor=''; _saveLayout(); }
+      function end(){ if(!active) return; active=false; el.classList.remove('dragging'); document.body.style.cursor='';if(window.BrushCursorNativeFlashNoteWrite)window.BrushCursorNativeFlashNoteWrite(document.body,'','panels:floating-resize-end'); _saveLayout(); }
       el.addEventListener('pointerup',end);
       el.addEventListener('pointercancel',end);
     });

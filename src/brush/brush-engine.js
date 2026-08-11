@@ -5143,6 +5143,23 @@ const _hardRoundRendererPool = [];
 const _hardRoundFinishingContexts = new Map();
 let _hardRoundCommitTail = Promise.resolve();
 let _hardRoundPendingCommitCount = 0;
+if(typeof window.HardRoundDebugRapidPresentation==='undefined')window.HardRoundDebugRapidPresentation=false;
+const _hardRoundRapidPresentationLog=[];
+function _hrRapidPresentation(event,strokeId,extra){
+  if(!window.HardRoundDebugRapidPresentation)return;
+  const overlay=_hardRoundGpuOverlay();
+  _hardRoundRapidPresentationLog.push(Object.assign({time:performance.now(),event,strokeId:strokeId==null?_activeStrokeSession:strokeId,
+    activeSession:_activeStrokeSession,overlayOwner:window.HardRoundOverlayOwnerStrokeId==null?null:window.HardRoundOverlayOwnerStrokeId,
+    overlayPresentedStrokeId:window.HardRoundOverlayPresentedStrokeId==null?null:window.HardRoundOverlayPresentedStrokeId,
+    overlayVisible:!!(overlay&&!overlay.hidden&&overlay.style.display!=='none'),pendingCommitCount:_hardRoundPendingCommitCount},extra||{}));
+  if(_hardRoundRapidPresentationLog.length>200)_hardRoundRapidPresentationLog.splice(0,_hardRoundRapidPresentationLog.length-200);
+}
+window.HardRoundAnalyzeRapidPresentation=function(){
+  const log=_hardRoundRapidPresentationLog.slice(),byStroke={};
+  log.forEach(entry=>{const key=entry.strokeId==null?'none':String(entry.strokeId),bucket=byStroke[key]||(byStroke[key]={commitStarted:0,readbackCompleted:0,commitCompleted:0,recompositeCompleted:0,finalizerCompleted:0});if(Object.prototype.hasOwnProperty.call(bucket,entry.event))bucket[entry.event]++;});
+  const incomplete=Object.entries(byStroke).filter(([,v])=>v.commitStarted!==v.commitCompleted||v.commitCompleted!==v.finalizerCompleted).map(([strokeId,counts])=>({strokeId,counts}));
+  return {count:log.length,byStroke,incompleteStrokeCount:incomplete.length,incomplete,log};
+};
 // Phase 10.1: raw pen input can arrive near 1000Hz. Core stabilization and
 // adapter mapping still run for every event immediately, but render-ready
 // segments wait for the next presentation frame and are then submitted in
@@ -5753,7 +5770,7 @@ function _commitFinishedHardRoundStroke(context){
   if(currentDestination){
     const key=layers[context.layerIndex]&&layers[context.layerIndex].frames[context.frameIndex];
     if(key){const keyCtx=key.getContext('2d');keyCtx.clearRect(0,0,key.width,key.height);keyCtx.drawImage(activeC,0,0);}
-    recomposite(context.layerIndex,context.frameIndex);
+    recomposite(context.layerIndex,context.frameIndex);_hrRapidPresentation('recompositeCompleted',context.strokeId,{kind:'normal-raster'});
   }
   context.state='committed';
 }
@@ -5778,7 +5795,7 @@ function _commitFinishedSmartRasterStroke(context){
     const key=context.destinationCanvas;if(key){const keyCtx=key.getContext('2d');keyCtx.clearRect(0,0,key.width,key.height);keyCtx.drawImage(activeC,0,0);}
     _hrSmartPointerupStage(context.pointerupTiming,'saveMs',saveStarted);
     const recompositeStarted=context.pointerupTiming?performance.now():0;
-    recomposite(context.layerIndex,context.frameIndex);
+    recomposite(context.layerIndex,context.frameIndex);_hrRapidPresentation('recompositeCompleted',context.strokeId,{kind:'smart-raster'});
     _hrSmartPointerupStage(context.pointerupTiming,'recompositeMs',recompositeStarted);
   }
   _hrSmartPointerupSummarize(context.pointerupTiming);
@@ -5790,6 +5807,7 @@ function _hardRoundReleaseFinishingContext(context){
   _hardRoundFinishingContexts.delete(context.strokeId);
 }
 function _hardRoundFinalizeOwnedContext(context,e){
+  _hrRapidPresentation('commitStarted',context.strokeId,{kind:context.smartRaster?'smart-raster':'normal-raster'});
   context.state='finishing';context.renderer._hardRoundFinishingOwner=context.strokeId;
   _hardRoundFinishingContexts.set(context.strokeId,context);
   const endStrokeStarted=context.pointerupTiming?performance.now():0;
@@ -5803,12 +5821,14 @@ function _hardRoundFinalizeOwnedContext(context,e){
     _hrSmartPointerupStage(context.pointerupTiming,'maskCopyMs',copyStarted);
     if(context.smartRaster){context.resolvedMaskCanvas=stable;context.resolvedMaskData=result&&result.maskData||null;}else context.resolvedCanvas=stable;
     context.state='ready';
+    _hrRapidPresentation('readbackCompleted',context.strokeId);
     _hardRoundReleaseFinishingContext(context);
     return context;
   });
   _hardRoundPendingCommitCount++;
   const commit=_hardRoundCommitTail.then(()=>resolution).then(ready=>{
     if(ready.smartRaster)_commitFinishedSmartRasterStroke(ready);else _commitFinishedHardRoundStroke(ready);
+    _hrRapidPresentation('commitCompleted',ready.strokeId,{kind:ready.smartRaster?'smart-raster':'normal-raster'});
     if(ready.strokeId===_activeStrokeSession){
       _hardRoundSetGpuOverlayVisible(false,'owned-finalization-current-session');
       _finalizePointerEndStroke(e,ready.strokeId,false);
@@ -5820,7 +5840,7 @@ function _hardRoundFinalizeOwnedContext(context,e){
       _hardRoundSetGpuOverlayVisible(false,'owned-finalization-retire-committed-overlay');
     }
   });
-  const settled=commit.finally(()=>{_hardRoundPendingCommitCount=Math.max(0,_hardRoundPendingCommitCount-1);});
+  const settled=commit.finally(()=>{_hardRoundPendingCommitCount=Math.max(0,_hardRoundPendingCommitCount-1);_hrRapidPresentation('finalizerCompleted',context.strokeId);});
   _hardRoundCommitTail=settled.catch(err=>{console.error('[Hard Round finalization]',err);});
   return settled;
 }
@@ -6112,6 +6132,7 @@ function _hardRoundSetGpuOverlayVisible(visible,reason){
   overlay.hidden=!visible;
   overlay.style.display=visible?'block':'none';
   if(!visible)window.HardRoundOverlayPresentedStrokeId=null;
+  _hrRapidPresentation(visible?'overlayShown':'overlayHidden',_activeStrokeSession,{reason:reason||null});
   _hrPresentBoundaryLog('setGpuOverlayVisible('+visible+')'+(reason?' via '+reason:''));
 }
 // TEMP DIAGNOSTIC (Phase 11A.35): one concise timestamped surface-state log,
@@ -8396,6 +8417,7 @@ function _finalizePointerEndStroke(e,originStrokeId=_activeStrokeSession,fromAsy
   mutate('_activeStrokePointerId',_activeStrokePointerId,null,()=>{_activeStrokePointerId=null;});
   mutate('_strokeOwnerLayer',_strokeOwnerLayer,-1,()=>{_strokeOwnerLayer=-1;});
   mutate('_strokeOwnerFrame',_strokeOwnerFrame,-1,()=>{_strokeOwnerFrame=-1;});
+  _hrRapidPresentation('sharedFinalizerCompleted',originStrokeId,{fromAsync:!!fromAsync});
 }
 document.addEventListener('keydown',e=>{
   if(!_curveToolGesture)return;const target=e.target instanceof Element?e.target:null;

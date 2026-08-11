@@ -17,6 +17,50 @@
   let latestSourceEventType='',latestSourceEventTime=-Infinity;
   if(typeof window.BrushCursorDebugTracking==='undefined')window.BrushCursorDebugTracking=false;
   if(!Array.isArray(window.BrushCursorTrackingLog))window.BrushCursorTrackingLog=[];
+  if(typeof window.BrushCursorDebugNativeFlash==='undefined')window.BrushCursorDebugNativeFlash=false;
+  if(!Array.isArray(window.BrushCursorNativeFlashLog))window.BrushCursorNativeFlashLog=[];
+
+  function cursorElementId(element){return element?(element.id||element.tagName||null):null;}
+  function nativeFlashRecord(event,eventType,extra){
+    if(!window.BrushCursorDebugNativeFlash)return;
+    let hit=null,activeComputed=null,bodyComputed=null,capture=null;
+    try{if(event&&Number.isFinite(event.clientX)&&Number.isFinite(event.clientY))hit=document.elementFromPoint(event.clientX,event.clientY);}catch(_){}
+    try{activeComputed=activeC?getComputedStyle(activeC).cursor:null;}catch(_){}
+    try{bodyComputed=getComputedStyle(document.body).cursor;}catch(_){}
+    try{capture=!!(event&&event.pointerId!=null&&activeC&&activeC.hasPointerCapture&&activeC.hasPointerCapture(event.pointerId));}catch(_){}
+    const entry=Object.assign({
+      time:performance.now(),eventType:eventType||(event&&event.type)||'cursor-state',pointerType:event&&event.pointerType||null,
+      pointerId:event&&event.pointerId!=null?event.pointerId:null,clientX:event&&Number.isFinite(event.clientX)?event.clientX:null,
+      clientY:event&&Number.isFinite(event.clientY)?event.clientY:null,targetId:cursorElementId(event&&event.target),
+      currentTargetId:cursorElementId(event&&event.currentTarget),elementFromPointId:cursorElementId(hit),
+      elementFromPointInCanvasStack:!!(hit&&canvasArea&&(hit===canvasArea||canvasArea.contains(hit))),
+      activeCanvasCursorInline:activeC&&activeC.style?activeC.style.cursor:null,activeCanvasCursorComputed:activeComputed,
+      bodyCursorComputed:bodyComputed,customCursorVisible:cursorCanvas.style.display!=='none',pointerCapture:capture,
+      inStroke:typeof _inStroke!=='undefined'&&!!_inStroke,hardRoundStrokeActive:typeof _hardRoundStrokeActive!=='undefined'&&!!_hardRoundStrokeActive,
+    },extra||{});
+    const log=window.BrushCursorNativeFlashLog;log.push(entry);if(log.length>200)log.splice(0,log.length-200);
+  }
+  window.BrushCursorNativeFlashNoteWrite=function(element,value,source){
+    nativeFlashRecord(null,'cursor-style-write',{writeTargetId:cursorElementId(element),writtenCursor:value==null?null:String(value),writeSource:source||null});
+  };
+  window.BrushCursorAnalyzeNativeFlash=function(){
+    const log=Array.isArray(window.BrushCursorNativeFlashLog)?window.BrushCursorNativeFlashLog:[],writes=log.filter(e=>e.eventType==='cursor-style-write');
+    const nonCanvasTargets=log.filter(e=>e.elementFromPointId&&!e.elementFromPointInCanvasStack);
+    const nonNoneCursor=log.filter(e=>e.activeCanvasCursorComputed&&e.activeCanvasCursorComputed!=='none');
+    const captureDrops=[];for(let i=1;i<log.length;i++)if(log[i-1].pointerCapture===true&&log[i].pointerCapture===false)captureDrops.push(log[i]);
+    const hiddenWithNative=log.filter(e=>!e.customCursorVisible&&e.activeCanvasCursorComputed&&e.activeCanvasCursorComputed!=='none');
+    const unexplainedPaintMissCandidates=log.filter(e=>!e.customCursorVisible&&e.activeCanvasCursorComputed==='none'&&e.elementFromPointInCanvasStack);
+    return {count:log.length,nonCanvasTargetCount:nonCanvasTargets.length,firstNonCanvasTarget:nonCanvasTargets[0]||null,
+      nonNoneCursorCount:nonNoneCursor.length,firstNonNoneCursor:nonNoneCursor[0]||null,captureDropCount:captureDrops.length,
+      firstCaptureDrop:captureDrops[0]||null,customHiddenWithNativeCount:hiddenWithNative.length,firstCustomHiddenWithNative:hiddenWithNative[0]||null,
+      explicitWrites:writes,unexplainedPaintMissCandidateCount:unexplainedPaintMissCandidates.length,
+      firstUnexplainedPaintMissCandidate:unexplainedPaintMissCandidates[0]||null,log:log.slice()};
+  };
+
+  function setCustomCursorVisible(visible,reason,event){
+    const next=visible?'block':'none';if(cursorCanvas.style.display===next)return;
+    cursorCanvas.style.display=next;nativeFlashRecord(event,'custom-cursor-visibility',{visible:!!visible,reason:reason||null});
+  }
 
   function pointerCaptured(event){
     try{return !!(event&&event.target&&event.target.hasPointerCapture&&event.target.hasPointerCapture(event.pointerId));}catch(_){return false;}
@@ -109,7 +153,7 @@
     return [cursorStyle,tool,toolSizes[tool]||6,zoom,window.brushTipVersion||0,tip&&tip.width,tip&&tip.height,window.brushTipRoundness,window._tsBrushAngle,strokeActive()&&typeof _activeDabRotation!=='undefined'?_activeDabRotation:'idle',!!window.brushTipFlipX,!!window.brushTipFlipY,lastPointerType].join('|');
   }
   function update(force){
-    if(!shouldShow()){cursorCanvas.style.display='none';lastSignature='';return;}
+    if(!shouldShow()){setCustomCursorVisible(false,'shouldShow-false');lastSignature='';return;}
     setPosition();const next=signature();
     // No difference blend mode needed — cross/point are now dark, circle is grey.
     cursorCanvas.style.mixBlendMode='normal';
@@ -122,9 +166,10 @@
       else drawCircle();
       lastSignature=next;
     }
-    cursorCanvas.style.display='block';
+    setCustomCursorVisible(true,'cursor-update');
   }
   function track(event){
+    nativeFlashRecord(event,event.type);
     if(window.HardRoundSmartPointerupTimingNote)window.HardRoundSmartPointerupTimingNote('pen-event',event);
     const active=strokeActive(),target=event.target;
     const inCanvas=!!(target&&(target===canvasArea||canvasArea.contains(target)));
@@ -133,17 +178,17 @@
     if(eventTime<latestPointerTime){trace(event,false,'timestamp-older-than-latest',{latestPointerTime});return;}
     latestPointerTime=eventTime;latestSourceEventType=event.type;latestSourceEventTime=eventTime;hovering=inCanvas||active;lastX=event.clientX;lastY=event.clientY;lastPointerType=event.pointerType||lastPointerType;
     trace(event,true,'',{latestPointerTime});
-    if(!cursorRaf)cursorRaf=requestAnimationFrame(()=>{cursorRaf=0;update(false);if(window.HardRoundSmartPointerupTimingNote)window.HardRoundSmartPointerupTimingNote('cursor-apply',{x:lastX,y:lastY,sourceEventType:latestSourceEventType,sourceEventTimestamp:latestSourceEventTime});trace(null,true,'',{type:'cursor-raf-apply',x:lastX,y:lastY,sourceEventType:latestSourceEventType,sourceEventTimestamp:latestSourceEventTime,rafPending:false,cursorX:lastX,cursorY:lastY});});
+    if(!cursorRaf)cursorRaf=requestAnimationFrame(()=>{cursorRaf=0;update(false);nativeFlashRecord(event,'cursor-raf-apply',{sourceEventType:latestSourceEventType,sourceEventTimestamp:latestSourceEventTime});if(window.HardRoundSmartPointerupTimingNote)window.HardRoundSmartPointerupTimingNote('cursor-apply',{x:lastX,y:lastY,sourceEventType:latestSourceEventType,sourceEventTimestamp:latestSourceEventTime});trace(null,true,'',{type:'cursor-raf-apply',x:lastX,y:lastY,sourceEventType:latestSourceEventType,sourceEventTimestamp:latestSourceEventTime,rafPending:false,cursorX:lastX,cursorY:lastY});});
   }
   canvasArea.addEventListener('pointerenter',track,true);
   window.addEventListener('pointermove',track,true);
   window.addEventListener('pointerrawupdate',track,true);
-  canvasArea.addEventListener('pointerleave',event=>{hovering=false;trace(event,true,'');if(!strokeActive())cursorCanvas.style.display='none';});
+  canvasArea.addEventListener('pointerleave',event=>{nativeFlashRecord(event,'pointerleave');hovering=false;trace(event,true,'');if(!strokeActive())setCustomCursorVisible(false,'pointerleave',event);});
   window.addEventListener('pointerdown',event=>trace(event,true,''),true);
-  window.addEventListener('pointerup',event=>{const eventTime=Number.isFinite(event.timeStamp)?event.timeStamp:performance.now();latestPointerTime=Math.max(latestPointerTime,eventTime);latestSourceEventType=event.type;latestSourceEventTime=eventTime;lastX=event.clientX;lastY=event.clientY;hovering=!!document.elementFromPoint(event.clientX,event.clientY)?.closest?.('#canvas-area');update(true);trace(event,true,'',{latestPointerTime});},true);
-  window.addEventListener('pointercancel',event=>{hovering=false;cursorCanvas.style.display='none';trace(event,true,'');},true);
-  window.addEventListener('lostpointercapture',event=>trace(event,true,''),true);
-  window.addEventListener('blur',()=>{hovering=false;cursorCanvas.style.display='none';});
+  window.addEventListener('pointerup',event=>{nativeFlashRecord(event,'pointerup');const eventTime=Number.isFinite(event.timeStamp)?event.timeStamp:performance.now();latestPointerTime=Math.max(latestPointerTime,eventTime);latestSourceEventType=event.type;latestSourceEventTime=eventTime;lastX=event.clientX;lastY=event.clientY;hovering=!!document.elementFromPoint(event.clientX,event.clientY)?.closest?.('#canvas-area');update(true);trace(event,true,'',{latestPointerTime});},true);
+  window.addEventListener('pointercancel',event=>{nativeFlashRecord(event,'pointercancel');hovering=false;setCustomCursorVisible(false,'pointercancel',event);trace(event,true,'');},true);
+  window.addEventListener('lostpointercapture',event=>{nativeFlashRecord(event,'lostpointercapture');trace(event,true,'');},true);
+  window.addEventListener('blur',event=>{nativeFlashRecord(event,'blur');hovering=false;setCustomCursorVisible(false,'blur',event);});
   window.addEventListener('tool-changed',()=>update(true));
   window.addEventListener('brush-resize-preview-toggle',()=>update(true));
   (function loop(){update(false);requestAnimationFrame(loop);})();
