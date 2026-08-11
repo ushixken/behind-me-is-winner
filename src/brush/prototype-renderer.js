@@ -87,6 +87,7 @@
       this.bh = height * ss;
       // Float32 single-channel coverage accumulator, backing-store resolution.
       this.coverage = new Float32Array(this.bw * this.bh);
+      this._resolvedAlpha = new Uint8ClampedArray(width * height);
       // Phase 9C.2: union of every drawSegment() bounding box (in
       // backing-store/SS-space pixels) accumulated since the dirty region
       // was last consumed by a resolve. Null means "nothing dirty". This
@@ -95,6 +96,7 @@
       // rasterize -- it was simply being discarded before; nothing new is
       // computed here, it's just retained.
       this._dirty = null;
+      this._strokeDirty = null;
       // Phase 9E.9: stroke-level smoothed direction, used ONLY to pick the
       // x-dominant-vs-y-dominant axis in the floor-regime anisotropic test
       // (see hard-round-capsule-math.js's _dominantAxisPerpendicularDistance
@@ -121,7 +123,9 @@
 
     reset() {
       this.coverage.fill(0);
+      this._resolvedAlpha.fill(0);
       this._dirty = null;
+      this._strokeDirty = null;
       this._axisHintDx = 0;
       this._axisHintDy = 0;
       this._stationWinners.clear();
@@ -134,24 +138,31 @@
     _markOutputPixelDirty(ox, oy) {
       const ss = this.ss;
       const sx = ox * ss, sy = oy * ss, ex = sx + ss, ey = sy + ss;
-      if (!this._dirty) this._dirty = { sx, sy, ex, ey };
-      else {
-        if (sx < this._dirty.sx) this._dirty.sx = sx;
-        if (sy < this._dirty.sy) this._dirty.sy = sy;
-        if (ex > this._dirty.ex) this._dirty.ex = ex;
-        if (ey > this._dirty.ey) this._dirty.ey = ey;
-      }
+      this._unionDirtyBounds('_dirty',sx,sy,ex,ey);
+      this._unionDirtyBounds('_strokeDirty',sx,sy,ex,ey);
     }
 
     _markBackingDirty(sx, sy, ex, ey) {
       if (ex <= sx || ey <= sy) return;
-      if (!this._dirty) this._dirty = { sx, sy, ex, ey };
+      this._unionDirtyBounds('_dirty',sx,sy,ex,ey);
+      this._unionDirtyBounds('_strokeDirty',sx,sy,ex,ey);
+    }
+
+    _unionDirtyBounds(field,sx,sy,ex,ey) {
+      if (!this[field]) this[field] = { sx, sy, ex, ey };
       else {
-        if (sx < this._dirty.sx) this._dirty.sx = sx;
-        if (sy < this._dirty.sy) this._dirty.sy = sy;
-        if (ex > this._dirty.ex) this._dirty.ex = ex;
-        if (ey > this._dirty.ey) this._dirty.ey = ey;
+        if (sx < this[field].sx) this[field].sx = sx;
+        if (sy < this[field].sy) this[field].sy = sy;
+        if (ex > this[field].ex) this[field].ex = ex;
+        if (ey > this[field].ey) this[field].ey = ey;
       }
+    }
+
+    getStrokeDirtyRegion() {
+      const d=this._strokeDirty;if(!d)return null;const ss=this.ss;
+      const x=Math.max(0,Math.floor(d.sx/ss)),y=Math.max(0,Math.floor(d.sy/ss));
+      const ex=Math.min(this.w,Math.ceil(d.ex/ss)),ey=Math.min(this.h,Math.ceil(d.ey/ss));
+      return ex>x&&ey>y?{x,y,width:ex-x,height:ey-y}:null;
     }
 
     _removeStationOwner(stationKey, winner) {
@@ -502,9 +513,12 @@
     // the two never risk producing different pixel values for the same
     // coverage data.
     _resolveRegion(outCtx, rgb, composite, ox, oy, ow, oh) {
+      const timingEnabled = typeof window !== 'undefined' && !!window.HardRoundDebugSmartPointerupTiming;
+      const timingStart = timingEnabled ? performance.now() : 0;
       const ss = this.ss, bw = this.bw;
       const cov = this.coverage;
       const img = outCtx.createImageData(ow, oh);
+      const imageDataMs = timingEnabled ? performance.now() - timingStart : 0;
       const d = img.data;
       const isErase = composite === 'erase';
       const cr = isErase ? 0 : rgb[0], cg = isErase ? 0 : rgb[1], cb = isErase ? 0 : rgb[2];
@@ -523,10 +537,26 @@
           const owners = this._winnerPixels.get((oy + y) * this.w + (ox + x));
           if (owners) for (const alpha of owners.values()) if (alpha > winnerAlpha) winnerAlpha = alpha;
           const a = Math.max(0, Math.min(1, Math.max(sum * norm, winnerAlpha)));
+          this._resolvedAlpha[(oy+y)*this.w+ox+x]=Math.round(a*255);
           d[p] = cr; d[p + 1] = cg; d[p + 2] = cb; d[p + 3] = Math.round(a * 255);
         }
       }
+      const loopMs = timingEnabled ? performance.now() - timingStart - imageDataMs : 0;
+      const putStarted = timingEnabled ? performance.now() : 0;
       outCtx.putImageData(img, ox, oy);
+      if (timingEnabled) {
+        const entry={width:ow,height:oh,pixels:ow*oh,backingSamples:ow*oh*ss*ss,imageDataMs,resolveLoopMs:loopMs,putImageDataMs:performance.now()-putStarted,totalMs:performance.now()-timingStart};
+        const log=window.HardRoundCpuResolveTimingLog||(window.HardRoundCpuResolveTimingLog=[]);log.push(entry);if(log.length>20)log.shift();
+      }
+    }
+
+    copyResolvedMaskRegion(rect,rgb,composite) {
+      if(!rect)return null;const x=Math.max(0,Math.floor(rect.x)),y=Math.max(0,Math.floor(rect.y));
+      const width=Math.max(0,Math.min(this.w-x,Math.ceil(rect.width==null?rect.w:rect.width))),height=Math.max(0,Math.min(this.h-y,Math.ceil(rect.height==null?rect.h:rect.height)));
+      if(!width||!height)return null;const data=new Uint8ClampedArray(width*height*4),erase=composite==='erase';
+      const cr=erase?0:rgb[0],cg=erase?0:rgb[1],cb=erase?0:rgb[2];let p=0;
+      for(let row=0;row<height;row++){let source=(y+row)*this.w+x;for(let col=0;col<width;col++,source++,p+=4){data[p]=cr;data[p+1]=cg;data[p+2]=cb;data[p+3]=this._resolvedAlpha[source];}}
+      return data;
     }
   }
 
@@ -542,6 +572,72 @@
   // hard-round-capsule-gpu.js: not runtime-verified outside a browser with
   // WebGPU, and never the only path -- isAvailable() gates every call site.
   // ---------------------------------------------------------------------
+  let _hardRoundGpuPresenterPromise = null;
+  class HardRoundGpuPresenter {
+    constructor() {
+      this.device = null;
+      this.canvas = null;
+      this.context = null;
+      this.format = null;
+      this.ready = false;
+      this.lost = false;
+      this.configureCount = 0;
+      this._pipelines = new Map();
+    }
+
+    static acquire(width, height) {
+      if (!_hardRoundGpuPresenterPromise) {
+        const presenter = new HardRoundGpuPresenter();
+        _hardRoundGpuPresenterPromise = presenter.init(width, height).then(ok => ok ? presenter : null);
+      }
+      return _hardRoundGpuPresenterPromise.then(presenter => {
+        if (presenter) presenter.ensureSize(width, height);
+        return presenter;
+      });
+    }
+
+    async init(width, height) {
+      if (typeof navigator === 'undefined' || !navigator.gpu) return false;
+      const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+      if (!adapter) return false;
+      this.device = await adapter.requestDevice();
+      this.canvas = document.getElementById('hard-round-gpu-overlay') || document.createElement('canvas');
+      this.canvas.width = width;
+      this.canvas.height = height;
+      this.context = this.canvas.getContext('webgpu');
+      if (!this.context) return false;
+      this.format = navigator.gpu.getPreferredCanvasFormat();
+      this.context.configure({ device: this.device, format: this.format, alphaMode: 'premultiplied' });
+      this.configureCount++;
+      this.ready = true;
+      this.device.lost.then(() => {
+        this.ready = false;
+        this.lost = true;
+        if (_hardRoundGpuPresenterPromise) _hardRoundGpuPresenterPromise = null;
+      }).catch(() => {});
+      return true;
+    }
+
+    ensureSize(width, height) {
+      if (!this.canvas) return;
+      if (this.canvas.width !== width) this.canvas.width = width;
+      if (this.canvas.height !== height) this.canvas.height = height;
+    }
+
+    pipelineFor(ss) {
+      if (this._pipelines.has(ss)) return this._pipelines.get(ss);
+      const shader = this.device.createShaderModule({ code: PRESENT_SHADER_WGSL(ss) });
+      const pipeline = this.device.createRenderPipeline({
+        layout: 'auto',
+        vertex: { module: shader, entryPoint: 'vs' },
+        fragment: { module: shader, entryPoint: 'fs', targets: [{ format: this.format }] },
+        primitive: { topology: 'triangle-list' },
+      });
+      this._pipelines.set(ss, pipeline);
+      return pipeline;
+    }
+  }
+
   class GpuBackend {
     constructor(width, height, ss) {
       this.w = width;
@@ -564,6 +660,7 @@
       this.presentPipeline = null;
       this.presentUniformBuf = null;
       this.presentBindGroup = null;
+      this.presenter = null;
     }
 
     // Lazily creates its own device/textures. Callers must not assume this
@@ -573,19 +670,15 @@
       if (this.ready) return true;
       if (typeof navigator === 'undefined' || !navigator.gpu) return false;
       try {
-        const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
-        if (!adapter) return false;
-        const device = await adapter.requestDevice();
+        const presenter = await HardRoundGpuPresenter.acquire(this.w, this.h);
+        if (!presenter || !presenter.ready) return false;
+        this.presenter = presenter;
+        const device = presenter.device;
         this.device = device;
-
-        this.outputCanvas = document.getElementById('hard-round-gpu-overlay') || document.createElement('canvas');
-        this.outputCanvas.width = this.w;
-        this.outputCanvas.height = this.h;
-        this.outputContext = this.outputCanvas.getContext('webgpu');
-        if (!this.outputContext) return false;
-        const outputFormat = navigator.gpu.getPreferredCanvasFormat();
+        this.outputCanvas = presenter.canvas;
+        this.outputContext = presenter.context;
+        const outputFormat = presenter.format;
         this.outputFormat = outputFormat;
-        this.outputContext.configure({ device, format: outputFormat, alphaMode: 'premultiplied' });
         // Phase 11B.9 TEMP DIAGNOSTIC (opt-in, default off): record this
         // (re)configure at the presentation boundary. This module only
         // calls configure() here, once, inside init() -- so a second entry
@@ -670,13 +763,7 @@
           entries: [{ binding: 0, resource: this.strokeMaskTex.createView() }],
         });
 
-        const presentShader = device.createShaderModule({ code: PRESENT_SHADER_WGSL(this.ss) });
-        this.presentPipeline = device.createRenderPipeline({
-          layout: 'auto',
-          vertex: { module: presentShader, entryPoint: 'vs' },
-          fragment: { module: presentShader, entryPoint: 'fs', targets: [{ format: outputFormat }] },
-          primitive: { topology: 'triangle-list' },
-        });
+        this.presentPipeline = presenter.pipelineFor(this.ss);
         this.presentUniformBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         this.presentBindGroup = device.createBindGroup({
           layout: this.presentPipeline.getBindGroupLayout(0),
@@ -783,10 +870,14 @@
     // performs no texture-to-buffer copy, mapAsync stall, ImageData
     // allocation, JavaScript pixel loop, or Canvas2D upload.
     async present(rgb, composite, opacity, meta) {
-      if (!this.ready || !this.outputContext) return null;
+      if (!this.ready || !this.presenter || !this.presenter.ready || !this.outputContext) {
+        return { presented: false, reason: 'presenter-unavailable', canvas: this.outputCanvas };
+      }
       if (meta && meta.strokeId != null && typeof window !== 'undefined' &&
           window.HardRoundOverlayOwnerStrokeId != null &&
-          meta.strokeId !== window.HardRoundOverlayOwnerStrokeId) return this.outputCanvas;
+          meta.strokeId !== window.HardRoundOverlayOwnerStrokeId) {
+        return { presented: false, reason: 'not-overlay-owner', canvas: this.outputCanvas };
+      }
       const isErase = composite === 'erase';
       const cr = isErase ? 0 : rgb[0] / 255;
       const cg = isErase ? 0 : rgb[1] / 255;
@@ -936,7 +1027,7 @@
         if (window.HardRoundGpuPresentLog.length > 500) window.HardRoundGpuPresentLog.shift();
       }
       // --- end diagnostic resolve-time bookkeeping ---
-      return this.outputCanvas;
+      return { presented: true, reason: null, canvas: this.outputCanvas };
     }
     // --- DIAGNOSTIC (Phase 11B.2): summarize window.HardRoundGpuPresentLog
     // (populated above, opt-in via window.HardRoundGpuPresentDiag) grouped
@@ -1571,19 +1662,27 @@
     // preview-only pixel path exists to drift out of sync with the real one.
     async _resolveToOutput(readback, meta) {
       if (this._usingGpu) {
-        if (readback) await this.gpu.resolveInto(this._outCtx, this._rgb, this._composite);
+        if (readback) {
+          await this.gpu.resolveInto(this._outCtx, this._rgb, this._composite);
+          return { presented: false, reason: 'readback' };
+        }
         // meta (optional; e.g. {strokeId, segmentCount}) is passed through
         // untouched to GpuBackend.present() purely for the Phase 11A.39
         // opt-in present() diagnostic below -- it has no effect on what
         // gets drawn or when.
-        else await this.gpu.present(this._rgb, this._composite, this.presentationOpacity, meta);
+        else return this.gpu.present(this._rgb, this._composite, this.presentationOpacity, meta);
       } else {
         this.cpu.resolveInto(this._outCtx, this._rgb, this._composite);
+        return { presented: false, reason: 'cpu' };
       }
     }
 
     _resultCanvas() {
       return this._usingGpu && this.gpu.outputCanvas ? this.gpu.outputCanvas : this._outCanvas;
+    }
+
+    getStrokeDirtyRegion() {
+      return this._usingGpu ? null : this.cpu.getStrokeDirtyRegion();
     }
 
     // Resolves the accumulated backing store down to logical resolution
@@ -1598,8 +1697,11 @@
       if (!this._active) return { canvas: this._resultCanvas(), composite: this._composite, segmentCount: 0 };
       const readback = !!(options && options.readback);
       this._active = false;
-      await this._resolveToOutput(readback);
-      return { canvas: readback ? this._outCanvas : this._resultCanvas(), composite: this._composite, segmentCount: this._segmentCount };
+      let dirtyRegion = null;
+      if (!this._usingGpu && !readback) dirtyRegion = this.cpu.resolveDirtyInto(this._outCtx, this._rgb, this._composite) || null;
+      else await this._resolveToOutput(readback);
+      const maskData=!this._usingGpu&&options&&options.includeCpuMaskData?this.cpu.copyResolvedMaskRegion(options.dirtyRect||this.cpu.getStrokeDirtyRegion(),this._rgb,this._composite):null;
+      return { canvas: readback ? this._outCanvas : this._resultCanvas(), composite: this._composite, segmentCount: this._segmentCount, dirtyRegion, maskData };
     }
 
     // Phase 9C.1: resolves the CURRENT in-progress accumulation to the
@@ -1678,7 +1780,8 @@
         // from the renderer's own counter when the caller didn't supply one,
         // so window.HardRoundGpuPresentLog entries aren't left null.
         const _diagMeta = Object.assign({ segmentCount: this._segmentCount }, meta || {});
-        await this._resolveToOutput(false, _diagMeta);
+        const presentation = await this._resolveToOutput(false, _diagMeta);
+        return { canvas: this._resultCanvas(), composite: this._composite, segmentCount: this._segmentCount, presentation };
       } else {
         const dirtyRegion = this.cpu.resolveDirtyInto(this._outCtx, this._rgb, this._composite);
         return { canvas: this._outCanvas, composite: this._composite, segmentCount: this._segmentCount, dirtyRegion: dirtyRegion || null };

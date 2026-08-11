@@ -14,6 +14,30 @@
   const previewCtx=previewCanvas.getContext('2d');
   let hovering=false,lastX=0,lastY=0,lastPointerType='mouse',lastSignature='';
   let latestPointerTime=-Infinity,cursorRaf=0;
+  let latestSourceEventType='',latestSourceEventTime=-Infinity;
+  if(typeof window.BrushCursorDebugTracking==='undefined')window.BrushCursorDebugTracking=false;
+  if(!Array.isArray(window.BrushCursorTrackingLog))window.BrushCursorTrackingLog=[];
+
+  function pointerCaptured(event){
+    try{return !!(event&&event.target&&event.target.hasPointerCapture&&event.target.hasPointerCapture(event.pointerId));}catch(_){return false;}
+  }
+  function trace(event,accepted,rejectionReason,override){
+    if(!window.BrushCursorDebugTracking)return;
+    const entry=Object.assign({
+      type:event&&event.type||'cursor-event',pointerType:event&&event.pointerType||'',pointerId:event&&event.pointerId,
+      buttons:event&&event.buttons,button:event&&event.button,clientX:event&&event.clientX,clientY:event&&event.clientY,
+      eventTimestamp:event&&Number.isFinite(event.timeStamp)?event.timeStamp:null,performanceTimestamp:performance.now(),
+      accepted:!!accepted,rejectionReason:rejectionReason||'',rafPending:!!cursorRaf,cursorX:lastX,cursorY:lastY,
+      pointerCapture:pointerCaptured(event)
+    },override||{});
+    const log=window.BrushCursorTrackingLog;log.push(entry);if(log.length>100)log.splice(0,log.length-100);
+  }
+  window.BrushCursorAnalyzeTracking=function(){
+    const log=Array.isArray(window.BrushCursorTrackingLog)?window.BrushCursorTrackingLog:[];
+    const rejected=log.filter(entry=>entry.accepted===false);
+    const byReason={};rejected.forEach(entry=>{const reason=entry.rejectionReason||'unknown';byReason[reason]=(byReason[reason]||0)+1;});
+    return {count:log.length,acceptedCount:log.filter(entry=>entry.accepted===true).length,rejectedCount:rejected.length,rejectionsByReason:byReason,firstEntry:log[0]||null,lastEntry:log[log.length-1]||null,log:log.slice()};
+  };
 
   function paintTool(){return tool==='brush'||tool==='eraser';}
   function strokeActive(){return typeof drawing!=='undefined'&&drawing&&paintTool();}
@@ -101,20 +125,24 @@
     cursorCanvas.style.display='block';
   }
   function track(event){
+    if(window.HardRoundSmartPointerupTimingNote)window.HardRoundSmartPointerupTimingNote('pen-event',event);
     const active=strokeActive(),target=event.target;
     const inCanvas=!!(target&&(target===canvasArea||canvasArea.contains(target)));
-    if(!active&&!inCanvas)return;
+    if(!active&&!inCanvas){trace(event,false,'outside-canvas-and-no-stroke');return;}
     const eventTime=Number.isFinite(event.timeStamp)?event.timeStamp:performance.now();
-    if(eventTime<latestPointerTime)return;
-    latestPointerTime=eventTime;hovering=inCanvas||active;lastX=event.clientX;lastY=event.clientY;lastPointerType=event.pointerType||lastPointerType;
-    if(!cursorRaf)cursorRaf=requestAnimationFrame(()=>{cursorRaf=0;update(false);});
+    if(eventTime<latestPointerTime){trace(event,false,'timestamp-older-than-latest',{latestPointerTime});return;}
+    latestPointerTime=eventTime;latestSourceEventType=event.type;latestSourceEventTime=eventTime;hovering=inCanvas||active;lastX=event.clientX;lastY=event.clientY;lastPointerType=event.pointerType||lastPointerType;
+    trace(event,true,'',{latestPointerTime});
+    if(!cursorRaf)cursorRaf=requestAnimationFrame(()=>{cursorRaf=0;update(false);if(window.HardRoundSmartPointerupTimingNote)window.HardRoundSmartPointerupTimingNote('cursor-apply',{x:lastX,y:lastY,sourceEventType:latestSourceEventType,sourceEventTimestamp:latestSourceEventTime});trace(null,true,'',{type:'cursor-raf-apply',x:lastX,y:lastY,sourceEventType:latestSourceEventType,sourceEventTimestamp:latestSourceEventTime,rafPending:false,cursorX:lastX,cursorY:lastY});});
   }
   canvasArea.addEventListener('pointerenter',track,true);
   window.addEventListener('pointermove',track,true);
   window.addEventListener('pointerrawupdate',track,true);
-  canvasArea.addEventListener('pointerleave',()=>{hovering=false;if(!strokeActive())cursorCanvas.style.display='none';});
-  window.addEventListener('pointerup',event=>{latestPointerTime=Math.max(latestPointerTime,Number.isFinite(event.timeStamp)?event.timeStamp:performance.now());lastX=event.clientX;lastY=event.clientY;hovering=!!document.elementFromPoint(event.clientX,event.clientY)?.closest?.('#canvas-area');update(true);},true);
-  window.addEventListener('pointercancel',()=>{hovering=false;cursorCanvas.style.display='none';},true);
+  canvasArea.addEventListener('pointerleave',event=>{hovering=false;trace(event,true,'');if(!strokeActive())cursorCanvas.style.display='none';});
+  window.addEventListener('pointerdown',event=>trace(event,true,''),true);
+  window.addEventListener('pointerup',event=>{const eventTime=Number.isFinite(event.timeStamp)?event.timeStamp:performance.now();latestPointerTime=Math.max(latestPointerTime,eventTime);latestSourceEventType=event.type;latestSourceEventTime=eventTime;lastX=event.clientX;lastY=event.clientY;hovering=!!document.elementFromPoint(event.clientX,event.clientY)?.closest?.('#canvas-area');update(true);trace(event,true,'',{latestPointerTime});},true);
+  window.addEventListener('pointercancel',event=>{hovering=false;cursorCanvas.style.display='none';trace(event,true,'');},true);
+  window.addEventListener('lostpointercapture',event=>trace(event,true,''),true);
   window.addEventListener('blur',()=>{hovering=false;cursorCanvas.style.display='none';});
   window.addEventListener('tool-changed',()=>update(true));
   window.addEventListener('brush-resize-preview-toggle',()=>update(true));

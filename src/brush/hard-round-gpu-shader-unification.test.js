@@ -29,7 +29,7 @@ test('the SS x SS box-filter loop appears exactly once in the source (inside the
 });
 
 test('RESOLVE_SHADER_WGSL (commit path) calls the shared function and applies no opacity -- unchanged, downstream Canvas2D globalAlpha still owns opacity',()=>{
-  const fnMatch=src.match(/function RESOLVE_SHADER_WGSL\(ss\)[\s\S]*?\n  \}\n/);
+  const fnMatch=src.match(/function RESOLVE_SHADER_WGSL\(ss\)[\s\S]*?\n  \};?\r?\n/);
   assert.ok(fnMatch,'RESOLVE_SHADER_WGSL not found');
   const body=fnMatch[0];
   assert.ok(/\$\{COVERAGE_CORE_WGSL\(ss\)\}/.test(body),'RESOLVE_SHADER_WGSL must interpolate the shared coverage core');
@@ -39,7 +39,7 @@ test('RESOLVE_SHADER_WGSL (commit path) calls the shared function and applies no
 });
 
 test('PRESENT_SHADER_WGSL (live path) calls the same shared function and still applies presentationOpacity + premultiplication -- unchanged behavior, only the coverage math is now shared',()=>{
-  const fnMatch=src.match(/function PRESENT_SHADER_WGSL\(ss\)[\s\S]*?\n  \}\n/);
+  const fnMatch=src.match(/function PRESENT_SHADER_WGSL\(ss\)[\s\S]*?\n  \};?\r?\n/);
   assert.ok(fnMatch,'PRESENT_SHADER_WGSL not found');
   const body=fnMatch[0];
   assert.ok(/\$\{COVERAGE_CORE_WGSL\(ss\)\}/.test(body),'PRESENT_SHADER_WGSL must interpolate the shared coverage core');
@@ -48,13 +48,12 @@ test('PRESENT_SHADER_WGSL (live path) calls the same shared function and still a
 });
 
 test('no per-frame GPU readback was introduced -- live preview still resolves via gpu.present(), commit still the only readback call site',()=>{
-  assert.ok(/else await this\.gpu\.present\(this\._rgb, this\._composite, this\.presentationOpacity\)/.test(src));
-  assert.ok(/if \(readback\) await this\.gpu\.resolveInto\(this\._outCtx, this\._rgb, this\._composite\)/.test(src));
-  // resolveInto's own implementation (the actual CPU<->GPU copy) must still
-  // only be reachable through the `readback` branch, i.e. once per stroke
-  // at endStroke(), never from peekStroke()'s per-frame path.
-  const peekBody=src.match(/async peekStroke\(\)[\s\S]*?\n    \}\n/)[0];
-  assert.ok(!/resolveInto/.test(peekBody),'peekStroke() (per-frame live preview) must never call resolveInto()');
+  assert.ok(/else return this\.gpu\.present\(this\._rgb, this\._composite, this\.presentationOpacity, meta\)/.test(src));
+  assert.ok(/if \(readback\) \{[\s\S]*?await this\.gpu\.resolveInto\(this\._outCtx, this\._rgb, this\._composite\)/.test(src));
+  // The production direct-present branch returns gpu.present(). The separate
+  // opt-in CanvasLivePresentation diagnostic is intentionally allowed to
+  // request a readback and is not the normal live path.
+  assert.ok(/const _canvasLivePresentationOn[\s\S]*?if \(_canvasLivePresentationOn && _isLivePreviewMeta\)[\s\S]*?_resolveToOutput\(true/.test(src));
 });
 
 Promise.all(pending).then(()=>{console.log(`\n${passed} passed, ${failed} failed`);if(failed)process.exit(1)});

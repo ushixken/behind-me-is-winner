@@ -378,14 +378,19 @@
     var used=false;trackedLayers.forEach(function(layer){var map=framesByLayer.get(layer);if(map)map.forEach(function(frame){if(v4.styleUsage(frame,styleId).used)used=true;});});return used;
   }
   function recordShadow(commit){
+    var timingEnabled=!!root.HardRoundDebugSmartPointerupTiming,timingStart=timingEnabled?performance.now():0,timing=timingEnabled?{setupMs:0,recordMaskMs:0,historyMs:0,composeMs:0,totalMs:0,touchedPixels:0,touchedTiles:0}:null,stageStarted=timingStart;
     var allLayers=currentLayers(),layer=allLayers&&allLayers[commit.layerIndex];if(!layer||layer.type!=='smart-raster')return null;
     var ensured=ensureShadowFrame(layer,commit.layerIndex,commit.frameIndex,commit.frameWidth,commit.frameHeight),frame=ensured.frame,state=ensured.state,mode=String(commit.blendMode||'normal');v4.noteBlendMode(frame,mode);
     if(mode!=='normal'){root.__smartRasterV4LastShadowRecord={layerIndex:commit.layerIndex,frameIndex:commit.frameIndex,styleId:commit.styleId,blendMode:mode,skipped:true,reason:'unsupported-blend-mode'};return null;}
     var command=createHistoryCommand('normal-paint'),entry=createHistoryEntry(frame,state,layer,commit.layerIndex,commit.frameIndex);command.entries.push(entry);v4.noteEdit(frame,'normal-paint');
     var styleIndex=v4.ensureStyleIndex(frame,commit.styleId);
+    if(timingEnabled){timing.setupMs=performance.now()-stageStarted;stageStarted=performance.now();}
     var result=v4.recordNormalMask(frame,styleIndex,commit.maskData,commit.rect,commit.strokeOpacity,function(pixel){captureBefore(entry,pixel.tileKey);updateComparablePixel(state,commit,pixel);});
+    if(timingEnabled){timing.recordMaskMs=performance.now()-stageStarted;stageStarted=performance.now();}
     updateTileOrder(state,styleIndex,result.touchedTiles);try{captureAfter(entry);if(result.touchedPixels)pushHistory(command);}catch(error){failHistoryCapture(command,error);}
+    if(timingEnabled){timing.historyMs=performance.now()-stageStarted;stageStarted=performance.now();}
     if(root.smartRasterV4DebugAssertions===true)v4.validateFrame(frame);var composition=composeDirtyTiles(frame,state);
+    if(timingEnabled){timing.composeMs=performance.now()-stageStarted;timing.totalMs=performance.now()-timingStart;timing.touchedPixels=result.touchedPixels;timing.touchedTiles=result.touchedTiles.size;root.HardRoundSmartMetadataTimingLast=timing;}
     root.__smartRasterV4LastShadowRecord={layerIndex:commit.layerIndex,frameIndex:commit.frameIndex,styleIndex:styleIndex,styleId:commit.styleId,touchedPixels:result.touchedPixels,touchedTiles:Array.from(result.touchedTiles),composedTiles:composition.completed,failedTiles:composition.failed};return result;
   }  function activeShadowFrame(){
     var allLayers=currentLayers(),layerIndex=typeof curLayer!=='undefined'?curLayer:-1,frameIndex=typeof curFrame!=='undefined'?curFrame:-1;

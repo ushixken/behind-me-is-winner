@@ -276,7 +276,7 @@ function refreshDisplayComposite(){
 // read-back of it is not guaranteed to reflect the very latest paint in
 // every browser/GPU combo — which intermittently made a layer switch save
 // a stale/blank copy of what was just drawn, looking like lost work.
-const ctx=activeC.getContext('2d');
+const ctx=activeC.getContext('2d',{willReadFrequently:true});
 const wrap=document.getElementById('canvas-wrap');
 const canvasArea=document.getElementById('canvas-area');
 const rulerEl=document.getElementById('tl-ruler');

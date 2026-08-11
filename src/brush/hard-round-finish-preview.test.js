@@ -47,7 +47,7 @@ test('pointer-up lifecycle detaches the renderer, resolves an owned result, then
   const flush=src.indexOf('_hardRoundFlushPending(_hardRoundRenderer)',finish);
   const detach=src.indexOf('_hardRoundActiveContext=null',flush);
   const finalize=src.indexOf('_hardRoundFinalizeOwnedContext(ownedContext,e)',detach);
-  const ownedEnd=src.indexOf('context.renderer.endStroke({readback:context.gpuCommit})');
+  const ownedEnd=src.indexOf('context.renderer.endStroke({readback:context.gpuCommit,includeCpuMaskData:context.smartRaster,dirtyRect:context.dirtyRect})');
   const copy=src.indexOf('const stable=_hardRoundCopyCanvas',ownedEnd);
   const commit=src.indexOf("if(ready.smartRaster)_commitFinishedSmartRasterStroke(ready);else _commitFinishedHardRoundStroke(ready)",copy);
   assert.ok(finish<flush&&flush<detach&&detach<finalize&&ownedEnd<copy&&copy<commit,{finish,flush,detach,finalize,ownedEnd,copy,commit});
