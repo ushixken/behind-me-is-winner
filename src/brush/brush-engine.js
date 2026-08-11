@@ -5142,6 +5142,7 @@ let _hardRoundActiveContext = null;
 const _hardRoundRendererPool = [];
 const _hardRoundFinishingContexts = new Map();
 let _hardRoundCommitTail = Promise.resolve();
+let _hardRoundPendingCommitCount = 0;
 // Phase 10.1: raw pen input can arrive near 1000Hz. Core stabilization and
 // adapter mapping still run for every event immediately, but render-ready
 // segments wait for the next presentation frame and are then submitted in
@@ -5805,15 +5806,23 @@ function _hardRoundFinalizeOwnedContext(context,e){
     _hardRoundReleaseFinishingContext(context);
     return context;
   });
+  _hardRoundPendingCommitCount++;
   const commit=_hardRoundCommitTail.then(()=>resolution).then(ready=>{
     if(ready.smartRaster)_commitFinishedSmartRasterStroke(ready);else _commitFinishedHardRoundStroke(ready);
     if(ready.strokeId===_activeStrokeSession){
       _hardRoundSetGpuOverlayVisible(false,'owned-finalization-current-session');
       _finalizePointerEndStroke(e,ready.strokeId,false);
+    }else if(window.HardRoundOverlayPresentedStrokeId===ready.strokeId){
+      // A newer stroke may already own the presenter, but until its first
+      // frame lands the shared canvas can still contain this just-committed
+      // stroke. Retire that old representation only after recomposite made
+      // the committed replacement visible.
+      _hardRoundSetGpuOverlayVisible(false,'owned-finalization-retire-committed-overlay');
     }
   });
-  _hardRoundCommitTail=commit.catch(err=>{console.error('[Hard Round finalization]',err);});
-  return commit;
+  const settled=commit.finally(()=>{_hardRoundPendingCommitCount=Math.max(0,_hardRoundPendingCommitCount-1);});
+  _hardRoundCommitTail=settled.catch(err=>{console.error('[Hard Round finalization]',err);});
+  return settled;
 }
 // TEMP DIAGNOSTIC (Phase 11A routing probe). Purely visual, appended once,
 // never read by any other code path. Safe to delete wholesale once the
@@ -6102,6 +6111,7 @@ function _hardRoundSetGpuOverlayVisible(visible,reason){
   if(!overlay)return;
   overlay.hidden=!visible;
   overlay.style.display=visible?'block':'none';
+  if(!visible)window.HardRoundOverlayPresentedStrokeId=null;
   _hrPresentBoundaryLog('setGpuOverlayVisible('+visible+')'+(reason?' via '+reason:''));
 }
 // TEMP DIAGNOSTIC (Phase 11A.35): one concise timestamped surface-state log,
@@ -6844,7 +6854,12 @@ function _hardRoundPresentLivePreview(renderer){
   // GpuBackend.present() can record submit-time info keyed by it -- see
   // window.HardRoundLivePreviewSubmitInfo above. Neither field affects
   // which frame is requested, resolved, or accepted.
-  return renderer.peekStroke({ strokeId: session, segmentCount: renderer._segmentCount, livePreviewId }).then(async result=>{
+  const presentationBarrier=_hardRoundActiveContext&&_hardRoundActiveContext.strokeId===session
+    ?_hardRoundActiveContext.presentationBarrier:null;
+  return Promise.resolve(presentationBarrier).then(()=>{
+    if(previewGeneration!==_hardRoundPreviewGeneration||session!==_activeStrokeSession||!_inStroke)return null;
+    return renderer.peekStroke({ strokeId: session, segmentCount: renderer._segmentCount, livePreviewId });
+  }).then(async result=>{
     if(previewGeneration!==_hardRoundPreviewGeneration)return;
     // --- 11B.13 frame-stall diagnostic: resolve-time bookkeeping ---
     _hrFsRecordPresentResolve(_hrFsPresentStart);
@@ -7010,6 +7025,7 @@ function _hardRoundPresentLivePreview(renderer){
       if (window.HardRoundDebugPaintedOverlayCompare) {
         _hr1112CompareAndRecord(renderer, session, renderer._segmentCount, previewGeneration).catch(()=>{});
       }
+      window.HardRoundOverlayPresentedStrokeId=session;
       _hardRoundSetGpuOverlayVisible(true,'presentLivePreview-accepted-frame');
       // --- diagnostic (11A.31): this generation's pixels were actually shown ---
       if(_dbgOrderEntry){ _dbgOrderEntry.overlayShown=true; _hardRoundPreviewOrderPush(_dbgOrderEntry); }
@@ -7042,24 +7058,33 @@ function _hardRoundPresentLivePreview(renderer){
 // peekStroke()/_resolveToOutput() happens for it -- matching
 // prototype.html's present-once-per-frame cadence.
 let _hardRoundPreviewRAF = null;
+let _hardRoundPreviewRAFSession = null;
 let _hardRoundPreviewSession = null;
 let _hardRoundPreviewInFlight = false;
+let _hardRoundPreviewInFlightToken = null;
 let _hardRoundPreviewNeedsFollowup = false;
 let _hardRoundPreviewRequestedRenderer = null;
 function _hardRoundSchedulePreviewFrame(renderer){
   if(_hardRoundPreviewRAF!==null)return;
+  const scheduledSession=_activeStrokeSession;
+  _hardRoundPreviewRAFSession=scheduledSession;
   _hrFsRecordSchedule();
   _hardRoundPreviewRAF=requestAnimationFrame(()=>{
     const _hrMtCbStart = _hrMtActive() ? performance.now() : null;
     _hardRoundPreviewRAF=null;
+    _hardRoundPreviewRAFSession=null;
     _hrFsRecordPreviewRafStart();
-    if(_hardRoundPreviewSession!==_activeStrokeSession||!_inStroke)return;
-    _hrPerfMarkPreviewRaf(_hardRoundPreviewSession);
+    if(scheduledSession!==_activeStrokeSession||!_inStroke)return;
+    _hrPerfMarkPreviewRaf(scheduledSession);
     _hardRoundFlushPending(renderer);
+    const flightToken={sessionId:scheduledSession,renderer};
     _hardRoundPreviewInFlight=true;
+    _hardRoundPreviewInFlightToken=flightToken;
     _hardRoundPreviewNeedsFollowup=false;
     Promise.resolve(_hardRoundPresentLivePreview(renderer)).finally(()=>{
+      if(_hardRoundPreviewInFlightToken!==flightToken)return;
       _hardRoundPreviewInFlight=false;
+      _hardRoundPreviewInFlightToken=null;
       const requestedRenderer=_hardRoundPreviewRequestedRenderer;
       const needsFollowup=_hardRoundPreviewNeedsFollowup||_hardRoundPendingRenderSegments.length>0;
       _hardRoundPreviewNeedsFollowup=false;
@@ -7075,7 +7100,12 @@ function _hardRoundRequestLivePreview(renderer){
   _hardRoundPreviewRequestedRenderer=renderer;
   _hardRoundPreviewSession = _activeStrokeSession;
   if(_hardRoundPreviewInFlight){_hardRoundPreviewNeedsFollowup=true;return;}
-  if(_hardRoundPreviewRAF !== null)return;
+  if(_hardRoundPreviewRAF !== null){
+    if(_hardRoundPreviewRAFSession===_activeStrokeSession)return;
+    cancelAnimationFrame(_hardRoundPreviewRAF);
+    _hardRoundPreviewRAF=null;
+    _hardRoundPreviewRAFSession=null;
+  }
   _hardRoundSchedulePreviewFrame(renderer);
 }
 
@@ -7121,6 +7151,7 @@ function _hardRoundCancelLivePreview(hideOverlay=true){
   if(_hardRoundPreviewRAF !== null){
     cancelAnimationFrame(_hardRoundPreviewRAF);
     _hardRoundPreviewRAF = null;
+    _hardRoundPreviewRAFSession = null;
   }
   _hardRoundPreviewSession = null;
   _hardRoundPreviewRequestedRenderer = null;
@@ -7555,6 +7586,7 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
         smartRasterMode:layers[curLayer]&&layers[curLayer].renderMode||null,
         smartRasterVersion:window.SmartRasterV4?'v4':'current',ownershipBefore:null,
         resolvedCanvas:null,resolvedMaskCanvas:null,dirtyRect:null,state:'active',gpuCommit:false,
+        presentationBarrier:_hardRoundCommitTail,
       };
       window.HardRoundOverlayOwnerStrokeId=_activeStrokeSession;
       hardRoundRenderer.beginStroke();
@@ -7593,8 +7625,9 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
         _hardRoundSetGpuOverlayVisible(false,'beginStroke-canvasLivePresentationMode');
         _traceStrokeLifecycle('hardround-overlay-show-suppressed-canvas-live-presentation',{gpuActive:!!(hardRoundRenderer.isGpuActive&&hardRoundRenderer.isGpuActive())});
       }else{
-        _hardRoundSetGpuOverlayVisible(false,'beginStroke-await-first-present');
-        _traceStrokeLifecycle('hardround-overlay-show-deferred',{gpuActive:!!(hardRoundRenderer.isGpuActive&&hardRoundRenderer.isGpuActive()),reason:'await-first-successful-present'});
+        const preservePriorUntilCommit=!!(hardRoundRenderer.isGpuActive&&hardRoundRenderer.isGpuActive()&&_hardRoundPendingCommitCount>0&&_hardRoundGpuOverlay()&&!_hardRoundGpuOverlay().hidden);
+        if(!preservePriorUntilCommit)_hardRoundSetGpuOverlayVisible(false,'beginStroke-await-first-present');
+        _traceStrokeLifecycle('hardround-overlay-show-deferred',{gpuActive:!!(hardRoundRenderer.isGpuActive&&hardRoundRenderer.isGpuActive()),reason:preservePriorUntilCommit?'preserve-prior-until-commit':'await-first-successful-present'});
       }
       // TEMP DIAGNOSTIC (Phase 11A.19): same region, immediately after the
       // GPU overlay has been made visible for this new stroke (or, under

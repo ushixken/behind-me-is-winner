@@ -15,7 +15,7 @@ test('pointerup contains no references to removed cadence scheduler state',()=>{
 test('normal and Smart owned finalization still enter the ordered commit queue',()=>{
   assert.match(source,/const commit=_hardRoundCommitTail\.then\(\(\)=>resolution\)\.then\(ready=>\{/);
   assert.match(source,/if\(ready\.smartRaster\)_commitFinishedSmartRasterStroke\(ready\);else _commitFinishedHardRoundStroke\(ready\)/);
-  assert.match(source,/_hardRoundCommitTail=commit\.catch/);
+  assert.match(source,/_hardRoundCommitTail=settled\.catch/);
 });
 
 test('normal commit preserves existing destination pixels and refreshes its key',()=>{

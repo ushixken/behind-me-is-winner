@@ -26,9 +26,10 @@ test('presentation rejection is explicit and propagated to the live-preview gate
   assert.match(engineSource,/presentLivePreview-rejected/);
 });
 
-test('beginStroke keeps the overlay hidden until the first successful present',()=>{
+test('beginStroke never reveals stale content and only preserves a prior frame behind a pending commit barrier',()=>{
   assert.doesNotMatch(engineSource,/_hardRoundSetGpuOverlayVisible\([^\n]*'beginStroke-earlyReveal'/);
   assert.match(engineSource,/_hardRoundSetGpuOverlayVisible\(false,'beginStroke-await-first-present'\)/);
+  assert.match(engineSource,/preservePriorUntilCommit/);
   assert.match(engineSource,/_hardRoundSetGpuOverlayVisible\(true,'presentLivePreview-accepted-frame'\)/);
 });
 

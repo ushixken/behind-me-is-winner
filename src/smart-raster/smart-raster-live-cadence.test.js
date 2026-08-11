@@ -15,8 +15,9 @@ test('expensive Smart previews have no raster-duration timeout',()=>{
 
 test('one pending or in-flight preview coalesces input into one newest-state follow-up',()=>{
   assert.match(engine,/if\(_hardRoundPreviewInFlight\)\{_hardRoundPreviewNeedsFollowup=true;return;\}/);
-  assert.match(engine,/if\(_hardRoundPreviewRAF !== null\)return;/);
+  assert.match(engine,/if\(_hardRoundPreviewRAF !== null\)\{[\s\S]*?_hardRoundPreviewRAFSession===_activeStrokeSession/);
   assert.match(engine,/Promise\.resolve\(_hardRoundPresentLivePreview\(renderer\)\)\.finally/);
+  assert.match(engine,/if\(_hardRoundPreviewInFlightToken!==flightToken\)return/);
   assert.match(engine,/needsFollowup&&requestedRenderer&&_hardRoundPreviewSession===_activeStrokeSession&&_inStroke/);
 });
 
@@ -24,7 +25,7 @@ test('pending geometry is drained without dropping and follow-up is session safe
   assert.match(engine,/_hardRoundPendingRenderSegments\.splice\(0,_hardRoundPendingRenderSegments\.length\)/);
   assert.match(engine,/_hardRoundPreviewNeedsFollowup\|\|_hardRoundPendingRenderSegments\.length>0/);
   assert.match(engine,/previewGeneration!==_hardRoundPreviewGeneration/);
-  assert.match(engine,/_hardRoundPreviewSession!==_activeStrokeSession\|\|!_inStroke/);
+  assert.match(engine,/scheduledSession!==_activeStrokeSession\|\|!_inStroke/);
 });
 
 test('Smart preview code never switches to a native default or system cursor',()=>{
