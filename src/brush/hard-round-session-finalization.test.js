@@ -6,6 +6,7 @@ const path=require('node:path');
 
 const engine=fs.readFileSync(path.join(__dirname,'brush-engine.js'),'utf8');
 const rendererSource=fs.readFileSync(path.join(__dirname,'prototype-renderer.js'),'utf8');
+const panelsSource=fs.readFileSync(path.join(__dirname,'../ui/panels.js'),'utf8');
 const deferred=()=>{let resolve;const promise=new Promise(r=>{resolve=r;});return{promise,resolve};};
 
 test('production source detaches an owned renderer before asynchronous finalization',()=>{
@@ -29,7 +30,7 @@ test('three deferred results commit in stroke order despite 3,1,2 resolution',as
 });
 
 test('stable result is copied before renderer is returned to pool',()=>{
-  const copy=engine.indexOf('context.resolvedCanvas=_hardRoundCopyCanvas');
+  const copy=engine.indexOf('const stable=_hardRoundCopyCanvas');
   const release=engine.indexOf('_hardRoundReleaseFinishingContext(context)',copy);
   assert.ok(copy>=0&&release>copy);
 });
@@ -53,3 +54,33 @@ test('live GPU presentation rejects a non-owner stroke before swapchain work',()
   assert.ok(start>=0&&guard>start&&texture>guard);
 });
 
+test('Smart Raster context captures style, destination, ownership and stable mask',()=>{
+  assert.match(engine,/styleId:typeof activeAdvancedStyleIdForPainting/);
+  assert.match(engine,/smartRasterMode:/);
+  assert.match(engine,/ownedContext\.ownershipBefore=.*getImageData/);
+  assert.match(engine,/context\.resolvedMaskCanvas=stable/);
+});
+
+test('Smart Raster commit API uses explicit layer and frame',()=>{
+  assert.match(panelsSource,/function commitSmartRasterBrushAt\(layerIndex,frameIndex/);
+  assert.match(panelsSource,/commitBrushMask\(layerIndex,frameIndex,maskCanvas/);
+  assert.match(panelsSource,/window\.commitSmartRasterBrushAt=commitSmartRasterBrushAt/);
+});
+
+test('deferred Smart Raster commits preserve style and ownership association',async()=>{
+  const waits=[deferred(),deferred(),deferred()],contexts=[
+    {strokeId:1,styleId:'red',ownershipBefore:'before-1'},
+    {strokeId:2,styleId:'green',ownershipBefore:'before-2'},
+    {strokeId:3,styleId:'blue',ownershipBefore:'before-3'},
+  ];
+  let tail=Promise.resolve();const committed=[];
+  contexts.forEach((context,index)=>{tail=tail.then(()=>waits[index].promise).then(()=>committed.push(context));});
+  waits[2].resolve();waits[0].resolve();await Promise.resolve();waits[1].resolve();await tail;
+  assert.deepEqual(committed.map(item=>[item.strokeId,item.styleId,item.ownershipBefore]),[
+    [1,'red','before-1'],[2,'green','before-2'],[3,'blue','before-3'],
+  ]);
+});
+
+test('Smart Raster remains excluded from GPU live compatibility',()=>{
+  assert.match(engine,/!\(layers\[curLayer\]&&layers\[curLayer\]\.type==='smart-raster'\)/);
+});

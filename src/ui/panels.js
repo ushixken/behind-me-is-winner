@@ -132,6 +132,10 @@ function commitSmartRasterBrush(maskCanvas,styleId,strokeOpacity,dirtyRect,befor
   if(!advancedPalettePaintingEnabled()||!styleId||!maskCanvas) return false;
   return window.SmartRasterLayer.commitBrushMask(curLayer,curFrame,maskCanvas,styleId,strokeOpacity,dirtyRect,beforeImage,brushBlendMode);
 }
+function commitSmartRasterBrushAt(layerIndex,frameIndex,maskCanvas,styleId,strokeOpacity,dirtyRect,beforeImage,brushBlendMode){
+  if(!styleId||!maskCanvas||!window.SmartRasterLayer||typeof window.SmartRasterLayer.commitBrushMask!=='function') return false;
+  return window.SmartRasterLayer.commitBrushMask(layerIndex,frameIndex,maskCanvas,styleId,strokeOpacity,dirtyRect,beforeImage,brushBlendMode);
+}
 
 function rerenderAllSmartRasterFrames(){
   window.SmartRasterLayer.rerenderAll();
@@ -172,6 +176,7 @@ function markStyleDeleted(styleId){
 
 // ── Publish shims on window so external callers (brush-engine.js, etc.) find them ──
 window.commitSmartRasterBrush=commitSmartRasterBrush;
+window.commitSmartRasterBrushAt=commitSmartRasterBrushAt;
 window.renderSmartRasterFrame=renderSmartRasterFrame;
 window.rerenderAllSmartRasterFrames=rerenderAllSmartRasterFrames;
 window.getStyleFrameBundle=function(li,fi){return window.SmartRasterLayer.getFrameBundle(li,fi);};

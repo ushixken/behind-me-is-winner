@@ -5711,6 +5711,21 @@ function _commitFinishedHardRoundStroke(context){
   }
   context.state='committed';
 }
+function _commitFinishedSmartRasterStroke(context){
+  const mask=context.resolvedMaskCanvas;if(!mask)return;
+  const currentDestination=curLayer===context.layerIndex&&curFrame===context.frameIndex;
+  const targetCanvas=currentDestination?activeC:context.destinationCanvas;
+  const target=targetCanvas&&targetCanvas.getContext('2d');if(!target)return;
+  target.save();target.globalAlpha=context.opacity;target.globalCompositeOperation=context.compositeOperation;target.drawImage(mask,0,0);target.restore();
+  if(typeof window.commitSmartRasterBrushAt==='function'){
+    window.commitSmartRasterBrushAt(context.layerIndex,context.frameIndex,mask,context.styleId,context.opacity,context.dirtyRect,context.ownershipBefore,context.blendMode);
+  }
+  if(currentDestination){
+    const key=context.destinationCanvas;if(key){const keyCtx=key.getContext('2d');keyCtx.clearRect(0,0,key.width,key.height);keyCtx.drawImage(activeC,0,0);}
+    recomposite(context.layerIndex,context.frameIndex);
+  }
+  context.state='committed';
+}
 function _hardRoundReleaseFinishingContext(context){
   context.renderer._hardRoundFinishingOwner=null;
   _hardRoundRendererPool.push(context.renderer);
@@ -5720,13 +5735,14 @@ function _hardRoundFinalizeOwnedContext(context,e){
   context.state='finishing';context.renderer._hardRoundFinishingOwner=context.strokeId;
   _hardRoundFinishingContexts.set(context.strokeId,context);
   const resolution=context.renderer.endStroke({readback:context.gpuCommit}).then(result=>{
-    context.resolvedCanvas=_hardRoundCopyCanvas(result&&result.canvas);
+    const stable=_hardRoundCopyCanvas(result&&result.canvas);
+    if(context.smartRaster)context.resolvedMaskCanvas=stable;else context.resolvedCanvas=stable;
     context.state='ready';
     _hardRoundReleaseFinishingContext(context);
     return context;
   });
   const commit=_hardRoundCommitTail.then(()=>resolution).then(ready=>{
-    _commitFinishedHardRoundStroke(ready);
+    if(ready.smartRaster)_commitFinishedSmartRasterStroke(ready);else _commitFinishedHardRoundStroke(ready);
     if(ready.strokeId===_activeStrokeSession){
       _hardRoundSetGpuOverlayVisible(false,'owned-finalization-current-session');
       _finalizePointerEndStroke(e,ready.strokeId,false);
@@ -7185,10 +7201,16 @@ activeC.style.touchAction='none';
 canvasArea.style.touchAction='none';
 
 let _eyedropperPointerId=null;
+let _eyedropperSampleRaf=0;
+let _eyedropperLatestPosition=null;
+let _eyedropperLastAppliedRgba=null;
 function _sampleVisibleCanvasColor(e){
   const p=getPos(e),x=Math.floor(p.x),y=Math.floor(p.y);
   if(x<0||y<0||x>=CW||y>=CH)return;
   const pixel=compCtx.getImageData(x,y,1,1).data;
+  const rgba=pixel[0]+','+pixel[1]+','+pixel[2]+','+pixel[3];
+  if(rgba===_eyedropperLastAppliedRgba)return;
+  _eyedropperLastAppliedRgba=rgba;
   const hex='#'+[pixel[0],pixel[1],pixel[2]].map(value=>value.toString(16).padStart(2,'0')).join('');
   if(typeof colorTarget!=='undefined')colorTarget='fg';
   const palette=window.PaletteDocker;
@@ -7203,6 +7225,24 @@ function _sampleVisibleCanvasColor(e){
     if(styleId)selectedOwnedStyle=palette.selectAdvancedStyleById(styleId);
   }
   if(!selectedOwnedStyle&&palette&&typeof palette.selectMatchingRgba==='function')palette.selectMatchingRgba(pixel[0],pixel[1],pixel[2],pixel[3]);
+}
+function _queueVisibleCanvasColorSample(e){
+  _eyedropperLatestPosition={clientX:e.clientX,clientY:e.clientY,pointerId:e.pointerId};
+  if(_eyedropperSampleRaf)return;
+  _eyedropperSampleRaf=requestAnimationFrame(()=>{
+    _eyedropperSampleRaf=0;
+    const latest=_eyedropperLatestPosition;
+    _eyedropperLatestPosition=null;
+    if(!latest||latest.pointerId!==_eyedropperPointerId)return;
+    _sampleVisibleCanvasColor(latest);
+  });
+}
+function _endVisibleCanvasColorSampling(pointerId){
+  if(pointerId!==_eyedropperPointerId)return false;
+  _eyedropperPointerId=null;
+  _eyedropperLatestPosition=null;
+  if(_eyedropperSampleRaf){cancelAnimationFrame(_eyedropperSampleRaf);_eyedropperSampleRaf=0;}
+  return true;
 }
 
 
@@ -7246,7 +7286,7 @@ function _brushPointerDown(e){
   if(activeGroupId||panning||(typeof _zoomDrag!=='undefined'&&_zoomDrag)||spaceHeld||tool==='transform') return;
   if(e.pointerType==='pen'?(!(e.buttons&1)):(e.button!==0)) return;
   if(tool==='eyedropper'){
-    e.preventDefault();_eyedropperPointerId=e.pointerId;activeC.setPointerCapture(e.pointerId);_sampleVisibleCanvasColor(e);return;
+    e.preventDefault();_eyedropperPointerId=e.pointerId;_eyedropperLastAppliedRgba=null;activeC.setPointerCapture(e.pointerId);_sampleVisibleCanvasColor(e);return;
   }
   if(tool!=='brush'&&tool!=='eraser'&&tool!=='fill'&&tool!=='line'&&tool!=='curve') return;
   if(typeof isDrawingFrameHidden==='function'&&isDrawingFrameHidden(curLayer,curFrame)) return;
@@ -7443,7 +7483,11 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
         destinationCanvas:layers[curLayer]&&layers[curLayer].frames[curFrame]||null,
         opacity:Math.max(0,Math.min(1,brushOpacity)),blendMode:window.brushBlendMode||'normal',
         compositeOperation:_hardRoundCapturedCompositeOperation(window.brushBlendMode||'normal'),
-        resolvedCanvas:null,dirtyRect:null,state:'active',gpuCommit:false,
+        styleId:typeof activeAdvancedStyleIdForPainting==='function'?activeAdvancedStyleIdForPainting():null,
+        smartRaster:!!(layers[curLayer]&&layers[curLayer].type==='smart-raster'),
+        smartRasterMode:layers[curLayer]&&layers[curLayer].renderMode||null,
+        smartRasterVersion:window.SmartRasterV4?'v4':'current',ownershipBefore:null,
+        resolvedCanvas:null,resolvedMaskCanvas:null,dirtyRect:null,state:'active',gpuCommit:false,
       };
       window.HardRoundOverlayOwnerStrokeId=_activeStrokeSession;
       hardRoundRenderer.beginStroke();
@@ -7771,14 +7815,14 @@ function _handleMoveEvent(e){
 // normally).
 const _hasRawUpdate = (typeof window !== 'undefined' && 'onpointerrawupdate' in window);
 activeC.addEventListener('pointermove', e=>{
-  if(tool==='eyedropper'&&e.pointerId===_eyedropperPointerId){if(e.buttons&1){e.preventDefault();_sampleVisibleCanvasColor(e);}return;}
+  if(tool==='eyedropper'&&e.pointerId===_eyedropperPointerId){if(e.buttons&1){e.preventDefault();_queueVisibleCanvasColorSample(e);}return;}
   if(_hasRawUpdate && e.pointerType === 'pen') return; // handled exclusively by pointerrawupdate below
   _handleMoveEvent(e);
 });
 if(_hasRawUpdate){
   activeC.addEventListener('pointerrawupdate', e=>{
     if(e.pointerType !== 'pen') return;
-    if(tool==='eyedropper'&&e.pointerId===_eyedropperPointerId){if(e.buttons&1){e.preventDefault();_sampleVisibleCanvasColor(e);}return;}
+    if(tool==='eyedropper'&&e.pointerId===_eyedropperPointerId){if(e.buttons&1){e.preventDefault();_queueVisibleCanvasColorSample(e);}return;}
     _handleMoveEvent(e);
   });
 }
@@ -7927,16 +7971,26 @@ function _pointerEndStroke(e){
     const ownedContext=_hardRoundActiveContext;
     const ownedGpuContext=ownedContext&&ownedContext.strokeId===_activeStrokeSession&&
       ownedContext.renderer.isGpuActive&&ownedContext.renderer.isGpuActive();
-    if(ownedGpuContext){
-      ownedContext.dirtyRect=_strokeDirty?Object.assign({},_strokeDirty):null;
-      ownedContext.gpuCommit=true;
+    const ownedSmartContext=ownedContext&&ownedContext.strokeId===_activeStrokeSession&&ownedContext.smartRaster===true&&
+      !!ownedContext.styleId&&typeof advancedPalettePaintingEnabled==='function'&&advancedPalettePaintingEnabled();
+    if(ownedGpuContext||ownedSmartContext){
+      if(_strokeDirty){
+        const x=Math.max(0,Math.floor(_strokeDirty.minX)),y=Math.max(0,Math.floor(_strokeDirty.minY));
+        const right=Math.min(CW,Math.ceil(_strokeDirty.maxX)),bottom=Math.min(CH,Math.ceil(_strokeDirty.maxY));
+        ownedContext.dirtyRect={x,y,w:Math.max(0,right-x),h:Math.max(0,bottom-y)};
+      }else ownedContext.dirtyRect=null;
+      if(ownedSmartContext){
+        const rect=ownedContext.dirtyRect;
+        ownedContext.ownershipBefore=rect&&rect.w>0&&rect.h>0?ctx.getImageData(rect.x,rect.y,rect.w,rect.h):ctx.getImageData(0,0,CW,CH);
+      }
+      ownedContext.gpuCommit=ownedGpuContext;
       _hardRoundActiveContext=null;
       if(_hardRoundRenderer===ownedContext.renderer)_hardRoundRenderer=null;
       _inStroke=false;
       _hardRoundFinalizeOwnedContext(ownedContext,e);
       return;
     }
-    _hardRoundActiveContext=null; // CPU/Smart/selection routes retain the established finalization below.
+    _hardRoundActiveContext=null; // Other CPU/selection routes retain the established finalization below.
     // Phase 9C: PrototypeRenderer.endStroke() resolves the whole stroke's
     // SS=4 backing store down to one finished logical-resolution canvas.
     // That canvas is this stroke's entire visible output -- draw it into
@@ -8248,9 +8302,9 @@ activeC.addEventListener('contextmenu',e=>{if(tool==='curve'&&_curveToolGesture)
 window.addEventListener('tool-changed',e=>{if(_curveToolGesture&&(!e.detail||e.detail.tool!=='curve'))_cancelCurveTool();});
 activeC.addEventListener('pointerup',e=>{
   if(e.pointerId===_curveCommitPointerId){_curveCommitPointerId=null;return;}
-  if(e.pointerId===_eyedropperPointerId){_eyedropperPointerId=null;if(activeC.hasPointerCapture(e.pointerId))activeC.releasePointerCapture(e.pointerId);return;}
+  if(_endVisibleCanvasColorSampling(e.pointerId)){if(activeC.hasPointerCapture(e.pointerId))activeC.releasePointerCapture(e.pointerId);return;}
   _pointerEndStroke(e);
   if(activeC.hasPointerCapture(e.pointerId))activeC.releasePointerCapture(e.pointerId);
 });
-activeC.addEventListener('pointercancel',e=>{if(e.pointerId===_eyedropperPointerId)_eyedropperPointerId=null;_endStroke(e.pointerId);});
-activeC.addEventListener('lostpointercapture',e=>{if(e.pointerId===_eyedropperPointerId)_eyedropperPointerId=null;if(tool==='curve'&&_curveToolGesture&&_curveToolGesture.phase==='bending')return;_endStroke(e.pointerId);});
+activeC.addEventListener('pointercancel',e=>{_endVisibleCanvasColorSampling(e.pointerId);_endStroke(e.pointerId);});
+activeC.addEventListener('lostpointercapture',e=>{_endVisibleCanvasColorSampling(e.pointerId);if(tool==='curve'&&_curveToolGesture&&_curveToolGesture.phase==='bending')return;_endStroke(e.pointerId);});

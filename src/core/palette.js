@@ -11,6 +11,13 @@
   const SWATCH_SIZE_DEFAULT=28;
   const ADVANCED_PALETTE_VERSION=2;
   const PALETTE_REORDER_HOLD_MS=260;
+  function isPrimaryPalettePointer(event){
+    if(!event||event.isPrimary===false)return false;
+    const pointerType=event.pointerType||'mouse';
+    if(pointerType==='pen')return !!(event.buttons&1);
+    if(pointerType==='mouse')return event.button===0;
+    return event.button===undefined||event.button===0;
+  }
   let palettes=[];
   let activePaletteId=null;
   let swatches=[];
@@ -1322,8 +1329,7 @@
   function onAdvancedStylePointerUp(event){finishAdvancedStyleDrag(event,false);}
   function onAdvancedStylePointerCancel(event){finishAdvancedStyleDrag(event,true);}
   function beginAdvancedStyleDrag(event,style,card){
-    if(event.isPrimary===false||event.target.closest('input'))return;
-    if((event.pointerType||'mouse')==='mouse'&&event.button!==0)return;
+    if(!isPrimaryPalettePointer(event)||event.target.closest('input'))return;
     if(advancedStyleDrag)finishAdvancedStyleDrag(null,true);
     const pointerType=event.pointerType||'mouse';
     if(!isAdvancedSeparator(style)){selectStyle(style.id,true);advancedStyleSuppressClick=true;}
@@ -1452,8 +1458,7 @@
       }
       btn.classList.toggle('selected',s.id===selectedId);
       btn.addEventListener('pointerdown',event=>{
-        if(event.isPrimary===false) return;
-        if(event.button!==undefined&&event.button!==0) return;
+        if(!isPrimaryPalettePointer(event))return;
         beginDrag(event,s,btn);
       });
       btn.addEventListener('dblclick',event=>{
@@ -2137,8 +2142,7 @@
     persist();
   }
   function beginDrag(event,swatch,el){
-    if(event.isPrimary===false) return;
-    if(event.button!==undefined&&event.button!==0) return;
+    if(!isPrimaryPalettePointer(event))return;
     event.preventDefault();
     hideContextMenu();
     if(dragState) finishPaletteDrag(null,true);
