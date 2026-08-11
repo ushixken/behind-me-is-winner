@@ -1960,13 +1960,16 @@ function _dabAACpu(x,y,r,rgb,alpha,composite){
 // Software fallback retained for internal diagnostics. Normal drawing always
 // uses the Canvas 2D accelerated path below.
 function _dabAATinyCoverage(x,y,r,rgb,alpha,composite){
+  _hardRoundTraceLegacyDabDuringGpu(r);
   const dc=(_inStroke&&composite!=='erase')?_strokeCtx:ctx;
   const rr=Math.max(0.05,r),pad=1;
   const sx=Math.max(0,Math.floor(x-rr-pad)),sy=Math.max(0,Math.floor(y-rr-pad));
   const ex=Math.min(dc.canvas.width,Math.ceil(x+rr+pad)),ey=Math.min(dc.canvas.height,Math.ceil(y+rr+pad));
   const width=ex-sx,height=ey-sy;
   if(width<=0||height<=0) return;
+  const _hrRtGidStart = window.HardRoundDebugRoutingTrace ? performance.now() : null;
   const image=dc.getImageData(sx,sy,width,height),data=image.data;
+  if(_hrRtGidStart!=null) _hrRtNoteDabAATinyCoverage(performance.now()-_hrRtGidStart);
   const inner=_effectiveInnerFrac(rr,brushHardness,_currentAAMode());
   const samples=4,invSamples=1/(samples*samples);
   for(let py=0;py<height;py++){
@@ -2141,7 +2144,17 @@ function _dabAA(x,y,r,rgb,alpha,composite){
   // -- no partial-alpha edge pixels at all, regardless of hardness.
   if(_currentAAMode()==='none'){_dabAliased(x,y,r,rgb,alpha,composite);return;}
   const tinyGeneratedHardRound=r<=1&&!window._brushAirbrush&&!window.brushTipCanvas&&brushHardness>=0.995;
-  if(tinyGeneratedHardRound){_dabAATinyCoverage(x,y,r,rgb,alpha,composite);return;}
+  if(tinyGeneratedHardRound){
+    // Phase 11B.16 causal test only: use the existing accelerated AA
+    // renderer instead of the analytic CPU read/modify/write path while a
+    // migrated GPU stroke is still active. Default-off preserves the exact
+    // tiny-coverage appearance and return contract.
+    if(_hardRoundShouldBypassTinyCoverageDuringGpu()){
+      _dabAAGpu(x,y,r,rgb,alpha,composite);
+      return;
+    }
+    _dabAATinyCoverage(x,y,r,rgb,alpha,composite);return;
+  }
   // Same cutoff (r<=1) as Hard Round above, so custom tips remain visible
   // down to approximately the same minimum size Hard Round hits, via the
   // same class of genuine supersampled-coverage rendering.
@@ -2696,6 +2709,7 @@ function _dabDirtyRadii(d){
   return {x,y};
 }
 function _drawDabNow(d){
+  if(window.HardRoundDebugRoutingTrace) _hrRtNoteDrawDabNow();
   const customTrace=window.CustomFirstDabTrace,customTraceStart=customTrace&&customTrace.enabled?performance.now():0;
   if(customTrace&&customTrace.enabled)customTrace.beginDab({custom:!!window.brushTipCanvas,radius:d.r,rotation:d.rotation||0,roundness:d.roundness,tipId:customTrace.objectId(window.brushTipCanvas),tipVersion:window.brushTipVersion||0});
   const perf=_brushPerf(),perfStart=perf?performance.now():0;
@@ -4465,6 +4479,7 @@ function _scheduleRecomposite(options){
     const rect=(drawing||_inStroke)?_consumeDirtyRect():null;
     if(perf)perf.point('first-dab-immediate-recomposite',{mode:firstDabExperiment?firstDabExperiment.mode:experiment.mode,rect,scheduledWork});
     const immediateStart=performance.now();_flushLiveColorEraserPreview();recomposite(curLayer,curFrame,rect);const immediateDuration=performance.now()-immediateStart;
+    _hrMtRecord('_scheduleRecomposite-immediate-recomposite', immediateStart, immediateStart+immediateDuration);
     _flushDeferredKeyVisualRefreshAfterPresentation();
     if(perf)perf.recordDuration('synchronous-first-dab-recomposite',immediateDuration,{rect,scheduledWork});
     if(firstDabExperiment)firstDabExperiment.notePresentation({kind:'synchronous-first-dab',rect,duration:immediateDuration,scheduledWork});return;
@@ -4488,6 +4503,7 @@ function _scheduleRecomposite(options){
     if(curLayer!==layerIndex||curFrame!==frameIndex){_traceStrokeLifecycle('recomposite-rejected',{sessionId,reason:'artwork-changed',sourceLayer:layerIndex,sourceFrame:frameIndex});_flushDeferredKeyVisualRefreshAfterPresentation();return;}
     const rect=(drawing||_inStroke)?_consumeDirtyRect():null;
     const scheduledStart=performance.now();_flushLiveColorEraserPreview();recomposite(layerIndex,frameIndex,rect);const scheduledDuration=performance.now()-scheduledStart;
+    _hrMtRecord('_scheduleRecomposite-scheduled-recomposite', scheduledStart, scheduledStart+scheduledDuration);
     _flushDeferredKeyVisualRefreshAfterPresentation();
     if(scheduleProfiler)scheduleProfiler.recordDuration('scheduled-recomposite-duration',scheduledDuration,{rect,firstDab});
     if(firstDabExperiment&&firstDab)firstDabExperiment.notePresentation({kind:'scheduled-first-dab',rect,duration:scheduledDuration,scheduledWork:'used'});
@@ -5122,6 +5138,10 @@ function _hardRoundGetCore(){
 // Recreated whenever that size changes (canvas resize), exactly like
 // _ensureStrokeCanvas's own allocatedOrResized check.
 let _hardRoundRenderer = null;
+let _hardRoundActiveContext = null;
+const _hardRoundRendererPool = [];
+const _hardRoundFinishingContexts = new Map();
+let _hardRoundCommitTail = Promise.resolve();
 // Phase 10.1: raw pen input can arrive near 1000Hz. Core stabilization and
 // adapter mapping still run for every event immediately, but render-ready
 // segments wait for the next presentation frame and are then submitted in
@@ -5213,10 +5233,426 @@ if(typeof window!=='undefined'){
     };
   };
 }
+// ---------------------------------------------------------------------
+// PHASE 11B.13 DIAGNOSTIC (opt-in via window.HardRoundDebugFrameStall,
+// default off/no-op). Read-only, timestamp/counter-only instrumentation.
+// Goal: determine whether the live-stroke blink/cut correlates with a
+// main-thread/frame stall rather than missing stroke geometry.
+//
+// Deliberately does NOT call getImageData, any GPU readback, canvas
+// capture, getComputedStyle, or elementFromPoint -- see call sites below.
+// Never touches geometry, pressure, stabilization, AA, shaders,
+// strokeMaskTex, presentation, commit/finalization, or overlay visibility.
+//
+// Log is bounded to ~200 lightweight records (oldest dropped first).
+// Cheap running aggregates (counters/maxes) are always updated so
+// summary stats stay accurate even once individual records roll off.
+// ---------------------------------------------------------------------
+window.HardRoundFrameStallLog = window.HardRoundFrameStallLog || [];
+const _hrFsAgg = {
+  frames: 0,
+  maxRafDeltaMs: 0,
+  countRafOver20ms: 0,
+  countRafOver33ms: 0,
+  countRafOver50ms: 0,
+  countRafOver100ms: 0,
+  maxFlushPendingMs: 0,
+  maxDrawSegmentsMs: 0,
+  maxPresentPromiseMs: 0,
+  maxInputEventGapMs: 0,
+};
+const _HR_FS_MAX_LOG = 200;
+const _HR_FS_STALL_THRESHOLD_MS = 20; // only individually log windows >= this
+function _hrFsPush(entry){
+  window.HardRoundFrameStallLog.push(entry);
+  if(window.HardRoundFrameStallLog.length > _HR_FS_MAX_LOG) window.HardRoundFrameStallLog.shift();
+}
+function _hrFsCursorSnapshot(e){
+  // Cheap only: no getComputedStyle, no elementFromPoint, no layout forcing.
+  let hasCapture = null;
+  try{ hasCapture = (e && typeof e.pointerId==='number' && activeC && activeC.hasPointerCapture) ? activeC.hasPointerCapture(e.pointerId) : null; }catch(_){}
+  return {
+    eventTarget: (e && e.target && (e.target.id || e.target.tagName)) || null,
+    pointerId: (e && e.pointerId!=null) ? e.pointerId : null,
+    pointerCapture: hasCapture,
+    cursor: (typeof activeC!=='undefined' && activeC && activeC.style) ? activeC.style.cursor : null,
+  };
+}
+function _hrFsCounts(){
+  return {
+    pendingSegmentCount: (typeof _hardRoundPendingRenderSegments!=='undefined' && _hardRoundPendingRenderSegments) ? _hardRoundPendingRenderSegments.length : null,
+    rendererSegmentCount: (typeof _hardRoundRenderer!=='undefined' && _hardRoundRenderer) ? _hardRoundRenderer._segmentCount : null,
+  };
+}
+function _hrFsStrokeId(){
+  return typeof _activeStrokeSession!=='undefined' ? _activeStrokeSession : null;
+}
+function _hrFsActive(){
+  return !!(window.HardRoundDebugFrameStall && typeof _inStroke!=='undefined' && _inStroke);
+}
+// -- rAF delta tracking: a persistent, self-perpetuating rAF loop. It is
+// always scheduled (negligible cost when the flag is off) but only records
+// anything while HardRoundDebugFrameStall is on AND a stroke is active.
+let _hrFsLastRafT = null;
+function _hrFsRafTick(t){
+  if(_hrFsActive()){
+    if(_hrFsLastRafT!=null){
+      const delta = t - _hrFsLastRafT;
+      _hrFsAgg.frames++;
+      if(delta > _hrFsAgg.maxRafDeltaMs) _hrFsAgg.maxRafDeltaMs = delta;
+      if(delta > 20) _hrFsAgg.countRafOver20ms++;
+      if(delta > 33) _hrFsAgg.countRafOver33ms++;
+      if(delta > 50) _hrFsAgg.countRafOver50ms++;
+      if(delta > 100) _hrFsAgg.countRafOver100ms++;
+      if(delta >= _HR_FS_STALL_THRESHOLD_MS){
+        _hrFsPush(Object.assign({type:'raf', timestamp:t, strokeId:_hrFsStrokeId(), rafDeltaMs:delta}, _hrFsCounts(), _hrFsCursorSnapshot(_lastPointerEvent)));
+      }
+    }
+    _hrFsLastRafT = t;
+  } else {
+    _hrFsLastRafT = null;
+  }
+  requestAnimationFrame(_hrFsRafTick);
+}
+requestAnimationFrame(_hrFsRafTick);
+// -- input event gap tracking. Call from pointerdown/pointermove/
+// pointerrawupdate handlers. Cheap: only performance.now() + the same
+// no-layout cursor snapshot above.
+let _hrFsLastInputT = null;
+function _hrFsRecordInput(eventType, e){
+  if(!_hrFsActive()) return;
+  const t = performance.now();
+  let gap = null;
+  if(_hrFsLastInputT!=null) gap = t - _hrFsLastInputT;
+  _hrFsLastInputT = t;
+  if(gap!=null){
+    if(gap > _hrFsAgg.maxInputEventGapMs) _hrFsAgg.maxInputEventGapMs = gap;
+    if(gap >= _HR_FS_STALL_THRESHOLD_MS){
+      _hrFsPush(Object.assign({type:'input', timestamp:t, strokeId:_hrFsStrokeId(), inputGapMs:gap, eventType}, _hrFsCounts(), _hrFsCursorSnapshot(e)));
+    }
+  }
+}
+// -- schedule/flush/present timing hooks. Populated by call sites in
+// _hardRoundSchedulePreviewFrame / _hardRoundFlushPending /
+// _hardRoundPresentLivePreview below.
+function _hrFsRecordSchedule(){
+  if(!_hrFsActive()) return;
+  _hrFsPush(Object.assign({type:'schedulePreviewFrame', timestamp:performance.now(), strokeId:_hrFsStrokeId()}, _hrFsCounts()));
+}
+function _hrFsRecordPreviewRafStart(){
+  if(!_hrFsActive()) return;
+  _hrFsPush(Object.assign({type:'previewRafStart', timestamp:performance.now(), strokeId:_hrFsStrokeId()}, _hrFsCounts()));
+}
+function _hrFsRecordFlushPending(durationMs, drawSegmentsMs, dispatchedCount){
+  if(!_hrFsActive()) return;
+  if(durationMs > _hrFsAgg.maxFlushPendingMs) _hrFsAgg.maxFlushPendingMs = durationMs;
+  if(drawSegmentsMs!=null && drawSegmentsMs > _hrFsAgg.maxDrawSegmentsMs) _hrFsAgg.maxDrawSegmentsMs = drawSegmentsMs;
+  if(durationMs >= _HR_FS_STALL_THRESHOLD_MS || (drawSegmentsMs!=null && drawSegmentsMs >= _HR_FS_STALL_THRESHOLD_MS)){
+    _hrFsPush(Object.assign({type:'flushPending', timestamp:performance.now(), strokeId:_hrFsStrokeId(), flushPendingMs:durationMs, drawSegmentsMs, dispatchedCount}, _hrFsCounts(), _hrFsCursorSnapshot(_lastPointerEvent)));
+  }
+}
+function _hrFsRecordPresentStart(){
+  if(!_hrFsActive()) return null;
+  const t = performance.now();
+  _hrFsPush(Object.assign({type:'presentLivePreviewStart', timestamp:t, strokeId:_hrFsStrokeId()}, _hrFsCounts()));
+  return t;
+}
+function _hrFsRecordPresentResolve(startT){
+  if(!_hrFsActive() || startT==null) return;
+  const t = performance.now();
+  const dur = t - startT;
+  if(dur > _hrFsAgg.maxPresentPromiseMs) _hrFsAgg.maxPresentPromiseMs = dur;
+  if(dur >= _HR_FS_STALL_THRESHOLD_MS){
+    _hrFsPush(Object.assign({type:'presentLivePreviewResolve', timestamp:t, strokeId:_hrFsStrokeId(), presentPromiseMs:dur}, _hrFsCounts(), _hrFsCursorSnapshot(_lastPointerEvent)));
+  }
+}
+window.HardRoundAnalyzeFrameStalls = function(){
+  const log = window.HardRoundFrameStallLog.slice();
+  const scored = log.map(r => ({
+    r,
+    score: Math.max(r.rafDeltaMs||0, r.inputGapMs||0, r.flushPendingMs||0, r.drawSegmentsMs||0, r.presentPromiseMs||0),
+  })).sort((a,b) => b.score - a.score).slice(0, 10);
+  const worst = scored.map(({r}) => ({
+    timestamp: r.timestamp,
+    strokeId: r.strokeId,
+    rafDeltaMs: r.rafDeltaMs!=null ? r.rafDeltaMs : null,
+    inputGapMs: r.inputGapMs!=null ? r.inputGapMs : null,
+    flushPendingMs: r.flushPendingMs!=null ? r.flushPendingMs : null,
+    drawSegmentsMs: r.drawSegmentsMs!=null ? r.drawSegmentsMs : null,
+    presentPromiseMs: r.presentPromiseMs!=null ? r.presentPromiseMs : null,
+    pendingSegmentCount: r.pendingSegmentCount!=null ? r.pendingSegmentCount : null,
+    rendererSegmentCount: r.rendererSegmentCount!=null ? r.rendererSegmentCount : null,
+    pointerCapture: r.pointerCapture!=null ? r.pointerCapture : null,
+    cursor: r.cursor!=null ? r.cursor : null,
+  }));
+  const summary = Object.assign({}, _hrFsAgg, {totalActiveStrokeRafFrames: _hrFsAgg.frames});
+  const out = {summary, worstStallWindows: worst};
+  console.log('[HardRoundFrameStall] summary', summary);
+  console.table ? console.table(worst) : console.log('[HardRoundFrameStall] worst windows', worst);
+  return out;
+};
+
+// ---------------------------------------------------------------------
+// PHASE 11B.14 DIAGNOSTIC (opt-in via window.HardRoundDebugMainThreadCost,
+// default off/no-op). Read-only, performance.now()-only timing of every
+// remaining synchronous chunk of work in the Hard Round pointermove/
+// pointerrawupdate path, to find what -- if anything measured here --
+// accounts for the ~100ms rAF gaps found in Phase 11B.13 (which showed
+// drawSegments/_hardRoundFlushPending were NOT big enough to explain it).
+//
+// No GPU readbacks, no getImageData, no pixel captures. Only
+// performance.now() around existing call sites.
+//
+// Never touches geometry, pressure, stabilization, AA, shaders, commit/
+// finalization, Smart Raster, legacy/custom-tip brushes, or panels/
+// core-state display composition.
+// ---------------------------------------------------------------------
+window.HardRoundMainThreadCostLog = window.HardRoundMainThreadCostLog || [];
+const _hrMtAgg = {}; // name -> {max, over8, over16, over33, count}
+const _HR_MT_MAX_LOG = 200;
+const _HR_MT_THRESHOLD_MS = 2;
+function _hrMtActive(){
+  return !!(window.HardRoundDebugMainThreadCost && typeof _inStroke!=='undefined' && _inStroke);
+}
+function _hrMtRecord(name, startT, endT){
+  if(!window.HardRoundDebugMainThreadCost) return; // aggregate even if !_inStroke edge, but gate on flag
+  const duration = endT - startT;
+  let agg = _hrMtAgg[name];
+  if(!agg){ agg = _hrMtAgg[name] = {max:0, over8:0, over16:0, over33:0, count:0}; _hrMtAgg[name]=agg; }
+  agg.count++;
+  if(duration > agg.max) agg.max = duration;
+  if(duration > 8) agg.over8++;
+  if(duration > 16) agg.over16++;
+  if(duration > 33) agg.over33++;
+  if(duration >= _HR_MT_THRESHOLD_MS){
+    const entry = {
+      name,
+      strokeId: _hrFsStrokeId(),
+      start: startT,
+      durationMs: duration,
+      pendingSegmentCount: (typeof _hardRoundPendingRenderSegments!=='undefined' && _hardRoundPendingRenderSegments) ? _hardRoundPendingRenderSegments.length : null,
+      rendererSegmentCount: (typeof _hardRoundRenderer!=='undefined' && _hardRoundRenderer) ? _hardRoundRenderer._segmentCount : null,
+    };
+    window.HardRoundMainThreadCostLog.push(entry);
+    if(window.HardRoundMainThreadCostLog.length > _HR_MT_MAX_LOG) window.HardRoundMainThreadCostLog.shift();
+  }
+}
+// Tiny helper for wrapping a synchronous call inline: _hrMtWrap('name', () => expr)
+function _hrMtWrap(name, fn){
+  if(!window.HardRoundDebugMainThreadCost) return fn();
+  const s = performance.now();
+  const r = fn();
+  _hrMtRecord(name, s, performance.now());
+  return r;
+}
+window.HardRoundAnalyzeMainThreadCost = function(){
+  const perOp = Object.keys(_hrMtAgg).map(name => Object.assign({name}, _hrMtAgg[name]));
+  const log = window.HardRoundMainThreadCostLog.slice();
+  const top10 = log.slice().sort((a,b) => b.durationMs - a.durationMs).slice(0, 10);
+  const maxSingleOp = perOp.reduce((m, o) => Math.max(m, o.max), 0);
+  const explainsGap = maxSingleOp >= 60; // rough: a single op within ~60ms+ of the ~100ms gap is a plausible sole cause
+  const note = maxSingleOp < 20
+    ? 'No single instrumented synchronous operation exceeds ~20ms. If rAF is still gapping by ~100ms, that time is NOT accounted for by the instrumented brush JS in this file -- likely outside JS entirely (browser rendering/compositor scheduling, GC, driver/GPU synchronization, or another app subsystem).'
+    : (explainsGap
+      ? 'At least one instrumented operation is large enough on its own to plausibly account for most of the ~100ms gap -- see perOperationMax for which one.'
+      : 'Instrumented operations show some cost but none individually reaches the ~100ms gap size; the gap may be the SUM of several of these back-to-back, or may still include time outside JS. Check top10SlowestOperations for clustering around the same timestamp as the blink.');
+  const out = {perOperationMax: perOp, top10SlowestOperations: top10, maxSingleOperationMs: maxSingleOp, note};
+  console.log('[HardRoundMainThreadCost] per-operation max/counts', perOp);
+  console.table ? console.table(top10) : console.log('[HardRoundMainThreadCost] top10', top10);
+  console.log('[HardRoundMainThreadCost] note:', note);
+  return out;
+};
+
+// ---------------------------------------------------------------------
+// PHASE 11B.15 DIAGNOSTIC (opt-in via window.HardRoundDebugRoutingTrace,
+// default off/no-op). Read-only. Purpose: confirm, per stroke, whether the
+// migrated Hard Round GPU path and the legacy per-dab CPU path
+// (_stampDab/_dabAA/_dabAATinyCoverage) are ever BOTH entered for the same
+// stroke, or whether a given stroke runs exactly one of the two --
+// source tracing shows _handleMoveEvent's Hard Round branch always
+// `return`s before the legacy `for(const ev of events)` loop, so the two
+// should be mutually exclusive per stroke; this diagnostic exists to
+// empirically confirm that and to capture WHY eligibility failed when it
+// does (see the eligibility snapshot recorded at pointerdown below).
+//
+// Never touches geometry, pressure, stabilization, AA math, shaders,
+// commit, or the final display-composition fix.
+// ---------------------------------------------------------------------
+window.HardRoundRoutingTraceLog = window.HardRoundRoutingTraceLog || [];
+const _HR_RT_MAX_LOG = 200;
+let _hrRtCurrentStroke = null; // per-stroke counters, reset at pointerdown
+function _hrRtNewStroke(strokeId, eligibilitySnapshot, hardRoundStrokeActive){
+  if(!window.HardRoundDebugRoutingTrace) return;
+  _hrRtCurrentStroke = {
+    strokeId,
+    hardRoundStrokeActive,
+    eligibilitySnapshot,
+    migratedHardRoundSegmentsGenerated: 0,
+    legacyDabPathEntered: false,
+    drawDabNowCount: 0,
+    dabAATinyCoverageCount: 0,
+    getImageDataCount: 0,
+    totalGetImageDataMs: 0,
+  };
+}
+function _hrRtFinalizeStroke(){
+  if(!window.HardRoundDebugRoutingTrace || !_hrRtCurrentStroke) return;
+  let isGpuActive = null;
+  try{ isGpuActive = (typeof _hardRoundRenderer!=='undefined' && _hardRoundRenderer && _hardRoundRenderer.isGpuActive) ? _hardRoundRenderer.isGpuActive() : null; }catch(_){}
+  const entry = Object.assign({}, _hrRtCurrentStroke, {isGpuActive, timestamp:performance.now()});
+  window.HardRoundRoutingTraceLog.push(entry);
+  if(window.HardRoundRoutingTraceLog.length > _HR_RT_MAX_LOG) window.HardRoundRoutingTraceLog.shift();
+  _hrRtCurrentStroke = null;
+}
+function _hrRtNoteMigratedSegments(count){
+  if(!window.HardRoundDebugRoutingTrace || !_hrRtCurrentStroke) return;
+  _hrRtCurrentStroke.migratedHardRoundSegmentsGenerated += (count||0);
+}
+function _hrRtNoteLegacyPathEntered(){
+  if(!window.HardRoundDebugRoutingTrace || !_hrRtCurrentStroke) return;
+  _hrRtCurrentStroke.legacyDabPathEntered = true;
+}
+function _hrRtNoteDrawDabNow(){
+  if(!window.HardRoundDebugRoutingTrace || !_hrRtCurrentStroke) return;
+  _hrRtCurrentStroke.drawDabNowCount++;
+}
+function _hrRtNoteDabAATinyCoverage(getImageDataMs){
+  if(!window.HardRoundDebugRoutingTrace || !_hrRtCurrentStroke) return;
+  _hrRtCurrentStroke.dabAATinyCoverageCount++;
+  _hrRtCurrentStroke.getImageDataCount++;
+  _hrRtCurrentStroke.totalGetImageDataMs += getImageDataMs;
+}
+window.HardRoundAnalyzeRoutingTrace = function(){
+  const log = window.HardRoundRoutingTraceLog.slice();
+  const bothRoutesSameStroke = log.filter(s => s.hardRoundStrokeActive && s.legacyDabPathEntered);
+  const legacyOnlyStrokes = log.filter(s => !s.hardRoundStrokeActive && s.legacyDabPathEntered);
+  const migratedOnlyStrokes = log.filter(s => s.hardRoundStrokeActive && !s.legacyDabPathEntered);
+  const out = {
+    strokes: log,
+    bothRoutesEnteredSameStrokeCount: bothRoutesSameStroke.length, // should always be 0 if source-level mutual exclusion holds
+    legacyOnlyStrokeCount: legacyOnlyStrokes.length,
+    migratedOnlyStrokeCount: migratedOnlyStrokes.length,
+  };
+  console.log('[HardRoundRoutingTrace] result', out);
+  console.table ? console.table(log) : console.log(log);
+  return out;
+};
+
+// ---------------------------------------------------------------------
+// PHASE 11B.16 MINIMAL CAUSAL TRACE / BYPASS (both default off).
+// Records only entry into the real tiny-coverage CPU renderer while the
+// stroke-level migrated-route flag is still true. No readback or stack
+// capture is added by this diagnostic.
+// ---------------------------------------------------------------------
+if(window.HardRoundDebugLegacyDabDuringGpu===undefined) window.HardRoundDebugLegacyDabDuringGpu=false;
+if(window.HardRoundDebugBypassTinyCoverageDuringGpu===undefined) window.HardRoundDebugBypassTinyCoverageDuringGpu=false;
+window.HardRoundLegacyDabDuringGpuLog=window.HardRoundLegacyDabDuringGpuLog||[];
+window.HardRoundLegacyDabDuringGpuCount=window.HardRoundLegacyDabDuringGpuCount||0;
+const _HR_LEGACY_DAB_DURING_GPU_MAX=100;
+function _hardRoundRendererIsGpuActive(){
+  try{return !!(_hardRoundRenderer&&_hardRoundRenderer.isGpuActive&&_hardRoundRenderer.isGpuActive());}
+  catch(_){return false;}
+}
+function _hardRoundTraceLegacyDabDuringGpu(radius){
+  if(!window.HardRoundDebugLegacyDabDuringGpu||_hardRoundStrokeActive!==true)return;
+  const entry={
+    timestamp:performance.now(),
+    strokeId:_activeStrokeSession,
+    activeStrokeSession:_activeStrokeSession,
+    hardRoundStrokeActive:true,
+    gpuActive:_hardRoundRendererIsGpuActive(),
+    radius:Number.isFinite(radius)?radius:null,
+    hardness:Number.isFinite(brushHardness)?brushHardness:null,
+    reason:'tiny-generated-hard-round',
+  };
+  window.HardRoundLegacyDabDuringGpuCount++;
+  window.HardRoundLegacyDabDuringGpuLog.push(entry);
+  if(window.HardRoundLegacyDabDuringGpuLog.length>_HR_LEGACY_DAB_DURING_GPU_MAX)window.HardRoundLegacyDabDuringGpuLog.shift();
+}
+function _hardRoundShouldBypassTinyCoverageDuringGpu(){
+  return window.HardRoundDebugBypassTinyCoverageDuringGpu===true&&
+    _hardRoundStrokeActive===true&&_hardRoundRendererIsGpuActive();
+}
+window.HardRoundAnalyzeLegacyDabDuringGpu=function(){
+  const log=window.HardRoundLegacyDabDuringGpuLog||[];
+  return{
+    count:window.HardRoundLegacyDabDuringGpuCount||0,
+    strokeIds:Array.from(new Set(log.map(entry=>entry.strokeId))),
+    firstEntry:log.length?log[0]:null,
+    lastEntry:log.length?log[log.length-1]:null,
+  };
+};
+
+// PHASE 11B.17: session-aware observation/guard for shared state mutations
+// made after Hard Round pointer-up has crossed an async boundary.
+if(window.HardRoundDebugStaleFinalizer===undefined)window.HardRoundDebugStaleFinalizer=false;
+if(window.HardRoundDebugGuardStaleFinalizer===undefined)window.HardRoundDebugGuardStaleFinalizer=false;
+window.HardRoundStaleFinalizerLog=window.HardRoundStaleFinalizerLog||[];
+const _HR_STALE_FINALIZER_MAX=100;
+function _hrStaleFinalizerMutation(originStrokeId,mutation,before,after,apply){
+  const stale=originStrokeId!==_activeStrokeSession;
+  if(window.HardRoundDebugStaleFinalizer){
+    const entry={timestamp:performance.now(),originStrokeId,currentActiveStrokeSession:_activeStrokeSession,mutation,before,after,stale};
+    window.HardRoundStaleFinalizerLog.push(entry);
+    if(window.HardRoundStaleFinalizerLog.length>_HR_STALE_FINALIZER_MAX)window.HardRoundStaleFinalizerLog.shift();
+  }
+  if(stale&&window.HardRoundDebugGuardStaleFinalizer)return false;
+  apply();
+  return true;
+}
+window.HardRoundAnalyzeStaleFinalizer=function(){
+  const log=(window.HardRoundStaleFinalizerLog||[]).slice();
+  const stale=log.filter(entry=>entry.stale);
+  const mutationsByName={};
+  for(const entry of log)mutationsByName[entry.mutation]=(mutationsByName[entry.mutation]||0)+1;
+  return{staleMutationCount:stale.length,firstStaleMutation:stale.length?stale[0]:null,mutationsByName,log};
+};
+
+// ---------------------------------------------------------------------
+// PHASE 11B.16 DIAGNOSTIC (opt-in via window.HardRoundDebugPerfMarks,
+// default off/no-op). performance.mark() ONLY -- no getImageData, no GPU
+// readback, no canvas capture, no console output. Purpose: make confirmed
+// migrated Hard Round GPU strokes and their pointer events trivially
+// findable in Chrome DevTools Performance recordings, so a specific
+// stroke's pointerdown/rawupdate mark can be located right next to a
+// visible blink and the long main-thread task around it inspected.
+//
+// Marks are only ever emitted for strokes already confirmed migrated/GPU
+// (i.e. _hardRoundStrokeActive is true for that stroke) -- never for
+// legacy/CPU-dab strokes. No rendering behavior is touched.
+// ---------------------------------------------------------------------
+let _hrPerfMarkStrokeId = null;
+let _hrPerfMarkRawCounter = 0;
+function _hrPerfMarkStrokeStart(strokeId){
+  if(!window.HardRoundDebugPerfMarks) return;
+  _hrPerfMarkStrokeId = strokeId;
+  _hrPerfMarkRawCounter = 0;
+  try{ performance.mark('HR-GPU-stroke-'+strokeId+'-pointerdown'); }catch(_){}
+}
+function _hrPerfMarkRaw(strokeId){
+  if(!window.HardRoundDebugPerfMarks) return;
+  _hrPerfMarkRawCounter++;
+  try{ performance.mark('HR-GPU-stroke-'+strokeId+'-raw-'+_hrPerfMarkRawCounter); }catch(_){}
+}
+function _hrPerfMarkPreviewRaf(strokeId){
+  if(!window.HardRoundDebugPerfMarks) return;
+  try{ performance.mark('HR-GPU-stroke-'+strokeId+'-preview-raf'); }catch(_){}
+}
+function _hrPerfMarkPointerup(strokeId){
+  if(!window.HardRoundDebugPerfMarks) return;
+  try{ performance.mark('HR-GPU-stroke-'+strokeId+'-pointerup'); }catch(_){}
+}
+
 function _hardRoundFlushPending(renderer){
   if(!renderer||!_hardRoundPendingRenderSegments.length)return 0;
+  const _hrFsFlushStart = _hrFsActive() ? performance.now() : null;
   const pending=_hardRoundPendingRenderSegments.splice(0,_hardRoundPendingRenderSegments.length);
+  const _hrFsDrawStart = _hrFsActive() ? performance.now() : null;
   renderer.drawSegments(pending);
+  if(_hrFsDrawStart!=null){
+    const _hrFsDrawMs = performance.now() - _hrFsDrawStart;
+    _hrFsRecordFlushPending(performance.now() - _hrFsFlushStart, _hrFsDrawMs, pending.length);
+  }
   // Bookkeeping only (no console output -- see Phase 11A.30 console
   // cleanup). Logs exactly what this flush dispatched into
   // renderer.drawSegments() -- this function is the sole path from
@@ -5231,15 +5667,73 @@ function _hardRoundFlushPending(renderer){
       flushedIntoRenderer:true,
     });
   }
+  _hr11b6Log('flushPending', null, {flushedCount:pending.length});
   return pending.length;
 }
 function _hardRoundGetRenderer(){
   if(typeof window==='undefined' || !window.PrototypeRenderer) return null;
   const w = activeC.width, h = activeC.height;
   if(!_hardRoundRenderer || _hardRoundRenderer.width!==w || _hardRoundRenderer.height!==h){
-    _hardRoundRenderer = new window.PrototypeRenderer({width:w, height:h, preferGpu:true});
+    const pooledIndex=_hardRoundRendererPool.findIndex(renderer=>renderer.width===w&&renderer.height===h&&!renderer._hardRoundFinishingOwner);
+    _hardRoundRenderer=pooledIndex>=0?_hardRoundRendererPool.splice(pooledIndex,1)[0]:new window.PrototypeRenderer({width:w, height:h, preferGpu:true});
   }
   return _hardRoundRenderer;
+}
+function _hardRoundCopyCanvas(source){
+  if(!source)return null;
+  const copy=document.createElement('canvas');copy.width=source.width;copy.height=source.height;
+  copy.getContext('2d').drawImage(source,0,0);
+  return copy;
+}
+function _hardRoundCapturedCompositeOperation(blendMode){
+  switch(blendMode){
+    case 'draw-behind':return'destination-over';case'darken':return'darken';case'multiply':return'multiply';
+    case'color-burn':return'color-burn';case'lighten':return'lighten';case'screen':return'screen';
+    case'color-dodge':return'color-dodge';case'add':case'add-glow':return'lighter';case'overlay':return'overlay';
+    case'soft-light':return'soft-light';case'hard-light':return'hard-light';case'difference':return'difference';
+    case'exclusion':return'exclusion';case'hue':return'hue';case'saturation':return'saturation';
+    case'color':return'color';case'luminosity':return'luminosity';default:return'source-over';
+  }
+}
+function _commitFinishedHardRoundStroke(context){
+  const src=context.resolvedCanvas;if(!src)return;
+  const currentDestination=curLayer===context.layerIndex&&curFrame===context.frameIndex;
+  const target=currentDestination?ctx:(context.destinationCanvas&&context.destinationCanvas.getContext('2d'));
+  if(!target)return;
+  target.save();target.globalAlpha=context.opacity;target.globalCompositeOperation=context.compositeOperation;
+  target.drawImage(src,0,0);
+  if(context.blendMode==='add-glow'){target.globalAlpha=context.opacity*.65;target.drawImage(src,0,0);}
+  target.restore();
+  if(currentDestination){
+    const key=layers[context.layerIndex]&&layers[context.layerIndex].frames[context.frameIndex];
+    if(key){const keyCtx=key.getContext('2d');keyCtx.clearRect(0,0,key.width,key.height);keyCtx.drawImage(activeC,0,0);}
+    recomposite(context.layerIndex,context.frameIndex);
+  }
+  context.state='committed';
+}
+function _hardRoundReleaseFinishingContext(context){
+  context.renderer._hardRoundFinishingOwner=null;
+  _hardRoundRendererPool.push(context.renderer);
+  _hardRoundFinishingContexts.delete(context.strokeId);
+}
+function _hardRoundFinalizeOwnedContext(context,e){
+  context.state='finishing';context.renderer._hardRoundFinishingOwner=context.strokeId;
+  _hardRoundFinishingContexts.set(context.strokeId,context);
+  const resolution=context.renderer.endStroke({readback:context.gpuCommit}).then(result=>{
+    context.resolvedCanvas=_hardRoundCopyCanvas(result&&result.canvas);
+    context.state='ready';
+    _hardRoundReleaseFinishingContext(context);
+    return context;
+  });
+  const commit=_hardRoundCommitTail.then(()=>resolution).then(ready=>{
+    _commitFinishedHardRoundStroke(ready);
+    if(ready.strokeId===_activeStrokeSession){
+      _hardRoundSetGpuOverlayVisible(false,'owned-finalization-current-session');
+      _finalizePointerEndStroke(e,ready.strokeId,false);
+    }
+  });
+  _hardRoundCommitTail=commit.catch(err=>{console.error('[Hard Round finalization]',err);});
+  return commit;
 }
 // TEMP DIAGNOSTIC (Phase 11A routing probe). Purely visual, appended once,
 // never read by any other code path. Safe to delete wholesale once the
@@ -5258,11 +5752,277 @@ function _hrDebugBadge(info){
     ' tip='+info.hasCustomTip+' tex='+info.textureEnabled;
 }
 function _hardRoundGpuOverlay(){return document.getElementById('hard-round-gpu-overlay');}
-function _hardRoundSetGpuOverlayVisible(visible){
+// Phase 11B.9 TEMP DIAGNOSTIC (opt-in, default off, off by default and never
+// polls). Gate: window.HardRoundDebugPresentationBoundary. Purpose: record
+// every state transition at the live presentation/visibility boundary
+// (the GPU overlay canvas + activeC) during an active Hard Round GPU
+// stroke, per Phase 11B.7's conclusion that segment accumulation /
+// strokeMaskTex accumulation / GPU resolve-readback are all healthy and the
+// remaining suspect is presentation/DOM visibility. Read-only: never
+// mutates overlay/activeC state itself, only observes call sites that
+// already exist. Call sites instrumented:
+//   - _hardRoundSetGpuOverlayVisible(visible) itself (every call, with the
+//     caller-supplied reason string and whether the DOM state actually
+//     changed)
+//   - PrototypeRenderer.init()'s outputContext.configure() (one-time GPU
+//     surface (re)configuration; see prototype-renderer.js)
+// Bounded ring buffer (last 200 entries) so this stays inspectable after
+// the fact via window.HardRoundPresentationBoundaryLog even if console
+// logging (window.HardRoundDebugPresentationBoundary) was off when the
+// repro happened -- flip the flag on, reproduce, then read the buffer.
+window.HardRoundPresentationBoundaryLog = window.HardRoundPresentationBoundaryLog || [];
+window.HardRoundResetPresentationBoundaryLog = function(){
+  window.HardRoundPresentationBoundaryLog = [];
+};
+function _hrPresentBoundarySnapshot(reason){
   const overlay=_hardRoundGpuOverlay();
+  const overlayCs=(overlay&&typeof getComputedStyle==='function')?getComputedStyle(overlay):null;
+  const activeCs=(typeof activeC!=='undefined'&&activeC&&typeof getComputedStyle==='function')?getComputedStyle(activeC):null;
+  const renderer=typeof _hardRoundRenderer!=='undefined'?_hardRoundRenderer:null;
+  return {
+    tag:'[11B.9 PRESENT-BOUNDARY]',
+    timestamp:performance.now(),
+    strokeId:typeof _activeStrokeSession!=='undefined'?_activeStrokeSession:null,
+    reason,
+    strokeActive:typeof _inStroke!=='undefined'?_inStroke:null,
+    hardRoundStrokeActive:typeof _hardRoundStrokeActive!=='undefined'?_hardRoundStrokeActive:null,
+    rendererSegmentCount:renderer?renderer._segmentCount:null,
+    overlay:overlay?{
+      display:overlay.style.display,
+      visibility:overlay.style.visibility,
+      opacity:overlay.style.opacity,
+      hidden:overlay.hidden,
+      width:overlay.width,
+      height:overlay.height,
+      clientWidth:overlay.clientWidth,
+      clientHeight:overlay.clientHeight,
+      isConnected:overlay.isConnected,
+      computedDisplay:overlayCs?overlayCs.display:null,
+      computedVisibility:overlayCs?overlayCs.visibility:null,
+      computedOpacity:overlayCs?overlayCs.opacity:null,
+    }:null,
+    activeC:(typeof activeC!=='undefined'&&activeC)?{
+      display:activeC.style.display,
+      visibility:activeC.style.visibility,
+      computedDisplay:activeCs?activeCs.display:null,
+      computedVisibility:activeCs?activeCs.visibility:null,
+    }:null,
+  };
+}
+function _hrPresentBoundaryLog(reason){
+  if(!window.HardRoundDebugPresentationBoundary)return;
+  const snap=_hrPresentBoundarySnapshot(reason);
+  window.HardRoundPresentationBoundaryLog.push(snap);
+  if(window.HardRoundPresentationBoundaryLog.length>200){
+    window.HardRoundPresentationBoundaryLog.splice(0,window.HardRoundPresentationBoundaryLog.length-200);
+  }
+  console.log(snap.tag,snap);
+}
+// Phase 11B.10 TEMP DIAGNOSTIC (opt-in, default off, no polling). Gate:
+// window.HardRoundDebugLivePreviewCrossover. Purpose: Phase 11B.9 proved
+// the overlay's DOM visibility/opacity/size never changes unexpectedly, but
+// exposed a timing pattern instead -- live-preview peekStroke()/present()
+// calls that are still in flight when pointerup begins, whose JS-side
+// generation/session bookkeeping only gets checked AFTER peekStroke() (and
+// therefore after any real GPU present() submit) has already resolved. This
+// records one lifecycle entry per live-preview request so that crossover
+// can be measured directly instead of inferred.
+//
+// Fields captured per live preview (see _hardRoundPresentLivePreview and
+// its .then() continuation below): strokeId, livePreviewId, requestTime,
+// presentSubmitTime (when available -- only populated for real GPU
+// present() calls, not the CanvasLivePresentation diagnostic's
+// resolveInto()-only path, and not the CPU backend), resolveTime,
+// pointerupStartedAt / finishedFrameStartedAt (looked up by strokeId,
+// filled in even if they happen AFTER this preview's request), generation
+// at request / at submit (if available) / at resolve, whether GPU
+// presentation work was actually submitted, and whether the JS accepted or
+// rejected the resolved result (and why).
+//
+// window.HardRoundGetPreviewGeneration() is a read-only accessor (added
+// solely so prototype-renderer.js's GpuBackend.present() -- which has no
+// other way to see brush-engine.js's private _hardRoundPreviewGeneration
+// counter -- can stamp what the generation was at the exact instant its
+// real GPU submit happened, without present() needing to know anything
+// else about stroke lifecycle).
+window.HardRoundLivePreviewCrossoverLog = window.HardRoundLivePreviewCrossoverLog || [];
+window.HardRoundResetLivePreviewCrossoverLog = function(){
+  window.HardRoundLivePreviewCrossoverLog = [];
+  window.HardRoundLivePreviewSubmitInfo = {};
+};
+// livePreviewId -> {submitTime, generationAtSubmit} written by
+// GpuBackend.present() in prototype-renderer.js when it actually runs for a
+// live-preview call (meta.livePreviewId set). Absence of an entry after
+// resolve means this particular live preview never reached a real GPU
+// present() call (e.g. CPU backend, or the CanvasLivePresentation
+// diagnostic's resolveInto()-only branch) -- itself part of "was
+// presentation GPU work submitted".
+window.HardRoundLivePreviewSubmitInfo = window.HardRoundLivePreviewSubmitInfo || {};
+window.HardRoundGetPreviewGeneration = function(){ return _hardRoundPreviewGeneration; };
+let _hr1110LivePreviewIdCounter = 0;
+// Keyed by strokeId (session). Recorded at the earliest possible instant of
+// each event so a live preview requested BEFORE that instant can still see
+// it filled in once it resolves later.
+let _hr1110PointerupStartedAtBySession = {};
+let _hr1110FinishedFrameStartedAtBySession = {};
+// Phase 11B.11: strokeId (session) -> {time, requestedVisible, reason} for
+// the overlay-visibility call made from beginStroke (see
+// _hardRoundSetGpuOverlayVisible below) -- the authoritative record of
+// whether/how early reveal happened for a given stroke, independent of the
+// separate 11B.9 boundary-log flag and its string-matching quirks.
+let _hr1110EarlyRevealBySession = {};
+function _hr1110PushRequest(entry){
+  if(!window.HardRoundDebugLivePreviewCrossover)return null;
+  window.HardRoundLivePreviewCrossoverLog.push(entry);
+  if(window.HardRoundLivePreviewCrossoverLog.length>300){
+    window.HardRoundLivePreviewCrossoverLog.splice(0,window.HardRoundLivePreviewCrossoverLog.length-300);
+  }
+  return entry;
+}
+// Console summary: joins each recorded live preview against the
+// pointerup/finished-frame timestamps for its stroke and reports exactly
+// the two crossover conditions Phase 11B.10 asked about, plus the "overlay
+// shown but zero accepted live previews before pointerup" fast-stroke case.
+// Read-only -- only reads window.HardRoundLivePreviewCrossoverLog and
+// window.HardRoundPresentationBoundaryLog (from 11B.9, if present).
+window.HardRoundLivePreviewCrossoverSummary = function(){
+  const log = window.HardRoundLivePreviewCrossoverLog || [];
+  const submittedAfterPointerup = log.filter(e=>
+    e.presentationSubmitted && e.presentSubmitTime!=null && e.pointerupStartedAt!=null &&
+    e.presentSubmitTime > e.pointerupStartedAt
+  );
+  const resolvedAfterFinishedFrameStarted = log.filter(e=>
+    e.resolveTime!=null && e.finishedFrameStartedAt!=null &&
+    e.resolveTime > e.finishedFrameStartedAt
+  );
+  const byStroke = {};
+  log.forEach(e=>{
+    byStroke[e.strokeId] = byStroke[e.strokeId] || {strokeId:e.strokeId, total:0, accepted:0};
+    byStroke[e.strokeId].total++;
+    if(e.accepted) byStroke[e.strokeId].accepted++;
+  });
+  const boundaryLog = window.HardRoundPresentationBoundaryLog || [];
+  // Phase 11B.11 fix: the original join here filtered
+  // window.HardRoundPresentationBoundaryLog (11B.9, a SEPARATE opt-in flag
+  // -- window.HardRoundDebugPresentationBoundary -- often not enabled in
+  // the same run as this diagnostic, so the log could be empty regardless)
+  // by `reason.indexOf('beginStroke-earlyReveal')===0`. But the string
+  // actually recorded there is `'setGpuOverlayVisible(true) via
+  // beginStroke-earlyReveal'` (see _hardRoundSetGpuOverlayVisible), which
+  // never starts at index 0 -- so the filter matched nothing even when the
+  // boundary log DID have data. Both problems are why
+  // strokesWithEarlyRevealButZeroAcceptedLivePreviews came back empty.
+  // Fixed by reading _hr1110EarlyRevealBySession instead: it's populated by
+  // this SAME diagnostic flag (window.HardRoundDebugLivePreviewCrossover),
+  // independent of 11B.9, directly inside _hardRoundSetGpuOverlayVisible
+  // whenever its `reason` argument starts with 'beginStroke' -- no string
+  // scanning of a differently-formatted log required.
+  const earlyRevealStrokeIds = Object.keys(_hr1110EarlyRevealBySession)
+    .map(Number)
+    .filter(id=>_hr1110EarlyRevealBySession[id].requestedVisible===true);
+  const zeroAcceptedFastStrokes = earlyRevealStrokeIds.filter(id=>{
+    const stats = byStroke[id];
+    return !stats || stats.accepted===0;
+  });
+  return {
+    totalLivePreviewsRecorded: log.length,
+    submittedAfterPointerupCount: submittedAfterPointerup.length,
+    submittedAfterPointerupEntries: submittedAfterPointerup,
+    resolvedAfterFinishedFrameStartedCount: resolvedAfterFinishedFrameStarted.length,
+    resolvedAfterFinishedFrameStartedEntries: resolvedAfterFinishedFrameStarted,
+    strokesWithEarlyRevealButZeroAcceptedLivePreviews: zeroAcceptedFastStrokes,
+    earlyRevealJoinFixNote: 'Phase 11B.11: this field now reads _hr1110EarlyRevealBySession, not the 11B.9 boundary log -- see comment above. If you previously saw [] here, that was the join bug, not evidence early reveal never happened.',
+    perStrokeAcceptedCounts: byStroke,
+  };
+};
+// Phase 11B.11: compact analyzer for strokes where live previews were
+// requested but NONE were accepted (stroke 4/6/7's total>0, accepted==0
+// pattern). Only strokes matching that exact condition are reported, with
+// every rejected live preview's full diagnostic record plus whether early
+// reveal happened for that stroke (via the fixed _hr1110EarlyRevealBySession
+// source above, not the broken boundary-log join).
+window.HardRoundAnalyzeZeroAcceptedPreviews = function(){
+  const log = window.HardRoundLivePreviewCrossoverLog || [];
+  const byStroke = {};
+  log.forEach(e=>{
+    byStroke[e.strokeId] = byStroke[e.strokeId] || {strokeId:e.strokeId, total:0, accepted:0, entries:[]};
+    byStroke[e.strokeId].total++;
+    if(e.accepted) byStroke[e.strokeId].accepted++;
+    byStroke[e.strokeId].entries.push(e);
+  });
+  const zeroAcceptedStrokes = Object.values(byStroke).filter(s=>s.total>0 && s.accepted===0);
+  const results = zeroAcceptedStrokes.map(s=>{
+    const earlyReveal = _hr1110EarlyRevealBySession[s.strokeId] || null;
+    const rejectedPreviews = s.entries.map(e=>({
+      strokeId: e.strokeId,
+      livePreviewId: e.livePreviewId,
+      requestTime: e.requestTime,
+      resolveTime: e.resolveTime,
+      rejectReason: e.rejectReason,
+      generationAtRequest: e.generationAtRequest,
+      generationAtResolve: e.generationAtResolve,
+      activeStrokeSessionAtResolve: e.activeStrokeSessionAtResolve,
+      hardRoundStrokeActiveAtResolve: e.hardRoundStrokeActiveAtResolve,
+      rendererSegmentCountAtResolve: e.rendererSegmentCountAtResolve,
+      presentationSubmitted: e.presentationSubmitted,
+    }));
+    return {
+      strokeId: s.strokeId,
+      totalLivePreviewsRequested: s.total,
+      accepted: s.accepted,
+      overlayRevealedAtBeginStroke: earlyReveal ? earlyReveal.requestedVisible : null,
+      earlyRevealTime: earlyReveal ? earlyReveal.time : null,
+      earlyRevealReason: earlyReveal ? earlyReveal.reason : null,
+      rejectedPreviews,
+    };
+  });
+  return {
+    strokeCountWithZeroAccepted: results.length,
+    strokes: results,
+  };
+};
+function _hardRoundSetGpuOverlayVisible(visible,reason){
+  const overlay=_hardRoundGpuOverlay();
+  // Log the call itself (including calls that no-op because the overlay
+  // element isn't in the DOM) whenever the diagnostic is enabled -- this is
+  // the "log every call, including whether it actually changed DOM state"
+  // requirement, independent of the before/after snapshots below.
+  if(window.HardRoundDebugPresentationBoundary){
+    const before=overlay?{hidden:overlay.hidden,display:overlay.style.display}:null;
+    const willChange=overlay?(overlay.hidden!==!visible||overlay.style.display!==(visible?'block':'none')):false;
+    console.log('[11B.9 SET-OVERLAY-VISIBLE]',{
+      timestamp:performance.now(),
+      requestedVisible:visible,
+      reason:reason||null,
+      overlayFound:!!overlay,
+      before,
+      willChangeDomState:willChange,
+      strokeId:typeof _activeStrokeSession!=='undefined'?_activeStrokeSession:null,
+      strokeActive:typeof _inStroke!=='undefined'?_inStroke:null,
+    });
+  }
+  // Phase 11B.11 TEMP DIAGNOSTIC (opt-in via window.HardRoundDebugLivePreviewCrossover,
+  // same flag as the rest of the 11B.10/11B.11 lifecycle diagnostic --
+  // deliberately NOT gated behind window.HardRoundDebugPresentationBoundary,
+  // since 11B.11's analyzer must work correctly even when that separate
+  // 11B.9 flag is off. Records, per stroke session, every time the overlay
+  // is made visible for the "beginStroke" reasons (both the normal
+  // beginStroke-earlyReveal path and the CanvasLivePresentation-diagnostic
+  // suppression, which explicitly requests visible=false) -- this is the
+  // authoritative, always-available source for "was early reveal true for
+  // this stroke", independent of the 11B.9 boundary log's own gating and
+  // string format.
+  if(window.HardRoundDebugLivePreviewCrossover && reason && reason.indexOf('beginStroke')===0){
+    _hr1110EarlyRevealBySession[_activeStrokeSession] = {
+      time: performance.now(),
+      requestedVisible: !!visible,
+      reason,
+    };
+  }
   if(!overlay)return;
   overlay.hidden=!visible;
   overlay.style.display=visible?'block':'none';
+  _hrPresentBoundaryLog('setGpuOverlayVisible('+visible+')'+(reason?' via '+reason:''));
 }
 // TEMP DIAGNOSTIC (Phase 11A.35): one concise timestamped surface-state log,
 // plus optional two-rAF-boundary checkpoints to sample what the browser has
@@ -5351,6 +6111,93 @@ function _hardRoundEligibleNow(){
 // used everywhere else in this module) define its continuous taper.
 let _hardRoundNextStampIsFirst = false; // Phase 9E.4 -- see _hardRoundStampSegments doc
 let _hardRoundNextStampIsLast = false;
+
+// ---------------------------------------------------------------------
+// Phase 11B.6 DIAGNOSTIC (opt-in via window.HardRoundDebugPhase11B6,
+// default off/no-op). Read-only: never touches geometry, pressure,
+// stabilization, AA, shaders, commit, pointer capture, or cursor CSS --
+// it only OBSERVES existing counters/DOM state and records them.
+//
+// Correlates, per stage of the live-stroke path, the running segment/queue
+// counts with the current cursor/hit-test/pointer-capture state, so a
+// blink/cut can be checked against (a) whether any monitored count ever
+// regresses and (b) whether the browser cursor was showing something other
+// than the app's own crosshair at that same moment.
+// ---------------------------------------------------------------------
+window.HardRoundPhase11B6Log = window.HardRoundPhase11B6Log || [];
+window.HardRoundReset11B6Log = function(){ window.HardRoundPhase11B6Log = []; };
+let _hr11b6InputSampleCount = 0;
+let _hr11b6GeneratedSegmentCount = 0;
+let _hr11b6MaxPending = 0;
+let _hr11b6MaxRendererSegments = 0;
+function _hr11b6CursorSnapshot(e){
+  if(!e || typeof e.clientX!=='number') return null;
+  let elAtPoint=null, cursorAtPoint=null;
+  try{
+    elAtPoint = document.elementFromPoint(e.clientX, e.clientY);
+    cursorAtPoint = elAtPoint ? getComputedStyle(elAtPoint).cursor : null;
+  }catch(_){}
+  let hasCapture=null;
+  try{ hasCapture = typeof e.pointerId==='number' && activeC.hasPointerCapture ? activeC.hasPointerCapture(e.pointerId) : null; }catch(_){}
+  return {
+    eventTarget: e.target && (e.target.id||e.target.tagName) || null,
+    pointerId: e.pointerId!=null?e.pointerId:null,
+    activeCHasCapture: hasCapture,
+    elementAtPoint: elAtPoint && (elAtPoint.id||elAtPoint.tagName) || null,
+    cursorAtPoint,
+    activeCCursorStyle: activeC && activeC.style ? activeC.style.cursor : null,
+  };
+}
+function _hr11b6Log(stage, e, extra){
+  if(!window.HardRoundDebugPhase11B6) return;
+  const renderer=_hardRoundRenderer;
+  const entry = Object.assign({
+    stage,
+    timestamp: performance.now(),
+    strokeId: _activeStrokeSession,
+    previewGeneration: _hardRoundPreviewGeneration,
+    inputSampleCount: _hr11b6InputSampleCount,
+    generatedSegmentCount: _hr11b6GeneratedSegmentCount,
+    pendingQueueLength: _hardRoundPendingRenderSegments.length,
+    rendererSegmentCount: renderer ? renderer._segmentCount : null,
+  }, _hr11b6CursorSnapshot(e), extra||{});
+  // First-regression tracking: a monitored count dropping below its own
+  // running max for this stroke is the signal deliverables 2-4 ask about.
+  if(entry.pendingQueueLength>_hr11b6MaxPending) _hr11b6MaxPending=entry.pendingQueueLength;
+  else if(entry.pendingQueueLength<_hr11b6MaxPending && !window.HardRoundFirst11B6Regression){
+    window.HardRoundFirst11B6Regression = Object.assign({kind:'pendingQueueLength', maxSoFar:_hr11b6MaxPending}, entry);
+  }
+  if(entry.rendererSegmentCount!=null){
+    if(entry.rendererSegmentCount>_hr11b6MaxRendererSegments) _hr11b6MaxRendererSegments=entry.rendererSegmentCount;
+    else if(entry.rendererSegmentCount<_hr11b6MaxRendererSegments && !window.HardRoundFirst11B6Regression){
+      window.HardRoundFirst11B6Regression = Object.assign({kind:'rendererSegmentCount', maxSoFar:_hr11b6MaxRendererSegments}, entry);
+    }
+  }
+  const log=window.HardRoundPhase11B6Log;
+  log.push(entry);
+  if(log.length>500) log.splice(0, log.length-500);
+}
+// Summarizes the log: whether any monitored count ever regressed
+// (deliverables 2-4), and whether any entry recorded a non-crosshair
+// cursor while pointer capture was still held on activeC (i.e. cursor
+// changed WITHOUT input actually leaving the drawing surface -- deliverable
+// 4-5). Read-only.
+window.HardRoundAnalyze11B6 = function(){
+  const log=(window.HardRoundPhase11B6Log||[]).slice();
+  const cursorAnomalies = log.filter(e=>e.activeCHasCapture===true && e.elementAtPoint && e.elementAtPoint!=='active-canvas');
+  return {
+    totalEntries: log.length,
+    firstRegression: window.HardRoundFirst11B6Regression || null,
+    cursorAnomalyCount: cursorAnomalies.length,
+    firstCursorAnomaly: cursorAnomalies[0]||null,
+    // Same-timestamp-neighborhood check: does a cursor anomaly land within
+    // ~1 frame (16ms) of the first regression, if any?
+    cursorNearFirstRegression: (window.HardRoundFirst11B6Regression && cursorAnomalies.length)
+      ? cursorAnomalies.some(e=>Math.abs(e.timestamp-window.HardRoundFirst11B6Regression.timestamp)<16)
+      : null,
+    log,
+  };
+};
 function _hardRoundStampSegments(segments, e){
   if(!segments || !segments.length) return;
   // Phase 9E.4: mark the stroke's true open start/end (not just this
@@ -5385,6 +6232,7 @@ function _hardRoundStampSegments(segments, e){
   // Size-dynamics computation entirely for migrated Hard Round strokes.
   _flowSpacingRatio = 1;
   const renderSegs = [];
+  const _hrMtAdapterStart = _hrMtActive() ? performance.now() : null;
   for(const seg of segments){
     currentPressure = seg.pressure0;
     const alpha0 = _getEffectiveBrushParams(e).alpha;
@@ -5398,6 +6246,7 @@ function _hardRoundStampSegments(segments, e){
       getEffectiveAlpha: (pressure) => (pressure===seg.pressure0 ? alpha0 : alpha1),
     }));
   }
+  if(_hrMtAdapterStart!=null) _hrMtRecord('HardRoundAdapter.resolveSegmentRenderParams-loop', _hrMtAdapterStart, performance.now());
   // PrototypeRenderer.drawSegments() accumulates into its own private SS=4
   // backing store (max-blended coverage). It is not painted to any
   // on-screen/scratch canvas by drawSegments() itself, so no per-segment
@@ -5424,7 +6273,10 @@ function _hardRoundStampSegments(segments, e){
   }
   currentPressure = savedPressure;
   _flowSpacingRatio = previousFlowRatio;
+  _hr11b6Log('stampSegments-pushed-pending', e);
+  const _hrMtReqPreviewStart = _hrMtActive() ? performance.now() : null;
   _hardRoundRequestLivePreview(renderer);
+  if(_hrMtReqPreviewStart!=null) _hrMtRecord('_hardRoundRequestLivePreview', _hrMtReqPreviewStart, performance.now());
 }
 
 // Phase 9C.1: resolves PrototypeRenderer's CURRENT (still in-progress)
@@ -5561,8 +6413,295 @@ if (typeof window !== 'undefined') {
     };
   };
 }
+// ---------------------------------------------------------------------
+// Phase 11B.7 DIAGNOSTIC (opt-in via window.HardRoundDebugLiveFrameRegression,
+// default off/no-op). Read-only: never touches geometry, pressure,
+// stabilization, AA, shaders, commit, pointer capture, cursor CSS, or the
+// existing display-composition fix. Invoked ONLY at the real GPU-overlay
+// accept point inside _hardRoundPresentLivePreview below (the production
+// path -- not the 11B.5 canvas-live-presentation diagnostic redirect,
+// which never touches the overlay).
+//
+// Purpose: answer whether an ACCEPTED live-preview frame ever visually
+// loses stroke coverage that a strictly-earlier accepted frame from the
+// SAME stroke already had, even though rendererSegmentCount is monotonic
+// non-decreasing between them. If so, the blink is a genuinely regressed
+// presented frame; if not (no coverage loss is ever recorded across
+// accepted frames while the blink is reproduced), the blink is an
+// overlay/display visibility issue rather than bad pixel content.
+//
+// Each accepted GPU frame is drawn (via drawImage, a cheap
+// CanvasImageSource copy) into a small downscaled off-screen 2D canvas
+// (longest side capped at DIAG_11B7_MAX_DIM px) so cost stays bounded
+// regardless of document size. Only ONE previous downscaled coverage
+// snapshot is retained at a time (not a per-frame history), so memory
+// stays flat. A binary coverage mask (alpha > threshold) is compared
+// bit-for-bit against the previous snapshot: pixels that were covered
+// before and are NOT covered now are "lost coverage". Pure AA/color/
+// alpha-magnitude shifts that don't cross the coverage threshold in
+// either direction are deliberately excluded from that count, so normal
+// antialiasing/opacity changes don't register as false positives.
+// ---------------------------------------------------------------------
+// ---------------------------------------------------------------------
+// Phase 11B.8 CORRECTION (opt-in via window.HardRoundDebugLiveFrameRegression,
+// default off/no-op). Read-only.
+//
+// Phase 11B.7's drawImage()-based capture of the WebGPU overlay canvas
+// (_hardRoundGpuOverlay()) reported differingPixelCount:0 across 25
+// consecutive accepted frames even while rendererSegmentCount rose
+// 131->491. That is not evidence the presented pixels were actually
+// identical -- it's a known WebGPU-canvas sampling gap:
+//
+//   present() awaits device.queue.onSubmittedWorkDone(), which only
+//   confirms the GPU finished executing the submitted commands. It says
+//   nothing about whether the browser has performed its own "update the
+//   rendering" step that copies/composites the configured canvas context's
+//   current texture into that <canvas> element's presented output bitmap.
+//   That step is tied to the UA's rendering opportunities (effectively
+//   rAF-timed), not to GPU command completion. drawImage()/getImageData()
+//   read from the canvas element's OUTPUT bitmap, not from strokeMaskTex or
+//   the just-submitted texture directly -- so a synchronous capture taken
+//   immediately after present() resolves (as 11B.7 did, inside the same
+//   microtask chain, before any rendering opportunity has occurred) can
+//   legitimately observe a stale/unchanged output bitmap on every call,
+//   producing a systematic false "no diff" across an entire stroke. This
+//   is a capture-timing gap in the diagnostic, not proof the real
+//   displayed frames were identical.
+//
+// Fix for the DIAGNOSTIC (not the app): stop sampling the presentation
+// canvas at all. Read directly from strokeMaskTex instead, via the
+// existing renderer.gpu.diagResolveIntoBuffer() -- the same non-mutating,
+// read-only GPU buffer readback already used by the 11A.27 LAST_LIVE
+// diagnostic. It renders strokeMaskTex through the real resolve pipeline
+// into a scratch texture and reads that back with copyTextureToBuffer(),
+// entirely independent of the outputContext/swapchain/canvas element --
+// so its timing can't be confounded by canvas-presentation lag the way
+// drawImage() was. _hrHashBuffer() (already defined above, used by
+// 11A.27) gives nonTransparent count + a content hash for it.
+// ---------------------------------------------------------------------
+let _hr11b7Counter = 0;
+let _hr11b7PrevHash = null; // { strokeId, previewId, rendererSegmentCount, hashed }
+if (typeof window !== 'undefined' && !window.HardRoundLiveFrameRegressionLog) {
+  window.HardRoundLiveFrameRegressionLog = [];
+}
+function _hr11b7PushLog(entry) {
+  const log = window.HardRoundLiveFrameRegressionLog || (window.HardRoundLiveFrameRegressionLog = []);
+  log.push(entry);
+  if (log.length > 100) log.splice(0, log.length - 100);
+}
+// Reads strokeMaskTex directly (bypassing the presentation canvas
+// entirely) and compares against the previous accepted frame from the
+// SAME strokeId. Fire-and-forget async -- callers must not await this in
+// the production accept path, so it can never delay
+// _hardRoundSetGpuOverlayVisible(true) or any other real behavior.
+async function _hr11b7CompareAndRecord(renderer, strokeId, rendererSegmentCount) {
+  if (!renderer || !renderer.gpu || !renderer.gpu.ready) return;
+  let buf = null;
+  try { buf = await renderer.gpu.diagResolveIntoBuffer(renderer._rgb, renderer._composite); } catch (err) { return; }
+  const hashed = _hrHashBuffer(buf, '11B8-accepted');
+  const previewId = ++_hr11b7Counter;
+  const prev = _hr11b7PrevHash;
+  if (prev && prev.strokeId === strokeId) {
+    const diff = _hrDiffHashes(prev.hashed, hashed);
+    const segmentsMonotonic = rendererSegmentCount >= prev.rendererSegmentCount;
+    const entry = {
+      strokeId,
+      previousPreviewId: prev.previewId,
+      newPreviewId: previewId,
+      previousRendererSegmentCount: prev.rendererSegmentCount,
+      newRendererSegmentCount: rendererSegmentCount,
+      segmentsMonotonic,
+      previousNonTransparent: prev.hashed.nonTransparent,
+      newNonTransparent: hashed.nonTransparent,
+      previousHash: prev.hashed.hash,
+      newHash: hashed.hash,
+      imageChanged: diff ? !diff.hashEqual : null,
+      nonTransparentDelta: diff ? diff.nonTransparentDelta : null,
+      timestamp: performance.now(),
+    };
+    _hr11b7PushLog(entry);
+    // A real regression: segment count didn't drop, but strokeMaskTex's
+    // own coverage count did -- this can no longer be blamed on canvas-
+    // presentation lag, since diagResolveIntoBuffer() never touches the
+    // canvas/swapchain.
+    if (segmentsMonotonic && entry.nonTransparentDelta != null && entry.nonTransparentDelta < 0 && !window.HardRoundFirstLiveFrameRegression) {
+      window.HardRoundFirstLiveFrameRegression = entry;
+    }
+  }
+  _hr11b7PrevHash = { strokeId, previewId, rendererSegmentCount, hashed };
+}
+window.HardRoundAnalyzeLiveFrameRegression = function () {
+  const log = (window.HardRoundLiveFrameRegressionLog || []).slice();
+  return {
+    totalComparisons: log.length,
+    // "Suspicious" = image genuinely unchanged (by hash) despite the
+    // renderer segment count having grown between the two accepted frames
+    // -- the exact symptom being checked for, now measured against
+    // strokeMaskTex directly instead of the presentation canvas.
+    suspiciousNoChangeWhileGrowing: log.filter(e => e.segmentsMonotonic && e.newRendererSegmentCount > e.previousRendererSegmentCount && e.imageChanged === false).length,
+    regressionsFound: log.filter(e => e.segmentsMonotonic && e.nonTransparentDelta != null && e.nonTransparentDelta < 0).length,
+    firstRegression: window.HardRoundFirstLiveFrameRegression || null,
+    log,
+  };
+};
+// Phase 11B.12 TEMP DIAGNOSTIC (opt-in via
+// window.HardRoundDebugPaintedOverlayCompare, default off). Everything
+// established so far (11B.7/11B.8/11B.9/11B.10/11B.11) reads strokeMaskTex
+// directly and never looks at what the browser actually painted for the
+// WebGPU presentation canvas itself. This closes that gap: for an accepted
+// live GPU preview, capture the reliable expected frame (same non-mutating
+// diagResolveIntoBuffer() readback 11B.7/11B.8 already use) and, completely
+// separately and without awaiting/delaying the real preview path, sample
+// what the overlay canvas actually shows after the browser has genuinely
+// had a chance to paint it (two rAF boundaries -- a single rAF callback
+// runs BEFORE paint, not after, same reasoning already used by
+// _hardRoundPresentFinishedFrame's own two-rAF wait). Then diffs the two
+// pixel-for-pixel to find coverage present in strokeMaskTex but missing
+// from what was actually painted.
+//
+// Fire-and-forget only: callers (see the accepted-frame branch in
+// _hardRoundPresentLivePreview below) must call this with .catch(()=>{})
+// and never await it. Never calls GpuBackend.present(), never touches
+// overlay visibility/display, never mutates strokeMaskTex or geometry --
+// diagResolveIntoBuffer() and reading the overlay via drawImage()/
+// getImageData() are both read-only.
+window.HardRoundPaintedOverlayCompareLog = window.HardRoundPaintedOverlayCompareLog || [];
+window.HardRoundResetPaintedOverlayCompareLog = function(){
+  window.HardRoundPaintedOverlayCompareLog = [];
+};
+let _hr1112PreviewIdCounter = 0;
+// Tracks the most recently ACCEPTED preview id so a comparison started for
+// an earlier preview can detect it was superseded by a later accepted
+// preview before its own painted capture happened -- distinct from (and in
+// addition to) the existing _hardRoundPreviewGeneration check, which only
+// changes on cancel/stroke-end, not on every accepted frame within one
+// stroke.
+let _hr1112LatestAcceptedPreviewId = 0;
+let _hr1112PaintedCompareCanvas = null; // reused scratch 2D canvas
+function _hr1112PushLog(entry){
+  window.HardRoundPaintedOverlayCompareLog.push(entry);
+  if (window.HardRoundPaintedOverlayCompareLog.length > 50) {
+    window.HardRoundPaintedOverlayCompareLog.splice(0, window.HardRoundPaintedOverlayCompareLog.length - 50);
+  }
+}
+// Pixel-for-pixel diff: coverage present in `expectedBuf` (strokeMaskTex
+// readback) but alpha===0 in `paintedData` (what the overlay canvas
+// actually shows). Both are same-size RGBA buffers by construction (the
+// overlay canvas is always sized renderer.w x renderer.h -- see
+// GpuBackend.init() -- matching diagResolveIntoBuffer()'s own output).
+function _hr1112ComputeLostCoverage(expectedBuf, paintedData, w, h){
+  let lostCount = 0, minX = w, minY = h, maxX = -1, maxY = -1;
+  for (let yy = 0; yy < h; yy++) {
+    for (let xx = 0; xx < w; xx++) {
+      const idx = (yy * w + xx) * 4;
+      const expectedAlpha = expectedBuf[idx + 3];
+      const paintedAlpha = paintedData[idx + 3];
+      if (expectedAlpha > 0 && paintedAlpha === 0) {
+        lostCount++;
+        if (xx < minX) minX = xx; if (xx > maxX) maxX = xx;
+        if (yy < minY) minY = yy; if (yy > maxY) maxY = yy;
+      }
+    }
+  }
+  return { lostCoveragePixelCount: lostCount, lostCoverageBounds: maxX >= minX ? { minX, minY, maxX, maxY } : null };
+}
+async function _hr1112CompareAndRecord(renderer, strokeId, rendererSegmentCount, previewGenerationAtAccept){
+  if (!renderer || !renderer.gpu || !renderer.gpu.ready) return;
+  const previewId = ++_hr1112PreviewIdCounter;
+  _hr1112LatestAcceptedPreviewId = previewId;
+  // present() for this accepted frame has already run and resolved by the
+  // time this branch executes (peekStroke() already returned) -- this is
+  // the best available approximation of its submit time without hooking
+  // present() itself, which this diagnostic deliberately does not do.
+  const presentSubmitTime = performance.now();
+  let expectedBuf = null;
+  try { expectedBuf = await renderer.gpu.diagResolveIntoBuffer(renderer._rgb, renderer._composite); }
+  catch (err) { return; }
+  if (!expectedBuf) return;
+  const expectedReadbackTime = performance.now();
+  const expectedHashed = _hrHashBuffer(expectedBuf, '11B12-expected');
+
+  // Give the browser a genuine rendering opportunity before sampling what
+  // it actually painted. A rAF callback runs BEFORE the browser paints, so
+  // one boundary is the minimum; wait a second as a safety margin (same
+  // pattern already used by _hardRoundPresentFinishedFrame).
+  let rafBoundariesWaited = 0;
+  await new Promise(resolve => requestAnimationFrame(() => { rafBoundariesWaited = 1; resolve(); }));
+  await new Promise(resolve => requestAnimationFrame(() => { rafBoundariesWaited = 2; resolve(); }));
+
+  // Supersede check, done AFTER the paint wait (i.e. right before the
+  // painted capture): if a later preview has since been accepted, or the
+  // stroke has since been cancelled/ended (generation bump), the overlay
+  // may legitimately show different/newer content by now -- comparing it
+  // against THIS preview's expected buffer would compare mismatched
+  // frames, not demonstrate lost coverage. Excluded from conclusions, not
+  // silently dropped, so it's still visible in the log.
+  const supersededByNewerPreview = _hr1112LatestAcceptedPreviewId !== previewId;
+  const supersededByGenerationChange = previewGenerationAtAccept !== _hardRoundPreviewGeneration;
+  const superseded = supersededByNewerPreview || supersededByGenerationChange;
+
+  const overlay = _hardRoundGpuOverlay();
+  let paintedHashed = { error: 'no-overlay' };
+  let lostCoverage = { lostCoveragePixelCount: null, lostCoverageBounds: null };
+  if (overlay) {
+    try {
+      if (!_hr1112PaintedCompareCanvas) _hr1112PaintedCompareCanvas = document.createElement('canvas');
+      const cap = _hr1112PaintedCompareCanvas;
+      if (cap.width !== expectedBuf.w || cap.height !== expectedBuf.h) {
+        cap.width = expectedBuf.w; cap.height = expectedBuf.h;
+      }
+      const capCtx = cap.getContext('2d');
+      capCtx.clearRect(0, 0, cap.width, cap.height);
+      capCtx.drawImage(overlay, 0, 0, cap.width, cap.height);
+      const paintedData = capCtx.getImageData(0, 0, cap.width, cap.height).data;
+      paintedHashed = _hrHashBuffer({ data: paintedData, w: cap.width, h: cap.height }, '11B12-painted');
+      if (!superseded) {
+        lostCoverage = _hr1112ComputeLostCoverage(expectedBuf.data, paintedData, expectedBuf.w, expectedBuf.h);
+      }
+    } catch (err) {
+      paintedHashed = { error: String(err) };
+    }
+  }
+  const paintedCaptureTime = performance.now();
+  _hr1112PushLog({
+    strokeId,
+    previewId,
+    rendererSegmentCount,
+    presentSubmitTime,
+    expectedReadbackTime,
+    paintedCaptureTime,
+    rafBoundariesWaited,
+    expectedNonTransparent: expectedHashed.nonTransparent != null ? expectedHashed.nonTransparent : null,
+    paintedNonTransparent: paintedHashed.nonTransparent != null ? paintedHashed.nonTransparent : null,
+    lostCoveragePixelCount: lostCoverage.lostCoveragePixelCount,
+    lostCoverageBounds: lostCoverage.lostCoverageBounds,
+    expectedHash: expectedHashed.hash != null ? expectedHashed.hash : null,
+    paintedHash: paintedHashed.hash != null ? paintedHashed.hash : null,
+    superseded,
+    supersededReason: superseded ? (supersededByNewerPreview ? 'superseded-by-newer-accepted-preview' : 'preview-generation-changed') : null,
+  });
+}
+// Console entry point. Excludes superseded comparisons from the
+// lost-coverage conclusion (their painted-vs-expected mismatch may simply
+// reflect legitimate newer content, not lost coverage) but keeps them in
+// the returned log for inspection.
+window.HardRoundAnalyzePaintedOverlayCompare = function(){
+  const log = (window.HardRoundPaintedOverlayCompareLog || []).slice();
+  const usable = log.filter(e => !e.superseded && e.lostCoveragePixelCount != null);
+  const withLostCoverage = usable.filter(e => e.lostCoveragePixelCount > 0);
+  let maxLost = 0;
+  withLostCoverage.forEach(e => { if (e.lostCoveragePixelCount > maxLost) maxLost = e.lostCoveragePixelCount; });
+  return {
+    totalComparisons: log.length,
+    comparisonsWithLostCoverage: withLostCoverage.length,
+    maxLostCoveragePixelCount: withLostCoverage.length ? maxLost : 0,
+    firstLostCoverage: withLostCoverage.length ? withLostCoverage[0] : null,
+    log,
+  };
+};
 function _hardRoundPresentLivePreview(renderer){
   if(!renderer || !_inStroke || !_strokeCtx || !_strokeCanvas) return;
+  const _hrMtSetupStart = _hrMtActive() ? performance.now() : null;
   const session = _activeStrokeSession;
   // Phase 11A.5: capture the current preview generation. See
   // _hardRoundPreviewGeneration below for why this check exists in
@@ -5588,12 +6727,47 @@ function _hardRoundPresentLivePreview(renderer){
     };
   }
   // --- end diagnostic request-time bookkeeping ---
+  // --- diagnostic (11B.10): request-time bookkeeping, opt-in, read-only ---
+  const livePreviewId = window.HardRoundDebugLivePreviewCrossover ? ++_hr1110LivePreviewIdCounter : null;
+  const _hr1110Entry = livePreviewId!=null ? _hr1110PushRequest({
+    strokeId: session,
+    livePreviewId,
+    requestTime: performance.now(),
+    presentSubmitTime: null,
+    resolveTime: null,
+    pointerupStartedAt: _hr1110PointerupStartedAtBySession[session]!=null ? _hr1110PointerupStartedAtBySession[session] : null,
+    finishedFrameStartedAt: _hr1110FinishedFrameStartedAtBySession[session]!=null ? _hr1110FinishedFrameStartedAtBySession[session] : null,
+    generationAtRequest: previewGeneration,
+    generationAtSubmit: null,
+    generationAtResolve: null,
+    presentationSubmitted: false,
+    accepted: false,
+    rejectReason: null,
+    // Phase 11B.11 additions: state at resolve time, for the
+    // zero-accepted-stroke analyzer.
+    activeStrokeSessionAtResolve: null,
+    hardRoundStrokeActiveAtResolve: null,
+    inStrokeAtResolve: null,
+    rendererSegmentCountAtResolve: null,
+  }) : null;
+  // --- end 11B.10 request-time bookkeeping ---
+  // --- 11B.13 frame-stall diagnostic: request-time bookkeeping ---
+  const _hrFsPresentStart = _hrFsRecordPresentStart();
+  // --- end 11B.13 request-time bookkeeping ---
+  if(_hrMtSetupStart!=null) _hrMtRecord('_hardRoundPresentLivePreview-sync-setup', _hrMtSetupStart, performance.now());
   // Phase 11A.39: pass this call's strokeId (session) through to
   // peekStroke() -> GpuBackend.present() purely so the opt-in
   // window.HardRoundGpuPresentLog diagnostic can attribute each real
   // present()/submit() to the stroke that requested it. Read-only; does not
   // change which frame is requested, resolved, or accepted below.
-  renderer.peekStroke({ strokeId: session, segmentCount: renderer._segmentCount }).then(async result=>{
+  // livePreviewId (11B.10, opt-in) is likewise passed through untouched, so
+  // GpuBackend.present() can record submit-time info keyed by it -- see
+  // window.HardRoundLivePreviewSubmitInfo above. Neither field affects
+  // which frame is requested, resolved, or accepted.
+  renderer.peekStroke({ strokeId: session, segmentCount: renderer._segmentCount, livePreviewId }).then(async result=>{
+    // --- 11B.13 frame-stall diagnostic: resolve-time bookkeeping ---
+    _hrFsRecordPresentResolve(_hrFsPresentStart);
+    // --- end 11B.13 resolve-time bookkeeping ---
     // --- diagnostic (11A.31): resolve-time bookkeeping, opt-in, read-only.
     // Runs BEFORE the real guards below so we see every resolve, including
     // ones the real logic is about to reject as stale -- that rejection
@@ -5610,10 +6784,60 @@ function _hardRoundPresentLivePreview(renderer){
       else if (!result || !result.canvas) { _dbgOrderEntry.staleAtResolve=true; _dbgOrderEntry.staleReason='no-result'; }
     }
     // --- end diagnostic resolve-time bookkeeping (pre-guard) ---
-    if(previewGeneration!==_hardRoundPreviewGeneration) { if(_dbgOrderEntry)_hardRoundPreviewOrderPush(_dbgOrderEntry); return; }
-    if(session!==_activeStrokeSession || !_inStroke || !_strokeCtx || !_strokeCanvas) { if(_dbgOrderEntry)_hardRoundPreviewOrderPush(_dbgOrderEntry); return; }
-    if(!result || !result.canvas) { if(_dbgOrderEntry)_hardRoundPreviewOrderPush(_dbgOrderEntry); return; }
+    // --- diagnostic (11B.10): resolve-time bookkeeping, opt-in, read-only.
+    // Computed once, before the real guards run, so a stale/rejected
+    // preview is recorded exactly like an accepted one -- only the
+    // accepted/rejectReason fields differ.
+    if (_hr1110Entry) {
+      _hr1110Entry.resolveTime = performance.now();
+      _hr1110Entry.generationAtResolve = _hardRoundPreviewGeneration;
+      _hr1110Entry.activeStrokeSessionAtResolve = _activeStrokeSession;
+      _hr1110Entry.hardRoundStrokeActiveAtResolve = typeof _hardRoundStrokeActive!=='undefined' ? _hardRoundStrokeActive : null;
+      _hr1110Entry.inStrokeAtResolve = _inStroke;
+      _hr1110Entry.rendererSegmentCountAtResolve = renderer ? renderer._segmentCount : null;
+      const submitInfo = window.HardRoundLivePreviewSubmitInfo[livePreviewId];
+      if (submitInfo) {
+        _hr1110Entry.presentationSubmitted = true;
+        _hr1110Entry.presentSubmitTime = submitInfo.submitTime;
+        _hr1110Entry.generationAtSubmit = submitInfo.generationAtSubmit;
+        delete window.HardRoundLivePreviewSubmitInfo[livePreviewId];
+      }
+      if (previewGeneration!==_hardRoundPreviewGeneration) _hr1110Entry.rejectReason='preview-generation-cancelled';
+      else if (session!==_activeStrokeSession) _hr1110Entry.rejectReason='session-changed';
+      else if (!_inStroke || !_strokeCtx || !_strokeCanvas) _hr1110Entry.rejectReason='stroke-ended';
+      else if (!result || !result.canvas) _hr1110Entry.rejectReason='no-result';
+      else _hr1110Entry.accepted = true;
+    }
+    // --- end 11B.10 resolve-time bookkeeping ---
+    if(previewGeneration!==_hardRoundPreviewGeneration) { _hr11b6Log('presentLivePreview-stale',_lastPointerEvent,{reason:'preview-generation-cancelled'}); if(_dbgOrderEntry)_hardRoundPreviewOrderPush(_dbgOrderEntry); return; }
+    if(session!==_activeStrokeSession || !_inStroke || !_strokeCtx || !_strokeCanvas) { _hr11b6Log('presentLivePreview-stale',_lastPointerEvent,{reason:'session-or-stroke-ended'}); if(_dbgOrderEntry)_hardRoundPreviewOrderPush(_dbgOrderEntry); return; }
+    if(!result || !result.canvas) { _hr11b6Log('presentLivePreview-stale',_lastPointerEvent,{reason:'no-result'}); if(_dbgOrderEntry)_hardRoundPreviewOrderPush(_dbgOrderEntry); return; }
+    _hr11b6Log('presentLivePreview-accepted',_lastPointerEvent,{resultSegmentCount:result.segmentCount});
     if(renderer.isGpuActive&&renderer.isGpuActive()){
+      // Phase 11B.5 TEMP DIAGNOSTIC (opt-in, default off): when
+      // window.HardRoundDebugCanvasLivePresentation is true,
+      // renderer.peekStroke() (see prototype-renderer.js) already redirected
+      // this live-preview call away from GpuBackend.present()/the WebGPU
+      // overlay and instead did a non-mutating gpu.resolveInto() readback
+      // into a plain Canvas2D canvas, returned here as result.canvas. Route
+      // it through the EXACT SAME _strokeCtx draw + _scheduleRecomposite()
+      // the CPU backend's branch below already uses, and explicitly keep
+      // the WebGPU overlay hidden -- never call
+      // _hardRoundSetGpuOverlayVisible(true) in this mode, for ANY live
+      // preview frame. GPU accumulation/strokeMaskTex/rasterization are
+      // untouched; only which surface the resolved pixels are drawn to
+      // changes. finishStroke()/commit/_hardRoundPresentFinishedFrame() are
+      // NOT touched by this flag -- it only affects this function.
+      if(window.HardRoundDebugCanvasLivePresentation){
+        if(result.canvas){
+          _hardRoundSetGpuOverlayVisible(false,'presentLivePreview-canvasLivePresentationMode');
+          _strokeCtx.clearRect(0,0,_strokeCanvas.width,_strokeCanvas.height);
+          _strokeCtx.drawImage(result.canvas,0,0);
+        }
+        if(_dbgOrderEntry){ _dbgOrderEntry.overlayShown=false; _hardRoundPreviewOrderPush(_dbgOrderEntry); }
+        _scheduleRecomposite();
+        return;
+      }
       // Phase 11A.30: this is the exact point a real live-preview frame has
       // been ACCEPTED for the current stroke session (session/generation/
       // result checks above all passed) and is about to be shown
@@ -5678,7 +6902,28 @@ function _hardRoundPresentLivePreview(renderer){
       }
       // The WebGPU canvas is already a visible document-space overlay in
       // canvas-wrap. Never copy its live pixels through Canvas2D.
-      _hardRoundSetGpuOverlayVisible(true);
+      // Phase 11B.8 DIAGNOSTIC (opt-in, default off, see
+      // _hr11b7CompareAndRecord above _hardRoundPresentLivePreview for
+      // full rationale): reads strokeMaskTex directly via the existing
+      // non-mutating diagResolveIntoBuffer() readback -- NOT the
+      // presentation canvas -- so it can't be confounded by
+      // canvas-presentation timing. Deliberately not awaited: this must
+      // never delay the real _hardRoundSetGpuOverlayVisible(true) call
+      // immediately below.
+      if (window.HardRoundDebugLiveFrameRegression) {
+        _hr11b7CompareAndRecord(renderer, session, renderer._segmentCount).catch(()=>{});
+      }
+      // Phase 11B.12 DIAGNOSTIC (opt-in, default off): same fire-and-forget
+      // shape as the 11B.8 call directly above -- never awaited, so it
+      // cannot delay the real _hardRoundSetGpuOverlayVisible(true) call
+      // immediately below. `previewGeneration` is this closure's own
+      // captured generation value (see the top of
+      // _hardRoundPresentLivePreview), used to detect if this preview gets
+      // superseded before its own painted-overlay capture completes.
+      if (window.HardRoundDebugPaintedOverlayCompare) {
+        _hr1112CompareAndRecord(renderer, session, renderer._segmentCount, previewGeneration).catch(()=>{});
+      }
+      _hardRoundSetGpuOverlayVisible(true,'presentLivePreview-accepted-frame');
       // --- diagnostic (11A.31): this generation's pixels were actually shown ---
       if(_dbgOrderEntry){ _dbgOrderEntry.overlayShown=true; _hardRoundPreviewOrderPush(_dbgOrderEntry); }
       return;
@@ -5715,9 +6960,13 @@ let _hardRoundPreviewSession = null;
 let _hardRoundPreviewNotBefore = 0;
 function _hardRoundSchedulePreviewFrame(renderer){
   if(_hardRoundPreviewRAF!==null)return;
+  _hrFsRecordSchedule();
   _hardRoundPreviewRAF=requestAnimationFrame(()=>{
+    const _hrMtCbStart = _hrMtActive() ? performance.now() : null;
     _hardRoundPreviewRAF=null;
+    _hrFsRecordPreviewRafStart();
     if(_hardRoundPreviewSession!==_activeStrokeSession||!_inStroke)return;
+    _hrPerfMarkPreviewRaf(_hardRoundPreviewSession);
     const started=performance.now();
     _hardRoundFlushPending(renderer);
     const rasterMs=performance.now()-started;
@@ -5729,6 +6978,7 @@ function _hardRoundSchedulePreviewFrame(renderer){
     _hardRoundPreviewNotBefore=performance.now()+(rasterMs>8?Math.min(50,rasterMs):0);
     _hardRoundPresentLivePreview(renderer);
     if(_hardRoundPendingRenderSegments.length)_hardRoundRequestLivePreview(renderer);
+    if(_hrMtCbStart!=null) _hrMtRecord('_hardRoundSchedulePreviewFrame-callback-total', _hrMtCbStart, performance.now());
   });
 }
 function _hardRoundRequestLivePreview(renderer){
@@ -5796,7 +7046,7 @@ function _hardRoundCancelLivePreview(hideOverlay=true){
   }
   _hardRoundPreviewSession = null;
   _hardRoundPreviewNotBefore = 0;
-  if(hideOverlay)_hardRoundSetGpuOverlayVisible(false);
+  if(hideOverlay)_hardRoundSetGpuOverlayVisible(false,'cancelLivePreview');
 }
 
 // Present the renderer state after finishStroke() has supplied its catch-up
@@ -5805,16 +7055,25 @@ function _hardRoundCancelLivePreview(hideOverlay=true){
 // Two RAF boundaries are intentional: RAF callbacks run before paint, so the
 // first boundary makes the submitted final frame paintable and the second is
 // the earliest safe point at which commit may replace it.
-function _hardRoundPresentFinishedFrame(renderer){
+function _hardRoundPresentFinishedFrame(renderer,originStrokeId=_activeStrokeSession){
   if(!renderer)return Promise.resolve();
+  // Phase 11B.10 TEMP DIAGNOSTIC (opt-in, default off): record the instant
+  // the finished-frame path begins, keyed by the still-active session, so
+  // any live preview that resolves AFTER this point (even one requested
+  // earlier) can be identified as crossing this boundary.
+  if (window.HardRoundDebugLivePreviewCrossover) {
+    _hr1110FinishedFrameStartedAtBySession[_activeStrokeSession] = performance.now();
+  }
   return renderer.peekStroke().then(result=>{
     if(result&&result.canvas){
       if(renderer.isGpuActive&&renderer.isGpuActive()){
-        _hardRoundSetGpuOverlayVisible(true);
+        _hrStaleFinalizerMutation(originStrokeId,'finishedPreviewGpuOverlayVisible',false,true,()=>_hardRoundSetGpuOverlayVisible(true,'presentFinishedFrame'));
       }else if(_strokeCtx&&_strokeCanvas){
-        _strokeCtx.clearRect(0,0,_strokeCanvas.width,_strokeCanvas.height);
-        _strokeCtx.drawImage(result.canvas,0,0);
-        _scheduleRecomposite();
+        _hrStaleFinalizerMutation(originStrokeId,'finishedPreviewStrokeScratchCanvas','current-shared-stroke','old-finished-preview',()=>{
+          _strokeCtx.clearRect(0,0,_strokeCanvas.width,_strokeCanvas.height);
+          _strokeCtx.drawImage(result.canvas,0,0);
+          _scheduleRecomposite();
+        });
       }
     }
     return new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
@@ -5980,6 +7239,7 @@ function _sampleVisibleCanvasColor(e){
 // pixels exactly where the stroke path enters the canvas Ã¢â‚¬â€ no special
 // "entry" case needed, no gap, no restart.
 function _brushPointerDown(e){
+  _hrFsRecordInput('pointerdown', e);
   const diagnosticPointerdownEntry=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
   const customTraceEntry=window.CustomFirstDabTrace&&window.CustomFirstDabTrace.enabled?performance.now():0;
   // e.button can be -1 on some tablet drivers for pen primary contact; use e.buttons&1 instead
@@ -6028,6 +7288,15 @@ function _brushPointerDown(e){
   // known. Re-evaluating mid-stroke (e.g. if the user hot-swapped a setting
   // while held down) would risk switching renderers under a live stroke.
   _hardRoundStrokeActive = tool==='brush' && _hardRoundEligibleNow() && !!_hardRoundGetCore() && !!_hardRoundGetRenderer();
+  if(window.HardRoundDebugRoutingTrace){
+    _hrRtNewStroke(_activeStrokeSession, {
+      tool, isPen:_isDrawingWithPen, hasCustomTip:!!window.brushTipCanvas,
+      hardness:brushHardness, sizeControl:_getSizeControl(), roundness:window.brushTipRoundness,
+      scatterEnabled:!!window._tsScatterEnabled, textureEnabled:!!window.brushTextureEnabled,
+      airbrush:!!window._brushAirbrush, eligibleNowResult:_hardRoundEligibleNow(),
+      hasCore:!!_hardRoundGetCore(), hasRenderer:!!_hardRoundGetRenderer(),
+    }, _hardRoundStrokeActive);
+  }
   _strokeFirstSample = true; // this stroke's first _getPressure() call snaps immediately, no de-jitter clamping
   currentPressure=_getPressure(e);
   _smoothedPressure = currentPressure; // snap smoothing to actual pressure at stroke start (no ramp-in lag)
@@ -6057,6 +7326,7 @@ function _brushPointerDown(e){
   if(tool==='fill'){pushUndo();ensureKey();floodFill(p.x,p.y,color);saveActiveToKey();recomposite(curLayer,curFrame);return;}
   _activeStrokePointerId=e.pointerId;
   _strokeOwnerLayer=curLayer;_strokeOwnerFrame=curFrame;_activeStrokeSession=++_strokeSessionSerial;
+  if(_hardRoundStrokeActive) _hrPerfMarkStrokeStart(_activeStrokeSession);
   _traceStrokeLifecycle('stroke-start',{sourceLayer:curLayer,sourceFrame:curFrame});
   _strokeCompletionStarted=false;
   if(tool==='line'||tool==='curve'){
@@ -6168,6 +7438,14 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
       // before beginStroke() touches anything. Whole-canvas region since
       // stroke 1's bounding box isn't tracked separately here.
       const _hrProbeBefore=_hrHashActiveCRegion(0,0,activeC.width,activeC.height,'beforeBeginStroke');
+      _hardRoundActiveContext={
+        strokeId:_activeStrokeSession,renderer:hardRoundRenderer,layerIndex:curLayer,frameIndex:curFrame,
+        destinationCanvas:layers[curLayer]&&layers[curLayer].frames[curFrame]||null,
+        opacity:Math.max(0,Math.min(1,brushOpacity)),blendMode:window.brushBlendMode||'normal',
+        compositeOperation:_hardRoundCapturedCompositeOperation(window.brushBlendMode||'normal'),
+        resolvedCanvas:null,dirtyRect:null,state:'active',gpuCommit:false,
+      };
+      window.HardRoundOverlayOwnerStrokeId=_activeStrokeSession;
       hardRoundRenderer.beginStroke();
       // TEMP DIAGNOSTIC (Phase 11A.19): same region, immediately after
       // beginStroke() returns, before the overlay is toggled visible.
@@ -6191,8 +7469,20 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
       // changed; this does not touch brush math, geometry, or the commit
       // path. Remove once Phase 11A.22 is resolved either way.
       _hr1135Log('next-stroke-pre-overlay-show');
-      if(!window.HardRoundDebugDelayOverlayShow){
-        _hardRoundSetGpuOverlayVisible(!!(hardRoundRenderer.isGpuActive&&hardRoundRenderer.isGpuActive()));
+      // Phase 11B.5 TEMP DIAGNOSTIC: when window.HardRoundDebugCanvasLivePresentation
+      // is true, never do this early unconditional overlay reveal either --
+      // otherwise the overlay would flash visible here (before this
+      // stroke's own peekStroke() has even resolved once) even though every
+      // subsequent live-preview frame in this mode intentionally keeps it
+      // hidden (see _hardRoundPresentLivePreview above). Explicitly hide it
+      // instead, so "overlay stays hidden throughout diagnostic mode" holds
+      // from the very first frame of the stroke, not just after the first
+      // peek resolves.
+      if(window.HardRoundDebugCanvasLivePresentation){
+        _hardRoundSetGpuOverlayVisible(false,'beginStroke-canvasLivePresentationMode');
+        _traceStrokeLifecycle('hardround-overlay-show-suppressed-canvas-live-presentation',{gpuActive:!!(hardRoundRenderer.isGpuActive&&hardRoundRenderer.isGpuActive())});
+      }else if(!window.HardRoundDebugDelayOverlayShow){
+        _hardRoundSetGpuOverlayVisible(!!(hardRoundRenderer.isGpuActive&&hardRoundRenderer.isGpuActive()),'beginStroke-earlyReveal');
         _hr1135Log('next-stroke-post-overlay-show');
         _hr1135LogAfterPaint('next-stroke-post-overlay-show');
       }else{
@@ -6365,6 +7655,8 @@ window.cancelCurveTool=_cancelCurveTool;
 // before the browser throttles events to display refresh rate Ã¢â‚¬â€ giving every
 // real pressure value the tablet digitizer reports, not just the surviving ones.
 function _handleMoveEvent(e){
+  const _hrMtMoveStart = _hrMtActive() ? performance.now() : null;
+  _hrFsRecordInput(e.type||'pointermove', e);
   if(tool==='curve'&&_curveToolGesture&&_curveToolGesture.phase==='bending'){
     if(activeGroupId)return;const p=getPos(e);_lastPointerEvent=e;_curveToolGesture.control={x:p.x,y:p.y};_scheduleLinePreview(p.x,p.y,e);return;
   }
@@ -6372,7 +7664,9 @@ function _handleMoveEvent(e){
   if(_activeStrokePointerId!=null&&e.pointerId!==_activeStrokePointerId) return;
   if(!(e.buttons&1)){_endStroke(e.pointerId);return;}
   e.preventDefault();
+  const _hrMtCoalesceStart = _hrMtActive() ? performance.now() : null;
   const events=(typeof e.getCoalescedEvents==='function'&&e.getCoalescedEvents().length)?e.getCoalescedEvents():[e];
+  if(_hrMtCoalesceStart!=null) _hrMtRecord('getCoalescedEvents', _hrMtCoalesceStart, performance.now());
   if((tool==='line'||tool==='curve')&&_lineDragging){
     // Record every coalesced sample (position + pressure) at full input
     // rate -- this is what lets Pen Pressure preserve the whole recorded
@@ -6392,6 +7686,7 @@ function _handleMoveEvent(e){
     return;
   }
   if(_hardRoundStrokeActive && _hardRoundCore){
+    _hrPerfMarkRaw(_activeStrokeSession);
     // Phase 8C: PrototypeStrokeCore owns pressure smoothing, position
     // stabilization, and interpolation for this stroke -- the legacy
     // _stabilizePoint/_curveAddPoint pipeline below is intentionally
@@ -6410,14 +7705,28 @@ function _handleMoveEvent(e){
       };
     });
     _hardRoundCore.updateSettings({brushSize:getBrushSize(),stabilization:_stabilizationAmount(),zoom});
+    const _hrMtPushStart = _hrMtActive() ? performance.now() : null;
     const segments=_hardRoundCore.pushSamples(samples);
+    if(_hrMtPushStart!=null) _hrMtRecord('PrototypeStrokeCore.pushSamples', _hrMtPushStart, performance.now());
+    if(window.HardRoundDebugRoutingTrace) _hrRtNoteMigratedSegments(segments.length);
+    _hr11b6InputSampleCount += samples.length;
+    _hr11b6GeneratedSegmentCount += segments.length;
+    _hr11b6Log('pushSamples', e, {batchInputSamples:samples.length, batchGeneratedSegments:segments.length});
+    const _hrMtStampStart = _hrMtActive() ? performance.now() : null;
     _hardRoundStampSegments(segments,e);
+    if(_hrMtStampStart!=null) _hrMtRecord('_hardRoundStampSegments-total', _hrMtStampStart, performance.now());
     const last=samples[samples.length-1];
     currentPressure=last.pressure;lx=last.x;ly=last.y;_lastPointerEvent=e;
-    if(!(_hardRoundRenderer&&_hardRoundRenderer.isGpuActive&&_hardRoundRenderer.isGpuActive()))_scheduleRecomposite();
+    if(!(_hardRoundRenderer&&_hardRoundRenderer.isGpuActive&&_hardRoundRenderer.isGpuActive())){
+      const _hrMtRecompStart = _hrMtActive() ? performance.now() : null;
+      _scheduleRecomposite();
+      if(_hrMtRecompStart!=null) _hrMtRecord('_scheduleRecomposite-call', _hrMtRecompStart, performance.now());
+    }
+    if(_hrMtMoveStart!=null) _hrMtRecord('_handleMoveEvent-total', _hrMtMoveStart, performance.now());
     return;
   }
   for(const ev of events){
+    if(window.HardRoundDebugRoutingTrace) _hrRtNoteLegacyPathEntered();
     const newPressure = _getPressure(ev);
     const raw=getPos(ev);
     if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.sample({source:e.type,eventTime:ev.timeStamp,x:raw.x,y:raw.y,pressure:newPressure,coalescedCount:events.length});
@@ -6474,6 +7783,18 @@ if(_hasRawUpdate){
   });
 }
 function _pointerEndStroke(e){
+  const finalizingStrokeSession=_activeStrokeSession;
+  if(_hardRoundStrokeActive) _hrPerfMarkPointerup(_activeStrokeSession);
+  // Phase 11B.10 TEMP DIAGNOSTIC (opt-in, default off): record the instant
+  // pointerup begins finishing this stroke, keyed by the session that is
+  // still active right now (it does not change until the NEXT
+  // pointerdown), so any live preview -- already in flight or requested
+  // later -- can be checked against it. Deliberately the very first line,
+  // ahead of even the 11A.30 freeze below, since this is the earliest
+  // possible timestamp for "pointerup started".
+  if (window.HardRoundDebugLivePreviewCrossover) {
+    _hr1110PointerupStartedAtBySession[_activeStrokeSession] = performance.now();
+  }
   // Phase 11A.30 §3: must be the very first thing this function does --
   // synchronously copies the metadata for the newest ACCEPTED live frame
   // (generation, strokeId/sessionId, segmentCountAtAccept, acceptedAt) into
@@ -6598,7 +7919,24 @@ function _pointerEndStroke(e){
     const previewGenerationAtFinish=_hardRoundPreviewGeneration;
     _hardRoundCancelLivePreview(false);
     _hardRoundStrokeActive=false;
+    if(window.HardRoundDebugRoutingTrace) _hrRtFinalizeStroke();
     _traceStrokeLifecycle('hardround-cancelLivePreview',{previewGenerationAtFinish,previewGenerationAfterCancel:_hardRoundPreviewGeneration,overlayVisible:_hardRoundGpuOverlay()?!_hardRoundGpuOverlay().hidden:null});
+    // Phase 11C.2: detach renderer and commit resources before crossing the
+    // async readback boundary. A subsequent pointerdown must acquire a
+    // different renderer and may freely replace all current-stroke globals.
+    const ownedContext=_hardRoundActiveContext;
+    const ownedGpuContext=ownedContext&&ownedContext.strokeId===_activeStrokeSession&&
+      ownedContext.renderer.isGpuActive&&ownedContext.renderer.isGpuActive();
+    if(ownedGpuContext){
+      ownedContext.dirtyRect=_strokeDirty?Object.assign({},_strokeDirty):null;
+      ownedContext.gpuCommit=true;
+      _hardRoundActiveContext=null;
+      if(_hardRoundRenderer===ownedContext.renderer)_hardRoundRenderer=null;
+      _inStroke=false;
+      _hardRoundFinalizeOwnedContext(ownedContext,e);
+      return;
+    }
+    _hardRoundActiveContext=null; // CPU/Smart/selection routes retain the established finalization below.
     // Phase 9C: PrototypeRenderer.endStroke() resolves the whole stroke's
     // SS=4 backing store down to one finished logical-resolution canvas.
     // That canvas is this stroke's entire visible output -- draw it into
@@ -6613,8 +7951,10 @@ function _pointerEndStroke(e){
     // of pointerup for the only path actually exercised in this phase.
     const renderer=_hardRoundRenderer;
     const finishHardRoundStroke=()=>{
-      _restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();
-      _finalizePointerEndStroke(e);
+      _hrStaleFinalizerMutation(finalizingStrokeSession,'postCommitCleanupAndSave','pending','complete',()=>{
+        _restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();
+      });
+      _finalizePointerEndStroke(e,finalizingStrokeSession,true);
       _traceStrokeLifecycle('hardround-recomposite-after-finalize',{overlayVisible:_hardRoundGpuOverlay()?!_hardRoundGpuOverlay().hidden:null});
     };
     if(renderer){
@@ -6635,7 +7975,7 @@ function _pointerEndStroke(e){
       // unmodified _hardRoundPresentFinishedFrame() path below, regardless
       // of this flag -- see the gpuCommit condition.
       const hr32Bypass=!!(gpuCommit&&window.HardRoundDebugBypassFinishedGpuPreview);
-      const hr32FinishedFramePromise=hr32Bypass?Promise.resolve():_hardRoundPresentFinishedFrame(renderer);
+      const hr32FinishedFramePromise=hr32Bypass?Promise.resolve():_hardRoundPresentFinishedFrame(renderer,finalizingStrokeSession);
       if(hr32Bypass&&window.HardRoundDebugPhase11A32){
         console.log('[11A.32 BYPASS RESULT]','skipping _hardRoundPresentFinishedFrame(); going straight to endStroke({readback:true})');
       }
@@ -6738,23 +8078,30 @@ function _pointerEndStroke(e){
             console.log('[11A.25] LIVE_PRESENT_DIAG vs FINAL_RESOLVE_DIAG',window.HardRoundPresentVsResolveResult);
           }catch(err){console.warn('[11A.25] present-vs-resolve diagnostic failed',err);}
         }
-        // Real production call -- exactly once, unchanged.
-        return renderer.endStroke({readback:gpuCommit}).then(result=>({result,endStrokeCalledAt,hr20PreEnd}));
+        // The debug-only session guard must also cover the shared renderer:
+        // after a new beginStroke(), ending it here would end the new stroke.
+        let endStrokePromise=null;
+        const mayEndRenderer=_hrStaleFinalizerMutation(finalizingStrokeSession,'renderer.endStroke',gpuCommit?'gpu-active':'cpu-active','ended',()=>{
+          endStrokePromise=renderer.endStroke({readback:gpuCommit});
+        });
+        if(!mayEndRenderer)return{result:null,endStrokeCalledAt,hr20PreEnd};
+        return endStrokePromise.then(result=>({result,endStrokeCalledAt,hr20PreEnd}));
       }).then(({result,endStrokeCalledAt,hr20PreEnd})=>{
         _traceStrokeLifecycle('hardround-endStroke-resolve',{elapsedMs:performance.now()-endStrokeCalledAt,hasCanvas:!!(result&&result.canvas),segmentCount:result&&result.segmentCount,overlayVisibleBeforeHide:_hardRoundGpuOverlay()?!_hardRoundGpuOverlay().hidden:null,inStroke:_inStroke});
-        if(gpuCommit)window.HardRoundDebugCapture.C=_hrCaptureCanvas(result&&result.canvas,'C-endStroke-readback');
-        // TEMP DIAGNOSTIC (Phase 11A.20): FINAL_GPU capture + comparisons.
-        // Wrapped in try/catch so a diagnostic failure never affects the
-        // real result object or the commit flow below.
+        // Phase 11B.2 cleanup: Phase 11A.16/11A.20's C/FINAL_GPU captures used
+        // to run unconditionally on every gpuCommit stroke, each doing a
+        // full-canvas ctx.getImageData() -- source of the recurring
+        // "getImageData performance warnings" console noise and needless
+        // per-stroke CPU cost. The out-of-order-completion hypothesis these
+        // captures existed to test has already been disproven
+        // (provesOutOfOrderCompletion:false, see 11A.31), so they are now
+        // gated behind an explicit opt-in flag (default off) instead of
+        // removed outright, in case a later phase needs to re-run them.
         let hr20FinalGpu=null;
-        if(gpuCommit){
+        if(gpuCommit&&window.HardRoundDebugPhase11A16Captures){
+          window.HardRoundDebugCapture.C=_hrCaptureCanvas(result&&result.canvas,'C-endStroke-readback');
           try{
             hr20FinalGpu=result&&result.canvas?_hrHashCanvas(result.canvas,'FINAL_GPU'):null;
-            // Phase 11A.30: routine [11A.20] FINAL_GPU / PRE_END vs
-            // FINAL_GPU / vertex accounting console spam removed. Values
-            // are still computed (available via hr20FinalGpu / the
-            // existing window.HardRoundDebugCapture bucket) in case a
-            // later phase needs them again.
             if(window.HardRoundDebugPhase11A30){
               console.log('[11A.30] FINAL_GPU',hr20FinalGpu);
               console.log('[11A.30] PRE_END vs FINAL_GPU',_hrDiffHashes(hr20PreEnd,hr20FinalGpu));
@@ -6772,11 +8119,14 @@ function _pointerEndStroke(e){
         const hr33KeepOverlay=!!(gpuCommit&&window.HardRoundDebugKeepGpuOverlayAfterCommit);
         _hr1135Log('pre-overlay-hide');
         if(!hr33KeepOverlay){
-          _hardRoundSetGpuOverlayVisible(false);
+          const overlay=_hardRoundGpuOverlay(),overlayBefore=overlay?!overlay.hidden:null;
+          _hrStaleFinalizerMutation(finalizingStrokeSession,'gpuOverlayVisible',overlayBefore,false,()=>_hardRoundSetGpuOverlayVisible(false,'endStroke-post-commit-hide'));
         } else if(window.HardRoundDebugPhase11A33){
           console.log('[11A.33 HANDOFF]','overlay-hide suppressed after commit; run document.getElementById(\'hard-round-gpu-overlay\').style.display=\'none\' manually to observe the handoff');
         }
         if(_inStroke){
+          const mayMutateSharedStroke=_hrStaleFinalizerMutation(finalizingStrokeSession,'strokeScratchCanvas','current-shared-stroke','old-finalized-stroke',()=>{});
+          if(mayMutateSharedStroke){
           // Phase 11A.36 stage A: the GPU-resolved result exactly as
           // returned by renderer.endStroke(), BEFORE it is copied into
           // _strokeCanvas. Captured here (not earlier) so it reflects
@@ -6802,11 +8152,15 @@ function _pointerEndStroke(e){
           // as _commitStrokeCanvas() -> _getTexturedStrokeCanvas() will
           // read it.
           if(gpuCommit)_hrStageDiagCaptureB(_strokeCanvas);
-          _inStroke=false;_commitStrokeCanvas();
-          // TEMP DIAGNOSTIC (Phase 11A.16): capture D -- the affected
-          // active-layer region right after commit. Reads only; does not
-          // modify ctx/activeC.
-          if(gpuCommit&&result&&result.canvas){
+          _hrStaleFinalizerMutation(finalizingStrokeSession,'_inStroke',_inStroke,false,()=>{_inStroke=false;});
+          _commitStrokeCanvas();
+          // Phase 11B.2 cleanup: Phase 11A.16 capture D + _hrRunCaptureSummary()
+          // used to run unconditionally on every gpuCommit stroke (another
+          // full-canvas getImageData(), stacked on top of A/B/C above) to
+          // compare against the now-disproven out-of-order-completion
+          // hypothesis. Gated behind the same opt-in flag as the C/FINAL_GPU
+          // captures above; off by default.
+          if(gpuCommit&&result&&result.canvas&&window.HardRoundDebugPhase11A16Captures){
             try{
               const w=result.canvas.width,h=result.canvas.height;
               const tmp=document.createElement('canvas');tmp.width=w;tmp.height=h;
@@ -6814,6 +8168,7 @@ function _pointerEndStroke(e){
               window.HardRoundDebugCapture.D=_hrCaptureCanvas(tmp,'D-committed-layer-region');
             }catch(err){console.warn('[HR-CAPTURE] D failed',err);}
             _hrRunCaptureSummary();
+          }
           }
         }
         _traceStrokeLifecycle('hardround-committed',{overlayVisible:_hardRoundGpuOverlay()?!_hardRoundGpuOverlay().hidden:null});
@@ -6857,25 +8212,31 @@ function _pointerEndStroke(e){
   }
   _finalizePointerEndStroke(e);
 }
-function _finalizePointerEndStroke(e){
-  _hardRoundStrokeActive=false; // Phase 8C: safety net across every exit path
-  _endColorEraserStroke();
-  _completePostStrokePresentation(_strokeOwnerLayer,_strokeOwnerFrame);
-  const latencyProfiler=_brushPerf();if(latencyProfiler)latencyProfiler.finishStroke({tool,sourceLayer:_strokeOwnerLayer,sourceFrame:_strokeOwnerFrame});
-  if(window.CompositionPrewarm)window.CompositionPrewarm.noteStrokeComplete();
-  if(window.BrushRafExperiment)window.BrushRafExperiment.strokeEnds({dabCount:_strokeDabCount});
-  if(window.BrushFirstDabExperiment)window.BrushFirstDabExperiment.strokeEnds({dabCount:_strokeDabCount});
-  if(window.KeyframeLatencyExperiment)window.KeyframeLatencyExperiment.strokeEnds({dabCount:_strokeDabCount});
-  if(window.TipReadbackExperiment)window.TipReadbackExperiment.strokeEnd();
-  if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.endStroke();
-  if(window.CustomTipCacheTrace)window.CustomTipCacheTrace.strokeEnd();
-  if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.strokeComplete();
-  _baselineConditionerFinish(false);
-  _pendingDabs.length=0;
-  _curveP0=null;_curveP1=null;
-  _strokeSegCarryOver=0;
-  _activeStrokePointerId=null;
-  _strokeOwnerLayer=-1;_strokeOwnerFrame=-1;
+function _finalizePointerEndStroke(e,originStrokeId=_activeStrokeSession,fromAsync=false){
+  const mutate=(name,before,after,apply)=>fromAsync?_hrStaleFinalizerMutation(originStrokeId,name,before,after,apply):(apply(),true);
+  mutate('_hardRoundStrokeActive',_hardRoundStrokeActive,false,()=>{_hardRoundStrokeActive=false;}); // Phase 8C safety net
+  if(window.HardRoundDebugRoutingTrace)mutate('routingTraceCurrentStroke','active','finalized',()=>_hrRtFinalizeStroke());
+  mutate('colorEraserStrokeState','active','ended',()=>_endColorEraserStroke());
+  mutate('postStrokePresentation','pending','complete',()=>_completePostStrokePresentation(_strokeOwnerLayer,_strokeOwnerFrame));
+  mutate('strokeCompletionObservers','active','finished',()=>{
+    const latencyProfiler=_brushPerf();if(latencyProfiler)latencyProfiler.finishStroke({tool,sourceLayer:_strokeOwnerLayer,sourceFrame:_strokeOwnerFrame});
+    if(window.CompositionPrewarm)window.CompositionPrewarm.noteStrokeComplete();
+    if(window.BrushRafExperiment)window.BrushRafExperiment.strokeEnds({dabCount:_strokeDabCount});
+    if(window.BrushFirstDabExperiment)window.BrushFirstDabExperiment.strokeEnds({dabCount:_strokeDabCount});
+    if(window.KeyframeLatencyExperiment)window.KeyframeLatencyExperiment.strokeEnds({dabCount:_strokeDabCount});
+    if(window.TipReadbackExperiment)window.TipReadbackExperiment.strokeEnd();
+    if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.endStroke();
+    if(window.CustomTipCacheTrace)window.CustomTipCacheTrace.strokeEnd();
+    if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.strokeComplete();
+  });
+  mutate('_baselineConditionerState',!!_baselineConditionerState,false,()=>_baselineConditionerFinish(false));
+  mutate('_pendingDabs.length',_pendingDabs.length,0,()=>{_pendingDabs.length=0;});
+  mutate('_curveP0',_curveP0,null,()=>{_curveP0=null;});
+  mutate('_curveP1',_curveP1,null,()=>{_curveP1=null;});
+  mutate('_strokeSegCarryOver',_strokeSegCarryOver,0,()=>{_strokeSegCarryOver=0;});
+  mutate('_activeStrokePointerId',_activeStrokePointerId,null,()=>{_activeStrokePointerId=null;});
+  mutate('_strokeOwnerLayer',_strokeOwnerLayer,-1,()=>{_strokeOwnerLayer=-1;});
+  mutate('_strokeOwnerFrame',_strokeOwnerFrame,-1,()=>{_strokeOwnerFrame=-1;});
 }
 document.addEventListener('keydown',e=>{
   if(!_curveToolGesture)return;const target=e.target instanceof Element?e.target:null;

@@ -41,15 +41,16 @@ test('constant input pressure remains constant through finish geometry',()=>{
   const r=run(scenarios.fast,{pressure:.5});
   for(const s of r.finish.segments){assert.ok(Math.abs(s.pressure0-.5)<1e-12);assert.ok(Math.abs(s.pressure1-.5)<1e-12);}
 });
-test('pointer-up lifecycle presents finished renderer state before endStroke and commit',()=>{
+test('pointer-up lifecycle detaches the renderer, resolves an owned result, then commits it',()=>{
   const src=fs.readFileSync(path.join(__dirname,'brush-engine.js'),'utf8');
   const finish=src.indexOf('const finish=_hardRoundCore.finishStroke');
   const flush=src.indexOf('_hardRoundFlushPending(_hardRoundRenderer)',finish);
-  const present=src.indexOf('_hardRoundPresentFinishedFrame(renderer)',flush);
-  const end=src.indexOf('renderer.endStroke({readback:gpuCommit})',present);
-  const hide=src.indexOf('_hardRoundSetGpuOverlayVisible(false)',end);
-  const commit=src.indexOf('_commitStrokeCanvas()',hide);
-  assert.ok(finish<flush&&flush<present&&present<end&&end<hide&&hide<commit,{finish,flush,present,end,hide,commit});
+  const detach=src.indexOf('_hardRoundActiveContext=null',flush);
+  const finalize=src.indexOf('_hardRoundFinalizeOwnedContext(ownedContext,e)',detach);
+  const ownedEnd=src.indexOf('context.renderer.endStroke({readback:context.gpuCommit})');
+  const copy=src.indexOf('context.resolvedCanvas=_hardRoundCopyCanvas',ownedEnd);
+  const commit=src.indexOf('_commitFinishedHardRoundStroke(ready)',copy);
+  assert.ok(finish<flush&&flush<detach&&detach<finalize&&ownedEnd<copy&&copy<commit,{finish,flush,detach,finalize,ownedEnd,copy,commit});
 });
 test('finished frame survives a browser paint before overlay exchange',()=>{
   const src=fs.readFileSync(path.join(__dirname,'brush-engine.js'),'utf8');

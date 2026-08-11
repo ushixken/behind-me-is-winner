@@ -586,6 +586,32 @@
         const outputFormat = navigator.gpu.getPreferredCanvasFormat();
         this.outputFormat = outputFormat;
         this.outputContext.configure({ device, format: outputFormat, alphaMode: 'premultiplied' });
+        // Phase 11B.9 TEMP DIAGNOSTIC (opt-in, default off): record this
+        // (re)configure at the presentation boundary. This module only
+        // calls configure() here, once, inside init() -- so a second entry
+        // in the log for the same renderer instance would itself be
+        // evidence worth investigating. Guarded so it's a no-op unless
+        // brush-engine.js's window.HardRoundDebugPresentationBoundary flag
+        // is on and its logger happens to be loaded first; wrapped in
+        // try/catch so a missing global can never break real init().
+        if (typeof window !== 'undefined' && window.HardRoundDebugPresentationBoundary) {
+          try {
+            console.log('[11B.9 OUTPUT-CONTEXT-CONFIGURE]', {
+              timestamp: performance.now(),
+              outputFormat,
+              canvasWidth: this.outputCanvas.width,
+              canvasHeight: this.outputCanvas.height,
+              isConnected: this.outputCanvas.isConnected,
+            });
+          } catch (_) {}
+        }
+        // Phase 11B.4 TEMP DIAGNOSTIC: bump whenever the output context is
+        // (re)configured. This module only calls configure() here, once,
+        // inside init() -- so under normal operation this should never
+        // change again for the lifetime of a renderer instance. Read by
+        // present()'s diagnostic to catch an external reconfigure (e.g. a
+        // canvas resize elsewhere in the app) coinciding with a stall.
+        this._contextConfigGeneration = (this._contextConfigGeneration || 0) + 1;
 
         const shaderModule = device.createShaderModule({ code: STROKE_SHADER_WGSL });
         this.strokePipeline = device.createRenderPipeline({
@@ -674,6 +700,13 @@
 
     reset() {
       if (!this.ready) return;
+      // Phase 11B.4 TEMP DIAGNOSTIC: bump a generation counter every time
+      // strokeMaskTex is cleared (real bookkeeping already done by this
+      // method -- beginStroke()/cancelStroke() are its only callers). Read
+      // by present()'s diagnostic above to detect whether a NEW stroke
+      // reset strokeMaskTex out from under a still-in-flight present() from
+      // the PREVIOUS stroke.
+      this._maskResetGeneration = (this._maskResetGeneration || 0) + 1;
       const enc = this.device.createCommandEncoder();
       const pass = enc.beginRenderPass({
         colorAttachments: [{ view: this.strokeMaskTex.createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } }],
@@ -751,6 +784,9 @@
     // allocation, JavaScript pixel loop, or Canvas2D upload.
     async present(rgb, composite, opacity, meta) {
       if (!this.ready || !this.outputContext) return null;
+      if (meta && meta.strokeId != null && typeof window !== 'undefined' &&
+          window.HardRoundOverlayOwnerStrokeId != null &&
+          meta.strokeId !== window.HardRoundOverlayOwnerStrokeId) return this.outputCanvas;
       const isErase = composite === 'erase';
       const cr = isErase ? 0 : rgb[0] / 255;
       const cg = isErase ? 0 : rgb[1] / 255;
@@ -788,14 +824,54 @@
           // onSubmittedWorkDone() resolution at the moment THIS call
           // entered present() -- i.e. concurrently in-flight GPU work.
           otherPresentsInFlightAtEnter: GpuBackend._inFlightCount,
+          // --- Phase 11B.4 additions below: fine-grained stage timing and
+          // swapchain/context state, requested to answer questions 1-3, 7-8
+          // (does a stalled present clear/replace visible content early,
+          // is getCurrentTexture()/context reconfiguration involved, does
+          // strokeMaskTex stay intact, is there a full-canvas clear/resize).
+          // All read-only: these read existing state or timestamps around
+          // existing calls, they do not add any new GPU work or change
+          // ordering.
+          beforeGetCurrentTextureTime: null,
+          afterGetCurrentTextureTime: null,
+          getCurrentTextureMs: null,
+          beforeRenderPassTime: null,
+          outputCanvasWidthBefore: this.outputCanvas ? this.outputCanvas.width : null,
+          outputCanvasHeightBefore: this.outputCanvas ? this.outputCanvas.height : null,
+          outputCanvasWidthAfter: null,
+          outputCanvasHeightAfter: null,
+          // Bumped only inside reset() (see below) -- if this present's
+          // "before" and "after" values differ, strokeMaskTex was cleared
+          // by a NEW stroke's beginStroke()/reset() while this present's
+          // GPU work was still in flight (a genuinely different bug class
+          // than swapchain/present() behavior itself).
+          maskResetGenerationBefore: this._maskResetGeneration || 0,
+          maskResetGenerationAfter: null,
+          // Bumped only inside init()'s outputContext.configure() call --
+          // this module never calls configure() again after the first
+          // init(), so under normal operation before/after should always
+          // match; a mismatch would mean something outside this diagnostic
+          // reconfigured the context mid-present.
+          contextConfigGenerationBefore: this._contextConfigGeneration || 0,
+          contextConfigGenerationAfter: null,
+          // Phase 11B.4: did this specific present() skip the
+          // onSubmittedWorkDone() fence (see the flag below)?
+          skippedWorkDoneWait: false,
         };
         GpuBackend._inFlightCount++;
       }
       // --- end diagnostic setup ---
       this.device.queue.writeBuffer(this.presentUniformBuf, 0, new Float32Array([cr, cg, cb, strokeOpacity]));
       const enc = this.device.createCommandEncoder();
+      if (_diagEntry) _diagEntry.beforeGetCurrentTextureTime = performance.now();
+      const currentTextureView = this.outputContext.getCurrentTexture().createView();
+      if (_diagEntry) {
+        _diagEntry.afterGetCurrentTextureTime = performance.now();
+        _diagEntry.getCurrentTextureMs = _diagEntry.afterGetCurrentTextureTime - _diagEntry.beforeGetCurrentTextureTime;
+        _diagEntry.beforeRenderPassTime = _diagEntry.afterGetCurrentTextureTime;
+      }
       const pass = enc.beginRenderPass({
-        colorAttachments: [{ view: this.outputContext.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } }],
+        colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } }],
       });
       pass.setPipeline(this.presentPipeline);
       pass.setBindGroup(0, this.presentBindGroup);
@@ -804,15 +880,56 @@
       if (_diagEntry) _diagEntry.beforeSubmitTime = performance.now();
       this.device.queue.submit([enc.finish()]);
       if (_diagEntry) _diagEntry.afterSubmitTime = performance.now();
-      // The caller immediately drawImage()s this WebGPU canvas into the
-      // app's established 2D preview/commit surface. Command submission is
-      // asynchronous; without this fence that copy can observe the prior
-      // (freshly cleared) canvas frame and make the live stroke invisible.
-      await this.device.queue.onSubmittedWorkDone();
-      // --- DIAGNOSTIC (Phase 11A.39): resolve-time bookkeeping ---
+      // Phase 11B.10 TEMP DIAGNOSTIC (opt-in, default off): record that
+      // real GPU presentation work was actually submitted for this
+      // meta.livePreviewId (set only by a live-preview peekStroke() call in
+      // brush-engine.js's _hardRoundPresentLivePreview, never by the
+      // finished-frame path), plus the submit time and what
+      // brush-engine.js's preview generation counter was at that exact
+      // instant -- read via window.HardRoundGetPreviewGeneration(), a
+      // read-only accessor with no other effect. Independent of the
+      // window.HardRoundGpuPresentDiag flag above so this diagnostic works
+      // on its own. Purely additive bookkeeping; does not change what gets
+      // submitted or when.
+      if (typeof window !== 'undefined' && window.HardRoundDebugLivePreviewCrossover && meta && meta.livePreviewId != null) {
+        window.HardRoundLivePreviewSubmitInfo = window.HardRoundLivePreviewSubmitInfo || {};
+        window.HardRoundLivePreviewSubmitInfo[meta.livePreviewId] = {
+          submitTime: _diagEntry ? _diagEntry.afterSubmitTime : performance.now(),
+          generationAtSubmit: window.HardRoundGetPreviewGeneration ? window.HardRoundGetPreviewGeneration() : null,
+        };
+      }
+      // Phase 11B.4 TEMP DIAGNOSTIC CAUSAL FLAG (default false): when true,
+      // ONLY for a live preview present() (meta.strokeId set -- see the
+      // strokeId!=null check below; finish-frame calls, which pass no meta/
+      // no strokeId, are NEVER affected and always keep the wait), skip
+      // awaiting queue.onSubmittedWorkDone() before this promise resolves.
+      // The render pass above and the submit() call are completely
+      // unchanged either way -- this flag only controls whether present()
+      // blocks the JS-side live-preview lifecycle on GPU completion before
+      // returning. If skipping the wait removes the blink, the fence itself
+      // (or what the caller does while synchronously blocked on it) is
+      // causally involved; if the blink remains, the stall is not caused by
+      // this await and must be in swapchain/present() behavior itself
+      // (getCurrentTexture()/clear/etc. above, already timestamped above
+      // regardless of this flag).
+      const _isLivePreviewCall = !!(meta && meta.strokeId != null);
+      const _skipWait = typeof window !== 'undefined' && !!window.HardRoundDebugSkipLivePresentWorkDoneWait && _isLivePreviewCall;
+      if (_diagEntry) _diagEntry.skippedWorkDoneWait = _skipWait;
+      if (!_skipWait) {
+        // The caller immediately drawImage()s this WebGPU canvas into the
+        // app's established 2D preview/commit surface. Command submission is
+        // asynchronous; without this fence that copy can observe the prior
+        // (freshly cleared) canvas frame and make the live stroke invisible.
+        await this.device.queue.onSubmittedWorkDone();
+      }
+      // --- DIAGNOSTIC (Phase 11A.39 / 11B.4): resolve-time bookkeeping ---
       if (_diagEntry) {
         _diagEntry.workDoneTime = performance.now();
         _diagEntry.submitToWorkDoneMs = _diagEntry.workDoneTime - _diagEntry.afterSubmitTime;
+        _diagEntry.outputCanvasWidthAfter = this.outputCanvas ? this.outputCanvas.width : null;
+        _diagEntry.outputCanvasHeightAfter = this.outputCanvas ? this.outputCanvas.height : null;
+        _diagEntry.maskResetGenerationAfter = this._maskResetGeneration || 0;
+        _diagEntry.contextConfigGenerationAfter = this._contextConfigGeneration || 0;
         GpuBackend._inFlightCount = Math.max(0, GpuBackend._inFlightCount - 1);
         window.HardRoundGpuPresentLog.push(_diagEntry);
         // Bounded window: keep memory flat during long diagnostic sessions.
@@ -820,6 +937,67 @@
       }
       // --- end diagnostic resolve-time bookkeeping ---
       return this.outputCanvas;
+    }
+    // --- DIAGNOSTIC (Phase 11B.2): summarize window.HardRoundGpuPresentLog
+    // (populated above, opt-in via window.HardRoundGpuPresentDiag) grouped
+    // by strokeId, to check whether GPU presentation backlog/concurrency
+    // correlates with the visible fast-stroke blink. Read-only: only reads
+    // window.HardRoundGpuPresentLog, never mutates it or anything else.
+    //
+    // Live-preview entries (meta.strokeId set by _hardRoundPresentLivePreview)
+    // and finish-frame entries (strokeId===null, from
+    // _hardRoundPresentFinishedFrame(), which calls peekStroke() with no
+    // meta) are kept in SEPARATE buckets on purpose -- mixing a single ~239ms
+    // finish-frame readback into a live-stroke's stats would badly skew that
+    // stroke's max/average latency and falsely implicate live presentation.
+    static analyzePresentBacklog() {
+      const log = (window.HardRoundGpuPresentLog || []).slice();
+      const liveByStroke = {};
+      const finishEntries = [];
+      for (const e of log) {
+        if (e.strokeId === null || e.strokeId === undefined) { finishEntries.push(e); continue; }
+        (liveByStroke[e.strokeId] || (liveByStroke[e.strokeId] = [])).push(e);
+      }
+      function summarize(entries) {
+        const durations = entries.map(e => e.submitToWorkDoneMs).filter(v => typeof v === 'number');
+        const sum = durations.reduce((a, b) => a + b, 0);
+        // Phase 11B.4 additions: getCurrentTexture() cost distribution (does
+        // acquiring the swapchain texture itself stall?), how many entries
+        // in this bucket skipped the workDone wait (so an A/B comparison of
+        // window.HardRoundDebugSkipLivePresentWorkDoneWait can be read
+        // straight out of this summary), and whether strokeMaskTex or the
+        // output context were ever observed to change mid-present.
+        const gctDurations = entries.map(e => e.getCurrentTextureMs).filter(v => typeof v === 'number');
+        const gctSum = gctDurations.reduce((a, b) => a + b, 0);
+        const skippedCount = entries.filter(e => e.skippedWorkDoneWait).length;
+        const maskResetDuringPresent = entries.filter(e =>
+          typeof e.maskResetGenerationBefore === 'number' && typeof e.maskResetGenerationAfter === 'number' &&
+          e.maskResetGenerationAfter !== e.maskResetGenerationBefore).length;
+        const contextReconfiguredDuringPresent = entries.filter(e =>
+          typeof e.contextConfigGenerationBefore === 'number' && typeof e.contextConfigGenerationAfter === 'number' &&
+          e.contextConfigGenerationAfter !== e.contextConfigGenerationBefore).length;
+        return {
+          presentationCount: entries.length,
+          maxInFlight: entries.reduce((m, e) => Math.max(m, (e.otherPresentsInFlightAtEnter || 0) + 1), 0),
+          maxSubmitToWorkDoneMs: durations.length ? Math.max(...durations) : null,
+          averageSubmitToWorkDoneMs: durations.length ? sum / durations.length : null,
+          countOver16ms: durations.filter(v => v > 16).length,
+          countOver33ms: durations.filter(v => v > 33).length,
+          countOver100ms: durations.filter(v => v > 100).length,
+          maxGetCurrentTextureMs: gctDurations.length ? Math.max(...gctDurations) : null,
+          averageGetCurrentTextureMs: gctDurations.length ? gctSum / gctDurations.length : null,
+          skippedWorkDoneWaitCount: skippedCount,
+          maskResetDuringPresentCount: maskResetDuringPresent,
+          contextReconfiguredDuringPresentCount: contextReconfiguredDuringPresent,
+        };
+      }
+      const strokes = {};
+      Object.keys(liveByStroke).forEach(strokeId => { strokes[strokeId] = summarize(liveByStroke[strokeId]); });
+      return {
+        strokes,
+        finishFrames: summarize(finishEntries),
+        finishFrameEntriesExcludedFromStrokeSummary: finishEntries.length,
+      };
     }
 
     // Resolves the backing-store coverage texture down to a logical-
@@ -1261,6 +1439,15 @@
       this._rgb = [0, 0, 0];
       this._segmentCount = 0;
       this.presentationOpacity = 1;
+      // Phase 11B.3 TEMP DIAGNOSTIC: gated by window.HardRoundDebugSerializeGpuPreview
+      // (default false, opt-in). Tracks whether a live GPU preview present()
+      // is currently in flight for THIS stroke, and whether newer stroke
+      // geometry has arrived since that present() was kicked off. Does not
+      // affect endStroke()/finished-frame presentation, the CPU renderer, or
+      // anything else -- see peekStroke()/_peekStrokeGpuSerialized() below,
+      // the only place these fields are read/written.
+      this._livePresentInFlight = false;
+      this._livePreviewDirty = false;
 
       // Output canvas: logical resolution, reused across strokes.
       this._outCanvas = (typeof document !== 'undefined')
@@ -1290,11 +1477,18 @@
     // being cleared. The clear itself is one clearRect() call, not a
     // per-frame cost.
     beginStroke() {
+      if (this._hardRoundFinishingOwner != null) {
+        throw new Error('PrototypeRenderer.beginStroke(): renderer is owned by finishing stroke '+this._hardRoundFinishingOwner);
+      }
       if (this._active) this.cancelStroke();
       this._active = true;
       this._segmentCount = 0;
       this._composite = 'paint';
       this._rgb = [0, 0, 0];
+      // Phase 11B.3 TEMP DIAGNOSTIC: fresh per-stroke state for the opt-in
+      // serialized-live-preview experiment (see constructor comment above).
+      this._livePresentInFlight = false;
+      this._livePreviewDirty = false;
       // TEMP DIAGNOSTIC (Phase 11A.23): fresh, empty per-backend segment
       // log for this stroke. `_nextId` is NOT reset -- identity tags stay
       // unique across the whole session so a duplicate-submission check
@@ -1445,6 +1639,41 @@
     async peekStroke(meta) {
       if (!this._active) return { canvas: this._resultCanvas(), composite: this._composite, segmentCount: this._segmentCount };
       if (this._usingGpu) {
+        // Phase 11B.5 TEMP DIAGNOSTIC (opt-in, default off): when
+        // window.HardRoundDebugCanvasLivePresentation is true, a LIVE
+        // PREVIEW peekStroke() call (meta.strokeId set -- same gating the
+        // Phase 11B.4 skip-wait flag uses to distinguish a live-preview
+        // request from the strokeId-less finished-frame request) does NOT
+        // call GpuBackend.present() / touch the WebGPU overlay at all.
+        // Instead it uses the SAME non-mutating GPU resolve/readback path
+        // endStroke({readback:true}) already uses (gpu.resolveInto(), which
+        // box-filters strokeMaskTex into a plain Canvas2D _outCtx/_outCanvas
+        // -- it does not clear, reset, or otherwise mutate strokeMaskTex),
+        // and returns that 2D canvas instead of the GPU outputCanvas, so the
+        // caller (_hardRoundPresentLivePreview in brush-engine.js) can draw
+        // it into the existing _strokeCanvas/_strokeCtx exactly like the
+        // CPU backend's result already is. GPU accumulation/rasterization,
+        // strokeMaskTex, segment generation, and the finished-frame path
+        // (meta with no strokeId) are completely unaffected.
+        const _canvasLivePresentationOn = typeof window !== 'undefined' && !!window.HardRoundDebugCanvasLivePresentation;
+        const _isLivePreviewMeta = !!(meta && meta.strokeId != null);
+        if (_canvasLivePresentationOn && _isLivePreviewMeta) {
+          const _diagMeta = Object.assign({ segmentCount: this._segmentCount }, meta || {});
+          await this._resolveToOutput(true, _diagMeta);
+          return { canvas: this._outCanvas, composite: this._composite, segmentCount: this._segmentCount, canvasLivePresentation: true };
+        }
+        // Phase 11B.3 TEMP DIAGNOSTIC (opt-in, default off): when
+        // window.HardRoundDebugSerializeGpuPreview is true, route the live
+        // GPU preview through the one-in-flight coalescing gate below
+        // instead of calling _resolveToOutput() directly on every
+        // peekStroke(). This ONLY changes the live-preview present() path --
+        // endStroke()/finished-frame presentation, the CPU renderer, Smart
+        // Raster, segment generation, pressure, stabilization, AA, shaders,
+        // and commit are all untouched (peekStroke() is never called by any
+        // of those).
+        if (typeof window !== 'undefined' && window.HardRoundDebugSerializeGpuPreview) {
+          return this._peekStrokeGpuSerialized(meta);
+        }
         // Phase 11A.39: fill in segmentCount for the present() diagnostic
         // from the renderer's own counter when the caller didn't supply one,
         // so window.HardRoundGpuPresentLog entries aren't left null.
@@ -1453,6 +1682,45 @@
       } else {
         const dirtyRegion = this.cpu.resolveDirtyInto(this._outCtx, this._rgb, this._composite);
         return { canvas: this._outCanvas, composite: this._composite, segmentCount: this._segmentCount, dirtyRegion: dirtyRegion || null };
+      }
+      return { canvas: this._resultCanvas(), composite: this._composite, segmentCount: this._segmentCount };
+    }
+
+    // Phase 11B.3 TEMP DIAGNOSTIC: the actual "one live present in flight,
+    // coalesce intermediate states" experiment described in the task. Only
+    // reached when window.HardRoundDebugSerializeGpuPreview is true AND
+    // this._usingGpu (see peekStroke() above) -- never touches the CPU path,
+    // endStroke(), or cancelStroke()'s own reset logic.
+    //
+    // Behavior:
+    //   - If a live present() is already in flight for this stroke, this
+    //     call does NOT start a second one. It just marks the preview dirty
+    //     (there is newer accumulated geometry than what's currently being
+    //     presented) and returns immediately with the last-resolved canvas.
+    //   - If no present is in flight, this call becomes the one in-flight
+    //     present. When it resolves, if the stroke is still active AND new
+    //     geometry arrived while it was presenting (dirty), it immediately
+    //     starts exactly one more present of the NEWEST accumulated state
+    //     (not one-per-arrival -- multiple arrivals while presenting all
+    //     collapse into that single follow-up present, i.e. coalesced, not
+    //     queued). That loop repeats until there's nothing left dirty.
+    async _peekStrokeGpuSerialized(meta) {
+      this._livePreviewDirty = true;
+      if (this._livePresentInFlight) {
+        return { canvas: this._resultCanvas(), composite: this._composite, segmentCount: this._segmentCount, coalesced: true };
+      }
+      this._livePresentInFlight = true;
+      try {
+        // eslint-disable-next-line no-unmodified-loop-condition -- _livePreviewDirty
+        // is reassigned inside this loop's own body every iteration.
+        while (this._livePreviewDirty) {
+          this._livePreviewDirty = false;
+          if (!this._active) break; // stroke ended/cancelled while we were looping
+          const _diagMeta = Object.assign({ segmentCount: this._segmentCount }, meta || {});
+          await this._resolveToOutput(false, _diagMeta);
+        }
+      } finally {
+        this._livePresentInFlight = false;
       }
       return { canvas: this._resultCanvas(), composite: this._composite, segmentCount: this._segmentCount };
     }
@@ -1466,6 +1734,12 @@
       this.cpu.reset();
       if (this._usingGpu) this.gpu.reset();
       this._usingGpu = false;
+      // Phase 11B.3 TEMP DIAGNOSTIC: an in-flight present()'s own `await`
+      // will still resolve after cancelStroke() runs, but its dirty-check
+      // loop re-tests `this._active` (now false) before requesting another
+      // present, so it will not keep presenting a cancelled stroke. Clearing
+      // the dirty flag here is just extra hygiene, not load-bearing.
+      this._livePreviewDirty = false;
     }
 
     isGpuActive() { return this._usingGpu; }
@@ -1482,7 +1756,31 @@
   }
   if (typeof window !== 'undefined') {
     window.PrototypeRenderer = PrototypeRenderer;
+    // Phase 11B.3 TEMP DIAGNOSTIC: default OFF. Set to true to run the
+    // one-in-flight live-GPU-preview-present coalescing experiment (see
+    // PrototypeRenderer.peekStroke()/_peekStrokeGpuSerialized() above).
+    // Declared here (rather than left implicitly undefined) purely so it is
+    // discoverable/greppable as a real, documented flag with an explicit
+    // default, matching how the other window.HardRound* diagnostic flags in
+    // this file are introduced.
+    if (typeof window.HardRoundDebugSerializeGpuPreview === 'undefined') {
+      window.HardRoundDebugSerializeGpuPreview = false;
+    }
+    // Phase 11B.4 TEMP DIAGNOSTIC CAUSAL FLAG: default OFF. See
+    // GpuBackend.present() above for exactly what it does/doesn't skip.
+    if (typeof window.HardRoundDebugSkipLivePresentWorkDoneWait === 'undefined') {
+      window.HardRoundDebugSkipLivePresentWorkDoneWait = false;
+    }
+    // Phase 11B.5 TEMP DIAGNOSTIC CAUSAL FLAG: default OFF. See
+    // PrototypeRenderer.peekStroke() above for exactly what it redirects
+    // (live-preview-tagged GPU peeks only) when true.
+    if (typeof window.HardRoundDebugCanvasLivePresentation === 'undefined') {
+      window.HardRoundDebugCanvasLivePresentation = false;
+    }
     window.PrototypeRendererModule = PrototypeRendererExports;
+    // Phase 11B.2: console entry point for the present()-backlog diagnostic
+    // summary defined on GpuBackend above. Read-only.
+    window.HardRoundAnalyzePresentBacklog = () => GpuBackend.analyzePresentBacklog();
     // TEMP DIAGNOSTIC (Phase 11A.23): compares window.HardRoundSegmentLog.cpu
     // and .gpu after a stroke. Since PrototypeRenderer.drawSegments()
     // dispatches to exactly one backend per stroke (this._usingGpu), a
