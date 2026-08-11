@@ -6844,7 +6844,7 @@ function _hardRoundPresentLivePreview(renderer){
   // GpuBackend.present() can record submit-time info keyed by it -- see
   // window.HardRoundLivePreviewSubmitInfo above. Neither field affects
   // which frame is requested, resolved, or accepted.
-  renderer.peekStroke({ strokeId: session, segmentCount: renderer._segmentCount, livePreviewId }).then(async result=>{
+  return renderer.peekStroke({ strokeId: session, segmentCount: renderer._segmentCount, livePreviewId }).then(async result=>{
     if(previewGeneration!==_hardRoundPreviewGeneration)return;
     // --- 11B.13 frame-stall diagnostic: resolve-time bookkeeping ---
     _hrFsRecordPresentResolve(_hrFsPresentStart);
@@ -7042,9 +7042,10 @@ function _hardRoundPresentLivePreview(renderer){
 // peekStroke()/_resolveToOutput() happens for it -- matching
 // prototype.html's present-once-per-frame cadence.
 let _hardRoundPreviewRAF = null;
-let _hardRoundPreviewTimer = null;
 let _hardRoundPreviewSession = null;
-let _hardRoundPreviewNotBefore = 0;
+let _hardRoundPreviewInFlight = false;
+let _hardRoundPreviewNeedsFollowup = false;
+let _hardRoundPreviewRequestedRenderer = null;
 function _hardRoundSchedulePreviewFrame(renderer){
   if(_hardRoundPreviewRAF!==null)return;
   _hrFsRecordSchedule();
@@ -7054,33 +7055,27 @@ function _hardRoundSchedulePreviewFrame(renderer){
     _hrFsRecordPreviewRafStart();
     if(_hardRoundPreviewSession!==_activeStrokeSession||!_inStroke)return;
     _hrPerfMarkPreviewRaf(_hardRoundPreviewSession);
-    const started=performance.now();
     _hardRoundFlushPending(renderer);
-    const rasterMs=performance.now()-started;
-    // A full-pressure 700px+ capsule can consume more than one display
-    // frame on the CPU. Immediately starting another such frame starves
-    // wheel/pan/key input for the whole stroke. Preserve every queued
-    // segment, but give the browser an input window after expensive
-    // raster work. Cheap/light-pressure frames retain normal RAF cadence.
-    _hardRoundPreviewNotBefore=performance.now()+(rasterMs>8?Math.min(50,rasterMs):0);
-    _hardRoundPresentLivePreview(renderer);
-    if(_hardRoundPendingRenderSegments.length)_hardRoundRequestLivePreview(renderer);
+    _hardRoundPreviewInFlight=true;
+    _hardRoundPreviewNeedsFollowup=false;
+    Promise.resolve(_hardRoundPresentLivePreview(renderer)).finally(()=>{
+      _hardRoundPreviewInFlight=false;
+      const requestedRenderer=_hardRoundPreviewRequestedRenderer;
+      const needsFollowup=_hardRoundPreviewNeedsFollowup||_hardRoundPendingRenderSegments.length>0;
+      _hardRoundPreviewNeedsFollowup=false;
+      if(needsFollowup&&requestedRenderer&&_hardRoundPreviewSession===_activeStrokeSession&&_inStroke){
+        _hardRoundRequestLivePreview(requestedRenderer);
+      }
+    });
     if(_hrMtCbStart!=null) _hrMtRecord('_hardRoundSchedulePreviewFrame-callback-total', _hrMtCbStart, performance.now());
   });
 }
 function _hardRoundRequestLivePreview(renderer){
   if(!renderer || !_inStroke || !_strokeCtx || !_strokeCanvas) return;
-  if(_hardRoundPreviewRAF !== null||_hardRoundPreviewTimer!==null) return;
+  _hardRoundPreviewRequestedRenderer=renderer;
   _hardRoundPreviewSession = _activeStrokeSession;
-  const delay=Math.max(0,_hardRoundPreviewNotBefore-performance.now());
-  if(delay>0){
-    _hardRoundPreviewTimer=setTimeout(()=>{
-      _hardRoundPreviewTimer=null;
-      if(_hardRoundPreviewSession!==_activeStrokeSession||!_inStroke)return;
-      _hardRoundSchedulePreviewFrame(renderer);
-    },delay);
-    return;
-  }
+  if(_hardRoundPreviewInFlight){_hardRoundPreviewNeedsFollowup=true;return;}
+  if(_hardRoundPreviewRAF !== null)return;
   _hardRoundSchedulePreviewFrame(renderer);
 }
 
@@ -7127,12 +7122,9 @@ function _hardRoundCancelLivePreview(hideOverlay=true){
     cancelAnimationFrame(_hardRoundPreviewRAF);
     _hardRoundPreviewRAF = null;
   }
-  if(_hardRoundPreviewTimer !== null){
-    clearTimeout(_hardRoundPreviewTimer);
-    _hardRoundPreviewTimer = null;
-  }
   _hardRoundPreviewSession = null;
-  _hardRoundPreviewNotBefore = 0;
+  _hardRoundPreviewRequestedRenderer = null;
+  _hardRoundPreviewNeedsFollowup = false;
   if(hideOverlay)_hardRoundSetGpuOverlayVisible(false);
 }
 
@@ -8001,7 +7993,7 @@ function _pointerEndStroke(e){
       });
     }
     _hardRoundNextStampIsLast = false;
-    _traceStrokeLifecycle('hardround-stampSegments',{queuedSegments:_hardRoundPendingRenderSegments.length,previewRAFPending:_hardRoundPreviewRAF,previewTimerPending:_hardRoundPreviewTimer});
+    _traceStrokeLifecycle('hardround-stampSegments',{queuedSegments:_hardRoundPendingRenderSegments.length,previewRAFPending:_hardRoundPreviewRAF,previewInFlight:_hardRoundPreviewInFlight,previewFollowupPending:_hardRoundPreviewNeedsFollowup});
     // Phase 11A.30 §8: the Phase 11A.29 pointer-up-flush-skip causality
     // experiment is complete (skip=false -> bug YES, skip=true -> bug YES,
     // so the pending flush was ruled out as the cause). Its diagnostic

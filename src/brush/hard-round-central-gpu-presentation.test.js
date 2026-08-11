@@ -43,6 +43,7 @@ test('visible artwork above the active layer forces layer-aware CPU preview',()=
   assert.match(engineSource,/if\(typeof getHeldKey!=='function'\|\|getHeldKey\(index,frameIndex\)\)return true/);
 });
 
-test('Smart Raster preview cadence throttle remains unchanged',()=>{
-  assert.match(engineSource,/rasterMs>8\?Math\.min\(50,rasterMs\):0/);
+test('Smart Raster remains CPU-backed after cadence scheduling changes',()=>{
+  assert.match(engineSource,/!\(layers\[curLayer\]&&layers\[curLayer\]\.type==='smart-raster'\)/);
+  assert.doesNotMatch(engineSource,/_hardRoundPreviewNotBefore/);
 });
