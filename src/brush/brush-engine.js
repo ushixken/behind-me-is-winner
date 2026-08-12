@@ -2715,6 +2715,9 @@ function _emitResolvedCustomTipDab(d, options = {}) {
   if (window._customTipRenderer && typeof window._customTipRenderer.onResolvedDab === 'function') {
     window._customTipRenderer.onResolvedDab(d, options);
   }
+  if (window.CustomBrushDebugGpuTipRenderer && window._customTipGpuRenderer && typeof window._customTipGpuRenderer.onResolvedDab === 'function') {
+    window._customTipGpuRenderer.onResolvedDab(d, options);
+  }
 }
 
 function _dabDirtyRadii(d){
@@ -7497,6 +7500,16 @@ function _brushPointerDown(e){
   if(window.BrushRafExperiment)window.BrushRafExperiment.strokeBegins({layerIndex:curLayer,frameIndex:curFrame,layerType:layers[curLayer]&&layers[curLayer].type});
   if(window.BrushFirstDabExperiment)window.BrushFirstDabExperiment.strokeBegins({layerIndex:curLayer,frameIndex:curFrame,layerType:layers[curLayer]&&layers[curLayer].type});
   if(window.KeyframeLatencyExperiment)window.KeyframeLatencyExperiment.strokeBegins({layerIndex:curLayer,frameIndex:curFrame,layerType:layers[curLayer]&&layers[curLayer].type});
+  if ((window.CustomBrushDebugRasterParity || window.CustomBrushDebugResolvedDabs) && window.brushTipCanvas) {
+    window._resolvedCustomTipDabLog = [];
+    window._resolvedCustomTipDrawDabNowCount = 0;
+    window._customTipRasterRepresentativeDab = null;
+    window._customTipRasterDabsSeen = 0;
+    window._customTipRasterMaxRadiusSeen = 0;
+  }
+  if (window.CustomBrushDebugGpuTipRenderer && window._customTipGpuRenderer && typeof window._customTipGpuRenderer.beginStroke === 'function') {
+    window._customTipGpuRenderer.beginStroke();
+  }
   if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('latencyHooksInitialization',diagnosticSetupStart);
   const inputStateStart=latencyProfiler?performance.now():0;
   diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
@@ -8471,6 +8484,9 @@ function _finalizePointerEndStroke(e,originStrokeId=_activeStrokeSession,fromAsy
     if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.endStroke();
     if(window.CustomTipCacheTrace)window.CustomTipCacheTrace.strokeEnd();
     if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.strokeComplete();
+    if(window.CustomBrushDebugGpuTipRenderer && window._customTipGpuRenderer && typeof window._customTipGpuRenderer.endStroke === 'function') {
+      window._customTipGpuRenderer.endStroke();
+    }
   });
   mutate('_baselineConditionerState',!!_baselineConditionerState,false,()=>_baselineConditionerFinish(false));
   mutate('_pendingDabs.length',_pendingDabs.length,0,()=>{_pendingDabs.length=0;});
