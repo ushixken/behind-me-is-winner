@@ -1,4 +1,4 @@
-﻿//
+//
 // DRAWING Ã¢â‚¬â€ getPos uses activeC's own getBoundingClientRect()
 // which accounts for the CSS transform, giving pixel-perfect coords
 //
@@ -2693,6 +2693,30 @@ function _drawAutoHardRoundSegment(d){
   dc.restore();
   return true;
 }
+
+function _emitResolvedCustomTipDab(d, options = {}) {
+  if (!window.brushTipCanvas) return;
+  if (window.CustomBrushDebugResolvedDabs) {
+    if (!window._resolvedCustomTipDabLog) window._resolvedCustomTipDabLog = [];
+    window._resolvedCustomTipDabLog.push({
+      strokeId: _activeStrokeSession || 1,
+      isTaperReplay: !!options.isTaperReplay,
+      x: d.x,
+      y: d.y,
+      r: d.r,
+      alpha: d.alpha,
+      rgb: d.rgb ? d.rgb.slice() : null,
+      composite: d.composite,
+      rotation: d.rotation || 0,
+      roundness: d.roundness != null ? d.roundness : (window.brushTipRoundness == null ? 1 : window.brushTipRoundness),
+      tipVersion: window.brushTipVersion || 0
+    });
+  }
+  if (window._customTipRenderer && typeof window._customTipRenderer.onResolvedDab === 'function') {
+    window._customTipRenderer.onResolvedDab(d, options);
+  }
+}
+
 function _dabDirtyRadii(d){
   let x=d.r,y=d.r;
   if(window.brushTipCanvas){
@@ -2709,6 +2733,9 @@ function _dabDirtyRadii(d){
   return {x,y};
 }
 function _drawDabNow(d){
+  if (window.CustomBrushDebugResolvedDabs && window.brushTipCanvas) {
+    window._resolvedCustomTipDrawDabNowCount = (window._resolvedCustomTipDrawDabNowCount || 0) + 1;
+  }
   if(window.HardRoundDebugRoutingTrace) _hrRtNoteDrawDabNow();
   const customTrace=window.CustomFirstDabTrace,customTraceStart=customTrace&&customTrace.enabled?performance.now():0;
   if(customTrace&&customTrace.enabled)customTrace.beginDab({custom:!!window.brushTipCanvas,radius:d.r,rotation:d.rotation||0,roundness:d.roundness,tipId:customTrace.objectId(window.brushTipCanvas),tipVersion:window.brushTipVersion||0});
@@ -2744,6 +2771,9 @@ function _drawDabNow(d){
 }
 function _taperDistance(amount){return 320*amount;}
 function _queueDab(d){
+  if (window.brushTipCanvas) {
+    _emitResolvedCustomTipDab(d, { isTaperReplay: false });
+  }
   if(!_replayingTaper&&(_getStartTaper()>0||_getEndTaper()>0)) _strokeReplayDabs.push(Object.assign({},d,{rgb:d.rgb.slice()}));
   _drawDabNow(d);
 }
@@ -2780,7 +2810,11 @@ function _flushStrokeTail(){
   _replayingTaper=true;
   for(let i=0;i<_strokeReplayDabs.length;i++){
     const d=_strokeReplayDabs[i];
-    _drawDabNow(Object.assign({},d,{r:Math.max(0.05,d.r*factors[i])}));
+    const replayedDab=Object.assign({},d,{r:Math.max(0.05,d.r*factors[i])});
+    if (window.brushTipCanvas) {
+      _emitResolvedCustomTipDab(replayedDab, { isTaperReplay: true });
+    }
+    _drawDabNow(replayedDab);
   }
   _replayingTaper=false;
   _autoHardRoundPrevDab=null;
@@ -7459,6 +7493,10 @@ function _brushPointerDown(e){
   currentPressure=_getPressure(e);
   _smoothedPressure = currentPressure; // snap smoothing to actual pressure at stroke start (no ramp-in lag)
   _lastKnownPressure = currentPressure;
+  if (window.CustomBrushDebugResolvedDabs && window.brushTipCanvas) {
+    window._resolvedCustomTipDabLog = [];
+    window._resolvedCustomTipDrawDabNowCount = 0;
+  }
   _strokeDabCount = 0; // reset fade counter
   _strokeDistSoFar = 0; // reset start-of-stroke taper
   _pendingDabs.length = 0; // discard any unflushed tail from a previous stroke
@@ -8435,3 +8473,23 @@ activeC.addEventListener('pointerup',e=>{
 });
 activeC.addEventListener('pointercancel',e=>{_endVisibleCanvasColorSampling(e.pointerId);_endStroke(e.pointerId);});
 activeC.addEventListener('lostpointercapture',e=>{_endVisibleCanvasColorSampling(e.pointerId);if(tool==='curve'&&_curveToolGesture&&_curveToolGesture.phase==='bending')return;_endStroke(e.pointerId);});
+
+window.CustomBrushAnalyzeResolvedDabs = function() {
+  const log = window._resolvedCustomTipDabLog || [];
+  const firstDab = log.length > 0 ? log[0] : null;
+  const lastDab = log.length > 0 ? log[log.length - 1] : null;
+  const fieldsPresent = firstDab ? Object.keys(firstDab) : [];
+  const taperReplayCount = log.filter(d => d.isTaperReplay).length;
+
+  return {
+    strokeId: firstDab ? firstDab.strokeId : null,
+    customTipActive: !!window.brushTipCanvas,
+    resolvedDabCount: log.length,
+    drawDabNowCount: window._resolvedCustomTipDrawDabNowCount || 0,
+    firstDab,
+    lastDab,
+    fieldsPresent,
+    taperReplayCount
+  };
+};
+
