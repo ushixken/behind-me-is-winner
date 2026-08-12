@@ -299,7 +299,7 @@
     }
     activePaletteId=active.id;
     swatches=active.swatches;
-    selectedId=active.selectedId&&swatches.some(s=>s.id===active.selectedId)?active.selectedId:(swatches[0]?swatches[0].id:null);
+    selectedId=active.selectedId&&swatches.some(s=>s.id===active.selectedId)?active.selectedId:null;
     active.selectedId=selectedId;
   }
   function persist(){try{localStorage.setItem(STORE_KEY,JSON.stringify(serialize()));}catch(e){}}
@@ -400,6 +400,22 @@
     }
   }
   function setForegroundFromSample(hex){setForeground(hex,false,true);}
+  // Centralized decoupling of normal-palette selection from free foreground color.
+  // Non-palette color sources (color wheel, hex, RGB/HSV/HSL, eyedropper miss)
+  // must clear the selected swatch unless the new color exactly matches one.
+  // Never writes the foreground color itself.
+  function syncPaletteSelectionToForeground(hex,source){
+    if(source==='palette-swatch-click') return;
+    const safeHex=normalizeHex(hex);
+    const match=swatches.find(item=>isSwatch(item)&&normalizeHex(item.hex)===safeHex);
+    const newId=match?match.id:null;
+    if(newId===selectedId) return;
+    selectedId=newId;
+    rememberSelection();
+    syncSelectionClasses();
+    syncToolbarSelection();
+    persist();
+  }
   function clampSwatchSize(value){
     const numeric=Number.isFinite(+value)?+value:SWATCH_SIZE_DEFAULT;
     const stepped=Math.round(numeric/SWATCH_SIZE_STEP)*SWATCH_SIZE_STEP;
@@ -1025,7 +1041,15 @@
     }
     const palette=activePalette();
     const match=palette&&palette.swatches.find(item=>isSwatch(item)&&equal(rgbaArray(item.hex)));
-    if(!match)return false;
+    if(!match){
+      if(selectedId!==null){
+        selectedId=null;
+        rememberSelection();
+        syncSelectionClasses();
+        persist();
+      }
+      return false;
+    }
     activatePaletteSwatch(match.id,{select:true,setForeground:true});
     render();
     return true;
@@ -2741,6 +2765,10 @@
     return style&&!style.locked&&Array.isArray(style.rgba)?style.rgba.slice():null;
   }
   window.PaletteDocker={serialize,load,reset(){load(null);},renderCurrentColors:render,refresh:render,synchronizeActiveContext,isAdvancedPalettePaintingEnabled,getActiveAdvancedPaletteStyleId,getActiveAdvancedStyleColorForHistory,findAdvancedStyleById,getAdvancedStyleOrder,restoreAdvancedStyleOrder,updateActiveAdvancedStyleFromColorPanel,flushAdvancedStyleColorChange,selectAdvancedStyleById,selectMatchingRgba,setForegroundFromSample};
+  window.addEventListener('foreground-color-changed',event=>{
+    if(isSyncingColorPanel) return; // change originated from the palette itself (swatch click / internal write)
+    syncPaletteSelectionToForeground(event.detail&&event.detail.color,'external');
+  });
   window.addEventListener('active-artwork-changed',()=>{synchronizeActiveContext(true);syncStyleLayeringControl();});
   window.addEventListener('active-layer-changed',syncStyleLayeringControl);
   window.addEventListener('smart-raster-style-layering-changed',syncStyleLayeringControl);
