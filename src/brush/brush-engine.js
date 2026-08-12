@@ -3205,27 +3205,54 @@ function _stabilizerSetSampleContext(pressure,event){
 function _stabilizerGapCanvas(){
   return Math.hypot(_stabilizerTargetX-_stabilizerX,_stabilizerTargetY-_stabilizerY);
 }
+function _emitHardRoundStabilizedPoint(x,y,pressure,ev,timeStamp,eventType){
+  if(!_hardRoundCore) return;
+  _hardRoundCore.updateSettings({brushSize:getBrushSize(),stabilization:0,zoom});
+  const sample={
+    x,y,
+    pressure,
+    pointerType:ev?ev.pointerType:'pen',
+    timeStamp:Number.isFinite(timeStamp)?timeStamp:performance.now()
+  };
+  const segments=_hardRoundCore.pushSamples([sample]);
+  _hardRoundStampSegments(segments,ev||_lastPointerEvent);
+  lx=x;ly=y;currentPressure=pressure;if(ev)_lastPointerEvent=ev;
+
+  if(window.BrushDebugStabilizerParity){
+    if(!window._stabilizerParityLog)window._stabilizerParityLog=[];
+    window._stabilizerParityLog.push({
+      eventType,
+      rawX:_stabilizerRawX,
+      rawY:_stabilizerRawY,
+      stabilizedX:_stabilizerX,
+      stabilizedY:_stabilizerY,
+      gpuInputX:x,
+      gpuInputY:y,
+      distanceToTarget:Math.hypot(_stabilizerTargetX-_stabilizerX,_stabilizerTargetY-_stabilizerY),
+      catchupActive:_stabilizerCatchupActive,
+      pointerHeld:drawing&&!_stabilizerFinishing,
+      finalizing:_stabilizerFinishing,
+      time:performance.now()
+    });
+    if(window._stabilizerParityLog.length>200){
+      window._stabilizerParityLog.splice(0,window._stabilizerParityLog.length-200);
+    }
+  }
+}
+
 function _stabilizerEmit(x,y,now){
   _updateVelocity(x,y,now);
   if(window._brushAirbrush&&Math.hypot(x-lx,y-ly)>0.01)_airbrushLastMovementTime=performance.now();
-  // Pressure is the smoothed/delayed value from the same point-count moving
-  // average buffer position uses (see _stabilizerPressureBuf) — NOT held
-  // flat at the raw target pressure. This is what lets width keep
-  // converging/tapering during the catch-up glide instead of painting a
-  // uniform-width thread at whatever pressure happened to be last recorded.
-  //
-  // Feeds the curve DIRECTLY, same as before the hold+redirect hook fix --
-  // routing this through _baselineConditionerPush was tried and reverted
-  // (see _baselineConditionerSync's comment): that function re-interpolates
-  // consecutive samples as straight chords, which flattened the glide's
-  // actual curved convergence into a visible straight line cutting across
-  // the stroke on a quick flick-then-release. Only the conditioner's
-  // reference state is kept in sync (below), not its resampling.
   const e=_stabilizerEvent||_lastPointerEvent;
-  _curveAddPoint(x,y,_stabilizerSmoothedPressure,e);
-  _baselineConditionerSync(_baselineSampleFromStabilizedPoint(e,{x,y,pressure:_stabilizerSmoothedPressure},now));
-  lx=x;ly=y;currentPressure=_stabilizerSmoothedPressure;
-  _scheduleRecomposite();
+  if(_hardRoundStrokeActive && _hardRoundCore){
+    const eventType=_stabilizerFinishing?'finish-catchup':'idle-catchup';
+    _emitHardRoundStabilizedPoint(x,y,_stabilizerSmoothedPressure,e,now,eventType);
+  }else{
+    _curveAddPoint(x,y,_stabilizerSmoothedPressure,e);
+    _baselineConditionerSync(_baselineSampleFromStabilizedPoint(e,{x,y,pressure:_stabilizerSmoothedPressure},now));
+    lx=x;ly=y;currentPressure=_stabilizerSmoothedPressure;
+    _scheduleRecomposite();
+  }
   _tipDisplayRecordAuthoritative(x,y,now);
   _updateStabilizerLeash();
 }
@@ -5196,6 +5223,14 @@ window.HardRoundAnalyzeRapidPresentation=function(){
   log.forEach(entry=>{const key=entry.strokeId==null?'none':String(entry.strokeId),bucket=byStroke[key]||(byStroke[key]={commitStarted:0,readbackCompleted:0,commitCompleted:0,recompositeCompleted:0,finalizerCompleted:0});if(Object.prototype.hasOwnProperty.call(bucket,entry.event))bucket[entry.event]++;});
   const incomplete=Object.entries(byStroke).filter(([,v])=>v.commitStarted!==v.commitCompleted||v.commitCompleted!==v.finalizerCompleted).map(([strokeId,counts])=>({strokeId,counts}));
   return {count:log.length,byStroke,incompleteStrokeCount:incomplete.length,incomplete,log};
+};
+window.BrushAnalyzeStabilizerParity=function(){
+  const log = (window._stabilizerParityLog || []).slice();
+  return {
+    enabled: !!window.BrushDebugStabilizerParity,
+    count: log.length,
+    log
+  };
 };
 // Phase 10.1: raw pen input can arrive near 1000Hz. Core stabilization and
 // adapter mapping still run for every event immediately, but render-ready
@@ -7923,67 +7958,11 @@ function _handleMoveEvent(e){
     _scheduleLinePreview(latest.point.x,latest.point.y,latest.event);
     return;
   }
-  if(_hardRoundStrokeActive && _hardRoundCore){
-    _hrPerfMarkRaw(_activeStrokeSession);
-    // Phase 8C: PrototypeStrokeCore owns pressure smoothing, position
-    // stabilization, and interpolation for this stroke -- the legacy
-    // _stabilizePoint/_curveAddPoint pipeline below is intentionally
-    // skipped entirely for it (both would otherwise double-stabilize).
-    // Phase 9E.5: raw prototype-equivalent pressure, not the legacy
-    // hold-last-known + rate-limited _getPressure -- PrototypeStrokeCore's
-    // own CONTACT_PRESSURE_FLOOR/isReleaseTailSample/moving-average handle
-    // release artifacts and jitter on the true raw signal, same as prototype.
-    const samples=events.map(ev=>{
-      const raw=getPos(ev);
-      return{
-        x:raw.x,y:raw.y,
-        pressure:_getPrototypePressure(ev),
-        pointerType:ev.pointerType,
-        timeStamp:(Number.isFinite(ev.timeStamp)&&ev.timeStamp>0)?ev.timeStamp:performance.now(),
-      };
-    });
-    _hardRoundCore.updateSettings({brushSize:getBrushSize(),stabilization:_stabilizationAmount(),zoom});
-    const _hrMtPushStart = _hrMtActive() ? performance.now() : null;
-    const segments=_hardRoundCore.pushSamples(samples);
-    if(_hrMtPushStart!=null) _hrMtRecord('PrototypeStrokeCore.pushSamples', _hrMtPushStart, performance.now());
-    if(window.HardRoundDebugRoutingTrace) _hrRtNoteMigratedSegments(segments.length);
-    _hr11b6InputSampleCount += samples.length;
-    _hr11b6GeneratedSegmentCount += segments.length;
-    _hr11b6Log('pushSamples', e, {batchInputSamples:samples.length, batchGeneratedSegments:segments.length});
-    const _hrMtStampStart = _hrMtActive() ? performance.now() : null;
-    _hardRoundStampSegments(segments,e);
-    if(_hrMtStampStart!=null) _hrMtRecord('_hardRoundStampSegments-total', _hrMtStampStart, performance.now());
-    const last=samples[samples.length-1];
-    currentPressure=last.pressure;lx=last.x;ly=last.y;_lastPointerEvent=e;
-    if(!(_hardRoundRenderer&&_hardRoundRenderer.isGpuActive&&_hardRoundRenderer.isGpuActive())){
-      const _hrMtRecompStart = _hrMtActive() ? performance.now() : null;
-      _scheduleRecomposite();
-      if(_hrMtRecompStart!=null) _hrMtRecord('_scheduleRecomposite-call', _hrMtRecompStart, performance.now());
-    }
-    if(_hrMtMoveStart!=null) _hrMtRecord('_handleMoveEvent-total', _hrMtMoveStart, performance.now());
-    return;
-  }
   for(const ev of events){
-    if(window.HardRoundDebugRoutingTrace) _hrRtNoteLegacyPathEntered();
-    const newPressure = _getPressure(ev);
+    if(window.HardRoundDebugRoutingTrace && !_hardRoundStrokeActive) _hrRtNoteLegacyPathEntered();
+    const newPressure = _hardRoundStrokeActive ? _getPrototypePressure(ev) : _getPressure(ev);
     const raw=getPos(ev);
     if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.sample({source:e.type,eventTime:ev.timeStamp,x:raw.x,y:raw.y,pressure:newPressure,coalescedCount:events.length});
-    // Stabilization now consumes the RAW per-event sample directly -- one
-    // _stabilizePoint call per real hardware/coalesced event, matching
-    // prototype/prototype.html's pushSmoothBuf (which also runs on raw
-    // events, before any resampling). Previously this ran on the output of
-    // _baselineConditionerPush below, which resamples the raw path into
-    // fixed SCREEN-DISTANCE steps (~0.5-2px apart) regardless of how fast
-    // the pointer is moving. Since the stabilizer's window is a fixed
-    // SAMPLE COUNT, feeding it distance-resampled points made the window
-    // span a roughly constant screen distance no matter the stroke speed --
-    // a fixed-length lag ("pulling a string"). Feeding it raw, time-paced
-    // events instead lets the window's screen-space span grow with speed
-    // (more raw samples arrive over a wider path when moving fast) and
-    // collapse quickly once the pointer slows or stops -- the rubberband
-    // feel. The arc-length conditioner still runs (see below), just after
-    // stabilization now, so curve tessellation/texture spacing keeps its
-    // even canonical density along the STABILIZED path.
     const effPressure=_contactFilteredPressure(newPressure,raw.x,raw.y,ev.pointerType);
     _stabilizerSetSampleContext(effPressure,ev);
     const evTime=Number.isFinite(ev.timeStamp)&&ev.timeStamp>0?ev.timeStamp:performance.now();
@@ -7991,10 +7970,15 @@ function _handleMoveEvent(e){
     _tipDisplayRecordAuthoritative(p.x,p.y,performance.now());
     _updateVelocity(p.x,p.y,evTime);
     if(window._brushAirbrush&&Math.hypot(p.x-lx,p.y-ly)>0.01)_airbrushLastMovementTime=performance.now();
-    const conditionedSamples=_baselineConditionerPush(_baselineSampleFromStabilizedPoint(ev,p,evTime));
-    for(const conditioned of conditionedSamples){
-      _curveAddPoint(conditioned.x,conditioned.y,conditioned.pressure,conditioned.event);
-      currentPressure=conditioned.pressure;lx=conditioned.x;ly=conditioned.y;_lastPointerEvent=conditioned.event;
+
+    if(_hardRoundStrokeActive && _hardRoundCore){
+      _emitHardRoundStabilizedPoint(p.x,p.y,p.pressure,ev,evTime,'move');
+    }else{
+      const conditionedSamples=_baselineConditionerPush(_baselineSampleFromStabilizedPoint(ev,p,evTime));
+      for(const conditioned of conditionedSamples){
+        _curveAddPoint(conditioned.x,conditioned.y,conditioned.pressure,conditioned.event);
+        currentPressure=conditioned.pressure;lx=conditioned.x;ly=conditioned.y;_lastPointerEvent=conditioned.event;
+      }
     }
   }
   _scheduleRecomposite();
@@ -8079,122 +8063,54 @@ function _pointerEndStroke(e){
     currentPressure=retainedPressure;
     if(!_strokeCanvas||!_inStroke){_ensureStrokeCanvas();_inStroke=true;}
   if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.event('stroke-state-initialization-complete',{strokeCanvas:!!_strokeCanvas,inStroke:_inStroke});
-    // Final commit shares the exact same renderer used for every live
-    // preview frame during the drag, so what the user saw IS what gets
-    // written to the layer (no "collapsing to one average value"). Any
-    // preview RAF that was still pending from the last pointermove was
-    // already cancelled above -- this call always uses the true final
-    // pointerup position, never a stale queued endpoint.
     _renderLineDrag(p.x,p.y,e,'commit');
-    if(_inStroke){_inStroke=false;_commitStrokeCanvas();}
-    _cleanupErasedSmartOwnership();_clearLinePreviewCanvas(_strokeCanvas,_strokeCtx);_clearLinePreviewCanvas(_texturedStrokeCanvas,_texturedStrokeCtx);_clearLinePreviewCanvas(_strokePreviewCanvas,_strokePreviewCtx);lineStart=null;_lineDragging=false;_linePressureSamples=[];_lineGesture=null;_linePreviewBounds=null;_linePreviewPreviousEndpoint=null;saveActiveToKey();
+    if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_cleanupErasedSmartOwnership();_clearLinePreviewCanvas(_strokeCanvas,_strokeCtx);_clearLinePreviewCanvas(_texturedStrokeCanvas,_texturedStrokeCtx);_clearLinePreviewCanvas(_strokePreviewCanvas,_strokePreviewCtx);lineStart=null;_lineDragging=false;_linePressureSamples=[];_lineGesture=null;_linePreviewBounds=null;_linePreviewPreviousEndpoint=null;saveActiveToKey();
   }else if(drawing && _hardRoundStrokeActive && _hardRoundCore){
-    // Phase 8C: use PrototypeStrokeCore's own finish/taper replay (natural
-    // pressure tail, §7) instead of the legacy stabilizer-finalize/taper
-    // flush path. Layer/undo/recomposite bookkeeping below is unchanged
-    // from the legacy branch -- only the source of the final dabs differs.
     drawing=false;
     const finalRaw=getPos(e);
-    // Phase 9E.5: same rationale as beginStroke/pushSamples above -- the
-    // prototype's endStroke freezes finishPressure from the true raw
-    // signal (via lastContactPressure/lastInputPressure, themselves fed by
-    // raw getPressure()), not a pre-held/rate-limited value.
     const finalPressure=_getPrototypePressure(e);
-    const finish=_hardRoundCore.finishStroke({x:finalRaw.x,y:finalRaw.y,pressure:finalPressure,pointerType:e.pointerType,timeStamp:e.timeStamp||performance.now()});
-    // Phase 11A.8: finishStroke() must still run exactly once to close and
-    // reset PrototypeStrokeCore, but its accelerated post-release positional
-    // replay is not new stylus input and was never part of the last visible
-    // renderer state. Appending it here made Hard Round uniquely change shape
-    // after pointer-up (even with stabilization=0); the shared commit then
-    // faithfully committed that already-widened mask once. Commit the exact
-    // live accumulation instead. Real pressure/tail samples received while
-    // the pen was down have already entered the renderer unchanged.
-    _traceStrokeLifecycle('hardround-finishStroke',{segmentCount:finish.segments?finish.segments.length:0,submittedSegmentCount:0,mode:finish.mode});
-    if(window.HardRoundDebugCaptureLastLiveFrame&&window.HardRoundGeometryMutationLog){
-      window.HardRoundGeometryMutationLog.push({
-        fn:'finishStroke',
-        timestamp:performance.now(),
-        finishSegmentCount:finish.segments?finish.segments.length:0,
-        // Per the existing Phase 11A.8 fix (see comment above), these
-        // segments are never flushed into the renderer -- logged here so
-        // that fact is directly verifiable from this diagnostic's own
-        // data rather than only from the surrounding comment.
-        flushedIntoRenderer:false,
-      });
-    }
-    _hardRoundNextStampIsLast = false;
-    _traceStrokeLifecycle('hardround-stampSegments',{queuedSegments:_hardRoundPendingRenderSegments.length,previewRAFPending:_hardRoundPreviewRAF,previewInFlight:_hardRoundPreviewInFlight,previewFollowupPending:_hardRoundPreviewNeedsFollowup});
-    // Phase 11A.30 §8: the Phase 11A.29 pointer-up-flush-skip causality
-    // experiment is complete (skip=false -> bug YES, skip=true -> bug YES,
-    // so the pending flush was ruled out as the cause). Its diagnostic
-    // switch, special pointerup behavior, and
-    // window.HardRoundLastSkippedPointerUpFlush have been removed; normal
-    // pointerup pending flushing is restored exactly as production did
-    // before that experiment.
-    const flushedCount=_hardRoundFlushPending(_hardRoundRenderer);
-    _traceStrokeLifecycle('hardround-flushPending',{flushedSegments:flushedCount,overlayVisible:_hardRoundGpuOverlay()?!_hardRoundGpuOverlay().hidden:null});
-    // Phase 9C.1 perf fix: drop any RAF-scheduled live preview now -- the
-    // authoritative endStroke() resolve below supersedes it, and letting a
-    // stray preview RAF fire afterward would race a now-inactive (or
-    // already-committed) renderer for nothing.
-    //
-    // Phase 11A.4 fix: pass hideOverlay=false here. The final segments were
-    // just flushed into the renderer's backing store above but have not
-    // been presented anywhere yet (that's the RAF this call is cancelling),
-    // and the real artwork layer won't have this stroke's pixels until the
-    // renderer.endStroke() promise below resolves and _commitStrokeCanvas()
-    // runs. Hiding the overlay here -- before that commit exists -- opened
-    // a blank gap between the overlay disappearing and the layer being
-    // painted, which is exactly the pointer-up blink. The overlay is now
-    // hidden in the .then() below, in the same synchronous step as the
-    // commit, so the transition from "live overlay" to "committed layer"
-    // is atomic.
-    //
-    // Phase 11A.8: finishStroke's synthetic positional replay is deliberately
-    // not submitted above. The flush therefore contains only real pen-down
-    // segments that were still waiting for their scheduled live frame. The
-    // finished preview below exposes those last legitimate segments before
-    // the same renderer accumulation is resolved and committed.
-    const previewGenerationAtFinish=_hardRoundPreviewGeneration;
-    _hardRoundCancelLivePreview(false);
-    _hardRoundStrokeActive=false;
-    if(window.HardRoundDebugRoutingTrace) _hrRtFinalizeStroke();
-    _traceStrokeLifecycle('hardround-cancelLivePreview',{previewGenerationAtFinish,previewGenerationAfterCancel:_hardRoundPreviewGeneration,overlayVisible:_hardRoundGpuOverlay()?!_hardRoundGpuOverlay().hidden:null});
-    // Phase 11C.2: detach renderer and commit resources before crossing the
-    // async readback boundary. A subsequent pointerdown must acquire a
-    // different renderer and may freely replace all current-stroke globals.
-    const ownedContext=_hardRoundActiveContext;
-    const ownedGpuContext=ownedContext&&ownedContext.strokeId===_activeStrokeSession&&
-      ownedContext.renderer.isGpuActive&&ownedContext.renderer.isGpuActive();
-    const ownedSmartContext=ownedContext&&ownedContext.strokeId===_activeStrokeSession&&ownedContext.smartRaster===true&&
-      !!ownedContext.styleId&&typeof advancedPalettePaintingEnabled==='function'&&advancedPalettePaintingEnabled();
-    if(ownedGpuContext||ownedSmartContext){
-      const rendererDirty=ownedSmartContext&&ownedContext.renderer&&typeof ownedContext.renderer.getStrokeDirtyRegion==='function'?ownedContext.renderer.getStrokeDirtyRegion():null;
-      if(rendererDirty){
-        ownedContext.dirtyRect={x:rendererDirty.x,y:rendererDirty.y,w:rendererDirty.width,h:rendererDirty.height};
-      }else if(_strokeDirty){
-        const x=Math.max(0,Math.floor(_strokeDirty.minX)),y=Math.max(0,Math.floor(_strokeDirty.minY));
-        const right=Math.min(CW,Math.ceil(_strokeDirty.maxX)),bottom=Math.min(CH,Math.ceil(_strokeDirty.maxY));
-        ownedContext.dirtyRect={x,y,w:Math.max(0,right-x),h:Math.max(0,bottom-y)};
-      }else ownedContext.dirtyRect=null;
-      if(ownedSmartContext){
-        const rect=ownedContext.dirtyRect;
-        const ownershipStarted=smartPointerupTiming?performance.now():0;
-        ownedContext.ownershipBefore=rect&&rect.w>0&&rect.h>0?ctx.getImageData(rect.x,rect.y,rect.w,rect.h):ctx.getImageData(0,0,CW,CH);
-        _hrSmartPointerupStage(smartPointerupTiming,'ownershipBeforeMs',ownershipStarted);
+
+    _stabilizerFinalize(finalRaw.x, finalRaw.y, finalPressure, e, ()=>{
+      const finish=_hardRoundCore.finishStroke({x:finalRaw.x,y:finalRaw.y,pressure:finalPressure,pointerType:e.pointerType,timeStamp:e.timeStamp||performance.now()});
+      _traceStrokeLifecycle('hardround-finishStroke',{segmentCount:finish.segments?finish.segments.length:0,submittedSegmentCount:0,mode:finish.mode});
+      if(window.HardRoundDebugCaptureLastLiveFrame&&window.HardRoundGeometryMutationLog){
+        window.HardRoundGeometryMutationLog.push({
+          fn:'finishStroke',
+          timestamp:performance.now(),
+          finishSegmentCount:finish.segments?finish.segments.length:0,
+          flushedIntoRenderer:false,
+        });
       }
-      ownedContext.pointerupTiming=smartPointerupTiming;
-      ownedContext.gpuCommit=ownedGpuContext;
-      _hardRoundActiveContext=null;
-      if(_hardRoundRenderer===ownedContext.renderer)_hardRoundRenderer=null;
-      _inStroke=false;
-      _hardRoundFinalizeOwnedContext(ownedContext,e);
-      _hrSmartPointerupFinish(smartPointerupTiming);
-      return;
-    }
-    _hardRoundActiveContext=null; // Other CPU/selection routes retain the established finalization below.
-    // Phase 9C: PrototypeRenderer.endStroke() resolves the whole stroke's
-    // SS=4 backing store down to one finished logical-resolution canvas.
+      _hardRoundNextStampIsLast = false;
+      _traceStrokeLifecycle('hardround-stampSegments',{queuedSegments:_hardRoundPendingRenderSegments.length,previewRAFPending:_hardRoundPreviewRAF,previewInFlight:_hardRoundPreviewInFlight,previewFollowupPending:_hardRoundPreviewNeedsFollowup});
+      const flushedCount=_hardRoundFlushPending(_hardRoundRenderer);
+      _traceStrokeLifecycle('hardround-flushPending',{flushedSegments:flushedCount,overlayVisible:_hardRoundGpuOverlay()?!_hardRoundGpuOverlay().hidden:null});
+      const previewGenerationAtFinish=_hardRoundPreviewGeneration;
+      _hardRoundCancelLivePreview(false);
+      _hardRoundStrokeActive=false;
+      if(window.HardRoundDebugRoutingTrace) _hrRtFinalizeStroke();
+      _traceStrokeLifecycle('hardround-cancelLivePreview',{previewGenerationAtFinish,previewGenerationAfterCancel:_hardRoundPreviewGeneration,overlayVisible:_hardRoundGpuOverlay()?!_hardRoundGpuOverlay().hidden:null});
+
+      if (window.BrushDebugStabilizerParity) {
+        if (!window._stabilizerParityLog) window._stabilizerParityLog = [];
+        window._stabilizerParityLog.push({
+          eventType: 'finalized',
+          rawX: _stabilizerRawX,
+          rawY: _stabilizerRawY,
+          stabilizedX: _stabilizerX,
+          stabilizedY: _stabilizerY,
+          gpuInputX: _stabilizerX,
+          gpuInputY: _stabilizerY,
+          distanceToTarget: Math.hypot(_stabilizerTargetX - _stabilizerX, _stabilizerTargetY - _stabilizerY),
+          catchupActive: false,
+          pointerHeld: false,
+          finalizing: false,
+          time: performance.now()
+        });
+        if (window._stabilizerParityLog.length > 200) {
+          window._stabilizerParityLog.splice(0, window._stabilizerParityLog.length - 200);
+        }
+      }
     // That canvas is this stroke's entire visible output -- draw it into
     // the existing _strokeCanvas/_strokeCtx scratch surface (exactly what
     // the legacy per-dab path already left there for _commitStrokeCanvas()
@@ -8437,6 +8353,7 @@ function _pointerEndStroke(e){
       if(_inStroke){_inStroke=false;_commitStrokeCanvas();}
       finishHardRoundStroke();
     }
+    });
     return; // finalization happens in the continuation above, not the shared tail below
   }else if(drawing){
     const finalRaw=getPos(e);

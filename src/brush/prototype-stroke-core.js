@@ -259,7 +259,7 @@ class PrototypeStrokeCore {
   _movingAverageAmount() {
     const internalAmount = this._computeInternalStabilization();
     if (internalAmount <= 0) return 1;
-    return Math.max(2, Math.round(internalAmount * 100));
+    return Math.max(2, Math.round(internalAmount * 200));
   }
 
   _pushPressureBuf(p) {
