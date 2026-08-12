@@ -2948,7 +2948,7 @@ function applyToolPreset(json){
     window._activeBrushPresetId = _activePresetId;
     const savedSettings=_isolatePresetTextureSettings(preset,normalizeBrushSettings(Object.assign({},preset.settings||{},_presetSettings[_presetSettingsKey(presetId,t)]||{})));
     // Non-custom presets: structural settings always come from the preset definition.
-    const PRESET_STRUCTURAL_KEYS=['ts-min-size','ts-texture-scale','ts-texture-strength','ts-texture-buildup-custom','ts-texture-brightness','ts-texture-contrast','ts-texture-invert','ts-texture-each','ts-texture-mode','ts-texture-url'];
+    const PRESET_STRUCTURAL_KEYS=['ts-texture-url'];
     if(!preset.custom && preset.settings){
       PRESET_STRUCTURAL_KEYS.forEach(k=>{ if(k in preset.settings) savedSettings[k]=preset.settings[k]; });
     }
@@ -2991,7 +2991,7 @@ function applyToolPreset(json){
     // having that stick permanently across sessions — the preset definition
     // is authoritative for these, while cosmetic slider values (size,
     // hardness, flow, opacity) are still freely remembered per-user.
-    const PRESET_STRUCTURAL_KEYS=['ts-min-size','ts-texture-scale','ts-texture-strength','ts-texture-buildup-custom','ts-texture-brightness','ts-texture-contrast','ts-texture-invert','ts-texture-each','ts-texture-mode','ts-texture-url'];
+    const PRESET_STRUCTURAL_KEYS=['ts-texture-url'];
     if(!p.custom && p.settings){
       PRESET_STRUCTURAL_KEYS.forEach(k=>{ if(k in p.settings) savedSettings[k]=p.settings[k]; });
     }
