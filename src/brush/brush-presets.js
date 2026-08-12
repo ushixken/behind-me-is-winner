@@ -1,4 +1,4 @@
-﻿//  TOOL SETTINGS PANEL  wiring
+//  TOOL SETTINGS PANEL  wiring
 (function(){
   // Helper: range + display
   function bindRange(id,dispId,suffix,onchange){
@@ -123,15 +123,28 @@ function updateBlendModeUI(){
   bindRange('ts-airbrush-rate','ts-airbrush-rate-val','',v=>{window._tsAirbrushRate=v/100;});
   // Dynamics
   bindRange('ts-min-size','ts-min-size-val','%');
-  bindRange('ts-start-taper','ts-start-taper-val','%');
-  bindRange('ts-end-taper','ts-end-taper-val','%');
+  bindRange('ts-start-taper','ts-start-taper-val','%', v => {
+    if(typeof captureLiveState==='function' && (tool==='brush'||tool==='eraser')) captureLiveState(tool);
+  });
+  bindRange('ts-end-taper','ts-end-taper-val','%', v => {
+    if(typeof captureLiveState==='function' && (tool==='brush'||tool==='eraser')) captureLiveState(tool);
+  });
   function syncTaperMode(){
     const mode=document.getElementById('ts-taper-mode');
     const enabled=!!mode&&mode.value==='percentage';
     ['ts-start-taper','ts-end-taper'].forEach(id=>{const control=document.getElementById(id);if(control) control.disabled=!enabled;});
   }
   const taperMode=document.getElementById('ts-taper-mode');
-  if(taperMode) taperMode.addEventListener('input',syncTaperMode);
+  if(taperMode) {
+    taperMode.addEventListener('input',()=>{
+      syncTaperMode();
+      if(typeof captureLiveState==='function' && (tool==='brush'||tool==='eraser')) captureLiveState(tool);
+    });
+    taperMode.addEventListener('change',()=>{
+      syncTaperMode();
+      if(typeof captureLiveState==='function' && (tool==='brush'||tool==='eraser')) captureLiveState(tool);
+    });
+  }
   syncTaperMode();
   bindRange('ts-angle','ts-angle-val','\u00B0',v=>{window._tsBrushAngle=v;if(typeof window._syncTipUI==='function')window._syncTipUI();});
   const rotationModeEl=document.getElementById('ts-rotation-mode');
@@ -2935,7 +2948,7 @@ function applyToolPreset(json){
     window._activeBrushPresetId = _activePresetId;
     const savedSettings=_isolatePresetTextureSettings(preset,normalizeBrushSettings(Object.assign({},preset.settings||{},_presetSettings[_presetSettingsKey(presetId,t)]||{})));
     // Non-custom presets: structural settings always come from the preset definition.
-    const PRESET_STRUCTURAL_KEYS=['ts-taper-mode','ts-start-taper','ts-end-taper','ts-min-size','ts-texture-scale','ts-texture-strength','ts-texture-buildup-custom','ts-texture-brightness','ts-texture-contrast','ts-texture-invert','ts-texture-each','ts-texture-mode','ts-texture-url'];
+    const PRESET_STRUCTURAL_KEYS=['ts-min-size','ts-texture-scale','ts-texture-strength','ts-texture-buildup-custom','ts-texture-brightness','ts-texture-contrast','ts-texture-invert','ts-texture-each','ts-texture-mode','ts-texture-url'];
     if(!preset.custom && preset.settings){
       PRESET_STRUCTURAL_KEYS.forEach(k=>{ if(k in preset.settings) savedSettings[k]=preset.settings[k]; });
     }
@@ -2978,7 +2991,7 @@ function applyToolPreset(json){
     // having that stick permanently across sessions — the preset definition
     // is authoritative for these, while cosmetic slider values (size,
     // hardness, flow, opacity) are still freely remembered per-user.
-    const PRESET_STRUCTURAL_KEYS=['ts-taper-mode','ts-start-taper','ts-end-taper','ts-min-size','ts-texture-scale','ts-texture-strength','ts-texture-buildup-custom','ts-texture-brightness','ts-texture-contrast','ts-texture-invert','ts-texture-each','ts-texture-mode','ts-texture-url'];
+    const PRESET_STRUCTURAL_KEYS=['ts-min-size','ts-texture-scale','ts-texture-strength','ts-texture-buildup-custom','ts-texture-brightness','ts-texture-contrast','ts-texture-invert','ts-texture-each','ts-texture-mode','ts-texture-url'];
     if(!p.custom && p.settings){
       PRESET_STRUCTURAL_KEYS.forEach(k=>{ if(k in p.settings) savedSettings[k]=p.settings[k]; });
     }

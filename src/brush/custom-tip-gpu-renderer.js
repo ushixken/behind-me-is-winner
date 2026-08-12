@@ -385,7 +385,8 @@
       const r = d.r || d.radius || 1;
       const alpha = d.alpha != null ? d.alpha : (d.opacity != null ? d.opacity : 1);
       const rgb = d.rgb || [0, 0, 0];
-      const composite = d.composite === 'erase' ? 1.0 : 0.0;
+      const isErase = d.composite === 'erase';
+      const composite = isErase ? 1.0 : 0.0;
 
       const reflected = (typeof flipX !== 'undefined' ? !!flipX : false) !== (typeof flipY !== 'undefined' ? !!flipY : false);
       const rotation = reflected ? -(d.rotation || 0) : (d.rotation || 0);
@@ -393,6 +394,12 @@
 
       const fX = window.brushTipFlipX ? -1.0 : 1.0;
       const fY = window.brushTipFlipY ? -1.0 : 1.0;
+
+      // If composite mode changes within a stroke, we must flush the batch.
+      if (this.instanceCount > 0 && this.currentBatchErase !== isErase) {
+        this.flushBatch();
+      }
+      this.currentBatchErase = isErase;
 
       if (this.instanceCount >= MAX_INSTANCES_PER_BATCH) {
         this.flushBatch();
@@ -457,10 +464,13 @@
         }]
       });
 
-      pass.setPipeline(this.paintPipeline);
-      pass.setBindGroup(0, bindGroup);
-      pass.setVertexBuffer(0, this.instanceBuffer);
-      pass.draw(6, this.instanceCount, 0, 0);
+      const pipeline = this.currentBatchErase ? this.erasePipeline : this.paintPipeline;
+      if (pipeline) {
+        pass.setPipeline(pipeline);
+        pass.setBindGroup(0, bindGroup);
+        pass.setVertexBuffer(0, this.instanceBuffer);
+        pass.draw(6, this.instanceCount, 0, 0);
+      }
       pass.end();
 
       this.device.queue.submit([encoder.finish()]);
@@ -669,15 +679,30 @@
           renderer.endStroke();
         }
       },
+      isEligible(context = {}) {
+        if (!navigator.gpu) return { eligible: false, reason: 'no-webgpu' };
+        if (renderer.device && renderer.device.lostReason) return { eligible: false, reason: 'device-lost' };
+        if (renderer.fallbackReason && renderer.fallbackReason.includes('failed')) {
+          return { eligible: false, reason: renderer.fallbackReason };
+        }
+        
+        // Supported composite modes
+        if (context.composite && context.composite !== 'source-over' && context.composite !== 'erase') {
+          return { eligible: false, reason: 'unsupported-composite' };
+        }
+
+        return { eligible: true, reason: null };
+      },
       instance: renderer
     };
 
     window.CustomBrushAnalyzeGpuTipRenderer = function() {
       const res = renderer.currentResource;
       const deviceLost = renderer.device ? !!renderer.device.lostReason : false;
+      const eligibility = window._customTipGpuRenderer.isEligible();
 
       return {
-        available: !!navigator.gpu && !!renderer.paintPipeline,
+        available: !!navigator.gpu,
         active: renderer.active,
         strokeId: renderer.currentStrokeId,
 
@@ -694,6 +719,12 @@
         batchCount: renderer.batchCount,
         drawCallCount: renderer.drawCallCount,
         targetClearCount: renderer.targetClearCount,
+
+        supportedPaint: true,
+        supportedErase: false, // Eraser tool in current product semantics uses separate procedural round brush path without custom tip canvas
+        supportedAaMode: 'all',
+        gpuEligible: eligibility.eligible,
+        gpuIneligibleReason: eligibility.reason,
 
         targetWidth: renderer.targetWidth,
         targetHeight: renderer.targetHeight,
