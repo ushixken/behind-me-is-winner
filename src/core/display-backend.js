@@ -230,5 +230,5 @@
     Object.assign(measurements,{artworkInvalidations:0,coalescedArtworkInvalidations:0,obsoleteUploadsRejected:0,obsoleteRendersRejected:0,uploads:0,uploadBytes:0,mipmapRegenerations:0,textureRecreations:0,pipelineRecreations:0,bindGroupRecreations:0,textureViewRecreations:0,renderBundleRecreations:0,renders:0,cameraOnlyRenders:0,totalUploadMs:0,totalRenderMs:0,totalCameraOnlyRenderMs:0,lastUploadMs:0,lastRenderMs:0,lastCameraOnlyRenderMs:0,lastError:''});
     return stats();
   }
-  window.DisplayBackend={set:setBackend,get mode(){return active;},get requested(){return requested;},get supported(){return !!navigator.gpu;},initialize,resize:configureCanvas,uploadComposite,scheduleUpload,renderView(){scheduleRender('camera');},destroy,stats,resetStats};
+  window.DisplayBackend={set:setBackend,get mode(){return active;},get requested(){return requested;},get supported(){return !!navigator.gpu;},get device(){return device;},initialize,resize:configureCanvas,uploadComposite,scheduleUpload,renderView(){scheduleRender('camera');},destroy,stats,resetStats};
 })();

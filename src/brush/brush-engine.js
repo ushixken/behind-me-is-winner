@@ -7257,6 +7257,23 @@ let _strokeSegCarryOver = 0;
 
 
 //  Brush Tip / Texture public API
+let _lastNormalizedTipPixels=null;
+let _tipAssetIdCounter=0;
+function _ensureTipAssetId(canvas, previousCanvas) {
+  if (!canvas) return null;
+  if (canvas._tipAssetId) return canvas._tipAssetId;
+  const w = canvas.width || canvas.naturalWidth || 1;
+  const h = canvas.height || canvas.naturalHeight || 1;
+  if (previousCanvas && previousCanvas._tipAssetId && (canvas === previousCanvas || (canvas.src && canvas.src === previousCanvas.src))) {
+    canvas._tipAssetId = previousCanvas._tipAssetId;
+    canvas._tipAssetVersion = previousCanvas._tipAssetVersion || 1;
+  } else {
+    canvas._tipAssetId = `tip_asset_${++_tipAssetIdCounter}_${w}x${h}`;
+    canvas._tipAssetVersion = 1;
+  }
+  return canvas._tipAssetId;
+}
+
 // These are the only entry points that should mutate the tip/texture state.
 // They bump the version counter (invalidating caches) and clear the relevant
 // stamp caches so the very next dab rebuilds with the new data.
@@ -7268,31 +7285,30 @@ window._setBrushTipShape=function(roundness,flipX,flipY){
   _stampCache.clear();
 };
 // Many exported tip images (including the morrowshore.com ABR-extractor's
-// PNGs) are plain OPAQUE grayscale pictures Ã¢â‚¬â€ a white shape on a black
-// background Ã¢â‚¬â€ with NO real transparency at all (every pixel's alpha is
+// PNGs) are plain OPAQUE grayscale pictures — a white shape on a black
+// background — with NO real transparency at all (every pixel's alpha is
 // 255). The GPU stamp path (_buildTipStamp) masks purely off the ALPHA
 // channel via destination-in, so a flat-alpha image like that produces no
 // masking whatsoever: every dab came out as a solid filled rectangle (the
 // tip's bounding box), not the tip's actual silhouette.
 // Fix: whenever a newly-set tip canvas has essentially no alpha variation,
-// synthesize real alpha from luminance instead Ã¢â‚¬â€ white pixels (the painted
+// synthesize real alpha from luminance instead — white pixels (the painted
 // shape) become opaque, black pixels (background) become transparent. This
 // matches the same "white = paint" convention _buildAAStamp's CPU path
 // already assumes for the luminance factor, so both renderers agree, and a
 // brush tip painted the intuitive way (light shape on dark background)
 // stops rendering as an inverted blob / solid box.
-let _lastNormalizedTipPixels=null;
 function _normalizeTipAlpha(canvas){
   if(!canvas || !canvas.width || !canvas.height) return canvas;
   const w=canvas.width, h=canvas.height;
   const normalizeStart=performance.now(),c2d=canvas.getContext('2d',{willReadFrequently:true}),readStart=performance.now();
   let id;
-  try{ id=c2d.getImageData(0,0,w,h);if(window.TipReadbackExperiment)window.TipReadbackExperiment.record('tip-normalization-read',{width:w,height:h,duration:performance.now()-readStart,totalDuration:performance.now()-normalizeStart}); }catch(e){ return canvas; } // tainted canvas (cross-origin) Ã¢â‚¬â€ leave as-is
+  try{ id=c2d.getImageData(0,0,w,h);if(window.TipReadbackExperiment)window.TipReadbackExperiment.record('tip-normalization-read',{width:w,height:h,duration:performance.now()-readStart,totalDuration:performance.now()-normalizeStart}); }catch(e){ return canvas; } // tainted canvas (cross-origin) — leave as-is
   const d=id.data;
   let minA=255,maxA=0;
   for(let i=3;i<d.length;i+=4){ const a=d[i]; if(a<minA)minA=a; if(a>maxA)maxA=a; }
   // Real transparency already present (e.g. a proper alpha-masked tip, or
-  // this function already having run on it) Ã¢â‚¬â€ leave it untouched.
+  // this function already having run on it) — leave it untouched.
   if(maxA-minA>4){_lastNormalizedTipPixels={data:new Uint8ClampedArray(d),w,h};return canvas;}
   for(let i=0;i<d.length;i+=4){
     const lum=(d[i]+d[i+1]+d[i+2])/3;
@@ -7305,7 +7321,16 @@ function _normalizeTipAlpha(canvas){
 }
 window.setBrushTip=function(canvas,referenceDiameter,invalidationReason){
   const trace=window.CustomTipCacheTrace,previousCanvas=window.brushTipCanvas,previousVersion=window.brushTipVersion||0,previousAlphaBuffer=_tipAlphaBuf;
-  _lastNormalizedTipPixels=null;window.brushTipCanvas=canvas?_normalizeTipAlpha(canvas):null;
+  _lastNormalizedTipPixels=null;
+  const normalized=canvas?_normalizeTipAlpha(canvas):null;
+  if(normalized){
+    _ensureTipAssetId(normalized,previousCanvas);
+    if(canvas&&canvas!==normalized&&!canvas._tipAssetId){
+      canvas._tipAssetId=normalized._tipAssetId;
+      canvas._tipAssetVersion=normalized._tipAssetVersion||1;
+    }
+  }
+  window.brushTipCanvas=normalized;
   window.brushTipSpacingBasis=canvas?'image-width':'diameter';
   window.brushTipReferenceDiameter=canvas&&Number.isFinite(Number(referenceDiameter))&&Number(referenceDiameter)>0?Number(referenceDiameter):null;
   window.brushTipVersion=(window.brushTipVersion||0)+1;
