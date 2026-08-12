@@ -2715,7 +2715,7 @@ function _emitResolvedCustomTipDab(d, options = {}) {
   if (window._customTipRenderer && typeof window._customTipRenderer.onResolvedDab === 'function') {
     window._customTipRenderer.onResolvedDab(d, options);
   }
-  if (window.CustomBrushDebugGpuTipRenderer && window._customTipGpuRenderer && typeof window._customTipGpuRenderer.onResolvedDab === 'function') {
+  if ((window.CustomBrushDebugGpuTipRenderer || window.CustomBrushDebugGpuTipPreview) && window._customTipGpuRenderer && typeof window._customTipGpuRenderer.onResolvedDab === 'function') {
     window._customTipGpuRenderer.onResolvedDab(d, options);
   }
 }
@@ -7507,7 +7507,7 @@ function _brushPointerDown(e){
     window._customTipRasterDabsSeen = 0;
     window._customTipRasterMaxRadiusSeen = 0;
   }
-  if (window.CustomBrushDebugGpuTipRenderer && window._customTipGpuRenderer && typeof window._customTipGpuRenderer.beginStroke === 'function') {
+  if ((window.CustomBrushDebugGpuTipRenderer || window.CustomBrushDebugGpuTipPreview) && window._customTipGpuRenderer && typeof window._customTipGpuRenderer.beginStroke === 'function') {
     window._customTipGpuRenderer.beginStroke();
   }
   if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('latencyHooksInitialization',diagnosticSetupStart);
@@ -8469,6 +8469,9 @@ function _pointerEndStroke(e){
   _finalizePointerEndStroke(e);
 }
 function _finalizePointerEndStroke(e,originStrokeId=_activeStrokeSession,fromAsync=false){
+  if ((window.CustomBrushDebugGpuTipRenderer || window.CustomBrushDebugGpuTipPreview) && window._customTipGpuRenderer && typeof window._customTipGpuRenderer.endStroke === 'function') {
+      window._customTipGpuRenderer.endStroke();
+    }
   const mutate=(name,before,after,apply)=>fromAsync?_hrStaleFinalizerMutation(originStrokeId,name,before,after,apply):(apply(),true);
   mutate('_hardRoundStrokeActive',_hardRoundStrokeActive,false,()=>{_hardRoundStrokeActive=false;}); // Phase 8C safety net
   if(window.HardRoundDebugRoutingTrace)mutate('routingTraceCurrentStroke','active','finalized',()=>_hrRtFinalizeStroke());
@@ -8484,9 +8487,6 @@ function _finalizePointerEndStroke(e,originStrokeId=_activeStrokeSession,fromAsy
     if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.endStroke();
     if(window.CustomTipCacheTrace)window.CustomTipCacheTrace.strokeEnd();
     if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.strokeComplete();
-    if(window.CustomBrushDebugGpuTipRenderer && window._customTipGpuRenderer && typeof window._customTipGpuRenderer.endStroke === 'function') {
-      window._customTipGpuRenderer.endStroke();
-    }
   });
   mutate('_baselineConditionerState',!!_baselineConditionerState,false,()=>_baselineConditionerFinish(false));
   mutate('_pendingDabs.length',_pendingDabs.length,0,()=>{_pendingDabs.length=0;});

@@ -1,8 +1,9 @@
 // src/brush/custom-tip-gpu-renderer.js
 //
-// Phase 3B: Generic WebGPU Custom-Tip Stamper (Shadow/Diagnostic Mode)
+// Phase 3B/3C: Generic WebGPU Custom-Tip Stamper & Diagnostic Preview
 // Consumes resolved dabs from _emitResolvedCustomTipDab seam.
 // Pure WebGPU instanced sprite rasterization into an offscreen render target.
+// Diagnostic preview via window.CustomBrushDebugGpuTipPreview = true.
 //
 
 (() => {
@@ -68,7 +69,7 @@
       let localOffset = quadOffsets[vertexIndex];
       let uv = quadUVs[vertexIndex];
 
-      // Custom tip aspect ratio scaling
+      // Custom tip aspect ratio scaling (reproducing legacy _buildTipStamp semantics)
       let compressWidth = u.tipAspect.x < u.tipAspect.y;
       let roundFactor = max(0.01, min(1.0, instance.roundness));
       let scaleW = u.tipAspect.x * (select(1.0, roundFactor, compressWidth));
@@ -141,13 +142,23 @@
       this.active = false;
       this.currentStrokeId = null;
       this.resolvedDabCount = 0;
+      this.liveDabCount = 0;
+      this.taperReplayDabCount = 0;
       this.gpuInstanceCount = 0;
+
       this.batchCount = 0;
       this.drawCallCount = 0;
+      this.targetClearCount = 0;
       this.unsupportedDabCount = 0;
+
       this.fallbackReason = null;
       this.currentResource = null;
       this.taperCleared = false;
+      this.pendingDabsQueue = [];
+
+      this.previewCanvas = null;
+      this.previewPresented = false;
+      this.nonTransparentPixelCount = 0;
     }
 
     async initPipeline() {
@@ -168,7 +179,7 @@
         const shaderModule = this.device.createShaderModule({ code: SHADER_WGSL });
 
         this.uniformBuffer = this.device.createBuffer({
-          size: 16, // vec2f canvasSize + vec2f tipAspect = 16 bytes
+          size: 16,
           usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
         });
 
@@ -276,6 +287,7 @@
 
     clearShadowTarget() {
       if (!this.device || !this.shadowTextureView) return;
+      this.targetClearCount++;
       const encoder = this.device.createCommandEncoder();
       const pass = encoder.beginRenderPass({
         colorAttachments: [{
@@ -290,7 +302,7 @@
     }
 
     async beginStroke(settings = {}) {
-      if (!window.CustomBrushDebugGpuTipRenderer) return;
+      if (!window.CustomBrushDebugGpuTipRenderer && !window.CustomBrushDebugGpuTipPreview) return;
 
       const targetCanvas = (typeof _strokeCanvas !== 'undefined' && _strokeCanvas) ? _strokeCanvas : (typeof activeC !== 'undefined' && activeC ? activeC : null);
       const w = settings.width || (targetCanvas ? targetCanvas.width : 1000);
@@ -299,14 +311,18 @@
       this.active = true;
       this.currentStrokeId = settings.strokeId || (typeof _activeStrokeSession !== 'undefined' ? _activeStrokeSession : 1);
       this.resolvedDabCount = 0;
+      this.liveDabCount = 0;
+      this.taperReplayDabCount = 0;
       this.gpuInstanceCount = 0;
       this.batchCount = 0;
       this.drawCallCount = 0;
+      this.targetClearCount = 0;
       this.unsupportedDabCount = 0;
       this.instanceCount = 0;
       this.taperCleared = false;
       this.currentResource = null;
       this.pendingDabsQueue = [];
+      this.nonTransparentPixelCount = 0;
 
       this.resourcePromise = (async () => {
         const ok = await this.initPipeline();
@@ -347,6 +363,7 @@
 
       // Handle taper replay reset on first replayed dab
       if (options && options.isTaperReplay) {
+        this.taperReplayDabCount++;
         if (options.taperIndex === 0 || !this.taperCleared) {
           this.flushBatch();
           this.clearShadowTarget();
@@ -356,6 +373,7 @@
           this.taperCleared = true;
         }
       } else {
+        this.liveDabCount++;
         this.taperCleared = false;
       }
 
@@ -452,6 +470,159 @@
       this.instanceCount = 0;
     }
 
+    async presentDiagnosticPreview() {
+      if (!window.CustomBrushDebugGpuTipPreview || !this.device || !this.shadowTexture) {
+        this.hidePreviewCanvas();
+        this.previewPresented = false;
+        return;
+      }
+
+      const w = this.targetWidth;
+      const h = this.targetHeight;
+
+      const PREVIEW_BOX_W = 280;
+      const PREVIEW_BOX_H = 280;
+
+      if (!this.previewCanvas) {
+        this.previewCanvas = document.createElement('canvas');
+        this.previewCanvas.id = 'custom-tip-gpu-preview-canvas';
+        this.previewCanvas.style.cssText = 'position:fixed;top:10px;right:10px;width:' + PREVIEW_BOX_W + 'px;height:' + PREVIEW_BOX_H + 'px;border:2px solid #3b82f6;background:rgba(15,23,42,0.9);z-index:999999;pointer-events:none;box-shadow:0 8px 24px rgba(0,0,0,0.6);border-radius:8px;';
+        document.body.appendChild(this.previewCanvas);
+      }
+      this.previewCanvas.style.display = 'block';
+      this.previewCanvas.width = PREVIEW_BOX_W;
+      this.previewCanvas.height = PREVIEW_BOX_H;
+
+      const bytesPerRow = Math.ceil((w * 4) / 256) * 256;
+      const bufferSize = bytesPerRow * h;
+
+      try {
+        const readBuffer = this.device.createBuffer({
+          size: bufferSize,
+          usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+        });
+
+        const encoder = this.device.createCommandEncoder();
+        encoder.copyTextureToBuffer(
+          { texture: this.shadowTexture },
+          { buffer: readBuffer, bytesPerRow },
+          [w, h, 1]
+        );
+        this.device.queue.submit([encoder.finish()]);
+
+        await readBuffer.mapAsync(GPUMapMode.READ);
+        const mapped = new Uint8Array(readBuffer.getMappedRange());
+
+        let nonZeroCount = 0;
+        let maxAlpha = 0;
+        let minX = w, minY = h, maxX = -1, maxY = -1;
+
+        for (let y = 0; y < h; y++) {
+          const rowOffset = y * bytesPerRow;
+          for (let x = 0; x < w; x++) {
+            const a = mapped[rowOffset + x * 4 + 3];
+            if (a > 0) {
+              nonZeroCount++;
+              if (a > maxAlpha) maxAlpha = a;
+              if (x < minX) minX = x;
+              if (x > maxX) maxX = x;
+              if (y < minY) minY = y;
+              if (y > maxY) maxY = y;
+            }
+          }
+        }
+
+        this.nonTransparentPixelCount = nonZeroCount;
+        this.maxAlpha = maxAlpha;
+
+        const ctx = this.previewCanvas.getContext('2d');
+        if (!ctx) {
+          readBuffer.unmap();
+          readBuffer.destroy();
+          return;
+        }
+
+        ctx.clearRect(0, 0, PREVIEW_BOX_W, PREVIEW_BOX_H);
+
+        if (nonZeroCount === 0 || maxX < minX || maxY < minY) {
+          this.nonTransparentBounds = null;
+          this.previewSourceBounds = { x: 0, y: 0, width: w, height: h };
+          this.previewScale = 1.0;
+          readBuffer.unmap();
+          readBuffer.destroy();
+          this.previewPresented = true;
+          return;
+        }
+
+        const boundsW = maxX - minX + 1;
+        const boundsH = maxY - minY + 1;
+        this.nonTransparentBounds = { x: minX, y: minY, width: boundsW, height: boundsH };
+
+        const PAD = 20;
+        const cropX = Math.max(0, minX - PAD);
+        const cropY = Math.max(0, minY - PAD);
+        const cropMaxX = Math.min(w, maxX + 1 + PAD);
+        const cropMaxY = Math.min(h, maxY + 1 + PAD);
+        const cropW = cropMaxX - cropX;
+        const cropH = cropMaxY - cropY;
+
+        this.previewSourceBounds = { x: cropX, y: cropY, width: cropW, height: cropH };
+
+        // Scale crop region to fit inside 280x280 while preserving aspect ratio
+        const scale = Math.min(PREVIEW_BOX_W / cropW, PREVIEW_BOX_H / cropH);
+        this.previewScale = scale;
+
+        const drawW = Math.max(1, Math.round(cropW * scale));
+        const drawH = Math.max(1, Math.round(cropH * scale));
+        const dstX = Math.round((PREVIEW_BOX_W - drawW) / 2);
+        const dstY = Math.round((PREVIEW_BOX_H - drawH) / 2);
+
+        // Copy crop region to ImageData
+        const cropImgData = new ImageData(cropW, cropH);
+        const cropData = cropImgData.data;
+
+        for (let cy = 0; cy < cropH; cy++) {
+          const sy = cropY + cy;
+          const srcRow = sy * bytesPerRow;
+          const dstRow = cy * cropW * 4;
+          for (let cx = 0; cx < cropW; cx++) {
+            const sx = cropX + cx;
+            const sIdx = srcRow + sx * 4;
+            const dIdx = dstRow + cx * 4;
+            cropData[dIdx + 0] = mapped[sIdx + 0];
+            cropData[dIdx + 1] = mapped[sIdx + 1];
+            cropData[dIdx + 2] = mapped[sIdx + 2];
+            cropData[dIdx + 3] = mapped[sIdx + 3];
+          }
+        }
+
+        readBuffer.unmap();
+        readBuffer.destroy();
+
+        // Render crop region to temporary offscreen canvas, then blit to previewCanvas
+        if (!this.cropScratchCanvas) {
+          this.cropScratchCanvas = document.createElement('canvas');
+        }
+        this.cropScratchCanvas.width = cropW;
+        this.cropScratchCanvas.height = cropH;
+        const scratchCtx = this.cropScratchCanvas.getContext('2d');
+        scratchCtx.putImageData(cropImgData, 0, 0);
+
+        ctx.imageSmoothingEnabled = true;
+        ctx.drawImage(this.cropScratchCanvas, 0, 0, cropW, cropH, dstX, dstY, drawW, drawH);
+
+        this.previewPresented = true;
+      } catch (e) {
+        this.previewPresented = false;
+      }
+    }
+
+    hidePreviewCanvas() {
+      if (this.previewCanvas) {
+        this.previewCanvas.style.display = 'none';
+      }
+    }
+
     async endStroke() {
       if (!this.active) return;
 
@@ -469,6 +640,12 @@
 
       this.flushBatch();
       this.active = false;
+
+      if (window.CustomBrushDebugGpuTipPreview) {
+        await this.presentDiagnosticPreview();
+      } else {
+        this.hidePreviewCanvas();
+      }
     }
   }
 
@@ -478,17 +655,17 @@
     window.CustomTipGpuRenderer = CustomTipGpuRenderer;
     window._customTipGpuRenderer = {
       onResolvedDab(d, options) {
-        if (window.CustomBrushDebugGpuTipRenderer) {
+        if (window.CustomBrushDebugGpuTipRenderer || window.CustomBrushDebugGpuTipPreview) {
           renderer.addDab(d, options);
         }
       },
       beginStroke(settings) {
-        if (window.CustomBrushDebugGpuTipRenderer) {
+        if (window.CustomBrushDebugGpuTipRenderer || window.CustomBrushDebugGpuTipPreview) {
           renderer.beginStroke(settings);
         }
       },
       endStroke() {
-        if (window.CustomBrushDebugGpuTipRenderer) {
+        if (window.CustomBrushDebugGpuTipRenderer || window.CustomBrushDebugGpuTipPreview) {
           renderer.endStroke();
         }
       },
@@ -510,13 +687,24 @@
         tipDimensions: res ? { width: res.width, height: res.height } : null,
 
         resolvedDabCount: renderer.resolvedDabCount,
-        gpuInstanceCount: renderer.gpuInstanceCount,
+        liveDabCount: renderer.liveDabCount,
+        taperReplayDabCount: renderer.taperReplayDabCount,
 
+        gpuInstanceCount: renderer.gpuInstanceCount,
         batchCount: renderer.batchCount,
         drawCallCount: renderer.drawCallCount,
+        targetClearCount: renderer.targetClearCount,
 
         targetWidth: renderer.targetWidth,
         targetHeight: renderer.targetHeight,
+
+        previewEnabled: !!window.CustomBrushDebugGpuTipPreview,
+        previewPresented: renderer.previewPresented,
+        nonTransparentPixelCount: renderer.nonTransparentPixelCount,
+        maxAlpha: renderer.maxAlpha || 0,
+        nonTransparentBounds: renderer.nonTransparentBounds,
+        previewSourceBounds: renderer.previewSourceBounds,
+        previewScale: renderer.previewScale || 1.0,
 
         pipelineReady: !!renderer.paintPipeline,
         resourceReady: !!res,
