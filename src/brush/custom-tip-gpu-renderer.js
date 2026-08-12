@@ -124,6 +124,45 @@
     }
   `;
 
+  const PRESENT_SHADER_WGSL = `
+    struct VertexOutput {
+      @builtin(position) clipPos: vec4f,
+      @location(0) uv: vec2f,
+    };
+
+    @vertex
+    fn vs(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
+      var pos = array<vec2f, 6>(
+        vec2f(-1.0, -1.0), vec2f( 1.0, -1.0), vec2f(-1.0,  1.0),
+        vec2f(-1.0,  1.0), vec2f( 1.0, -1.0), vec2f( 1.0,  1.0)
+      );
+      var uvs = array<vec2f, 6>(
+        vec2f(0.0, 1.0), vec2f(1.0, 1.0), vec2f(0.0, 0.0),
+        vec2f(0.0, 0.0), vec2f(1.0, 1.0), vec2f(1.0, 0.0)
+      );
+      var out: VertexOutput;
+      out.clipPos = vec4f(pos[vertexIndex], 0.0, 1.0);
+      out.uv = uvs[vertexIndex];
+      return out;
+    }
+
+    @group(0) @binding(0) var texSampler: sampler;
+    @group(0) @binding(1) var texTarget: texture_2d<f32>;
+
+    @fragment
+    fn fs(in: VertexOutput) -> @location(0) vec4f {
+      return textureSample(texTarget, texSampler, in.uv);
+    }
+  `;
+
+  function shouldRunCustomTipGpuDiagnostic() {
+    return typeof window !== 'undefined' && (
+      !!window.CustomBrushDebugGpuTipRenderer ||
+      !!window.CustomBrushDebugGpuTipPreview ||
+      !!window.CustomBrushDebugGpuPresenter
+    );
+  }
+
   class CustomTipGpuRenderer {
     constructor() {
       this.device = null;
@@ -159,6 +198,20 @@
       this.previewCanvas = null;
       this.previewPresented = false;
       this.nonTransparentPixelCount = 0;
+
+      this.presentContext = null;
+      this.presentPipeline = null;
+      this.presentBindGroupLayout = null;
+      this.presentSampler = null;
+      this.overlayPresented = false;
+
+      this.dirtyBounds = null;
+      this.resolveCount = 0;
+      this.lastResolveRect = null;
+      this.lastResolveSucceeded = false;
+      this.lastReadbackBytes = 0;
+      this.lastFullCanvasReadbackUsed = false;
+      this.sessionSafe = true;
     }
 
     async initPipeline() {
@@ -268,6 +321,125 @@
       }
     }
 
+    initPresenter() {
+      if (this.presentPipeline || !this.device) return !!this.presentPipeline;
+      try {
+        const overlayCanvas = document.getElementById('hard-round-gpu-overlay');
+        if (!overlayCanvas) return false;
+
+        this.presentContext = overlayCanvas.getContext('webgpu');
+        if (!this.presentContext) return false;
+
+        this.presentFormat = navigator.gpu.getPreferredCanvasFormat();
+        this.presentContext.configure({
+          device: this.device,
+          format: this.presentFormat,
+          alphaMode: 'premultiplied'
+        });
+
+        const shaderModule = this.device.createShaderModule({ code: PRESENT_SHADER_WGSL });
+        this.presentBindGroupLayout = this.device.createBindGroupLayout({
+          entries: [
+            { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+            { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+          ]
+        });
+
+        const pipelineLayout = this.device.createPipelineLayout({
+          bindGroupLayouts: [this.presentBindGroupLayout]
+        });
+
+        this.presentPipeline = this.device.createRenderPipeline({
+          layout: pipelineLayout,
+          vertex: { module: shaderModule, entryPoint: 'vs' },
+          fragment: {
+            module: shaderModule,
+            entryPoint: 'fs',
+            targets: [{ format: this.presentFormat }]
+          },
+          primitive: { topology: 'triangle-list' }
+        });
+
+        this.presentSampler = this.device.createSampler({
+          magFilter: 'linear',
+          minFilter: 'linear'
+        });
+
+        return true;
+      } catch (e) {
+        console.warn('[CustomTipGpuRenderer] Failed to init presenter:', e);
+        return false;
+      }
+    }
+
+    presentLiveOverlay() {
+      if (!this.active || !this.device || !this.shadowTextureView) return { presented: false, reason: 'uninitialized' };
+      if (!this.initPresenter()) return { presented: false, reason: 'presenter-init-failed' };
+
+      const overlayCanvas = document.getElementById('hard-round-gpu-overlay');
+      if (!overlayCanvas) return { presented: false, reason: 'no-overlay-canvas' };
+
+      if (window.HardRoundOverlayOwnerStrokeId != null && window.HardRoundOverlayOwnerStrokeId !== this.currentStrokeId) {
+        return { presented: false, reason: 'not-overlay-owner' };
+      }
+
+      window.HardRoundOverlayOwnerStrokeId = this.currentStrokeId;
+      window.CustomTipOverlayOwner = 'custom-tip';
+
+      if (overlayCanvas.width !== this.targetWidth || overlayCanvas.height !== this.targetHeight) {
+        overlayCanvas.width = this.targetWidth;
+        overlayCanvas.height = this.targetHeight;
+      }
+      overlayCanvas.style.display = 'block';
+      overlayCanvas.hidden = false;
+
+      try {
+        const currentView = this.presentContext.getCurrentTexture().createView();
+        const bindGroup = this.device.createBindGroup({
+          layout: this.presentBindGroupLayout,
+          entries: [
+            { binding: 0, resource: this.presentSampler },
+            { binding: 1, resource: this.shadowTextureView }
+          ]
+        });
+
+        const encoder = this.device.createCommandEncoder();
+        const pass = encoder.beginRenderPass({
+          colorAttachments: [{
+            view: currentView,
+            loadOp: 'clear',
+            storeOp: 'store',
+            clearValue: { r: 0, g: 0, b: 0, a: 0 }
+          }]
+        });
+
+        pass.setPipeline(this.presentPipeline);
+        pass.setBindGroup(0, bindGroup);
+        pass.draw(6);
+        pass.end();
+
+        this.device.queue.submit([encoder.finish()]);
+        this.overlayPresented = true;
+        return { presented: true, reason: null };
+      } catch (e) {
+        this.overlayPresented = false;
+        return { presented: false, reason: e.message || String(e) };
+      }
+    }
+
+    hideLiveOverlay() {
+      const overlayCanvas = document.getElementById('hard-round-gpu-overlay');
+      if (overlayCanvas && window.CustomTipOverlayOwner === 'custom-tip') {
+        overlayCanvas.style.display = 'none';
+        overlayCanvas.hidden = true;
+        window.CustomTipOverlayOwner = 'none';
+        if (window.HardRoundOverlayOwnerStrokeId === this.currentStrokeId) {
+          window.HardRoundOverlayOwnerStrokeId = null;
+        }
+      }
+      this.overlayPresented = false;
+    }
+
     ensureShadowTexture(w, h) {
       if (this.shadowTexture && this.targetWidth === w && this.targetHeight === h) return;
       if (this.shadowTexture) {
@@ -301,8 +473,25 @@
       this.device.queue.submit([encoder.finish()]);
     }
 
+    _growDirtyBounds(x, y, r) {
+      const pad = Math.ceil(r + 4);
+      const minX = Math.max(0, Math.floor(x - pad));
+      const minY = Math.max(0, Math.floor(y - pad));
+      const maxX = Math.min(this.targetWidth - 1, Math.ceil(x + pad));
+      const maxY = Math.min(this.targetHeight - 1, Math.ceil(y + pad));
+
+      if (!this.dirtyBounds) {
+        this.dirtyBounds = { minX, minY, maxX, maxY };
+      } else {
+        this.dirtyBounds.minX = Math.min(this.dirtyBounds.minX, minX);
+        this.dirtyBounds.minY = Math.min(this.dirtyBounds.minY, minY);
+        this.dirtyBounds.maxX = Math.max(this.dirtyBounds.maxX, maxX);
+        this.dirtyBounds.maxY = Math.max(this.dirtyBounds.maxY, maxY);
+      }
+    }
+
     async beginStroke(settings = {}) {
-      if (!window.CustomBrushDebugGpuTipRenderer && !window.CustomBrushDebugGpuTipPreview) return;
+      if (!shouldRunCustomTipGpuDiagnostic()) return;
 
       const targetCanvas = (typeof _strokeCanvas !== 'undefined' && _strokeCanvas) ? _strokeCanvas : (typeof activeC !== 'undefined' && activeC ? activeC : null);
       const w = settings.width || (targetCanvas ? targetCanvas.width : 1000);
@@ -323,6 +512,8 @@
       this.currentResource = null;
       this.pendingDabsQueue = [];
       this.nonTransparentPixelCount = 0;
+      this.dirtyBounds = null;
+      this.sessionSafe = true;
 
       this.resourcePromise = (async () => {
         const ok = await this.initPipeline();
@@ -371,6 +562,7 @@
           this.batchCount = 0;
           this.drawCallCount = 0;
           this.taperCleared = true;
+          this.dirtyBounds = null;
         }
       } else {
         this.liveDabCount++;
@@ -394,6 +586,8 @@
 
       const fX = window.brushTipFlipX ? -1.0 : 1.0;
       const fY = window.brushTipFlipY ? -1.0 : 1.0;
+
+      this._growDirtyBounds(d.x, d.y, r);
 
       // If composite mode changes within a stroke, we must flush the batch.
       if (this.instanceCount > 0 && this.currentBatchErase !== isErase) {
@@ -421,6 +615,21 @@
 
       this.instanceCount++;
       this.gpuInstanceCount++;
+
+      if (window.CustomBrushDebugGpuPresenter) {
+        this.scheduleLivePresentation();
+      }
+    }
+
+    scheduleLivePresentation() {
+      if (this.presentRaf || !this.active) return;
+      this.presentRaf = requestAnimationFrame(() => {
+        this.presentRaf = 0;
+        if (!this.active) return;
+        this.flushBatch();
+        this.presentLiveOverlay();
+        this.presentFrameCount = (this.presentFrameCount || 0) + 1;
+      });
     }
 
     flushBatch() {
@@ -478,6 +687,99 @@
       this.batchCount++;
       this.drawCallCount++;
       this.instanceCount = 0;
+    }
+
+    async resolveInto(outCtx, options = {}) {
+      if (!this.device || !this.shadowTexture) {
+        return { success: false, reason: 'no-device-or-texture' };
+      }
+
+      this.flushBatch();
+
+      let minX = 0, minY = 0, maxX = this.targetWidth - 1, maxY = this.targetHeight - 1;
+      let fullCanvas = true;
+
+      if (options.bounds) {
+        minX = Math.max(0, Math.floor(options.bounds.minX));
+        minY = Math.max(0, Math.floor(options.bounds.minY));
+        maxX = Math.min(this.targetWidth - 1, Math.ceil(options.bounds.maxX));
+        maxY = Math.min(this.targetHeight - 1, Math.ceil(options.bounds.maxY));
+        fullCanvas = false;
+      } else if (this.dirtyBounds) {
+        minX = this.dirtyBounds.minX;
+        minY = this.dirtyBounds.minY;
+        maxX = this.dirtyBounds.maxX;
+        maxY = this.dirtyBounds.maxY;
+        fullCanvas = (minX === 0 && minY === 0 && maxX === this.targetWidth - 1 && maxY === this.targetHeight - 1);
+      }
+
+      const rectW = Math.max(1, maxX - minX + 1);
+      const rectH = Math.max(1, maxY - minY + 1);
+
+      const bytesPerRow = Math.ceil((rectW * 4) / 256) * 256;
+      const bufferSize = bytesPerRow * rectH;
+
+      try {
+        const readBuffer = this.device.createBuffer({
+          size: bufferSize,
+          usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+        });
+
+        const encoder = this.device.createCommandEncoder();
+        encoder.copyTextureToBuffer(
+          { texture: this.shadowTexture, origin: [minX, minY, 0] },
+          { buffer: readBuffer, bytesPerRow, rowsPerImage: rectH },
+          [rectW, rectH, 1]
+        );
+
+        this.device.queue.submit([encoder.finish()]);
+
+        await readBuffer.mapAsync(GPUMapMode.READ);
+        const mapped = new Uint8Array(readBuffer.getMappedRange());
+
+        const targetCanvas = outCtx.canvas || outCtx;
+        if (targetCanvas.width !== this.targetWidth || targetCanvas.height !== this.targetHeight) {
+          targetCanvas.width = this.targetWidth;
+          targetCanvas.height = this.targetHeight;
+        }
+
+        const imgData = outCtx.createImageData(rectW, rectH);
+        const data = imgData.data;
+
+        for (let y = 0; y < rectH; y++) {
+          const srcRow = y * bytesPerRow;
+          const dstRow = y * rectW * 4;
+          for (let x = 0; x < rectW; x++) {
+            const sIdx = srcRow + x * 4;
+            const dIdx = dstRow + x * 4;
+            data[dIdx + 0] = mapped[sIdx + 0];
+            data[dIdx + 1] = mapped[sIdx + 1];
+            data[dIdx + 2] = mapped[sIdx + 2];
+            data[dIdx + 3] = mapped[sIdx + 3];
+          }
+        }
+
+        outCtx.putImageData(imgData, minX, minY);
+
+        readBuffer.unmap();
+        readBuffer.destroy();
+
+        this.resolveCount = (this.resolveCount || 0) + 1;
+        this.lastResolveRect = { x: minX, y: minY, w: rectW, h: rectH };
+        this.lastResolveSucceeded = true;
+        this.lastReadbackBytes = bufferSize;
+        this.lastFullCanvasReadbackUsed = fullCanvas;
+
+        return {
+          success: true,
+          rect: this.lastResolveRect,
+          fullCanvasReadbackUsed: fullCanvas,
+          readbackBytes: bufferSize
+        };
+      } catch (e) {
+        this.lastResolveSucceeded = false;
+        return { success: false, reason: e.message || String(e) };
+      }
     }
 
     async presentDiagnosticPreview() {
@@ -578,7 +880,6 @@
 
         this.previewSourceBounds = { x: cropX, y: cropY, width: cropW, height: cropH };
 
-        // Scale crop region to fit inside 280x280 while preserving aspect ratio
         const scale = Math.min(PREVIEW_BOX_W / cropW, PREVIEW_BOX_H / cropH);
         this.previewScale = scale;
 
@@ -587,7 +888,6 @@
         const dstX = Math.round((PREVIEW_BOX_W - drawW) / 2);
         const dstY = Math.round((PREVIEW_BOX_H - drawH) / 2);
 
-        // Copy crop region to ImageData
         const cropImgData = new ImageData(cropW, cropH);
         const cropData = cropImgData.data;
 
@@ -609,7 +909,6 @@
         readBuffer.unmap();
         readBuffer.destroy();
 
-        // Render crop region to temporary offscreen canvas, then blit to previewCanvas
         if (!this.cropScratchCanvas) {
           this.cropScratchCanvas = document.createElement('canvas');
         }
@@ -636,6 +935,11 @@
     async endStroke() {
       if (!this.active) return;
 
+      if (this.presentRaf) {
+        cancelAnimationFrame(this.presentRaf);
+        this.presentRaf = 0;
+      }
+
       if (this.resourcePromise) {
         await this.resourcePromise;
       }
@@ -649,6 +953,11 @@
       }
 
       this.flushBatch();
+
+      if (window.CustomBrushDebugGpuPresenter) {
+        this.presentLiveOverlay();
+      }
+
       this.active = false;
 
       if (window.CustomBrushDebugGpuTipPreview) {
@@ -656,6 +965,8 @@
       } else {
         this.hidePreviewCanvas();
       }
+
+      this.hideLiveOverlay();
     }
   }
 
@@ -665,17 +976,17 @@
     window.CustomTipGpuRenderer = CustomTipGpuRenderer;
     window._customTipGpuRenderer = {
       onResolvedDab(d, options) {
-        if (window.CustomBrushDebugGpuTipRenderer || window.CustomBrushDebugGpuTipPreview) {
+        if (shouldRunCustomTipGpuDiagnostic()) {
           renderer.addDab(d, options);
         }
       },
       beginStroke(settings) {
-        if (window.CustomBrushDebugGpuTipRenderer || window.CustomBrushDebugGpuTipPreview) {
+        if (shouldRunCustomTipGpuDiagnostic()) {
           renderer.beginStroke(settings);
         }
       },
       endStroke() {
-        if (window.CustomBrushDebugGpuTipRenderer || window.CustomBrushDebugGpuTipPreview) {
+        if (shouldRunCustomTipGpuDiagnostic()) {
           renderer.endStroke();
         }
       },
@@ -694,6 +1005,12 @@
         return { eligible: true, reason: null };
       },
       instance: renderer
+    };
+
+    window.CustomTipGpuRunTestResolver = async function(targetCtx, options) {
+      const ctx = targetCtx || (typeof _strokeCtx !== 'undefined' ? _strokeCtx : null);
+      if (!ctx) return { success: false, reason: 'no-target-ctx' };
+      return await renderer.resolveInto(ctx, options);
     };
 
     window.CustomBrushAnalyzeGpuTipRenderer = function() {
@@ -721,7 +1038,7 @@
         targetClearCount: renderer.targetClearCount,
 
         supportedPaint: true,
-        supportedErase: false, // Eraser tool in current product semantics uses separate procedural round brush path without custom tip canvas
+        supportedErase: false,
         supportedAaMode: 'all',
         gpuEligible: eligibility.eligible,
         gpuIneligibleReason: eligibility.reason,
@@ -736,6 +1053,20 @@
         nonTransparentBounds: renderer.nonTransparentBounds,
         previewSourceBounds: renderer.previewSourceBounds,
         previewScale: renderer.previewScale || 1.0,
+
+        presenterReady: !!renderer.presentPipeline,
+        overlayOwner: typeof window !== 'undefined' ? (window.CustomTipOverlayOwner || 'none') : 'none',
+        overlayPresented: !!renderer.overlayPresented,
+
+        resolverReady: true,
+        resolveCount: renderer.resolveCount || 0,
+        lastResolveRect: renderer.lastResolveRect || null,
+        lastResolveSucceeded: renderer.lastResolveSucceeded || false,
+
+        readbackBytes: renderer.lastReadbackBytes || 0,
+        fullCanvasReadbackUsed: renderer.lastFullCanvasReadbackUsed || false,
+
+        sessionSafe: renderer.sessionSafe !== false,
 
         pipelineReady: !!renderer.paintPipeline,
         resourceReady: !!res,

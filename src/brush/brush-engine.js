@@ -2694,6 +2694,14 @@ function _drawAutoHardRoundSegment(d){
   return true;
 }
 
+function _shouldRunCustomTipGpuDiagnostic() {
+  return typeof window !== 'undefined' && (
+    !!window.CustomBrushDebugGpuTipRenderer ||
+    !!window.CustomBrushDebugGpuTipPreview ||
+    !!window.CustomBrushDebugGpuPresenter
+  );
+}
+
 function _emitResolvedCustomTipDab(d, options = {}) {
   if (!window.brushTipCanvas) return;
   if (window.CustomBrushDebugResolvedDabs) {
@@ -2715,7 +2723,7 @@ function _emitResolvedCustomTipDab(d, options = {}) {
   if (window._customTipRenderer && typeof window._customTipRenderer.onResolvedDab === 'function') {
     window._customTipRenderer.onResolvedDab(d, options);
   }
-  if ((window.CustomBrushDebugGpuTipRenderer || window.CustomBrushDebugGpuTipPreview) && window._customTipGpuRenderer && typeof window._customTipGpuRenderer.onResolvedDab === 'function') {
+  if (_shouldRunCustomTipGpuDiagnostic() && window._customTipGpuRenderer && typeof window._customTipGpuRenderer.onResolvedDab === 'function') {
     window._customTipGpuRenderer.onResolvedDab(d, options);
   }
 }
@@ -6276,7 +6284,7 @@ function _hardRoundEligibleNow(){
     sizeControl: _getSizeControl(),
     roundness: window.brushTipRoundness,
     scatterEnabled: !!window._tsScatterEnabled,
-    textureEnabled: !!window.brushTextureEnabled,
+    textureEnabled: !!(window.brushTextureEnabled && window.brushTextureCanvas && (typeof window.brushTextureStrength === 'undefined' || window.brushTextureStrength > 0)),
     airbrush: !!window._brushAirbrush,
   });
 }
@@ -7542,7 +7550,7 @@ function _brushPointerDown(e){
     window._customTipRasterDabsSeen = 0;
     window._customTipRasterMaxRadiusSeen = 0;
   }
-  if ((window.CustomBrushDebugGpuTipRenderer || window.CustomBrushDebugGpuTipPreview) && window._customTipGpuRenderer && typeof window._customTipGpuRenderer.beginStroke === 'function') {
+  if (_shouldRunCustomTipGpuDiagnostic() && window._customTipGpuRenderer && typeof window._customTipGpuRenderer.beginStroke === 'function') {
     window._customTipGpuRenderer.beginStroke();
   }
   if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('latencyHooksInitialization',diagnosticSetupStart);
@@ -8386,9 +8394,9 @@ function _pointerEndStroke(e){
   _finalizePointerEndStroke(e);
 }
 function _finalizePointerEndStroke(e,originStrokeId=_activeStrokeSession,fromAsync=false){
-  if ((window.CustomBrushDebugGpuTipRenderer || window.CustomBrushDebugGpuTipPreview) && window._customTipGpuRenderer && typeof window._customTipGpuRenderer.endStroke === 'function') {
-      window._customTipGpuRenderer.endStroke();
-    }
+  if (_shouldRunCustomTipGpuDiagnostic() && window._customTipGpuRenderer && typeof window._customTipGpuRenderer.endStroke === 'function') {
+    window._customTipGpuRenderer.endStroke();
+  }
   const mutate=(name,before,after,apply)=>fromAsync?_hrStaleFinalizerMutation(originStrokeId,name,before,after,apply):(apply(),true);
   mutate('_hardRoundStrokeActive',_hardRoundStrokeActive,false,()=>{_hardRoundStrokeActive=false;}); // Phase 8C safety net
   if(window.HardRoundDebugRoutingTrace)mutate('routingTraceCurrentStroke','active','finalized',()=>_hrRtFinalizeStroke());

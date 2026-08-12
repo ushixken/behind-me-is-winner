@@ -598,9 +598,19 @@
 
     async init(width, height) {
       if (typeof navigator === 'undefined' || !navigator.gpu) return false;
-      const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
-      if (!adapter) return false;
-      this.device = await adapter.requestDevice();
+      if (typeof window !== 'undefined' && window.DisplayBackend) {
+        if (!window.DisplayBackend.device && typeof window.DisplayBackend.initialize === 'function') {
+          try { await window.DisplayBackend.initialize(); } catch (_) {}
+        }
+        if (window.DisplayBackend.device) {
+          this.device = window.DisplayBackend.device;
+        }
+      }
+      if (!this.device) {
+        const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+        if (!adapter) return false;
+        this.device = await adapter.requestDevice();
+      }
       this.canvas = document.getElementById('hard-round-gpu-overlay') || document.createElement('canvas');
       this.canvas.width = width;
       this.canvas.height = height;
