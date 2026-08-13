@@ -18,15 +18,45 @@ test('committed replacement retires only the overlay pixels belonging to that st
   assert.match(engine,/window\.HardRoundOverlayPresentedStrokeId=session/);
   assert.match(engine,/window\.HardRoundOverlayPresentedStrokeId===ready\.strokeId/);
   assert.match(engine,/owned-finalization-retire-committed-overlay/);
+  assert.match(engine,/overlayHideSuppressed/);
+  assert.match(engine,/older-finalizer-newer-owner/);
   assert.match(engine,/if\(!visible\)window\.HardRoundOverlayPresentedStrokeId=null/);
+});
+
+test('old finalizer preserves continuity when a newer session owns the shared overlay',()=>{
+  const retireStart=engine.indexOf('}else if(window.HardRoundOverlayPresentedStrokeId===ready.strokeId)');
+  const retireEnd=engine.indexOf('\n    }\n  });',retireStart);
+  const body=engine.slice(retireStart,retireEnd);
+  assert.match(body,/overlayOwner!==ready\.strokeId/);
+  assert.match(body,/visibilityOwner!==ready\.strokeId/);
+  assert.match(body,/_hrRapidPresentation\('overlayHideSuppressed'/);
+  assert.match(body,/_hardRoundSetGpuOverlayVisible\(false,'owned-finalization-retire-committed-overlay'\)/);
+
+  const retire=(state,finalizingStrokeId)=>{
+    if(state.presented!==finalizingStrokeId)return;
+    if((state.owner!=null&&state.owner!==finalizingStrokeId)||(state.visibilityOwner!=null&&state.visibilityOwner!==finalizingStrokeId)){state.events.push('overlayHideSuppressed');return;}
+    state.visible=false;state.events.push('overlayHidden');
+  };
+  const overlap={owner:3,visibilityOwner:3,presented:2,visible:true,events:[]};
+  retire(overlap,2);
+  assert.equal(overlap.visible,true);
+  assert.deepEqual(overlap.events,['overlayHideSuppressed']);
+  overlap.presented=3; // Stroke 3's accepted present atomically supersedes 2.
+  assert.equal(overlap.visible,true);
+});
+
+test('finalizer may retire its overlay when no newer session owns it',()=>{
+  const state={owner:2,visibilityOwner:2,presented:2,visible:true};
+  if(state.presented===2&&!((state.owner!=null&&state.owner!==2)||(state.visibilityOwner!=null&&state.visibilityOwner!==2)))state.visible=false;
+  assert.equal(state.visible,false);
 });
 
 test('RAF callbacks and async completions own immutable session tokens',()=>{
   assert.match(engine,/const scheduledSession=_activeStrokeSession/);
   assert.match(engine,/if\(scheduledSession!==_activeStrokeSession\|\|!_inStroke\)return/);
-  assert.match(engine,/const flightToken=\{sessionId:scheduledSession,renderer\}/);
+  assert.match(engine,/const flightToken=\{sessionId:session,renderer\}/);
   assert.match(engine,/if\(_hardRoundPreviewInFlightToken!==flightToken\)return/);
-  assert.match(engine,/if\(_hardRoundPreviewRAFSession===_activeStrokeSession\)return/);
+  assert.match(engine,/if\(!immediate&&_hardRoundPreviewRAFSession===_activeStrokeSession\)return/);
 });
 
 test('a stale queued RAF is replaced rather than consuming the next stroke request',()=>{

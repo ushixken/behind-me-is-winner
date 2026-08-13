@@ -5369,9 +5369,46 @@ let _hardRoundRendererResizePending=false;
 let _hardRoundPointerdownPreparing=false;
 let _hardRoundActiveContext = null;
 const _hardRoundRendererPool = [];
+const _HARD_ROUND_WARM_RESERVE = 2;
+let _hardRoundReserveFillPromise=null;
 const _hardRoundFinishingContexts = new Map();
 let _hardRoundCommitTail = Promise.resolve();
 let _hardRoundPendingCommitCount = 0;
+if(typeof window.HardRoundDebugFirstPresentTiming==='undefined')window.HardRoundDebugFirstPresentTiming=false;
+if(typeof window.HardRoundPresenterWarm==='undefined')window.HardRoundPresenterWarm=false;
+const _hardRoundFirstPresentTiming=[];
+let _hardRoundPointerDownAt=0;
+function _hrFirstPresentRecord(strokeId){
+  if(!window.HardRoundDebugFirstPresentTiming)return null;
+  let record=_hardRoundFirstPresentTiming.find(item=>item.strokeId===strokeId);
+  if(!record&&_hardRoundFirstPresentTiming.length<5){
+    record={strokeId,pointerDownTime:_hardRoundPointerDownAt||performance.now(),beginStrokeStart:null,beginStrokeEnd:null,firstRawInputTime:null,firstStabilizedInputTime:null,firstSegmentGeneratedTime:null,firstGpuEncodeStart:null,firstGpuSubmitTime:null,firstPresentCallTime:null,firstOverlayVisibleTime:null,rendererCreated:!!_hardRoundRendererCreatedPending,rendererReused:!_hardRoundRendererCreatedPending,warmReserveAvailableAtBegin:_hardRoundRendererPool.filter(renderer=>renderer.width===activeC.width&&renderer.height===activeC.height&&renderer.gpu&&renderer.gpu.isAvailable&&renderer.gpu.isAvailable()).length,gpuReadyAtBegin:false,presenterWarmAtBegin:!!window.HardRoundPresenterWarm,backend:null,previewGenerationAtBegin:null,overlayOwnerAtBegin:null,presentLivePreviewCallCount:0,presentLivePreviewAcceptedCount:0,cpuPreviewAcceptedCount:0,presentLivePreviewRejectedCount:0,overlayShownCount:0,gpuClearCountThisStroke:0,gpuGeometrySubmitCountThisStroke:0,gpuPresentSubmitCountThisStroke:0,firstPresentReason:null};
+    _hardRoundFirstPresentTiming.push(record);
+  }
+  return record||null;
+}
+function _hrFirstPresentNote(strokeId,name,time=performance.now()){
+  const record=_hrFirstPresentRecord(strokeId);if(record&&record[name]==null)record[name]=time;
+}
+function _hrFirstPresentCount(strokeId,name,reason){
+  const record=_hrFirstPresentRecord(strokeId);if(!record)return;
+  record[name]=(record[name]||0)+1;
+  if(reason&&record.firstPresentReason==null)record.firstPresentReason=reason;
+}
+window.HardRoundFirstPresentNote=_hrFirstPresentNote;
+window.HardRoundFirstPresentCount=_hrFirstPresentCount;
+window.HardRoundAnalyzeFirstPresentTiming=function(){
+  const strokes=_hardRoundFirstPresentTiming.map(record=>{
+    const delta=(a,b)=>record[a]!=null&&record[b]!=null?record[b]-record[a]:null;
+    return Object.assign({},record,{
+      pointerDownToBeginMs:delta('pointerDownTime','beginStrokeStart'),beginToFirstInputMs:delta('beginStrokeEnd','firstRawInputTime'),
+      firstInputToFirstSegmentMs:delta('firstRawInputTime','firstSegmentGeneratedTime'),firstSegmentToSubmitMs:delta('firstSegmentGeneratedTime','firstGpuSubmitTime'),
+      submitToPresentCallMs:delta('firstGpuSubmitTime','firstPresentCallTime'),presentCallToOverlayVisibleMs:delta('firstPresentCallTime','firstOverlayVisibleTime'),
+      pointerDownToOverlayVisibleMs:delta('pointerDownTime','firstOverlayVisibleTime'),
+    });
+  });
+  return {presenterWarm:!!window.HardRoundPresenterWarm,count:strokes.length,strokes};
+};
 if(typeof window.HardRoundDebugRapidPresentation==='undefined')window.HardRoundDebugRapidPresentation=false;
 const _hardRoundRapidPresentationLog=[];
 function _hrRapidPresentation(event,strokeId,extra){
@@ -5379,8 +5416,9 @@ function _hrRapidPresentation(event,strokeId,extra){
   const overlay=_hardRoundGpuOverlay();
   _hardRoundRapidPresentationLog.push(Object.assign({time:performance.now(),event,strokeId:strokeId==null?_activeStrokeSession:strokeId,
     activeSession:_activeStrokeSession,overlayOwner:window.HardRoundOverlayOwnerStrokeId==null?null:window.HardRoundOverlayOwnerStrokeId,
+    overlayVisibilityOwnerStrokeId:window.HardRoundOverlayVisibilityOwnerStrokeId==null?null:window.HardRoundOverlayVisibilityOwnerStrokeId,
     overlayPresentedStrokeId:window.HardRoundOverlayPresentedStrokeId==null?null:window.HardRoundOverlayPresentedStrokeId,
-    overlayVisible:!!(overlay&&!overlay.hidden&&overlay.style.display!=='none'),pendingCommitCount:_hardRoundPendingCommitCount},extra||{}));
+    overlayVisible:!!(overlay&&!overlay.hidden&&overlay.style.display!=='none'&&overlay.style.opacity!=='0'),pendingCommitCount:_hardRoundPendingCommitCount},extra||{}));
   if(_hardRoundRapidPresentationLog.length>200)_hardRoundRapidPresentationLog.splice(0,_hardRoundRapidPresentationLog.length-200);
 }
 window.HardRoundAnalyzeRapidPresentation=function(){
@@ -5954,13 +5992,33 @@ function _hardRoundFlushPending(renderer){
 function _hardRoundGetRenderer(){
   if(typeof window==='undefined' || !window.PrototypeRenderer) return null;
   const w = activeC.width, h = activeC.height;
-  if(!_hardRoundRenderer || _hardRoundRenderer.width!==w || _hardRoundRenderer.height!==h){
-    const resized=!!_hardRoundRenderer&&(_hardRoundRenderer.width!==w||_hardRoundRenderer.height!==h);
-    const pooledIndex=_hardRoundRendererPool.findIndex(renderer=>renderer.width===w&&renderer.height===h&&!renderer._hardRoundFinishingOwner);
-    _hardRoundRenderer=pooledIndex>=0?_hardRoundRendererPool.splice(pooledIndex,1)[0]:new window.PrototypeRenderer({width:w, height:h, preferGpu:true});
-    _hardRoundRendererCreatedPending=pooledIndex<0&&_hardRoundPointerdownPreparing;
-    _hardRoundRendererResizePending=resized&&_hardRoundPointerdownPreparing;
+  const primary=_hardRoundRenderer;
+  const primaryMatches=!!(primary&&primary.width===w&&primary.height===h&&!primary._hardRoundFinishingOwner);
+  // Never swap a renderer underneath an already-active stroke.
+  if(primaryMatches&&primary._active)return primary;
+  const primaryGpuReady=!!(primaryMatches&&primary.gpu&&primary.gpu.isAvailable&&primary.gpu.isAvailable());
+  if(primaryGpuReady)return primary;
+  // A cold/non-matching primary must not block a prepared spare. This was
+  // the first-stroke bug: pool lookup previously happened only when the
+  // primary was null or resized, so any non-null cold primary won.
+  const readyIndex=_hardRoundRendererPool.findIndex(renderer=>renderer.width===w&&renderer.height===h&&!renderer._hardRoundFinishingOwner&&renderer.gpu&&renderer.gpu.isAvailable&&renderer.gpu.isAvailable());
+  if(readyIndex>=0){
+    if(primary&&!primary._active&&!primary._hardRoundFinishingOwner&&!_hardRoundRendererPool.includes(primary))_hardRoundRendererPool.push(primary);
+    _hardRoundRenderer=_hardRoundRendererPool.splice(readyIndex,1)[0];
+    _hardRoundRendererCreatedPending=false;
+    _hardRoundRendererResizePending=!!primary&&primary!==_hardRoundRenderer&&_hardRoundPointerdownPreparing;
+    _hardRoundReplenishWarmReserve();
+    return _hardRoundRenderer;
   }
+  // Preserve genuine CPU fallback: reuse a compatible cold primary when no
+  // prepared GPU renderer exists, and construct only as the final option.
+  if(primaryMatches)return primary;
+  const resized=!!primary&&(primary.width!==w||primary.height!==h);
+  const pooledIndex=_hardRoundRendererPool.findIndex(renderer=>renderer.width===w&&renderer.height===h&&!renderer._hardRoundFinishingOwner);
+  _hardRoundRenderer=pooledIndex>=0?_hardRoundRendererPool.splice(pooledIndex,1)[0]:new window.PrototypeRenderer({width:w,height:h,preferGpu:true});
+  _hardRoundRendererCreatedPending=pooledIndex<0&&_hardRoundPointerdownPreparing;
+  _hardRoundRendererResizePending=resized&&_hardRoundPointerdownPreparing;
+  _hardRoundReplenishWarmReserve();
   return _hardRoundRenderer;
 }
 function _hardRoundHasVisibleLayerAbove(layerIndex,frameIndex){
@@ -6084,6 +6142,7 @@ function _hardRoundReleaseFinishingContext(context){
   context.renderer._hardRoundFinishingOwner=null;
   _hardRoundRendererPool.push(context.renderer);
   _hardRoundFinishingContexts.delete(context.strokeId);
+  _hardRoundReplenishWarmReserve();
 }
 function _hardRoundFinalizeOwnedContext(context,e){
   _hrRapidPresentation('commitStarted',context.strokeId,{kind:context.smartRaster?'smart-raster':'normal-raster'});
@@ -6128,11 +6187,21 @@ function _hardRoundFinalizeOwnedContext(context,e){
       _hardRoundSetGpuOverlayVisible(false,'owned-finalization-current-session');
       _finalizePointerEndStroke(e,ready.strokeId,false);
     }else if(window.HardRoundOverlayPresentedStrokeId===ready.strokeId){
-      // A newer stroke may already own the presenter, but until its first
-      // frame lands the shared canvas can still contain this just-committed
-      // stroke. Retire that old representation only after recomposite made
-      // the committed replacement visible.
-      _hardRoundSetGpuOverlayVisible(false,'owned-finalization-retire-committed-overlay');
+      const overlayOwner=window.HardRoundOverlayOwnerStrokeId;
+      const visibilityOwner=window.HardRoundOverlayVisibilityOwnerStrokeId;
+      if((overlayOwner!=null&&overlayOwner!==ready.strokeId)||(visibilityOwner!=null&&visibilityOwner!==ready.strokeId)){
+        // The pixels are old, but the shared surface is already controlled
+        // by a newer active session. Keep those last valid pixels as a
+        // continuity bridge until the new owner atomically presents its
+        // first accepted frame; the old finalizer cannot hide that surface.
+        _hrRapidPresentation('overlayHideSuppressed',ready.strokeId,{
+          reason:'older-finalizer-newer-owner',finalizingStrokeId:ready.strokeId,
+          overlayOwner,overlayVisibilityOwnerStrokeId:visibilityOwner,
+          overlayPresentedStrokeId:window.HardRoundOverlayPresentedStrokeId,
+        });
+      }else{
+        _hardRoundSetGpuOverlayVisible(false,'owned-finalization-retire-committed-overlay');
+      }
     }
   });
   const settled=commit.finally(()=>{_hardRoundPendingCommitCount=Math.max(0,_hardRoundPendingCommitCount-1);_hrRapidPresentation('finalizerCompleted',context.strokeId);});
@@ -6426,9 +6495,17 @@ function _hardRoundSetGpuOverlayVisible(visible,reason){
   if(!overlay)return;
   overlay.hidden=!visible;
   overlay.style.display=visible?'block':'none';
+  overlay.style.opacity=visible?'1':'0';
   if(!visible)window.HardRoundOverlayPresentedStrokeId=null;
+  if(visible){_hrFirstPresentNote(_activeStrokeSession,'firstOverlayVisibleTime');_hrFirstPresentCount(_activeStrokeSession,'overlayShownCount');}
   _hrRapidPresentation(visible?'overlayShown':'overlayHidden',_activeStrokeSession,{reason:reason||null});
   _hrPresentBoundaryLog('setGpuOverlayVisible('+visible+')'+(reason?' via '+reason:''));
+}
+function _hardRoundConcealMountedOverlay(reason){
+  const overlay=_hardRoundGpuOverlay();if(!overlay)return;
+  overlay.hidden=false;overlay.style.display='block';overlay.style.opacity='0';
+  window.HardRoundOverlayPresentedStrokeId=null;
+  _hrRapidPresentation('overlayHidden',_activeStrokeSession,{reason:reason||'mounted-transparent'});
 }
 // TEMP DIAGNOSTIC (Phase 11A.35): one concise timestamped surface-state log,
 // plus optional two-rAF-boundary checkpoints to sample what the browser has
@@ -6442,7 +6519,7 @@ function _hr1135Snapshot(event){
     tag:'[11A.35 SURFACES]',
     time:performance.now(),
     event,
-    overlayVisible:overlay?!overlay.hidden&&overlay.style.display!=='none':null,
+    overlayVisible:overlay?!overlay.hidden&&overlay.style.display!=='none'&&overlay.style.opacity!=='0':null,
     overlayOpacity:overlay?getComputedStyle(overlay).opacity:null,
     displayBackend:(window.DisplayBackend&&window.DisplayBackend.mode)||'canvas2d',
     activeCanvasOpacity:(typeof activeC!=='undefined'&&activeC)?activeC.style.opacity:null,
@@ -6477,16 +6554,57 @@ function _hr1135LogAfterPaint(event){
     if(window.HardRoundDebug1135)console.log(snap.tag,snap);
   }));
 }
-// Give device/pipeline creation the hover interval before pointer-down.
+let _hardRoundPresentationPrewarmPromise=null;
+function _hardRoundReplenishWarmReserve(){
+  if(_hardRoundReserveFillPromise||typeof window==='undefined'||!window.PrototypeRenderer||!activeC)return _hardRoundReserveFillPromise||Promise.resolve(false);
+  const w=activeC.width,h=activeC.height;
+  _hardRoundReserveFillPromise=(async()=>{
+    // First finish preparing any same-size renderer already in the pool.
+    for(const renderer of _hardRoundRendererPool){
+      if(renderer.width!==w||renderer.height!==h||renderer._hardRoundFinishingOwner)continue;
+      if(renderer.gpu&&renderer.gpu.isAvailable&&renderer.gpu.isAvailable())continue;
+      if(typeof renderer.prepareGpuPresentation==='function')await renderer.prepareGpuPresentation();
+    }
+    let readyCount=_hardRoundRendererPool.filter(renderer=>renderer.width===w&&renderer.height===h&&!renderer._hardRoundFinishingOwner&&renderer.gpu&&renderer.gpu.isAvailable&&renderer.gpu.isAvailable()).length;
+    while(readyCount<_HARD_ROUND_WARM_RESERVE){
+      const renderer=new window.PrototypeRenderer({width:w,height:h,preferGpu:true});
+      const warmed=typeof renderer.prepareGpuPresentation==='function'&&await renderer.prepareGpuPresentation();
+      if(!warmed)break;
+      _hardRoundRendererPool.push(renderer);readyCount++;
+    }
+    return readyCount>=_HARD_ROUND_WARM_RESERVE;
+  })().finally(()=>{_hardRoundReserveFillPromise=null;});
+  return _hardRoundReserveFillPromise;
+}
+function _hardRoundPrewarmPresentation(){
+  if(_hardRoundPresentationPrewarmPromise)return _hardRoundPresentationPrewarmPromise;
+  const renderer=_hardRoundGetRenderer();
+  if(!renderer||typeof renderer.prepareGpuPresentation!=='function')return Promise.resolve(false);
+  // Presenter warmth is global, renderer readiness is size-specific. Never
+  // let the global flag skip preparing the current primary/reserve after a
+  // canvas-size change.
+  if(renderer.gpu&&renderer.gpu.isAvailable&&renderer.gpu.isAvailable()){
+    _hardRoundReplenishWarmReserve();return Promise.resolve(true);
+  }
+  _hardRoundConcealMountedOverlay('prewarm-mounted-transparent');
+  _hardRoundPresentationPrewarmPromise=renderer.prepareGpuPresentation().then(warmed=>{
+    window.HardRoundPresenterWarm=!!warmed;
+    if(warmed)_hardRoundReplenishWarmReserve();
+    return !!warmed;
+  }).finally(()=>{_hardRoundPresentationPrewarmPromise=null;});
+  return _hardRoundPresentationPrewarmPromise;
+}
+// Give device/pipeline creation and one real transparent presentation the
+// hover interval before pointer-down.
 activeC.addEventListener('pointerenter',()=>{
-  if(tool==='brush'&&typeof window!=='undefined'&&window.PrototypeRenderer)_hardRoundGetRenderer();
+  if(tool==='brush'&&typeof window!=='undefined'&&window.PrototypeRenderer)_hardRoundPrewarmPresentation();
 },{passive:true});
 // Preset activation is an earlier, idempotent warm-up opportunity than
 // pointerenter. Ordinary switches retain the existing renderer; first use
 // starts its shared-device GPU preparation without blocking the selection UI.
 window.addEventListener('brush-runtime-ready',event=>{
   if(!event.detail||event.detail.presetId!=='hard-round'||window.brushTipCanvas||window.brushTextureEnabled)return;
-  requestAnimationFrame(()=>{if(tool==='brush')_hardRoundGetRenderer();});
+  if(tool==='brush')_hardRoundPrewarmPresentation();
 });
 
 // Exact eligibility condition (Phase 8C §9). Procedural, not a preset-name
@@ -6613,6 +6731,7 @@ window.HardRoundAnalyze11B6 = function(){
 };
 function _hardRoundStampSegments(segments, e){
   if(!segments || !segments.length) return;
+  if(_hardRoundStrokeActive)_hrFirstPresentNote(_activeStrokeSession,'firstSegmentGeneratedTime');
   const brushDiagStart=window.BrushDebugPerf?performance.now():0;
   // Phase 9E.4: mark the stroke's true open start/end (not just this
   // batch's first/last -- batches are per pointermove, the stroke's own
@@ -7119,9 +7238,13 @@ window.HardRoundAnalyzePaintedOverlayCompare = function(){
   };
 };
 function _hardRoundPresentLivePreview(renderer){
-  if(!renderer || !_inStroke || !_strokeCtx || !_strokeCanvas) return;
+  if(!renderer || !_inStroke || !_strokeCtx || !_strokeCanvas){
+    _hrFirstPresentCount(_activeStrokeSession,'presentLivePreviewRejectedCount',!renderer?'no-renderer':'pending-preview-cancelled');
+    return;
+  }
   const _hrMtSetupStart = _hrMtActive() ? performance.now() : null;
   const session = _activeStrokeSession;
+  _hrFirstPresentCount(session,'presentLivePreviewCallCount');
   // Phase 11A.5: capture the current preview generation. See
   // _hardRoundPreviewGeneration below for why this check exists in
   // addition to the session/_inStroke checks already here.
@@ -7235,16 +7358,19 @@ function _hardRoundPresentLivePreview(renderer){
       else _hr1110Entry.accepted = true;
     }
     // --- end 11B.10 resolve-time bookkeeping ---
-    if(previewGeneration!==_hardRoundPreviewGeneration) { _hr11b6Log('presentLivePreview-stale',_lastPointerEvent,{reason:'preview-generation-cancelled'}); if(_dbgOrderEntry)_hardRoundPreviewOrderPush(_dbgOrderEntry); return; }
-    if(session!==_activeStrokeSession || !_inStroke || !_strokeCtx || !_strokeCanvas) { _hr11b6Log('presentLivePreview-stale',_lastPointerEvent,{reason:'session-or-stroke-ended'}); if(_dbgOrderEntry)_hardRoundPreviewOrderPush(_dbgOrderEntry); return; }
-    if(!result || !result.canvas) { _hr11b6Log('presentLivePreview-stale',_lastPointerEvent,{reason:'no-result'}); if(_dbgOrderEntry)_hardRoundPreviewOrderPush(_dbgOrderEntry); return; }
+    if(previewGeneration!==_hardRoundPreviewGeneration) { _hrFirstPresentCount(session,'presentLivePreviewRejectedCount','stale-generation');_hr11b6Log('presentLivePreview-stale',_lastPointerEvent,{reason:'preview-generation-cancelled'}); if(_dbgOrderEntry)_hardRoundPreviewOrderPush(_dbgOrderEntry); return; }
+    if(session!==_activeStrokeSession || !_inStroke || !_strokeCtx || !_strokeCanvas) { _hrFirstPresentCount(session,'presentLivePreviewRejectedCount',session!==_activeStrokeSession?'wrong-stroke-id':'pending-preview-cancelled');_hr11b6Log('presentLivePreview-stale',_lastPointerEvent,{reason:'session-or-stroke-ended'}); if(_dbgOrderEntry)_hardRoundPreviewOrderPush(_dbgOrderEntry); return; }
+    if(!result || !result.canvas) { _hrFirstPresentCount(session,'presentLivePreviewRejectedCount','empty-geometry');_hr11b6Log('presentLivePreview-stale',_lastPointerEvent,{reason:'no-result'}); if(_dbgOrderEntry)_hardRoundPreviewOrderPush(_dbgOrderEntry); return; }
     if(renderer.isGpuActive&&renderer.isGpuActive()&&(!result.presentation||result.presentation.presented!==true)){
       _hr11b6Log('presentLivePreview-rejected',_lastPointerEvent,{reason:result.presentation&&result.presentation.reason||'not-presented'});
+      _hrFirstPresentCount(session,'presentLivePreviewRejectedCount',result.presentation&&result.presentation.reason||'other');
       if(_dbgOrderEntry){_dbgOrderEntry.staleAtResolve=true;_dbgOrderEntry.staleReason=result.presentation&&result.presentation.reason||'not-presented';_hardRoundPreviewOrderPush(_dbgOrderEntry);}
       return;
     }
     _hr11b6Log('presentLivePreview-accepted',_lastPointerEvent,{resultSegmentCount:result.segmentCount});
-    if(renderer.isGpuActive&&renderer.isGpuActive()){
+    const gpuPreviewAccepted=!!(renderer.isGpuActive&&renderer.isGpuActive());
+    _hrFirstPresentCount(session,gpuPreviewAccepted?'presentLivePreviewAcceptedCount':'cpuPreviewAcceptedCount',gpuPreviewAccepted?'accepted':null);
+    if(gpuPreviewAccepted){
       // Phase 11B.5 TEMP DIAGNOSTIC (opt-in, default off): when
       // window.HardRoundDebugCanvasLivePresentation is true,
       // renderer.peekStroke() (see prototype-renderer.js) already redirected
@@ -7394,6 +7520,24 @@ let _hardRoundPreviewInFlight = false;
 let _hardRoundPreviewInFlightToken = null;
 let _hardRoundPreviewNeedsFollowup = false;
 let _hardRoundPreviewRequestedRenderer = null;
+function _hardRoundStartPreviewFlight(renderer,session){
+  if(session!==_activeStrokeSession||!_inStroke)return false;
+  _hardRoundFlushPending(renderer);
+  const flightToken={sessionId:session,renderer};
+  _hardRoundPreviewInFlight=true;
+  _hardRoundPreviewInFlightToken=flightToken;
+  _hardRoundPreviewNeedsFollowup=false;
+  Promise.resolve(_hardRoundPresentLivePreview(renderer)).finally(()=>{
+    if(_hardRoundPreviewInFlightToken!==flightToken)return;
+    _hardRoundPreviewInFlight=false;
+    _hardRoundPreviewInFlightToken=null;
+    const requestedRenderer=_hardRoundPreviewRequestedRenderer;
+    const needsFollowup=_hardRoundPreviewNeedsFollowup||_hardRoundPendingRenderSegments.length>0;
+    _hardRoundPreviewNeedsFollowup=false;
+    if(needsFollowup&&requestedRenderer&&_hardRoundPreviewSession===_activeStrokeSession&&_inStroke)_hardRoundRequestLivePreview(requestedRenderer);
+  });
+  return true;
+}
 function _hardRoundSchedulePreviewFrame(renderer){
   if(_hardRoundPreviewRAF!==null)return;
   const scheduledSession=_activeStrokeSession;
@@ -7406,36 +7550,22 @@ function _hardRoundSchedulePreviewFrame(renderer){
     _hrFsRecordPreviewRafStart();
     if(scheduledSession!==_activeStrokeSession||!_inStroke)return;
     _hrPerfMarkPreviewRaf(scheduledSession);
-    _hardRoundFlushPending(renderer);
-    const flightToken={sessionId:scheduledSession,renderer};
-    _hardRoundPreviewInFlight=true;
-    _hardRoundPreviewInFlightToken=flightToken;
-    _hardRoundPreviewNeedsFollowup=false;
-    Promise.resolve(_hardRoundPresentLivePreview(renderer)).finally(()=>{
-      if(_hardRoundPreviewInFlightToken!==flightToken)return;
-      _hardRoundPreviewInFlight=false;
-      _hardRoundPreviewInFlightToken=null;
-      const requestedRenderer=_hardRoundPreviewRequestedRenderer;
-      const needsFollowup=_hardRoundPreviewNeedsFollowup||_hardRoundPendingRenderSegments.length>0;
-      _hardRoundPreviewNeedsFollowup=false;
-      if(needsFollowup&&requestedRenderer&&_hardRoundPreviewSession===_activeStrokeSession&&_inStroke){
-        _hardRoundRequestLivePreview(requestedRenderer);
-      }
-    });
+    _hardRoundStartPreviewFlight(renderer,scheduledSession);
     if(_hrMtCbStart!=null) _hrMtRecord('_hardRoundSchedulePreviewFrame-callback-total', _hrMtCbStart, performance.now());
   });
 }
-function _hardRoundRequestLivePreview(renderer){
+function _hardRoundRequestLivePreview(renderer,immediate=false){
   if(!renderer || !_inStroke || !_strokeCtx || !_strokeCanvas) return;
   _hardRoundPreviewRequestedRenderer=renderer;
   _hardRoundPreviewSession = _activeStrokeSession;
   if(_hardRoundPreviewInFlight){_hardRoundPreviewNeedsFollowup=true;return;}
   if(_hardRoundPreviewRAF !== null){
-    if(_hardRoundPreviewRAFSession===_activeStrokeSession)return;
+    if(!immediate&&_hardRoundPreviewRAFSession===_activeStrokeSession)return;
     cancelAnimationFrame(_hardRoundPreviewRAF);
     _hardRoundPreviewRAF=null;
     _hardRoundPreviewRAFSession=null;
   }
+  if(immediate){_hardRoundStartPreviewFlight(renderer,_activeStrokeSession);return;}
   _hardRoundSchedulePreviewFrame(renderer);
 }
 
@@ -7732,6 +7862,7 @@ function _endVisibleCanvasColorSampling(pointerId){
 // pixels exactly where the stroke path enters the canvas Ã¢â‚¬â€ no special
 // "entry" case needed, no gap, no restart.
 function _brushPointerDown(e){
+  _hardRoundPointerDownAt=performance.now();
   _hrFsRecordInput('pointerdown', e);
   const diagnosticPointerdownEntry=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
   const customTraceEntry=window.CustomFirstDabTrace&&window.CustomFirstDabTrace.enabled?performance.now():0;
@@ -7835,6 +7966,7 @@ function _brushPointerDown(e){
   if(tool==='fill'){pushUndo();ensureKey();floodFill(p.x,p.y,color);saveActiveToKey();recomposite(curLayer,curFrame);return;}
   _activeStrokePointerId=e.pointerId;
   _strokeOwnerLayer=curLayer;_strokeOwnerFrame=curFrame;_activeStrokeSession=++_strokeSessionSerial;
+  if(_hardRoundStrokeActive)_hrFirstPresentRecord(_activeStrokeSession);
   _brushDiagPerfBegin(_activeStrokeSession);
   if(_hardRoundStrokeActive){_brushDiagPerfNote('hard-round-renderer',{created:_hardRoundRendererCreatedPending});if(_hardRoundRendererResizePending)_brushDiagPerfNote('hard-round-resize');_hardRoundRendererCreatedPending=false;_hardRoundRendererResizePending=false;}
   if(_hardRoundStrokeActive) _hrPerfMarkStrokeStart(_activeStrokeSession);
@@ -7963,9 +8095,20 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
         presentationBarrier:_hardRoundCommitTail,
       };
       window.HardRoundOverlayOwnerStrokeId=_activeStrokeSession;
+      window.HardRoundOverlayVisibilityOwnerStrokeId=_activeStrokeSession;
+      _hrFirstPresentNote(_activeStrokeSession,'beginStrokeStart');
       const hardRoundBeginStarted=window.BrushDebugPerf?performance.now():0;
       hardRoundRenderer._brushPerfStrokeBeginAt=hardRoundBeginStarted||0;
       hardRoundRenderer.beginStroke();
+      _hrFirstPresentNote(_activeStrokeSession,'beginStrokeEnd');
+      const firstPresentRecord=_hrFirstPresentRecord(_activeStrokeSession);
+      if(firstPresentRecord){
+        firstPresentRecord.gpuReadyAtBegin=!!(hardRoundRenderer.isGpuActive&&hardRoundRenderer.isGpuActive());
+        firstPresentRecord.backend=firstPresentRecord.gpuReadyAtBegin?'webgpu':'cpu';
+        firstPresentRecord.previewGenerationAtBegin=_hardRoundPreviewGeneration;
+        firstPresentRecord.overlayOwnerAtBegin=window.HardRoundOverlayOwnerStrokeId==null?null:window.HardRoundOverlayOwnerStrokeId;
+        if(firstPresentRecord.gpuReadyAtBegin)firstPresentRecord.gpuClearCountThisStroke++;
+      }
       if(hardRoundBeginStarted)_brushDiagPerfNote('hard-round-begin',{ms:performance.now()-hardRoundBeginStarted});
       _brushDiagPerfNote('gpu-state',{backend:hardRoundRenderer.isGpuActive&&hardRoundRenderer.isGpuActive()?'webgpu':'cpu'});
       // TEMP DIAGNOSTIC (Phase 11A.19): same region, immediately after
@@ -8003,8 +8146,12 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
         _hardRoundSetGpuOverlayVisible(false,'beginStroke-canvasLivePresentationMode');
         _traceStrokeLifecycle('hardround-overlay-show-suppressed-canvas-live-presentation',{gpuActive:!!(hardRoundRenderer.isGpuActive&&hardRoundRenderer.isGpuActive())});
       }else{
-        const preservePriorUntilCommit=!!(hardRoundRenderer.isGpuActive&&hardRoundRenderer.isGpuActive()&&_hardRoundPendingCommitCount>0&&_hardRoundGpuOverlay()&&!_hardRoundGpuOverlay().hidden);
-        if(!preservePriorUntilCommit)_hardRoundSetGpuOverlayVisible(false,'beginStroke-await-first-present');
+        const priorOverlay=_hardRoundGpuOverlay();
+        const preservePriorUntilCommit=!!(hardRoundRenderer.isGpuActive&&hardRoundRenderer.isGpuActive()&&_hardRoundPendingCommitCount>0&&priorOverlay&&!priorOverlay.hidden&&priorOverlay.style.display!=='none'&&priorOverlay.style.opacity!=='0');
+        if(!preservePriorUntilCommit){
+          if(window.HardRoundPresenterWarm)_hardRoundConcealMountedOverlay('beginStroke-await-first-present-mounted-transparent');
+          else _hardRoundSetGpuOverlayVisible(false,'beginStroke-await-first-present');
+        }
         _traceStrokeLifecycle('hardround-overlay-show-deferred',{gpuActive:!!(hardRoundRenderer.isGpuActive&&hardRoundRenderer.isGpuActive()),reason:preservePriorUntilCommit?'preserve-prior-until-commit':'await-first-successful-present'});
       }
       // TEMP DIAGNOSTIC (Phase 11A.19): same region, immediately after the
@@ -8055,6 +8202,11 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
       // Preserve the original immediate first-dab behavior; only movement
       // segments are frame-batched.
       _hardRoundFlushPending(_hardRoundRenderer);
+      if(firstPresentRecord&&firstPresentRecord.gpuReadyAtBegin)firstPresentRecord.gpuGeometrySubmitCountThisStroke++;
+      // The first stroke has no prior committed/overlay representation to
+      // bridge a one-frame scheduler wait. Submit its initial dab now;
+      // movement remains coalesced to one preview per animation frame.
+      _hardRoundRequestLivePreview(_hardRoundRenderer,true);
     } else {
       // TEMP DIAGNOSTIC (Phase 11A routing probe) -- read-only.
       window._hrDebugStrokeId = (window._hrDebugStrokeId||0)+1;
@@ -8182,6 +8334,7 @@ function _handleMoveEvent(e){
   if((!drawing&&!_lineDragging)||activeGroupId||_strokeCompletionStarted) return;
   if(_activeStrokePointerId!=null&&e.pointerId!==_activeStrokePointerId) return;
   if(!(e.buttons&1)){_endStroke(e.pointerId);return;}
+  if(_hardRoundStrokeActive)_hrFirstPresentNote(_activeStrokeSession,'firstRawInputTime');
   e.preventDefault();
   const _hrMtCoalesceStart = _hrMtActive() ? performance.now() : null;
   const events=(typeof e.getCoalescedEvents==='function'&&e.getCoalescedEvents().length)?e.getCoalescedEvents():[e];
@@ -8215,6 +8368,7 @@ function _handleMoveEvent(e){
     _stabilizerSetSampleContext(effPressure,ev);
     const evTime=Number.isFinite(ev.timeStamp)&&ev.timeStamp>0?ev.timeStamp:performance.now();
     const p=_stabilizePoint(raw.x,raw.y,evTime);
+    if(_hardRoundStrokeActive)_hrFirstPresentNote(_activeStrokeSession,'firstStabilizedInputTime');
     _tipDisplayRecordAuthoritative(p.x,p.y,performance.now());
     _updateVelocity(p.x,p.y,evTime);
     if(window._brushAirbrush&&Math.hypot(p.x-lx,p.y-ly)>0.01)_airbrushLastMovementTime=performance.now();

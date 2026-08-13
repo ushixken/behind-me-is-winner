@@ -588,6 +588,37 @@
   // WebGPU, and never the only path -- isAvailable() gates every call site.
   // ---------------------------------------------------------------------
   let _hardRoundGpuPresenterPromise = null;
+  let _hardRoundSharedPresentSequence = 0;
+  function sharedPresentTrace(event,detail) {
+    if (typeof window === 'undefined' || !window.HardRoundDebugSharedPresentation) return;
+    const log = window.HardRoundSharedPresentationLog || (window.HardRoundSharedPresentationLog = []);
+    log.push(Object.assign({
+      event,
+      time: performance.now(),
+      sharedPresentSequence: ++_hardRoundSharedPresentSequence,
+      overlayOwner: window.HardRoundOverlayOwnerStrokeId == null ? null : window.HardRoundOverlayOwnerStrokeId,
+      overlayVisibilityOwnerStrokeId: window.HardRoundOverlayVisibilityOwnerStrokeId == null ? null : window.HardRoundOverlayVisibilityOwnerStrokeId,
+      presentedStrokeIdBeforeSubmit: window.HardRoundOverlayPresentedStrokeId == null ? null : window.HardRoundOverlayPresentedStrokeId,
+    }, detail || {}));
+    if (log.length > 100) log.splice(0, log.length - 100);
+  }
+  if (typeof window !== 'undefined') {
+    if (typeof window.HardRoundDebugSharedPresentation === 'undefined') window.HardRoundDebugSharedPresentation = false;
+    window.HardRoundAnalyzeSharedPresentation = function() {
+      const log = (window.HardRoundSharedPresentationLog || []).slice();
+      const submissions = log.filter(entry => entry.event === 'sharedPresentSubmit');
+      const blankDuringBridge = submissions.filter(entry => entry.sharedPresentWasBlank && entry.sharedPresentDuringBridge);
+      return {
+        submissionCount: submissions.length,
+        blankSubmissionCount: submissions.filter(entry => entry.sharedPresentWasBlank).length,
+        blankDuringBridgeCount: blankDuringBridge.length,
+        firstBlankDuringBridge: blankDuringBridge[0] || null,
+        contextConfigureCount: log.filter(entry => entry.event === 'contextConfigure').length,
+        skippedBlankWarmupCount: log.filter(entry => entry.event === 'sharedBlankPresentSuppressed').length,
+        log,
+      };
+    };
+  }
   class HardRoundGpuPresenter {
     constructor() {
       this.device = null;
@@ -635,6 +666,7 @@
       this.context.configure({ device: this.device, format: this.format, alphaMode: 'premultiplied' });
       if(typeof window!=='undefined'&&window.BrushDebugPerf&&window.BrushPerfNote)window.BrushPerfNote('hard-round-overlay-configured');
       this.configureCount++;
+      sharedPresentTrace('contextConfigure',{contextConfigureCount:this.configureCount,contextConfigureStrokeId:typeof window!=='undefined'&&window.HardRoundOverlayOwnerStrokeId!=null?window.HardRoundOverlayOwnerStrokeId:null});
       this.ready = true;
       this.device.lost.then(() => {
         this.ready = false;
@@ -914,6 +946,12 @@
       const cg = isErase ? 0 : rgb[1] / 255;
       const cb = isErase ? 0 : rgb[2] / 255;
       const strokeOpacity = Math.max(0, Math.min(1, opacity == null ? 1 : opacity));
+      const producingStrokeId=meta&&meta.strokeId!=null?meta.strokeId:null;
+      const presentPurpose=meta&&meta.warmup?'prewarm':(producingStrokeId!=null?'live-preview':'finalization');
+      const containsGeometry=!!(meta&&Number(meta.segmentCount)>0);
+      if (typeof window !== 'undefined' && window.HardRoundFirstPresentNote && meta && meta.strokeId != null) {
+        window.HardRoundFirstPresentNote(meta.strokeId, 'firstGpuEncodeStart');
+      }
       // --- DIAGNOSTIC (Phase 11A.39): opt-in (window.HardRoundGpuPresentDiag),
       // read-only instrumentation at the REAL present() call site. The
       // out-of-order-preview hypothesis has already been ruled out
@@ -1001,6 +1039,19 @@
       pass.end();
       if (_diagEntry) _diagEntry.beforeSubmitTime = performance.now();
       this.device.queue.submit([enc.finish()]);
+      const presentedBefore=typeof window!=='undefined'&&window.HardRoundOverlayPresentedStrokeId!=null?window.HardRoundOverlayPresentedStrokeId:null;
+      const owner=typeof window!=='undefined'&&window.HardRoundOverlayOwnerStrokeId!=null?window.HardRoundOverlayOwnerStrokeId:null;
+      sharedPresentTrace('sharedPresentSubmit',{
+        sharedPresentStrokeId:producingStrokeId,sharedPresentOpacity:strokeOpacity,
+        sharedPresentClearAlpha:0,sharedPresentLoadOp:'clear',sharedPresentWasBlank:strokeOpacity<=0||!containsGeometry,
+        sharedPresentDuringBridge:presentedBefore!=null&&owner!=null&&presentedBefore!==owner,
+        containsActualStrokeGeometry:containsGeometry,purpose:presentPurpose,
+      });
+      if (typeof window !== 'undefined' && window.HardRoundFirstPresentNote && meta && meta.strokeId != null) {
+        window.HardRoundFirstPresentNote(meta.strokeId, 'firstGpuSubmitTime');
+        window.HardRoundFirstPresentNote(meta.strokeId, 'firstPresentCallTime');
+        if(window.HardRoundFirstPresentCount)window.HardRoundFirstPresentCount(meta.strokeId,'gpuPresentSubmitCountThisStroke');
+      }
       if (_diagEntry) _diagEntry.afterSubmitTime = performance.now();
       // Phase 11B.10 TEMP DIAGNOSTIC (opt-in, default off): record that
       // real GPU presentation work was actually submitted for this
@@ -1059,6 +1110,41 @@
       }
       // --- end diagnostic resolve-time bookkeeping ---
       return { presented: true, reason: null, canvas: this.outputCanvas };
+    }
+
+    warmPresentation() {
+      if (this._warmPresentationPromise) return this._warmPresentationPromise;
+      this._warmPresentationPromise = (async () => {
+        if (!this.ready) return false;
+        // Exercise both production pipelines and the real swapchain path.
+        // Zero vertices leave the transparent mask unchanged; opacity zero
+        // makes the presentation pass non-visible.
+        this.reset();
+        const enc = this.device.createCommandEncoder();
+        const pass = enc.beginRenderPass({
+          colorAttachments: [{ view: this.strokeMaskTex.createView(), loadOp: 'load', storeOp: 'store' }],
+        });
+        pass.setPipeline(this.strokePipeline);
+        pass.setBindGroup(0, this.strokeBindGroup);
+        pass.setVertexBuffer(0, this.vertexBuf);
+        pass.draw(0);
+        pass.end();
+        this.device.queue.submit([enc.finish()]);
+        // All GpuBackends share one GPUCanvasContext. Reserve preparation
+        // may warm private pipelines/textures while another stroke's last
+        // valid frame bridges to a newer owner, but it must not replace the
+        // shared swapchain image with the zero-opacity warm-up frame.
+        const sharedSurfaceOccupied=typeof window!=='undefined'&&(
+          window.HardRoundOverlayOwnerStrokeId!=null||window.HardRoundOverlayPresentedStrokeId!=null
+        );
+        if(sharedSurfaceOccupied){
+          sharedPresentTrace('sharedBlankPresentSuppressed',{purpose:'prewarm',sharedPresentOpacity:0,sharedPresentWasBlank:true,sharedPresentDuringBridge:window.HardRoundOverlayOwnerStrokeId!=null&&window.HardRoundOverlayPresentedStrokeId!=null&&window.HardRoundOverlayOwnerStrokeId!==window.HardRoundOverlayPresentedStrokeId});
+          return true;
+        }
+        await this.present([0, 0, 0], 'paint', 0, { warmup: true });
+        return true;
+      })().catch(() => false);
+      return this._warmPresentationPromise;
     }
     // --- DIAGNOSTIC (Phase 11B.2): summarize window.HardRoundGpuPresentLog
     // (populated above, opt-in via window.HardRoundGpuPresentDiag) grouped
@@ -1630,6 +1716,14 @@
       // availability was already established.
       if (this._usingGpu) this.gpu.reset();
       else this.cpu.reset();
+    }
+
+    async prepareGpuPresentation() {
+      if (!this.preferGpu) return false;
+      if (!this._gpuInitPromise) this._gpuInitPromise = this.gpu.init();
+      const ready = await this._gpuInitPromise;
+      if (!ready || this._active || !this.gpu.isAvailable()) return false;
+      return this.gpu.warmPresentation();
     }
 
     // Accumulates render-ready segments (see module doc for shape) into
