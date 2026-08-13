@@ -174,6 +174,27 @@ function pushUndo(){
   redoStack=[];
 }
 
+// Session-owned async brush commits cannot snapshot whichever layer/frame is
+// current when their continuation runs. Capture the authoritative backing
+// store for the stroke's explicit owner immediately before its ordered commit.
+function pushUndoAt(layerIndex,frameIndex){
+  const layer=layers[layerIndex];
+  const selectionSnapshot=window.PixelSelection&&PixelSelection.capture?PixelSelection.capture():null;
+  const layerType=layer&&layer.type==='smart-raster'?'smart-raster':'bitmap';
+  const extendedSnapshot=typeof getExtendedLayerFrame==='function'&&typeof cloneExtendedFrameRecord==='function'?cloneExtendedFrameRecord(getExtendedLayerFrame(layerIndex,frameIndex)):null;
+  let snap=null,styleBundle=null;
+  if(layerType==='smart-raster')styleBundle=typeof getStyleFrameBundle==='function'?getStyleFrameBundle(layerIndex,frameIndex):null;
+  else{
+    snap=mkLayerCanvas();
+    const frameCanvas=layer&&layer.frames&&layer.frames[frameIndex];
+    if(frameCanvas)snap.getContext('2d').drawImage(frameCanvas,0,0);
+  }
+  undoStack.push({snap,styleBundle,extendedSnapshot,frame:frameIndex,layer:layerIndex,layerType,selectionSnapshot});
+  if(undoStack.length>40)undoStack.shift();
+  redoStack=[];
+}
+window.pushUndoAt=pushUndoAt;
+
 function restoreBitmapUndo(action){
   if(action.layer!==curLayer) switchLayer(action.layer);
   if(action.frame!==curFrame) curFrame=action.frame;

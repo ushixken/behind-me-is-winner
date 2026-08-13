@@ -85,9 +85,12 @@
       this.ss = ss;
       this.bw = width * ss;
       this.bh = height * ss;
-      // Float32 single-channel coverage accumulator, backing-store resolution.
-      this.coverage = new Float32Array(this.bw * this.bh);
-      this._resolvedAlpha = new Uint8ClampedArray(width * height);
+      // CPU fallback storage is intentionally lazy. A GPU-ready Hard Round
+      // stroke never touches this backend, so eagerly allocating ~126 MiB
+      // at 1920x1080/SS=4 made renderer preparation itself a cold-start
+      // hazard. reset() allocates it before the first real CPU stroke.
+      this.coverage = null;
+      this._resolvedAlpha = null;
       // Phase 9C.2: union of every drawSegment() bounding box (in
       // backing-store/SS-space pixels) accumulated since the dirty region
       // was last consumed by a resolve. Null means "nothing dirty". This
@@ -121,9 +124,21 @@
       this._coverageFullCounts = new Uint16Array(this._coverageTileCols * Math.ceil(this.bh / this._coverageTileSize));
     }
 
+    _ensureStorage() {
+      if (this.coverage && this._resolvedAlpha) return false;
+      this.coverage = new Float32Array(this.bw * this.bh);
+      this._resolvedAlpha = new Uint8ClampedArray(this.w * this.h);
+      if (typeof window !== 'undefined' && window.BrushDebugPerf && window.BrushPerfNote) {
+        window.BrushPerfNote('hard-round-cpu-allocation', {
+          bytes: this.coverage.byteLength + this._resolvedAlpha.byteLength,
+        });
+      }
+      return true;
+    }
+
     reset() {
-      this.coverage.fill(0);
-      this._resolvedAlpha.fill(0);
+      const allocated=this._ensureStorage();
+      if(!allocated){this.coverage.fill(0);this._resolvedAlpha.fill(0);}
       this._dirty = null;
       this._strokeDirty = null;
       this._axisHintDx = 0;
@@ -618,6 +633,7 @@
       if (!this.context) return false;
       this.format = navigator.gpu.getPreferredCanvasFormat();
       this.context.configure({ device: this.device, format: this.format, alphaMode: 'premultiplied' });
+      if(typeof window!=='undefined'&&window.BrushDebugPerf&&window.BrushPerfNote)window.BrushPerfNote('hard-round-overlay-configured');
       this.configureCount++;
       this.ready = true;
       this.device.lost.then(() => {
@@ -785,6 +801,7 @@
         });
 
         this.ready = true;
+        if(typeof window!=='undefined'&&window.BrushDebugPerf&&window.BrushPerfNote)window.BrushPerfNote('hard-round-gpu-resources',{pipeline:true,buffers:3,textures:1});
         if(brushPerfInitStart&&window.BrushPerfNote)window.BrushPerfNote('gpu-init',{ms:performance.now()-brushPerfInitStart,first:true});
         return true;
       } catch (err) {
@@ -1602,14 +1619,17 @@
         const prevNextId = window.HardRoundSegmentLog ? window.HardRoundSegmentLog._nextId : 0;
         window.HardRoundSegmentLog = { cpu: [], gpu: [], dispatchCalls: [], _nextId: prevNextId };
       }
-      this.cpu.reset();
       if (this._outCtx) this._outCtx.clearRect(0, 0, this.width, this.height);
 
       if (this.preferGpu && !this._gpuInitPromise) {
         this._gpuInitPromise = this.gpu.init();
       }
       this._usingGpu = this.preferGpu && this.gpu.isAvailable();
+      // Reset only the backend that owns this stroke. The previous order
+      // synchronously cleared the entire SS=4 CPU fallback even after GPU
+      // availability was already established.
       if (this._usingGpu) this.gpu.reset();
+      else this.cpu.reset();
     }
 
     // Accumulates render-ready segments (see module doc for shape) into

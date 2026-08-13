@@ -44,7 +44,7 @@ test('constant input pressure remains constant through finish geometry',()=>{
 test('pointer-up lifecycle detaches the renderer, resolves an owned result, then commits it',()=>{
   const src=fs.readFileSync(path.join(__dirname,'brush-engine.js'),'utf8');
   const finish=src.indexOf('const finish=_hardRoundCore.finishStroke');
-  const flush=src.indexOf('_hardRoundFlushPending(_hardRoundRenderer)',finish);
+  const flush=src.indexOf('_hardRoundFlushPending(renderer)',finish);
   const detach=src.indexOf('_hardRoundActiveContext=null',flush);
   const finalize=src.indexOf('_hardRoundFinalizeOwnedContext(ownedContext,e)',detach);
   const ownedEnd=src.indexOf('context.renderer.endStroke({readback:context.gpuCommit,includeCpuMaskData:context.smartRaster,dirtyRect:context.dirtyRect})');

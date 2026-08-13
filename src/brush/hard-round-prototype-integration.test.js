@@ -222,6 +222,49 @@ test('cancelStroke produces no committed output (backing store cleared, stroke i
   assert.strictEqual(renderer._segmentCount, 0, 'drawSegments() after cancelStroke() must be ignored');
 });
 
+test('GPU-ready beginStroke does not allocate or clear the CPU fallback', () => {
+  const renderer = new PrototypeRenderer({ width: 64, height: 64, ss: 4, preferGpu: false });
+  assert.strictEqual(renderer.cpu.coverage, null, 'CPU fallback must be lazy before a CPU stroke needs it');
+  renderer.preferGpu = true;
+  renderer.gpu.ready = true;
+  let gpuResetCount = 0;
+  renderer.gpu.reset = () => { gpuResetCount++; };
+  renderer.beginStroke();
+  assert.strictEqual(renderer.isGpuActive(), true, 'prepared renderer must select GPU');
+  assert.strictEqual(gpuResetCount, 1, 'GPU per-stroke state must reset once');
+  assert.strictEqual(renderer.cpu.coverage, null, 'GPU begin must not allocate the supersampled CPU coverage buffer');
+  renderer.cancelStroke();
+});
+
+test('CPU fallback storage is allocated on the first actual CPU stroke and reused', () => {
+  const renderer = new PrototypeRenderer({ width: 32, height: 32, ss: 4, preferGpu: false });
+  assert.strictEqual(renderer.cpu.coverage, null);
+  renderer.beginStroke();
+  const firstCoverage = renderer.cpu.coverage;
+  assert.ok(firstCoverage instanceof Float32Array && firstCoverage.length === 32 * 32 * 16);
+  renderer.cancelStroke();
+  renderer.beginStroke();
+  assert.strictEqual(renderer.cpu.coverage, firstCoverage, 'subsequent CPU strokes must reuse fallback storage');
+  renderer.cancelStroke();
+});
+
+test('rapid-stroke finalization permanently session-gates shared mutations', () => {
+  const src = fs.readFileSync(path.join(__dirname, 'brush-engine.js'), 'utf8');
+  const start = src.indexOf('function _hrStaleFinalizerMutation(');
+  const end = src.indexOf('\n}', start);
+  const body = src.slice(start, end);
+  assert.match(body, /if\(stale\)return false/, 'stale finalizers must be rejected without a debug flag');
+  assert.doesNotMatch(body, /stale&&window\.HardRoundDebugGuardStaleFinalizer/, 'correctness must not depend on the diagnostic guard');
+});
+
+test('pointer-up detaches a finishing renderer before async finalization', () => {
+  const src = fs.readFileSync(path.join(__dirname, 'brush-engine.js'), 'utf8');
+  assert.match(src, /renderer\._hardRoundFinishingOwner=finalizingStrokeSession/);
+  assert.match(src, /if\(_hardRoundRenderer===renderer\)_hardRoundRenderer=null/);
+  assert.match(src, /_hardRoundFlushPending\(renderer\)/, 'final pending geometry must flush into the detached owner');
+  assert.match(src, /_hardRoundRendererPool\.includes\(renderer\)/, 'finished renderer must return to the reusable pool');
+});
+
 // Static check: the migrated Hard Round call path (_hardRoundStampSegments,
 // and everything it calls into) must never reach `_stampDab()`. This can't
 // be checked by calling into brush-engine.js (it isn't require()-able

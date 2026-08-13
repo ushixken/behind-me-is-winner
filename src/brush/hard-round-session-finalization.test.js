@@ -13,7 +13,7 @@ test('production source detaches an owned renderer before asynchronous finalizat
   const detach=engine.indexOf('_hardRoundActiveContext=null;');
   const release=engine.indexOf('_hardRoundFinalizeOwnedContext(ownedContext,e)');
   assert.ok(detach>=0&&release>detach);
-  assert.match(engine,/if\(_hardRoundRenderer===ownedContext\.renderer\)_hardRoundRenderer=null/);
+  assert.match(engine,/if\(_hardRoundRenderer===renderer\)_hardRoundRenderer=null/);
   assert.match(rendererSource,/renderer is owned by finishing stroke/);
 });
 
@@ -54,10 +54,10 @@ test('live GPU presentation rejects a non-owner stroke before swapchain work',()
   assert.ok(start>=0&&guard>start&&texture>guard);
 });
 
-test('Smart Raster context captures style, destination, ownership and stable mask',()=>{
+test('Smart Raster context captures style/destination and ordered commit captures ownership before paint',()=>{
   assert.match(engine,/styleId:typeof activeAdvancedStyleIdForPainting/);
   assert.match(engine,/smartRasterMode:/);
-  assert.match(engine,/ownedContext\.ownershipBefore=.*getImageData/);
+  assert.match(engine,/if\(!context\.ownershipBefore\)[\s\S]*?target\.getImageData/);
   assert.match(engine,/context\.resolvedMaskCanvas=stable/);
 });
 

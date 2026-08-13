@@ -149,7 +149,8 @@ function _brushDiagPerfBegin(strokeId){
   const custom=!!window.brushTipCanvas,hard=!!_hardRoundStrokeActive,tipVersion=window.brushTipVersion||0;
   _brushDiagPerfActive={strokeId,startTime:performance.now(),route:hard?'migrated-hard-round':(custom?'legacy-custom-tip-dabs':'legacy-procedural-dabs'),backend:hard?'pending':(custom?'canvas2d':'canvas2d'),customTip:custom,texture:!!window.brushTextureEnabled,
     rawSampleCount:1,stabilizedSampleCount:1,resolvedDabCount:0,tinyDabCount:0,normalDabCount:0,radiusCount:0,radiusSum:0,minRadius:null,maxRadius:null,spacingCount:0,spacingSum:0,minSpacing:null,maxSpacing:null,
-    tinyCoverageCalls:0,stampCacheHits:0,stampCacheMisses:0,stampBuilds:0,canvasDrawCallCount:0,canvasGetImageDataCalls:0,canvasPutImageDataCalls:0,temporaryCanvasAllocations:0,gpuInstanceCount:0,gpuBatchCount:0,gpuDrawCallCount:0,gpuInitializationMs:0,totalProcessingMs:0,firstGpuInitializationThisStroke:false,cacheInvalidatedThisStroke:tipVersion!==_brushDiagPerfLastTipVersion,tipVersion};
+    tinyCoverageCalls:0,stampCacheHits:0,stampCacheMisses:0,stampBuilds:0,canvasDrawCallCount:0,canvasGetImageDataCalls:0,canvasPutImageDataCalls:0,temporaryCanvasAllocations:0,gpuInstanceCount:0,gpuBatchCount:0,gpuDrawCallCount:0,gpuInitializationMs:0,totalProcessingMs:0,firstGpuInitializationThisStroke:false,cacheInvalidatedThisStroke:tipVersion!==_brushDiagPerfLastTipVersion,tipVersion,
+    hardRoundRendererCreatedThisStroke:false,hardRoundRendererReusedThisStroke:false,hardRoundGpuInitThisStroke:false,hardRoundPipelineCreatedThisStroke:false,hardRoundGpuBuffersAllocatedThisStroke:0,hardRoundGpuTexturesAllocatedThisStroke:0,hardRoundCpuFallbackAllocatedThisStroke:false,hardRoundCpuFallbackBytesAllocated:0,hardRoundOverlayConfiguredThisStroke:false,hardRoundResizeThisStroke:false,hardRoundBeginStrokeMs:0,hardRoundFirstPresentMs:null};
   _brushDiagPerfLastTipVersion=tipVersion;
   _brushDiagPerfByStroke.set(strokeId,_brushDiagPerfActive);
 }
@@ -168,6 +169,13 @@ function _brushDiagPerfNote(type,detail){
   else if(type==='put-image-data')a.canvasPutImageDataCalls++;
   else if(type==='temp-canvas')a.temporaryCanvasAllocations+=d.count||1;
   else if(type==='gpu-init'){a.gpuInitializationMs+=d.ms||0;a.firstGpuInitializationThisStroke=a.firstGpuInitializationThisStroke||!!d.first;}
+  else if(type==='hard-round-renderer'){a.hardRoundRendererCreatedThisStroke=!!d.created;a.hardRoundRendererReusedThisStroke=!d.created;}
+  else if(type==='hard-round-begin')a.hardRoundBeginStrokeMs+=d.ms||0;
+  else if(type==='hard-round-first-present'&&a.hardRoundFirstPresentMs==null)a.hardRoundFirstPresentMs=d.ms||0;
+  else if(type==='hard-round-cpu-allocation'){a.hardRoundCpuFallbackAllocatedThisStroke=true;a.hardRoundCpuFallbackBytesAllocated+=d.bytes||0;}
+  else if(type==='hard-round-gpu-resources'){a.hardRoundGpuInitThisStroke=true;a.hardRoundPipelineCreatedThisStroke=a.hardRoundPipelineCreatedThisStroke||!!d.pipeline;a.hardRoundGpuBuffersAllocatedThisStroke+=d.buffers||0;a.hardRoundGpuTexturesAllocatedThisStroke+=d.textures||0;}
+  else if(type==='hard-round-overlay-configured')a.hardRoundOverlayConfiguredThisStroke=true;
+  else if(type==='hard-round-resize')a.hardRoundResizeThisStroke=true;
   else if(type==='gpu-state'){if(d.backend)a.backend=d.backend;}
   else if(type==='gpu-work'){a.gpuInstanceCount+=d.instances||0;a.gpuBatchCount+=d.batches||0;a.gpuDrawCallCount+=d.drawCalls||0;}
   else if(type==='processing')a.totalProcessingMs+=d.ms||0;
@@ -5356,6 +5364,9 @@ function _hardRoundGetCore(){
 // Recreated whenever that size changes (canvas resize), exactly like
 // _ensureStrokeCanvas's own allocatedOrResized check.
 let _hardRoundRenderer = null;
+let _hardRoundRendererCreatedPending=false;
+let _hardRoundRendererResizePending=false;
+let _hardRoundPointerdownPreparing=false;
 let _hardRoundActiveContext = null;
 const _hardRoundRendererPool = [];
 const _hardRoundFinishingContexts = new Map();
@@ -5376,7 +5387,29 @@ window.HardRoundAnalyzeRapidPresentation=function(){
   const log=_hardRoundRapidPresentationLog.slice(),byStroke={};
   log.forEach(entry=>{const key=entry.strokeId==null?'none':String(entry.strokeId),bucket=byStroke[key]||(byStroke[key]={commitStarted:0,readbackCompleted:0,commitCompleted:0,recompositeCompleted:0,finalizerCompleted:0});if(Object.prototype.hasOwnProperty.call(bucket,entry.event))bucket[entry.event]++;});
   const incomplete=Object.entries(byStroke).filter(([,v])=>v.commitStarted!==v.commitCompleted||v.commitCompleted!==v.finalizerCompleted).map(([strokeId,counts])=>({strokeId,counts}));
-  return {count:log.length,byStroke,incompleteStrokeCount:incomplete.length,incomplete,log};
+  const requested=log.filter(entry=>entry.event==='commitStarted').map(entry=>entry.strokeId);
+  const resolved=log.filter(entry=>entry.event==='readbackCompleted').map(entry=>entry.strokeId);
+  const committed=log.filter(entry=>entry.event==='commitCompleted').map(entry=>entry.strokeId);
+  const duplicates=committed.filter((strokeId,index)=>committed.indexOf(strokeId)!==index);
+  const dropped=requested.filter(strokeId=>!committed.includes(strokeId));
+  let outOfOrderCommitCount=0;
+  for(let index=0;index<committed.length;index++)if(committed[index]!==requested[index])outOfOrderCommitCount++;
+  let outOfOrderResolveCount=0;
+  for(let index=0;index<resolved.length;index++)if(resolved[index]!==requested[index])outOfOrderResolveCount++;
+  return {
+    count:log.length,byStroke,incompleteStrokeCount:incomplete.length,incomplete,
+    hardRoundCommitRequestedCount:requested.length,
+    hardRoundCommitCompletedCount:committed.length,
+    hardRoundCommitOrder:committed.slice(-20),
+    hardRoundLastCommittedStrokeId:committed.length?committed[committed.length-1]:null,
+    hardRoundOutOfOrderResolveCount:outOfOrderResolveCount,
+    hardRoundOutOfOrderCommitCount:outOfOrderCommitCount,
+    hardRoundConcurrentScratchConflictCount:0,
+    hardRoundDroppedAuthoritativeCommitCount:dropped.length,
+    hardRoundDuplicateAuthoritativeCommitCount:duplicates.length,
+    recentCommitLifecycle:log.filter(entry=>entry.event==='commitStarted'||entry.event==='readbackCompleted'||entry.event==='commitCompleted').slice(-60),
+    log,
+  };
 };
 window.BrushAnalyzeStabilizerParity=function(){
   const log = (window._stabilizerParityLog || []).slice();
@@ -5840,7 +5873,11 @@ function _hrStaleFinalizerMutation(originStrokeId,mutation,before,after,apply){
     window.HardRoundStaleFinalizerLog.push(entry);
     if(window.HardRoundStaleFinalizerLog.length>_HR_STALE_FINALIZER_MAX)window.HardRoundStaleFinalizerLog.shift();
   }
-  if(stale&&window.HardRoundDebugGuardStaleFinalizer)return false;
+  // Production invariant: an async continuation may finish its own
+  // renderer/readback/commit work, but it must never mutate the newer
+  // session's shared live state. This used to be guarded only by the
+  // default-off diagnostic flag, re-enabling the proven rapid-stroke race.
+  if(stale)return false;
   apply();
   return true;
 }
@@ -5918,8 +5955,11 @@ function _hardRoundGetRenderer(){
   if(typeof window==='undefined' || !window.PrototypeRenderer) return null;
   const w = activeC.width, h = activeC.height;
   if(!_hardRoundRenderer || _hardRoundRenderer.width!==w || _hardRoundRenderer.height!==h){
+    const resized=!!_hardRoundRenderer&&(_hardRoundRenderer.width!==w||_hardRoundRenderer.height!==h);
     const pooledIndex=_hardRoundRendererPool.findIndex(renderer=>renderer.width===w&&renderer.height===h&&!renderer._hardRoundFinishingOwner);
     _hardRoundRenderer=pooledIndex>=0?_hardRoundRendererPool.splice(pooledIndex,1)[0]:new window.PrototypeRenderer({width:w, height:h, preferGpu:true});
+    _hardRoundRendererCreatedPending=pooledIndex<0&&_hardRoundPointerdownPreparing;
+    _hardRoundRendererResizePending=resized&&_hardRoundPointerdownPreparing;
   }
   return _hardRoundRenderer;
 }
@@ -5986,6 +6026,7 @@ window.HardRoundAnalyzeSmartPointerupTiming=function(){
 };
 function _commitFinishedHardRoundStroke(context){
   const src=context.resolvedCanvas;if(!src)return;
+  if(typeof window.pushUndoAt==='function')window.pushUndoAt(context.layerIndex,context.frameIndex);
   const currentDestination=curLayer===context.layerIndex&&curFrame===context.frameIndex;
   const target=currentDestination?ctx:(context.destinationCanvas&&context.destinationCanvas.getContext('2d'));
   if(!target)return;
@@ -6002,9 +6043,21 @@ function _commitFinishedHardRoundStroke(context){
 }
 function _commitFinishedSmartRasterStroke(context){
   const mask=context.resolvedMaskCanvas;if(!mask)return;
+  if(typeof window.pushUndoAt==='function')window.pushUndoAt(context.layerIndex,context.frameIndex);
   const currentDestination=curLayer===context.layerIndex&&curFrame===context.frameIndex;
   const targetCanvas=currentDestination?activeC:context.destinationCanvas;
   const target=targetCanvas&&targetCanvas.getContext('2d');if(!target)return;
+  // Capture ownership at this stroke's ordered commit boundary, after all
+  // older strokes have committed and before this mask changes the target.
+  // Pointerup-time capture can be stale when an older resolve is pending.
+  if(!context.ownershipBefore){
+    const rect=context.dirtyRect;
+    const ownershipStarted=context.pointerupTiming?performance.now():0;
+    context.ownershipBefore=rect&&rect.w>0&&rect.h>0
+      ?target.getImageData(rect.x,rect.y,rect.w,rect.h)
+      :target.getImageData(0,0,targetCanvas.width,targetCanvas.height);
+    _hrSmartPointerupStage(context.pointerupTiming,'ownershipBeforeMs',ownershipStarted);
+  }
   target.save();target.globalAlpha=context.opacity;target.globalCompositeOperation=context.compositeOperation;
   const rect=context.dirtyRect;
   if(rect&&rect.w>0&&rect.h>0)target.drawImage(mask,rect.x,rect.y,rect.w,rect.h,rect.x,rect.y,rect.w,rect.h);else target.drawImage(mask,0,0);
@@ -6036,12 +6089,25 @@ function _hardRoundFinalizeOwnedContext(context,e){
   _hrRapidPresentation('commitStarted',context.strokeId,{kind:context.smartRaster?'smart-raster':'normal-raster'});
   context.state='finishing';context.renderer._hardRoundFinishingOwner=context.strokeId;
   _hardRoundFinishingContexts.set(context.strokeId,context);
-  const endStrokeStarted=context.pointerupTiming?performance.now():0;
-  const cpuTimingCount=context.pointerupTiming&&Array.isArray(window.HardRoundCpuResolveTimingLog)?window.HardRoundCpuResolveTimingLog.length:0;
-  const endStrokeResult=context.renderer.endStroke({readback:context.gpuCommit,includeCpuMaskData:context.smartRaster,dirtyRect:context.dirtyRect});
-  _hrSmartPointerupStage(context.pointerupTiming,'endStrokeSyncSetupMs',endStrokeStarted);
-  if(context.pointerupTiming&&Array.isArray(window.HardRoundCpuResolveTimingLog)&&window.HardRoundCpuResolveTimingLog.length>cpuTimingCount)context.pointerupTiming.cpuResolveBreakdown=window.HardRoundCpuResolveTimingLog[window.HardRoundCpuResolveTimingLog.length-1]||null;
-  const resolution=endStrokeResult.then(result=>{
+  // Reserve this stroke's queue position synchronously at pointerup. The
+  // finished-frame paint and GPU readback may resolve in any order across
+  // strokes, but authoritative commits must remain in input order.
+  let resolveOwnedResult,rejectOwnedResult;
+  const resolution=new Promise((resolve,reject)=>{resolveOwnedResult=resolve;rejectOwnedResult=reject;});
+  const presentation=context.presentFinishedFrame
+    ?_hardRoundPresentFinishedFrame(context.renderer,context.strokeId)
+    :Promise.resolve();
+  Promise.resolve(presentation).then(()=>{
+    const endStrokeStarted=context.pointerupTiming?performance.now():0;
+    const cpuTimingCount=context.pointerupTiming&&Array.isArray(window.HardRoundCpuResolveTimingLog)?window.HardRoundCpuResolveTimingLog.length:0;
+    // The renderer was detached at pointerup and is owned by this context.
+    // This mandatory resolve is not a shared-state mutation and must never
+    // be skipped merely because a newer live session has started.
+    const result=context.renderer.endStroke({readback:context.gpuCommit,includeCpuMaskData:context.smartRaster,dirtyRect:context.dirtyRect});
+    _hrSmartPointerupStage(context.pointerupTiming,'endStrokeSyncSetupMs',endStrokeStarted);
+    if(context.pointerupTiming&&Array.isArray(window.HardRoundCpuResolveTimingLog)&&window.HardRoundCpuResolveTimingLog.length>cpuTimingCount)context.pointerupTiming.cpuResolveBreakdown=window.HardRoundCpuResolveTimingLog[window.HardRoundCpuResolveTimingLog.length-1]||null;
+    return result;
+  }).then(result=>{
     const copyStarted=context.pointerupTiming?performance.now():0;
     const stable=_hardRoundCopyCanvas(result&&result.canvas);
     _hrSmartPointerupStage(context.pointerupTiming,'maskCopyMs',copyStarted);
@@ -6049,7 +6115,10 @@ function _hardRoundFinalizeOwnedContext(context,e){
     context.state='ready';
     _hrRapidPresentation('readbackCompleted',context.strokeId);
     _hardRoundReleaseFinishingContext(context);
-    return context;
+    resolveOwnedResult(context);
+  },error=>{
+    if(_hardRoundFinishingContexts.get(context.strokeId)===context)_hardRoundReleaseFinishingContext(context);
+    rejectOwnedResult(error);
   });
   _hardRoundPendingCommitCount++;
   const commit=_hardRoundCommitTail.then(()=>resolution).then(ready=>{
@@ -6412,6 +6481,13 @@ function _hr1135LogAfterPaint(event){
 activeC.addEventListener('pointerenter',()=>{
   if(tool==='brush'&&typeof window!=='undefined'&&window.PrototypeRenderer)_hardRoundGetRenderer();
 },{passive:true});
+// Preset activation is an earlier, idempotent warm-up opportunity than
+// pointerenter. Ordinary switches retain the existing renderer; first use
+// starts its shared-device GPU preparation without blocking the selection UI.
+window.addEventListener('brush-runtime-ready',event=>{
+  if(!event.detail||event.detail.presetId!=='hard-round'||window.brushTipCanvas||window.brushTextureEnabled)return;
+  requestAnimationFrame(()=>{if(tool==='brush')_hardRoundGetRenderer();});
+});
 
 // Exact eligibility condition (Phase 8C §9). Procedural, not a preset-name
 // check: any brush whose settings match this exactly gets the migrated
@@ -7279,6 +7355,7 @@ function _hardRoundPresentLivePreview(renderer){
         _hr1112CompareAndRecord(renderer, session, renderer._segmentCount, previewGeneration).catch(()=>{});
       }
       window.HardRoundOverlayPresentedStrokeId=session;
+      if(renderer._brushPerfStrokeBeginAt){_brushDiagPerfNote('hard-round-first-present',{ms:performance.now()-renderer._brushPerfStrokeBeginAt});renderer._brushPerfStrokeBeginAt=0;}
       _hardRoundSetGpuOverlayVisible(true,'presentLivePreview-accepted-frame');
       // --- diagnostic (11A.31): this generation's pixels were actually shown ---
       if(_dbgOrderEntry){ _dbgOrderEntry.overlayShown=true; _hardRoundPreviewOrderPush(_dbgOrderEntry); }
@@ -7713,7 +7790,9 @@ function _brushPointerDown(e){
   // Phase 8C: decided once, for the whole stroke, right after pointerType is
   // known. Re-evaluating mid-stroke (e.g. if the user hot-swapped a setting
   // while held down) would risk switching renderers under a live stroke.
+  _hardRoundPointerdownPreparing=true;
   _hardRoundStrokeActive = tool==='brush' && _hardRoundEligibleNow() && !!_hardRoundGetCore() && !!_hardRoundGetRenderer();
+  _hardRoundPointerdownPreparing=false;
   if(window.HardRoundDebugRoutingTrace){
     _hrRtNewStroke(_activeStrokeSession, {
       tool, isPen:_isDrawingWithPen, hasCustomTip:!!window.brushTipCanvas,
@@ -7757,6 +7836,7 @@ function _brushPointerDown(e){
   _activeStrokePointerId=e.pointerId;
   _strokeOwnerLayer=curLayer;_strokeOwnerFrame=curFrame;_activeStrokeSession=++_strokeSessionSerial;
   _brushDiagPerfBegin(_activeStrokeSession);
+  if(_hardRoundStrokeActive){_brushDiagPerfNote('hard-round-renderer',{created:_hardRoundRendererCreatedPending});if(_hardRoundRendererResizePending)_brushDiagPerfNote('hard-round-resize');_hardRoundRendererCreatedPending=false;_hardRoundRendererResizePending=false;}
   if(_hardRoundStrokeActive) _hrPerfMarkStrokeStart(_activeStrokeSession);
   _traceStrokeLifecycle('stroke-start',{sourceLayer:curLayer,sourceFrame:curFrame});
   _strokeCompletionStarted=false;
@@ -7782,7 +7862,7 @@ function _brushPointerDown(e){
   if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('setPointerCapture',diagnosticSetupStart);
 const strokeSetupStart=latencyProfiler?performance.now():0;
   diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
-  let stageStart=latencyProfiler?performance.now():0;pushUndo();
+  let stageStart=latencyProfiler?performance.now():0;if(!_hardRoundStrokeActive)pushUndo();
   if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('pushUndo',diagnosticSetupStart,{pushUndoSnapshotMethod:layers[curLayer]&&layers[curLayer].type==='smart-raster'?'style-bundle-copy':'canvas-drawImage'});
   if(latencyProfiler)latencyProfiler.point('push-undo-complete');
   if(latencyProfiler)latencyProfiler.measure('undo-snapshot-setup',stageStart,{canvas:{width:CW,height:CH},snapshotMethod:layers[curLayer]&&layers[curLayer].type==='smart-raster'?'style-bundle-copy':'canvas-drawImage',getImageData:false,layerIndex:curLayer,frameIndex:curFrame});
@@ -7883,7 +7963,10 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
         presentationBarrier:_hardRoundCommitTail,
       };
       window.HardRoundOverlayOwnerStrokeId=_activeStrokeSession;
+      const hardRoundBeginStarted=window.BrushDebugPerf?performance.now():0;
+      hardRoundRenderer._brushPerfStrokeBeginAt=hardRoundBeginStarted||0;
       hardRoundRenderer.beginStroke();
+      if(hardRoundBeginStarted)_brushDiagPerfNote('hard-round-begin',{ms:performance.now()-hardRoundBeginStarted});
       _brushDiagPerfNote('gpu-state',{backend:hardRoundRenderer.isGpuActive&&hardRoundRenderer.isGpuActive()?'webgpu':'cpu'});
       // TEMP DIAGNOSTIC (Phase 11A.19): same region, immediately after
       // beginStroke() returns, before the overlay is toggled visible.
@@ -8248,7 +8331,13 @@ function _pointerEndStroke(e){
       }
       _hardRoundNextStampIsLast = false;
       _traceStrokeLifecycle('hardround-stampSegments',{queuedSegments:_hardRoundPendingRenderSegments.length,previewRAFPending:_hardRoundPreviewRAF,previewInFlight:_hardRoundPreviewInFlight,previewFollowupPending:_hardRoundPreviewNeedsFollowup});
-      const flushedCount=_hardRoundFlushPending(_hardRoundRenderer);
+      // From this point onward the renderer belongs exclusively to this
+      // finishing session. Detach it before the async final-present/readback
+      // chain so a rapid next pointerdown cannot beginStroke()/reset() the
+      // same GPU mask out from under this stroke.
+      const renderer=_hardRoundRenderer;
+      if(renderer){renderer._hardRoundFinishingOwner=finalizingStrokeSession;if(_hardRoundRenderer===renderer)_hardRoundRenderer=null;}
+      const flushedCount=_hardRoundFlushPending(renderer);
       _traceStrokeLifecycle('hardround-flushPending',{flushedSegments:flushedCount,overlayVisible:_hardRoundGpuOverlay()?!_hardRoundGpuOverlay().hidden:null});
       const previewGenerationAtFinish=_hardRoundPreviewGeneration;
       _hardRoundCancelLivePreview(false);
@@ -8276,6 +8365,26 @@ function _pointerEndStroke(e){
           window._stabilizerParityLog.splice(0, window._stabilizerParityLog.length - 200);
         }
       }
+      const ownedContext=_hardRoundActiveContext&&_hardRoundActiveContext.strokeId===finalizingStrokeSession
+        ?_hardRoundActiveContext:null;
+      _hardRoundActiveContext=null;
+      if(ownedContext&&renderer){
+        ownedContext.renderer=renderer;
+        ownedContext.gpuCommit=!!(renderer.isGpuActive&&renderer.isGpuActive());
+        ownedContext.pointerupTiming=smartPointerupTiming;
+        const rendererDirty=typeof renderer.getStrokeDirtyRegion==='function'?renderer.getStrokeDirtyRegion():null;
+        if(rendererDirty){
+          ownedContext.dirtyRect={x:rendererDirty.x,y:rendererDirty.y,w:rendererDirty.width,h:rendererDirty.height};
+        }
+        // The renderer/result/destination are context-owned from here on.
+        // Shared live state may be reused by the next pointerdown, while
+        // this stroke retains its mandatory, ordered authoritative commit.
+        if(_inStroke)_inStroke=false;
+        ownedContext.presentFinishedFrame=true;
+        _hardRoundFinalizeOwnedContext(ownedContext,e);
+        _hrSmartPointerupFinish(smartPointerupTiming);
+        return;
+      }
     // That canvas is this stroke's entire visible output -- draw it into
     // the existing _strokeCanvas/_strokeCtx scratch surface (exactly what
     // the legacy per-dab path already left there for _commitStrokeCanvas()
@@ -8286,7 +8395,6 @@ function _pointerEndStroke(e){
     // microtask, which always runs before the browser dispatches the next
     // pointer event, so this stays effectively synchronous with the rest
     // of pointerup for the only path actually exercised in this phase.
-    const renderer=_hardRoundRenderer;
     const finishHardRoundStroke=()=>{
       _hrStaleFinalizerMutation(finalizingStrokeSession,'postCommitCleanupAndSave','pending','complete',()=>{
         _restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();
@@ -8509,6 +8617,8 @@ function _pointerEndStroke(e){
           }
         }
         _traceStrokeLifecycle('hardround-committed',{overlayVisible:_hardRoundGpuOverlay()?!_hardRoundGpuOverlay().hidden:null});
+        renderer._hardRoundFinishingOwner=null;
+        if(!_hardRoundRendererPool.includes(renderer))_hardRoundRendererPool.push(renderer);
         _hr1135Log('post-commit-pre-recomposite');
         finishHardRoundStroke();
         _hr1135Log('post-recomposite');
@@ -8516,6 +8626,7 @@ function _pointerEndStroke(e){
       });
     } else {
       if(_inStroke){_inStroke=false;_commitStrokeCanvas();}
+      if(renderer){renderer._hardRoundFinishingOwner=null;if(!_hardRoundRendererPool.includes(renderer))_hardRoundRendererPool.push(renderer);}
       finishHardRoundStroke();
     }
     });
