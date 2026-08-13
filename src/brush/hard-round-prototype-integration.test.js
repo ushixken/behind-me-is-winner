@@ -305,6 +305,20 @@ test('Phase 9C.1: pointermove path presents a live preview via peekStroke(), not
   assert.ok(/_scheduleRecomposite\(\)/.test(previewBody), '_hardRoundPresentLivePreview must request a recomposite so the preview is actually shown');
 });
 
+test('post-commit overlay retirement defers until paint opportunity and honors newer-owner continuity', () => {
+  const src = fs.readFileSync(path.join(__dirname, 'brush-engine.js'), 'utf8');
+  const fnStart = src.indexOf('function _hardRoundFinalizeOwnedContext(');
+  assert.ok(fnStart >= 0, '_hardRoundFinalizeOwnedContext not found');
+  const fnEnd = src.indexOf('\n}', fnStart);
+  const body = src.slice(fnStart, fnEnd);
+
+  assert.ok(/schedulePostPaint/.test(body), 'finalization must schedule overlay retirement post-paint');
+  assert.ok(/requestAnimationFrame/.test(body), 'post-paint scheduling must use requestAnimationFrame');
+  assert.ok(/older-finalizer-newer-owner/.test(body), 'immediate check must preserve older-finalizer-newer-owner continuity guard');
+  assert.ok(/newer-stroke-started-before-paint/.test(body), 'post-paint check must cancel hide if newer stroke started before paint boundary');
+  assert.ok(/owned-finalization-post-paint-retire/.test(body), 'overlay must retire with owned-finalization-post-paint-retire');
+});
+
 Promise.all(pending).then(() => {
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);

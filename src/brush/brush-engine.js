@@ -5967,6 +5967,7 @@ function _hardRoundFlushPending(renderer){
   const _hrFsFlushStart = _hrFsActive() ? performance.now() : null;
   const pending=_hardRoundPendingRenderSegments.splice(0,_hardRoundPendingRenderSegments.length);
   const _hrFsDrawStart = _hrFsActive() ? performance.now() : null;
+  _hrInputLatencyNote(_activeStrokeSession,'firstRendererGeometryTime');
   renderer.drawSegments(pending);
   if(_hrFsDrawStart!=null){
     const _hrFsDrawMs = performance.now() - _hrFsDrawStart;
@@ -6183,24 +6184,47 @@ function _hardRoundFinalizeOwnedContext(context,e){
   const commit=_hardRoundCommitTail.then(()=>resolution).then(ready=>{
     if(ready.smartRaster)_commitFinishedSmartRasterStroke(ready);else _commitFinishedHardRoundStroke(ready);
     _hrRapidPresentation('commitCompleted',ready.strokeId,{kind:ready.smartRaster?'smart-raster':'normal-raster'});
+    const finishingStrokeId=ready.strokeId;
     if(ready.strokeId===_activeStrokeSession){
-      _hardRoundSetGpuOverlayVisible(false,'owned-finalization-current-session');
       _finalizePointerEndStroke(e,ready.strokeId,false);
-    }else if(window.HardRoundOverlayPresentedStrokeId===ready.strokeId){
+    }
+    if(window.HardRoundOverlayPresentedStrokeId===ready.strokeId){
       const overlayOwner=window.HardRoundOverlayOwnerStrokeId;
       const visibilityOwner=window.HardRoundOverlayVisibilityOwnerStrokeId;
-      if((overlayOwner!=null&&overlayOwner!==ready.strokeId)||(visibilityOwner!=null&&visibilityOwner!==ready.strokeId)){
-        // The pixels are old, but the shared surface is already controlled
-        // by a newer active session. Keep those last valid pixels as a
-        // continuity bridge until the new owner atomically presents its
-        // first accepted frame; the old finalizer cannot hide that surface.
+      const isNewerOwner=(overlayOwner!=null&&overlayOwner!==ready.strokeId)||(visibilityOwner!=null&&visibilityOwner!==ready.strokeId);
+      if(isNewerOwner){
         _hrRapidPresentation('overlayHideSuppressed',ready.strokeId,{
           reason:'older-finalizer-newer-owner',finalizingStrokeId:ready.strokeId,
           overlayOwner,overlayVisibilityOwnerStrokeId:visibilityOwner,
           overlayPresentedStrokeId:window.HardRoundOverlayPresentedStrokeId,
         });
       }else{
-        _hardRoundSetGpuOverlayVisible(false,'owned-finalization-retire-committed-overlay');
+        const committedRevision=(window.DisplayBackend&&window.DisplayBackend.mode==='webgpu'&&typeof window.DisplayBackend.artworkRevision==='number')
+          ?window.DisplayBackend.artworkRevision
+          :null;
+        const retireOverlay=()=>{
+          const overlayOwnerNow=window.HardRoundOverlayOwnerStrokeId;
+          const visibilityOwnerNow=window.HardRoundOverlayVisibilityOwnerStrokeId;
+          const activeNow=_activeStrokeSession;
+          const isNewerNow=(overlayOwnerNow!=null&&overlayOwnerNow!==ready.strokeId)||
+                             (visibilityOwnerNow!=null&&visibilityOwnerNow!==ready.strokeId)||
+                             (activeNow!=null&&activeNow!==ready.strokeId);
+          if(isNewerNow){
+            _hrRapidPresentation('overlayHideSuppressed',ready.strokeId,{
+              reason:'newer-stroke-started-before-paint',finalizingStrokeId:ready.strokeId,
+              overlayOwner:overlayOwnerNow,overlayVisibilityOwnerStrokeId:visibilityOwnerNow,
+              activeSession:activeNow,
+              overlayPresentedStrokeId:window.HardRoundOverlayPresentedStrokeId,
+            });
+          }else{
+            _hardRoundSetGpuOverlayVisible(false,'owned-finalization-retire-committed-overlay'); // owned-finalization-post-paint-retire
+          }
+        };
+        if(committedRevision!=null&&window.DisplayBackend&&typeof window.DisplayBackend.whenRevisionPresented==='function'){
+          window.DisplayBackend.whenRevisionPresented(committedRevision,retireOverlay);
+        }else{
+          retireOverlay();
+        }
       }
     }
   });
@@ -7237,6 +7261,54 @@ window.HardRoundAnalyzePaintedOverlayCompare = function(){
     log,
   };
 };
+if(typeof window.HardRoundDebugActiveCProbe==='undefined')window.HardRoundDebugActiveCProbe=false;
+if(typeof window.HardRoundDebugInputLatency==='undefined')window.HardRoundDebugInputLatency=false;
+if(typeof window.HardRoundDebugPreviewFlightOwnership==='undefined')window.HardRoundDebugPreviewFlightOwnership=false;
+if(typeof window.HardRoundDebugSharedPresentation==='undefined')window.HardRoundDebugSharedPresentation=false;
+if(typeof window.HardRoundDebugPresentationLifecycle==='undefined')window.HardRoundDebugPresentationLifecycle=false;
+
+const _hardRoundInputLatencyRecords=[];
+function _hrInputLatencyRecord(strokeId,initial={}){
+  if(!strokeId)return null;
+  let rec=_hardRoundInputLatencyRecords.find(r=>r.strokeId===strokeId);
+  if(!rec){
+    rec=Object.assign({strokeId,pointerDownTime:null,firstRawEventType:null,firstRawEventTime:null,firstPressureAcceptedTime:null,firstStabilizerInputTime:null,firstStabilizerOutputTime:null,firstCoreInputTime:null,firstCoreGeometryTime:null,firstRendererGeometryTime:null,firstGpuSubmitTime:null,firstPresentCallTime:null,firstOverlayVisibleTime:null,firstGeometrySourceEvent:null,presentationBarrierStartTime:null,presentationBarrierEndTime:null,backend:null,stabilizationAmount:null},initial);
+    if(_hardRoundInputLatencyRecords.length<8){
+      _hardRoundInputLatencyRecords.push(rec);
+    }else{
+      _hardRoundInputLatencyRecords.shift();
+      _hardRoundInputLatencyRecords.push(rec);
+    }
+  }else if(initial){
+    Object.assign(rec,initial);
+  }
+  return rec;
+}
+function _hrInputLatencyNote(strokeId,field,time=performance.now(),extra=null){
+  if(!window.HardRoundDebugInputLatency||!strokeId)return;
+  const rec=_hrInputLatencyRecord(strokeId);
+  if(rec){
+    if(field&&rec[field]===null)rec[field]=time;
+    if(extra)Object.assign(rec,extra);
+  }
+}
+window.HardRoundInputLatencyNote=function(strokeId,field,time=performance.now(),extra=null){
+  _hrInputLatencyNote(strokeId,field,time,extra);
+};
+window.HardRoundAnalyzeInputLatency=function(){
+  return _hardRoundInputLatencyRecords.map(r=>{
+    return Object.assign({},r,{
+      presentationBarrierWaitMs:r.presentationBarrierStartTime!=null&&r.presentationBarrierEndTime!=null?r.presentationBarrierEndTime-r.presentationBarrierStartTime:null,
+      gpuSubmitToWorkDoneMs:r.firstGpuSubmitTime!=null&&r.firstGpuWorkDoneTime!=null?r.firstGpuWorkDoneTime-r.firstGpuSubmitTime:null,
+    });
+  });
+};
+
+window.HardRoundIsLivePreviewCurrent = function(session, previewGeneration, renderer, strokeId) {
+  if (strokeId == null) strokeId = session;
+  return strokeId===_activeStrokeSession&&previewGeneration===_hardRoundPreviewGeneration && _hardRoundActiveContext&&_hardRoundActiveContext.renderer===renderer && window.HardRoundOverlayOwnerStrokeId===strokeId;
+};
+
 function _hardRoundPresentLivePreview(renderer){
   if(!renderer || !_inStroke || !_strokeCtx || !_strokeCanvas){
     _hrFirstPresentCount(_activeStrokeSession,'presentLivePreviewRejectedCount',!renderer?'no-renderer':'pending-preview-cancelled');
@@ -7306,11 +7378,14 @@ function _hardRoundPresentLivePreview(renderer){
   // GpuBackend.present() can record submit-time info keyed by it -- see
   // window.HardRoundLivePreviewSubmitInfo above. Neither field affects
   // which frame is requested, resolved, or accepted.
-  const presentationBarrier=_hardRoundActiveContext&&_hardRoundActiveContext.strokeId===session
+  const gpuLivePreview=!!(renderer.isGpuActive&&renderer.isGpuActive());
+  const presentationBarrier=!gpuLivePreview&&_hardRoundActiveContext
     ?_hardRoundActiveContext.presentationBarrier:null;
+  _hrInputLatencyNote(session,'presentationBarrierStartTime');
   return Promise.resolve(presentationBarrier).then(()=>{
+    _hrInputLatencyNote(session,'presentationBarrierEndTime');
     if(previewGeneration!==_hardRoundPreviewGeneration||session!==_activeStrokeSession||!_inStroke)return null;
-    return renderer.peekStroke({ strokeId: session, segmentCount: renderer._segmentCount, livePreviewId });
+    return renderer.peekStroke({ strokeId: session, previewGeneration, renderer, segmentCount: renderer._segmentCount, livePreviewId, presentationBarrierDependency:gpuLivePreview?'none-private-gpu-renderer':'ordered-canvas-base' });
   }).then(async result=>{
     if(previewGeneration!==_hardRoundPreviewGeneration)return;
     // --- 11B.13 frame-stall diagnostic: resolve-time bookkeeping ---
@@ -7477,8 +7552,10 @@ function _hardRoundPresentLivePreview(renderer){
       // captured generation value (see the top of
       // _hardRoundPresentLivePreview), used to detect if this preview gets
       // superseded before its own painted-overlay capture completes.
-      if (window.HardRoundDebugPaintedOverlayCompare) {
-        _hr1112CompareAndRecord(renderer, session, renderer._segmentCount, previewGeneration).catch(()=>{});
+      if(typeof window.HardRoundIsLivePreviewCurrent==='function'&&!window.HardRoundIsLivePreviewCurrent(session,previewGeneration,renderer,session)){
+        _hrFirstPresentCount(session,'presentLivePreviewRejectedCount','stale-after-gpu-completion');
+        if(_dbgOrderEntry){_dbgOrderEntry.staleAtResolve=true;_dbgOrderEntry.staleReason='stale-after-gpu-completion';_hardRoundPreviewOrderPush(_dbgOrderEntry);}
+        return;
       }
       window.HardRoundOverlayPresentedStrokeId=session;
       if(renderer._brushPerfStrokeBeginAt){_brushDiagPerfNote('hard-round-first-present',{ms:performance.now()-renderer._brushPerfStrokeBeginAt});renderer._brushPerfStrokeBeginAt=0;}
@@ -8052,36 +8129,28 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
       // was already confirmed non-null by _hardRoundEligibleNow's caller
       // (see _hardRoundStrokeActive's assignment above), so this is a plain
       // reset of that existing instance, not a fallible lookup.
-      _hardRoundCore.updateSettings({brushSize:getBrushSize(),stabilization:_stabilizationAmount(),zoom});
-      // Phase 9E.5: feed PrototypeStrokeCore the stateless prototype-
-      // equivalent pressure read, not the legacy _getPressure-derived
-      // currentPressure (hold-last-known + rate-limited) used above for the
-      // non-Hard-Round pointerdown path -- see _getPrototypePressure doc.
-      const beginSeg=_hardRoundCore.beginStroke({x:p.x,y:p.y,pressure:_getPrototypePressure(e),pointerType:e.pointerType,timeStamp:e.timeStamp||performance.now()});
+      const prototypeBeginPressure=_getPrototypePressure(e);
+      _hrInputLatencyNote(_activeStrokeSession,'firstPressureAcceptedTime');
+      _hrInputLatencyNote(_activeStrokeSession,'firstCoreInputTime',performance.now(),{firstGeometrySourceEvent:'pointerdown'});
+      const beginSeg=_hardRoundCore.beginStroke({x:p.x,y:p.y,pressure:prototypeBeginPressure,pointerType:e.pointerType,timeStamp:e.timeStamp||performance.now()});
+      if(beginSeg){
+        _hrInputLatencyNote(_activeStrokeSession,'firstCoreGeometryTime');
+        _hardRoundStampSegments([beginSeg],e);
+      }
       const hardRoundRenderer=_hardRoundGetRenderer();
+      _hardRoundRequestLivePreview(hardRoundRenderer,true);
       const hardRoundAaMode=_currentAAMode();
-      // Phase 11A: AA-On owns a direct WebGPU overlay. AA Off retains the
-      // exact CPU station-winner implementation until GPU parity exists.
-      // Blend modes, selection clipping, and Smart Raster need their own
-      // GPU compositor parity; keep them on the established CPU preview so
-      // the visible stroke cannot disagree with the pointer-up commit.
       const gpuLiveCompatible=hardRoundAaMode!=='off'&&hardRoundAaMode!=='none'&&
         (!window.brushBlendMode||window.brushBlendMode==='normal')&&
         !(window.SelectionScope&&SelectionScope.isRestricted&&SelectionScope.isRestricted())&&
         !(layers[curLayer]&&layers[curLayer].type==='smart-raster')&&
         !_hardRoundHasVisibleLayerAbove(curLayer,curFrame);
       hardRoundRenderer.preferGpu=gpuLiveCompatible;
-      // TEMP DIAGNOSTIC (Phase 11A.14) -- manual backend override for
-      // isolation testing only. Does not touch eligibility; route stays
-      // 'migrated' either way. Remove alongside the rest of the HR-DEBUG
-      // instrumentation once the routing matrix is resolved.
       if(window.HardRoundDebugForceBackend==='cpu') hardRoundRenderer.preferGpu=false;
       else if(window.HardRoundDebugForceBackend==='gpu') hardRoundRenderer.preferGpu=true;
       hardRoundRenderer.presentationOpacity=Math.max(0,Math.min(1,brushOpacity));
-      // TEMP DIAGNOSTIC (Phase 11A.19): read-only activeC hash immediately
-      // before beginStroke() touches anything. Whole-canvas region since
-      // stroke 1's bounding box isn't tracked separately here.
-      const _hrProbeBefore=_hrHashActiveCRegion(0,0,activeC.width,activeC.height,'beforeBeginStroke');
+      const activeCProbeEnabled=!!window.HardRoundDebugActiveCProbe;
+      const _hrProbeBefore=activeCProbeEnabled?_hrHashActiveCRegion(0,0,activeC.width,activeC.height,'beforeBeginStroke'):null;
       _hardRoundActiveContext={
         strokeId:_activeStrokeSession,renderer:hardRoundRenderer,layerIndex:curLayer,frameIndex:curFrame,
         destinationCanvas:layers[curLayer]&&layers[curLayer].frames[curFrame]||null,
@@ -8100,6 +8169,8 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
       const hardRoundBeginStarted=window.BrushDebugPerf?performance.now():0;
       hardRoundRenderer._brushPerfStrokeBeginAt=hardRoundBeginStarted||0;
       hardRoundRenderer.beginStroke();
+      const inputLatencyRecord=_hrInputLatencyRecord(_activeStrokeSession);
+      if(inputLatencyRecord)inputLatencyRecord.backend=hardRoundRenderer.isGpuActive&&hardRoundRenderer.isGpuActive()?'webgpu':'cpu';
       _hrFirstPresentNote(_activeStrokeSession,'beginStrokeEnd');
       const firstPresentRecord=_hrFirstPresentRecord(_activeStrokeSession);
       if(firstPresentRecord){
@@ -8111,9 +8182,7 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
       }
       if(hardRoundBeginStarted)_brushDiagPerfNote('hard-round-begin',{ms:performance.now()-hardRoundBeginStarted});
       _brushDiagPerfNote('gpu-state',{backend:hardRoundRenderer.isGpuActive&&hardRoundRenderer.isGpuActive()?'webgpu':'cpu'});
-      // TEMP DIAGNOSTIC (Phase 11A.19): same region, immediately after
-      // beginStroke() returns, before the overlay is toggled visible.
-      const _hrProbeAfter=_hrHashActiveCRegion(0,0,activeC.width,activeC.height,'afterBeginStroke');
+      const _hrProbeAfter=activeCProbeEnabled?_hrHashActiveCRegion(0,0,activeC.width,activeC.height,'afterBeginStroke'):null;
       // TEMP DIAGNOSTIC (Phase 11A.22): this call shows the GPU overlay
       // immediately after beginStroke() -- before this stroke's first
       // drawSegments()/peekStroke() has resolved, i.e. before any new
@@ -8158,8 +8227,8 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
       // GPU overlay has been made visible for this new stroke (or, under
       // the 11A.22 delayed-show diagnostic, immediately after the decision
       // to defer that visibility).
-      const _hrProbeAfterOverlay=_hrHashActiveCRegion(0,0,activeC.width,activeC.height,'afterOverlayVisible');
-      window.HardRoundActiveCProbe={
+      const _hrProbeAfterOverlay=activeCProbeEnabled?_hrHashActiveCRegion(0,0,activeC.width,activeC.height,'afterOverlayVisible'):null;
+      if(activeCProbeEnabled)window.HardRoundActiveCProbe={
         beforeBeginStroke:_hrProbeBefore,
         afterBeginStroke:_hrProbeAfter,
         afterOverlayVisible:_hrProbeAfterOverlay,
@@ -8334,21 +8403,16 @@ function _handleMoveEvent(e){
   if((!drawing&&!_lineDragging)||activeGroupId||_strokeCompletionStarted) return;
   if(_activeStrokePointerId!=null&&e.pointerId!==_activeStrokePointerId) return;
   if(!(e.buttons&1)){_endStroke(e.pointerId);return;}
-  if(_hardRoundStrokeActive)_hrFirstPresentNote(_activeStrokeSession,'firstRawInputTime');
+  if(_hardRoundStrokeActive){
+    _hrFirstPresentNote(_activeStrokeSession,'firstRawInputTime');
+    _hrInputLatencyNote(_activeStrokeSession,'firstRawEventTime',performance.now(),{firstRawEventType:e.type||'pointermove'});
+  }
   e.preventDefault();
   const _hrMtCoalesceStart = _hrMtActive() ? performance.now() : null;
   const events=(typeof e.getCoalescedEvents==='function'&&e.getCoalescedEvents().length)?e.getCoalescedEvents():[e];
   _brushDiagPerfNote('raw-samples',{count:events.length});
   if(_hrMtCoalesceStart!=null) _hrMtRecord('getCoalescedEvents', _hrMtCoalesceStart, performance.now());
   if((tool==='line'||tool==='curve')&&_lineDragging){
-    // Record every coalesced sample (position + pressure) at full input
-    // rate -- this is what lets Pen Pressure preserve the whole recorded
-    // curve instead of collapsing it to one value. The line itself stays
-    // straight (start -> current raw pointer position); only the WIDTH
-    // profile comes from the sampled path, so no smoothing/curving is
-    // applied to the endpoint tracking itself. Recording happens on every
-    // call regardless of rendering -- see _scheduleLinePreview above for
-    // why rendering itself is decoupled from this.
     const lineEvents=events.map(ev=>({event:ev,point:getPos(ev)}));
     const latest=lineEvents[lineEvents.length-1];
     _editLinePressureProfile(lineEvents);
@@ -8362,18 +8426,22 @@ function _handleMoveEvent(e){
     _brushDiagPerfNote('stabilized-sample');
     if(window.HardRoundDebugRoutingTrace && !_hardRoundStrokeActive) _hrRtNoteLegacyPathEntered();
     const newPressure = _hardRoundStrokeActive ? _getPrototypePressure(ev) : _getPressure(ev);
+    if(_hardRoundStrokeActive)_hrInputLatencyNote(_activeStrokeSession,'firstPressureAcceptedTime');
     const raw=getPos(ev);
     if(window.CustomFirstDabTrace)window.CustomFirstDabTrace.sample({source:e.type,eventTime:ev.timeStamp,x:raw.x,y:raw.y,pressure:newPressure,coalescedCount:events.length});
     const effPressure=_contactFilteredPressure(newPressure,raw.x,raw.y,ev.pointerType);
     _stabilizerSetSampleContext(effPressure,ev);
+    if(_hardRoundStrokeActive)_hrInputLatencyNote(_activeStrokeSession,'firstStabilizerInputTime');
     const evTime=Number.isFinite(ev.timeStamp)&&ev.timeStamp>0?ev.timeStamp:performance.now();
     const p=_stabilizePoint(raw.x,raw.y,evTime);
+    if(_hardRoundStrokeActive)_hrInputLatencyNote(_activeStrokeSession,'firstStabilizerOutputTime');
     if(_hardRoundStrokeActive)_hrFirstPresentNote(_activeStrokeSession,'firstStabilizedInputTime');
     _tipDisplayRecordAuthoritative(p.x,p.y,performance.now());
     _updateVelocity(p.x,p.y,evTime);
     if(window._brushAirbrush&&Math.hypot(p.x-lx,p.y-ly)>0.01)_airbrushLastMovementTime=performance.now();
 
     if(_hardRoundStrokeActive && _hardRoundCore){
+      _hardRoundCore.updateSettings({brushSize:getBrushSize(),stabilization:0,zoom});
       _emitHardRoundStabilizedPoint(p.x,p.y,p.pressure,ev,evTime,'move');
     }else{
       const conditionedSamples=_baselineConditionerPush(_baselineSampleFromStabilizedPoint(ev,p,evTime));

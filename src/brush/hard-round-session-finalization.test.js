@@ -49,8 +49,8 @@ test('finished commit uses captured destination and settings, not shared stroke 
 
 test('live GPU presentation rejects a non-owner stroke before swapchain work',()=>{
   const start=rendererSource.indexOf('async present(rgb, composite, opacity, meta)');
-  const guard=rendererSource.indexOf('meta.strokeId !== window.HardRoundOverlayOwnerStrokeId',start);
-  const texture=rendererSource.indexOf('getCurrentTexture()',start);
+  const guard=rendererSource.indexOf('!previewFlightCurrent(meta,meta.renderer)',start);
+  const texture=rendererSource.indexOf('this.outputContext.getCurrentTexture()',start);
   assert.ok(start>=0&&guard>start&&texture>guard);
 });
 

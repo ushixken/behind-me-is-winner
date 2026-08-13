@@ -55,3 +55,34 @@ test('old finalizer remains unable to alter shared presentation after newer owne
   const texture=renderer.indexOf('getCurrentTexture()',presentStart);
   assert.ok(ownerGuard>presentStart&&texture>ownerGuard);
 });
+
+test('live preview revalidates ownership immediately before swapchain access and after GPU completion',()=>{
+  assert.match(engine,/window\.HardRoundIsLivePreviewCurrent = function/);
+  assert.match(engine,/strokeId===_activeStrokeSession&&previewGeneration===_hardRoundPreviewGeneration/);
+  assert.match(engine,/_hardRoundActiveContext\.renderer===renderer/);
+  assert.match(engine,/window\.HardRoundOverlayOwnerStrokeId===strokeId/);
+  const presentStart=renderer.indexOf('async present(rgb, composite, opacity, meta)');
+  const presentEnd=renderer.indexOf('warmPresentation()',presentStart);
+  const body=renderer.slice(presentStart,presentEnd);
+  const beforeCheck=body.indexOf('const currentBeforeSubmit=previewFlightCurrent');
+  const texture=body.indexOf('this.outputContext.getCurrentTexture()');
+  const submit=body.indexOf('this.device.queue.submit');
+  const afterCheck=body.indexOf('const currentAfterWorkDone=previewFlightCurrent');
+  assert.ok(beforeCheck>=0&&beforeCheck<texture&&texture<submit&&submit<afterCheck,{beforeCheck,texture,submit,afterCheck});
+  assert.match(body,/if\(!currentAfterWorkDone\)return \{presented:false,reason:'stale-after-work-done'/);
+});
+
+test('stale GPU completion cannot reveal overlay or update presented stroke id',()=>{
+  assert.match(engine,/renderer\.peekStroke\(\{ strokeId: session, previewGeneration, renderer/);
+  const guard=engine.indexOf("presentLivePreviewRejectedCount','stale-after-gpu-completion'");
+  const presented=engine.indexOf('window.HardRoundOverlayPresentedStrokeId=session',guard);
+  const reveal=engine.indexOf("_hardRoundSetGpuOverlayVisible(true,'presentLivePreview-accepted-frame')",guard);
+  assert.ok(guard>=0&&presented>guard&&reveal>presented,{guard,presented,reveal});
+});
+
+test('preview-flight ownership diagnostic is default-off and bounded',()=>{
+  assert.match(renderer,/HardRoundDebugPreviewFlightOwnership==='undefined'\)window\.HardRoundDebugPreviewFlightOwnership=false/);
+  assert.match(renderer,/if\(log\.length>100\)log\.splice/);
+  for(const field of ['strokeId','previewGeneration','overlayOwnerAtFlightStart','overlayOwnerBeforeSubmit','overlayOwnerAfterWorkDone','presentedStrokeIdBeforeSubmit','presentedStrokeIdAfterWorkDone','submitSequence','acceptedBeforeSubmit','acceptedAfterWorkDone','staleBeforeSubmit','staleAfterWorkDone'])assert.match(renderer,new RegExp(field));
+  assert.match(renderer,/window\.HardRoundAnalyzePreviewFlightOwnership=function/);
+});

@@ -189,6 +189,7 @@
     measurements.renders++;measurements.lastRenderMs=performance.now()-start;measurements.totalRenderMs+=measurements.lastRenderMs;
     if(cameraOnly){measurements.cameraOnlyRenders++;measurements.lastCameraOnlyRenderMs=measurements.lastRenderMs;measurements.totalCameraOnlyRenderMs+=measurements.lastRenderMs;}
     lastRenderedUploadGeneration=uploadGeneration;presentedArtworkRevision=revision;traceRevision('render-complete',{reason,revision});
+    flushRenderCallbacks();
   }
   function fallback(reason){
     requested='canvas2d';active='canvas2d';document.body.classList.remove('webgpu-presentation-active');gpuCanvas.hidden=true;
@@ -230,5 +231,23 @@
     Object.assign(measurements,{artworkInvalidations:0,coalescedArtworkInvalidations:0,obsoleteUploadsRejected:0,obsoleteRendersRejected:0,uploads:0,uploadBytes:0,mipmapRegenerations:0,textureRecreations:0,pipelineRecreations:0,bindGroupRecreations:0,textureViewRecreations:0,renderBundleRecreations:0,renders:0,cameraOnlyRenders:0,totalUploadMs:0,totalRenderMs:0,totalCameraOnlyRenderMs:0,lastUploadMs:0,lastRenderMs:0,lastCameraOnlyRenderMs:0,lastError:''});
     return stats();
   }
-  window.DisplayBackend={set:setBackend,get mode(){return active;},get requested(){return requested;},get supported(){return !!navigator.gpu;},get device(){return device;},initialize,resize:configureCanvas,uploadComposite,scheduleUpload,renderView(){scheduleRender('camera');},destroy,stats,resetStats};
+  let renderCallbacks=[];
+  function whenRevisionPresented(targetRevision,cb){
+    if(active!=='webgpu'||presentedArtworkRevision>=targetRevision){
+      cb();
+      return;
+    }
+    renderCallbacks.push({targetRevision,cb});
+  }
+  function flushRenderCallbacks(){
+    if(!renderCallbacks.length)return;
+    renderCallbacks=renderCallbacks.filter(item=>{
+      if(presentedArtworkRevision>=item.targetRevision){
+        try{item.cb();}catch(e){console.error('[DisplayBackend render callback]',e);}
+        return false;
+      }
+      return true;
+    });
+  }
+  window.DisplayBackend={set:setBackend,get mode(){return active;},get requested(){return requested;},get supported(){return !!navigator.gpu;},get device(){return device;},get artworkRevision(){return artworkRevision;},get presentedArtworkRevision(){return presentedArtworkRevision;},whenRevisionPresented,initialize,resize:configureCanvas,uploadComposite,scheduleUpload,renderView(){scheduleRender('camera');},destroy,stats,resetStats};
 })();

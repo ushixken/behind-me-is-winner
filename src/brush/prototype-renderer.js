@@ -589,6 +589,22 @@
   // ---------------------------------------------------------------------
   let _hardRoundGpuPresenterPromise = null;
   let _hardRoundSharedPresentSequence = 0;
+  let _hardRoundPreviewFlightSubmitSequence = 0;
+  function previewFlightCurrent(meta,renderer) {
+    if(!meta||meta.strokeId==null)return true;
+    if(typeof window==='undefined')return true;
+    if(typeof window.HardRoundIsLivePreviewCurrent==='function')return !!window.HardRoundIsLivePreviewCurrent(meta.strokeId,meta.previewGeneration,renderer);
+    return window.HardRoundOverlayOwnerStrokeId===meta.strokeId;
+  }
+  function previewFlightTrace(entry) {
+    if(typeof window==='undefined'||!window.HardRoundDebugPreviewFlightOwnership)return;
+    const log=window.HardRoundPreviewFlightOwnershipLog||(window.HardRoundPreviewFlightOwnershipLog=[]);
+    log.push(entry);if(log.length>100)log.splice(0,log.length-100);
+  }
+  function presentationLifecycleTrace(event,detail) {
+    if(typeof window==='undefined'||!window.HardRoundDebugPresentationLifecycle||typeof window.HardRoundPresentationLifecycleNote!=='function')return;
+    window.HardRoundPresentationLifecycleNote(event,detail||{});
+  }
   function sharedPresentTrace(event,detail) {
     if (typeof window === 'undefined' || !window.HardRoundDebugSharedPresentation) return;
     const log = window.HardRoundSharedPresentationLog || (window.HardRoundSharedPresentationLog = []);
@@ -617,6 +633,11 @@
         skippedBlankWarmupCount: log.filter(entry => entry.event === 'sharedBlankPresentSuppressed').length,
         log,
       };
+    };
+    if(typeof window.HardRoundDebugPreviewFlightOwnership==='undefined')window.HardRoundDebugPreviewFlightOwnership=false;
+    window.HardRoundAnalyzePreviewFlightOwnership=function(){
+      const log=(window.HardRoundPreviewFlightOwnershipLog||[]).slice();
+      return {count:log.length,staleBeforeSubmitCount:log.filter(entry=>entry.staleBeforeSubmit).length,staleAfterWorkDoneCount:log.filter(entry=>entry.staleAfterWorkDone).length,staleSubmissions:log.filter(entry=>entry.staleAfterWorkDone&&!entry.staleBeforeSubmit),log};
     };
   }
   class HardRoundGpuPresenter {
@@ -658,12 +679,14 @@
         this.device = await adapter.requestDevice();
       }
       this.canvas = document.getElementById('hard-round-gpu-overlay') || document.createElement('canvas');
+      presentationLifecycleTrace('presentation-context-replacement',{canvasFoundInDom:!!document.getElementById('hard-round-gpu-overlay'),canvasConnected:this.canvas.isConnected,deviceReplaced:true,contextReplaced:true});
       this.canvas.width = width;
       this.canvas.height = height;
       this.context = this.canvas.getContext('webgpu');
       if (!this.context) return false;
       this.format = navigator.gpu.getPreferredCanvasFormat();
       this.context.configure({ device: this.device, format: this.format, alphaMode: 'premultiplied' });
+      presentationLifecycleTrace('context-configure',{width,height,format:this.format,alphaMode:'premultiplied',configureSequence:this.configureCount+1});
       if(typeof window!=='undefined'&&window.BrushDebugPerf&&window.BrushPerfNote)window.BrushPerfNote('hard-round-overlay-configured');
       this.configureCount++;
       sharedPresentTrace('contextConfigure',{contextConfigureCount:this.configureCount,contextConfigureStrokeId:typeof window!=='undefined'&&window.HardRoundOverlayOwnerStrokeId!=null?window.HardRoundOverlayOwnerStrokeId:null});
@@ -678,8 +701,10 @@
 
     ensureSize(width, height) {
       if (!this.canvas) return;
-      if (this.canvas.width !== width) this.canvas.width = width;
-      if (this.canvas.height !== height) this.canvas.height = height;
+      const beforeWidth=this.canvas.width,beforeHeight=this.canvas.height;
+      if (beforeWidth !== width) this.canvas.width = width;
+      if (beforeHeight !== height) this.canvas.height = height;
+      if(beforeWidth!==this.canvas.width||beforeHeight!==this.canvas.height)presentationLifecycleTrace('presentation-canvas-resize',{beforeWidth,beforeHeight,afterWidth:this.canvas.width,afterHeight:this.canvas.height});
     }
 
     pipelineFor(ss) {
@@ -936,9 +961,14 @@
       if (!this.ready || !this.presenter || !this.presenter.ready || !this.outputContext) {
         return { presented: false, reason: 'presenter-unavailable', canvas: this.outputCanvas };
       }
-      if (meta && meta.strokeId != null && typeof window !== 'undefined' &&
-          window.HardRoundOverlayOwnerStrokeId != null &&
-          meta.strokeId !== window.HardRoundOverlayOwnerStrokeId) {
+      const liveFlight=meta&&meta.strokeId!=null;
+      const flightEntry=liveFlight&&typeof window!=='undefined'&&window.HardRoundDebugPreviewFlightOwnership?{
+        strokeId:meta.strokeId,previewGeneration:meta.previewGeneration,overlayOwnerAtFlightStart:window.HardRoundOverlayOwnerStrokeId,
+        overlayOwnerBeforeSubmit:null,overlayOwnerAfterWorkDone:null,presentedStrokeIdBeforeSubmit:null,presentedStrokeIdAfterWorkDone:null,
+        submitSequence:null,acceptedBeforeSubmit:false,acceptedAfterWorkDone:false,staleBeforeSubmit:false,staleAfterWorkDone:false
+      }:null;
+      if (liveFlight && !previewFlightCurrent(meta,meta.renderer)) {
+        if(flightEntry){flightEntry.staleBeforeSubmit=true;previewFlightTrace(flightEntry);}
         return { presented: false, reason: 'not-overlay-owner', canvas: this.outputCanvas };
       }
       const isErase = composite === 'erase';
@@ -949,6 +979,10 @@
       const producingStrokeId=meta&&meta.strokeId!=null?meta.strokeId:null;
       const presentPurpose=meta&&meta.warmup?'prewarm':(producingStrokeId!=null?'live-preview':'finalization');
       const containsGeometry=!!(meta&&Number(meta.segmentCount)>0);
+      if (typeof window !== 'undefined' && window.HardRoundInputLatencyNote && meta && meta.strokeId != null) {
+        window.HardRoundInputLatencyNote(meta.strokeId, 'firstPresentCallTime');
+        window.HardRoundInputLatencyNote(meta.strokeId, 'firstGpuEncodeStart');
+      }
       if (typeof window !== 'undefined' && window.HardRoundFirstPresentNote && meta && meta.strokeId != null) {
         window.HardRoundFirstPresentNote(meta.strokeId, 'firstGpuEncodeStart');
       }
@@ -1023,8 +1057,21 @@
       // --- end diagnostic setup ---
       this.device.queue.writeBuffer(this.presentUniformBuf, 0, new Float32Array([cr, cg, cb, strokeOpacity]));
       const enc = this.device.createCommandEncoder();
+      const currentBeforeSubmit=previewFlightCurrent(meta,meta&&meta.renderer);
+      if(flightEntry){
+        flightEntry.overlayOwnerBeforeSubmit=window.HardRoundOverlayOwnerStrokeId;
+        flightEntry.presentedStrokeIdBeforeSubmit=window.HardRoundOverlayPresentedStrokeId==null?null:window.HardRoundOverlayPresentedStrokeId;
+        flightEntry.acceptedBeforeSubmit=currentBeforeSubmit;flightEntry.staleBeforeSubmit=!currentBeforeSubmit;
+      }
+      if(!currentBeforeSubmit){
+        if(_diagEntry)GpuBackend._inFlightCount=Math.max(0,GpuBackend._inFlightCount-1);
+        if(flightEntry)previewFlightTrace(flightEntry);
+        return {presented:false,reason:'stale-before-submit',canvas:this.outputCanvas};
+      }
       if (_diagEntry) _diagEntry.beforeGetCurrentTextureTime = performance.now();
+      presentationLifecycleTrace('presentation-texture-acquire-start',{strokeId:producingStrokeId,previewGeneration:meta&&meta.previewGeneration,submitPurpose:presentPurpose});
       const currentTextureView = this.outputContext.getCurrentTexture().createView();
+      presentationLifecycleTrace('presentation-texture-acquired',{strokeId:producingStrokeId,previewGeneration:meta&&meta.previewGeneration,submitPurpose:presentPurpose});
       if (_diagEntry) {
         _diagEntry.afterGetCurrentTextureTime = performance.now();
         _diagEntry.getCurrentTextureMs = _diagEntry.afterGetCurrentTextureTime - _diagEntry.beforeGetCurrentTextureTime;
@@ -1039,6 +1086,12 @@
       pass.end();
       if (_diagEntry) _diagEntry.beforeSubmitTime = performance.now();
       this.device.queue.submit([enc.finish()]);
+      const lifecycleSubmitSequence=++_hardRoundPreviewFlightSubmitSequence;
+      if(flightEntry)flightEntry.submitSequence=lifecycleSubmitSequence;
+      presentationLifecycleTrace('presentation-queue-submit',{strokeId:producingStrokeId,previewGeneration:meta&&meta.previewGeneration,submitPurpose:presentPurpose,submitSequence:lifecycleSubmitSequence,segmentCount:meta&&meta.segmentCount,opacity:strokeOpacity,containsGeometry});
+      if (typeof window !== 'undefined' && window.HardRoundInputLatencyNote && meta && meta.strokeId != null) {
+        window.HardRoundInputLatencyNote(meta.strokeId, 'firstGpuSubmitTime');
+      }
       const presentedBefore=typeof window!=='undefined'&&window.HardRoundOverlayPresentedStrokeId!=null?window.HardRoundOverlayPresentedStrokeId:null;
       const owner=typeof window!=='undefined'&&window.HardRoundOverlayOwnerStrokeId!=null?window.HardRoundOverlayOwnerStrokeId:null;
       sharedPresentTrace('sharedPresentSubmit',{
@@ -1095,6 +1148,16 @@
         // (freshly cleared) canvas frame and make the live stroke invisible.
         await this.device.queue.onSubmittedWorkDone();
       }
+      if (typeof window !== 'undefined' && window.HardRoundInputLatencyNote && meta && meta.strokeId != null) {
+        window.HardRoundInputLatencyNote(meta.strokeId, 'firstGpuWorkDoneTime');
+      }
+      const currentAfterWorkDone=previewFlightCurrent(meta,meta&&meta.renderer);
+      presentationLifecycleTrace('presentation-work-done',{strokeId:producingStrokeId,previewGeneration:meta&&meta.previewGeneration,submitPurpose:presentPurpose,submitSequence:lifecycleSubmitSequence,currentAfterWorkDone});
+      if(flightEntry){
+        flightEntry.overlayOwnerAfterWorkDone=window.HardRoundOverlayOwnerStrokeId;
+        flightEntry.presentedStrokeIdAfterWorkDone=window.HardRoundOverlayPresentedStrokeId==null?null:window.HardRoundOverlayPresentedStrokeId;
+        flightEntry.acceptedAfterWorkDone=currentAfterWorkDone;flightEntry.staleAfterWorkDone=!currentAfterWorkDone;previewFlightTrace(flightEntry);
+      }
       // --- DIAGNOSTIC (Phase 11A.39 / 11B.4): resolve-time bookkeeping ---
       if (_diagEntry) {
         _diagEntry.workDoneTime = performance.now();
@@ -1109,6 +1172,7 @@
         if (window.HardRoundGpuPresentLog.length > 500) window.HardRoundGpuPresentLog.shift();
       }
       // --- end diagnostic resolve-time bookkeeping ---
+      if(!currentAfterWorkDone)return {presented:false,reason:'stale-after-work-done',canvas:this.outputCanvas};
       return { presented: true, reason: null, canvas: this.outputCanvas };
     }
 

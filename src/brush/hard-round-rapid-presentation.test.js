@@ -7,11 +7,37 @@ const engine=fs.readFileSync(path.join(__dirname,'brush-engine.js'),'utf8');
 const cursorPrefs=fs.readFileSync(path.join(__dirname,'..','ui','cursor-prefs.js'),'utf8');
 const css=fs.readFileSync(path.join(__dirname,'..','..','style.css'),'utf8');
 
-test('new GPU strokes retain the preceding overlay until its commit is visible',()=>{
+test('new GPU strokes retain the preceding overlay without waiting for its authoritative commit',()=>{
   assert.match(engine,/presentationBarrier:_hardRoundCommitTail/);
   assert.match(engine,/preservePriorUntilCommit=.*_hardRoundPendingCommitCount>0/);
   assert.match(engine,/preserve-prior-until-commit/);
+  assert.match(engine,/const gpuLivePreview=!!\(renderer\.isGpuActive&&renderer\.isGpuActive\(\)\)/);
+  assert.match(engine,/const presentationBarrier=!gpuLivePreview&&_hardRoundActiveContext/);
+  assert.match(engine,/presentationBarrierDependency:gpuLivePreview\?'none-private-gpu-renderer':'ordered-canvas-base'/);
   assert.match(engine,/Promise\.resolve\(presentationBarrier\)[\s\S]*?renderer\.peekStroke/);
+});
+
+test('authoritative ordering remains tied to the commit tail, not GPU live presentation',()=>{
+  assert.match(engine,/const commit=_hardRoundCommitTail\.then\(\(\)=>resolution\)/);
+  assert.match(engine,/_hardRoundCommitTail=settled\.catch/);
+  const presentStart=engine.indexOf('function _hardRoundPresentLivePreview(renderer)');
+  const presentEnd=engine.indexOf('let _hardRoundPreviewRAF',presentStart);
+  const liveBody=engine.slice(presentStart,presentEnd);
+  assert.doesNotMatch(liveBody,/_hardRoundCommitTail/);
+});
+
+test('private GPU preview can run while an older ordered commit remains pending',async()=>{
+  let releaseCommit;
+  const oldCommit=new Promise(resolve=>{releaseCommit=resolve;});
+  const events=[];
+  const present=(gpuActive,barrier)=>Promise.resolve(gpuActive?null:barrier).then(()=>events.push('preview'));
+  const preview=present(true,oldCommit);
+  await preview;
+  assert.deepEqual(events,['preview']);
+  let committed=false;
+  oldCommit.then(()=>{committed=true;});
+  assert.equal(committed,false);
+  releaseCommit();await oldCommit;
 });
 
 test('committed replacement retires only the overlay pixels belonging to that stroke',()=>{
