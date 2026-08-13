@@ -679,6 +679,7 @@
     async init() {
       if (this.ready) return true;
       if (typeof navigator === 'undefined' || !navigator.gpu) return false;
+      const brushPerfInitStart=(typeof window!=='undefined'&&window.BrushDebugPerf)?performance.now():0;
       try {
         const presenter = await HardRoundGpuPresenter.acquire(this.w, this.h);
         if (!presenter || !presenter.ready) return false;
@@ -784,9 +785,11 @@
         });
 
         this.ready = true;
+        if(brushPerfInitStart&&window.BrushPerfNote)window.BrushPerfNote('gpu-init',{ms:performance.now()-brushPerfInitStart,first:true});
         return true;
       } catch (err) {
         this.ready = false;
+        if(brushPerfInitStart&&window.BrushPerfNote)window.BrushPerfNote('gpu-init',{ms:performance.now()-brushPerfInitStart,first:true});
         return false;
       }
     }
@@ -872,6 +875,7 @@
       pass.draw(data.length / 12);
       pass.end();
       this.device.queue.submit([enc.finish()]);
+      if(typeof window!=='undefined'&&window.BrushDebugPerf&&window.BrushPerfNote)window.BrushPerfNote('gpu-work',{instances:data.length/72,batches:1,drawCalls:1});
       this.pendingVerts = [];
     }
 

@@ -136,6 +136,48 @@ window.brushTipCanvas   = null;   // HTMLCanvasElement | null
 window.brushTipVersion  = 0;      // integer, incremented on each tip change
 window.brushTipReferenceDiameter = null;
 window.brushTipSpacingBasis = 'diameter';
+// Diagnostic-only aggregate brush performance recorder. It is deliberately
+// counter/timing based: no pixel reads, stack capture, DOM queries, or
+// per-dab log entries are introduced by this diagnostic.
+if(typeof window.BrushDebugPerf==='undefined')window.BrushDebugPerf=false;
+const _brushDiagPerfRecords=[];
+let _brushDiagPerfActive=null;
+const _brushDiagPerfByStroke=new Map();
+let _brushDiagPerfLastTipVersion=window.brushTipVersion||0;
+function _brushDiagPerfBegin(strokeId){
+  if(!window.BrushDebugPerf){_brushDiagPerfActive=null;return;}
+  const custom=!!window.brushTipCanvas,hard=!!_hardRoundStrokeActive,tipVersion=window.brushTipVersion||0;
+  _brushDiagPerfActive={strokeId,startTime:performance.now(),route:hard?'migrated-hard-round':(custom?'legacy-custom-tip-dabs':'legacy-procedural-dabs'),backend:hard?'pending':(custom?'canvas2d':'canvas2d'),customTip:custom,texture:!!window.brushTextureEnabled,
+    rawSampleCount:1,stabilizedSampleCount:1,resolvedDabCount:0,tinyDabCount:0,normalDabCount:0,radiusCount:0,radiusSum:0,minRadius:null,maxRadius:null,spacingCount:0,spacingSum:0,minSpacing:null,maxSpacing:null,
+    tinyCoverageCalls:0,stampCacheHits:0,stampCacheMisses:0,stampBuilds:0,canvasDrawCallCount:0,canvasGetImageDataCalls:0,canvasPutImageDataCalls:0,temporaryCanvasAllocations:0,gpuInstanceCount:0,gpuBatchCount:0,gpuDrawCallCount:0,gpuInitializationMs:0,totalProcessingMs:0,firstGpuInitializationThisStroke:false,cacheInvalidatedThisStroke:tipVersion!==_brushDiagPerfLastTipVersion,tipVersion};
+  _brushDiagPerfLastTipVersion=tipVersion;
+  _brushDiagPerfByStroke.set(strokeId,_brushDiagPerfActive);
+}
+function _brushDiagPerfNote(type,detail){
+  const a=_brushDiagPerfActive;if(!window.BrushDebugPerf||!a)return;const d=detail||{};
+  if(type==='raw-samples')a.rawSampleCount+=d.count||0;
+  else if(type==='stabilized-sample')a.stabilizedSampleCount++;
+  else if(type==='resolved'){const n=d.count||1;a.resolvedDabCount+=n;if(Number.isFinite(d.radius)){a.radiusCount+=n;a.radiusSum+=d.radius*n;}const lo=Number.isFinite(d.minRadius)?d.minRadius:d.radius,hi=Number.isFinite(d.maxRadius)?d.maxRadius:d.radius;if(Number.isFinite(lo))a.minRadius=a.minRadius==null?lo:Math.min(a.minRadius,lo);if(Number.isFinite(hi))a.maxRadius=a.maxRadius==null?hi:Math.max(a.maxRadius,hi);}
+  else if(type==='spacing'&&Number.isFinite(d.step)){a.spacingCount++;a.spacingSum+=d.step;a.minSpacing=a.minSpacing==null?d.step:Math.min(a.minSpacing,d.step);a.maxSpacing=a.maxSpacing==null?d.step:Math.max(a.maxSpacing,d.step);}
+  else if(type==='tiny'){a.tinyDabCount++;a.tinyCoverageCalls++;}
+  else if(type==='normal')a.normalDabCount++;
+  else if(type==='stamp-cache'){if(d.hit)a.stampCacheHits++;else a.stampCacheMisses++;}
+  else if(type==='stamp-build')a.stampBuilds++;
+  else if(type==='canvas-draw')a.canvasDrawCallCount++;
+  else if(type==='get-image-data')a.canvasGetImageDataCalls++;
+  else if(type==='put-image-data')a.canvasPutImageDataCalls++;
+  else if(type==='temp-canvas')a.temporaryCanvasAllocations+=d.count||1;
+  else if(type==='gpu-init'){a.gpuInitializationMs+=d.ms||0;a.firstGpuInitializationThisStroke=a.firstGpuInitializationThisStroke||!!d.first;}
+  else if(type==='gpu-state'){if(d.backend)a.backend=d.backend;}
+  else if(type==='gpu-work'){a.gpuInstanceCount+=d.instances||0;a.gpuBatchCount+=d.batches||0;a.gpuDrawCallCount+=d.drawCalls||0;}
+  else if(type==='processing')a.totalProcessingMs+=d.ms||0;
+  else if(type==='cache-invalidated')a.cacheInvalidatedThisStroke=true;
+}
+window.BrushPerfNote=_brushDiagPerfNote;
+function _brushDiagPerfEnd(strokeId){
+  const a=_brushDiagPerfByStroke.get(strokeId);if(!a)return;a.endTime=performance.now();a.strokeDurationMs=a.endTime-a.startTime;a.avgRadius=a.radiusCount?a.radiusSum/a.radiusCount:null;a.avgSpacing=a.spacingCount?a.spacingSum/a.spacingCount:null;a.minSpacingDistance=a.minSpacing;a.maxSpacingDistance=a.maxSpacing;a.avgSpacingDistance=a.avgSpacing;a.tinyCoverageCallCount=a.tinyCoverageCalls;a.stampBuildCount=a.stampBuilds;a.stampCacheHitCount=a.stampCacheHits;a.stampCacheMissCount=a.stampCacheMisses;a.getImageDataCount=a.canvasGetImageDataCalls;a.putImageDataCount=a.canvasPutImageDataCalls;a.temporaryCanvasCount=a.temporaryCanvasAllocations;a.initializationMs=a.gpuInitializationMs;a.strokeProcessingMs=a.totalProcessingMs;delete a.radiusSum;delete a.spacingSum;_brushDiagPerfRecords.push(a);if(_brushDiagPerfRecords.length>24)_brushDiagPerfRecords.splice(0,_brushDiagPerfRecords.length-24);_brushDiagPerfByStroke.delete(strokeId);if(_brushDiagPerfActive===a)_brushDiagPerfActive=null;
+}
+window.BrushAnalyzePerf=function(){const strokes=_brushDiagPerfRecords.map(x=>Object.assign({},x));return{available:true,enabled:!!window.BrushDebugPerf,count:strokes.length,latest:strokes[strokes.length-1]||null,strokes};};
 // When true the tip mask is multiplied by the standard radial hardness
 // falloff Ã¢â‚¬â€ giving a soft feathered edge even on an imported ABR tip.
 // When false the tip image alpha is used verbatim (hard-edged custom shape).
@@ -390,6 +432,7 @@ function _beginEndTaperCapture(){
 }
 
 function _ensureStrokeCanvas(){
+  _flushTinyTipCoverageTiles();
   const perf=_brushPerf(),started=perf?performance.now():0;
   const w = activeC.width, h = activeC.height;
   const allocatedOrResized=!_strokeCanvas||_strokeCanvas.width!==w||_strokeCanvas.height!==h;
@@ -956,6 +999,7 @@ window.HardRoundStageDiagSummary=function(){
   return cap;
 };
 function _commitStrokeCanvas(){
+  _flushTinyTipCoverageTiles();
   if(!_strokeCanvas) return;
   const commitSession=_activeStrokeSession,commitLayer=curLayer,commitFrame=curFrame;
   _traceStrokeLifecycle('commit-start',{sessionId:commitSession,sourceLayer:commitLayer,sourceFrame:commitFrame,dirtyRect:_strokeDirty?{minX:_strokeDirty.minX,minY:_strokeDirty.minY,maxX:_strokeDirty.maxX,maxY:_strokeDirty.maxY}:null});
@@ -1549,6 +1593,7 @@ function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   const key=r.toFixed(2)+'|'+rgb.join(',')+'|'+alpha.toFixed(2)+'|'+composite+'|'+
             hardness.toFixed(2)+'|t'+tipV+'|'+(softAlpha?'s':'h')+'|'+tipMode+'|rd'+tipRoundness.toFixed(3);
   const hit=_tipDabCache.get(key);
+  _brushDiagPerfNote('stamp-cache',{hit:!!hit});
   if(latencyProbe&&latencyProbe.enabled)latencyProbe.cache({key,hit:!!hit,sizeBeforeLookup:_tipDabCache.size});
   if(trace&&trace.enabled){trace.stage('custom-tip-cache-lookup',lookupStart,{tipId:trace.objectId(tipC),tipVersion:tipV,invalidationReason:hit?null:(_tipAlphaInvalidationReason||'stamp-key-miss')});trace.instant('stamp-cache-lookup',{hit:!!hit,key,scaleBucket:r.toFixed(2),rotationBucket:Math.round(_viewAdjustedTipRotation()*180/Math.PI),roundnessBucket:tipRoundness.toFixed(3)});}
   const tipPerf=_brushPerf();if(tipPerf)tipPerf.point(hit?'tip-stamp-cache-hit':'tip-stamp-cache-miss',{key});
@@ -1584,6 +1629,7 @@ function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   const cx=w/2, cy=h/2;
 
   const tmp=document.createElement('canvas'); tmp.width=w; tmp.height=h;
+  _brushDiagPerfNote('temp-canvas');
   const tc=tmp.getContext('2d',{willReadFrequently:true});
 
   const cr=composite==='erase'?0:rgb[0];
@@ -1594,12 +1640,14 @@ function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   // never enters the output stamp canvas; only the resolved mask alpha is
   // copied into a fresh brush-coloured ImageData buffer.
   const maskCanvas=document.createElement('canvas');
+  _brushDiagPerfNote('temp-canvas');
   maskCanvas.width=w; maskCanvas.height=h;
   const maskCtx=maskCanvas.getContext('2d',{willReadFrequently:true});
   maskCtx.imageSmoothingEnabled=true;
   maskCtx.imageSmoothingQuality='high';
   const scaleStart=trace&&trace.enabled?performance.now():0;maskCtx.drawImage(tipC,0,0,tipNativeW,tipNativeH,(w-dabW)/2,(h-dabH)/2,dabW,dabH);
   if(trace&&trace.enabled)trace.stage('tip-scaling-resampling',scaleStart,{sourceWidth:tipNativeW,sourceHeight:tipNativeH,dabWidth:dabW,dabHeight:dabH,stampWidth:w,stampHeight:h,scaleBucket:r.toFixed(2)});
+  _brushDiagPerfNote('get-image-data');
   const maskReadStart=trace&&trace.enabled?performance.now():0,maskData=maskCtx.getImageData(0,0,w,h).data;
   if(trace&&trace.enabled)trace.stage('get-image-data',maskReadStart,{source:'scaled-mask',width:w,height:h});
 
@@ -1607,6 +1655,7 @@ function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
   try{
     const sourceCtx=tipC.getContext('2d',{willReadFrequently:true});
     const sourceReadStart=performance.now();
+    _brushDiagPerfNote('get-image-data');
     const sourceData=sourceCtx.getImageData(0,0,tipNativeW,tipNativeH).data;
     if(trace&&trace.enabled)trace.stage('get-image-data',sourceReadStart,{source:'tip-source',width:tipNativeW,height:tipNativeH});
     if(window.CustomTipCacheTrace)window.CustomTipCacheTrace.record('direct-tip-source-read',{path:'_buildTipStamp',tipVersion:window.brushTipVersion||0,tipCanvasId:window.CustomTipCacheTrace.objectId(tipC,'tip-canvas'),width:tipNativeW,height:tipNativeH,getImageDataDuration:performance.now()-sourceReadStart});
@@ -1657,10 +1706,12 @@ function _buildTipStamp(rRaw,rgb,alphaRaw,composite,hardnessRaw){
     outputData[p]=cr; outputData[p+1]=cg; outputData[p+2]=cb;
     outputData[p+3]=Math.round(Math.min(1,alpha*tipAlpha)*255);
   }
+  _brushDiagPerfNote('put-image-data');
   const outputCopyStart=trace&&trace.enabled?performance.now():0;tc.putImageData(output,0,0);
   if(trace&&trace.enabled)trace.stage('temporary-canvas-copy',outputCopyStart,{operation:'putImageData',width:w,height:h});
 
   const stamp={canvas:tmp,w,h};
+  _brushDiagPerfNote('stamp-build');
   if(_tipDabCache.size>=_TIP_DAB_CACHE_MAX) _tipDabCache.delete(_tipDabCache.keys().next().value);
   _tipDabCache.set(key,stamp);
   if(latencyProbe&&latencyProbe.enabled){latencyProbe.renderer('custom-stamp',{effectiveRadius:r,stampWidth:w,stampHeight:h});latencyProbe.measure('buildTipStamp',latencyBuildStart);}
@@ -1960,6 +2011,7 @@ function _dabAACpu(x,y,r,rgb,alpha,composite){
 // Software fallback retained for internal diagnostics. Normal drawing always
 // uses the Canvas 2D accelerated path below.
 function _dabAATinyCoverage(x,y,r,rgb,alpha,composite){
+  _brushDiagPerfNote('tiny');
   _hardRoundTraceLegacyDabDuringGpu(r);
   const dc=(_inStroke&&composite!=='erase')?_strokeCtx:ctx;
   const rr=Math.max(0.05,r),pad=1;
@@ -1968,6 +2020,7 @@ function _dabAATinyCoverage(x,y,r,rgb,alpha,composite){
   const width=ex-sx,height=ey-sy;
   if(width<=0||height<=0) return;
   const _hrRtGidStart = window.HardRoundDebugRoutingTrace ? performance.now() : null;
+  _brushDiagPerfNote('get-image-data');
   const image=dc.getImageData(sx,sy,width,height),data=image.data;
   if(_hrRtGidStart!=null) _hrRtNoteDabAATinyCoverage(performance.now()-_hrRtGidStart);
   const inner=_effectiveInnerFrac(rr,brushHardness,_currentAAMode());
@@ -1998,6 +2051,7 @@ function _dabAATinyCoverage(x,y,r,rgb,alpha,composite){
       }
     }
   }
+  _brushDiagPerfNote('put-image-data');
   dc.putImageData(image,sx,sy);
 }// ---- Tiny custom-tip coverage renderer (matches _dabAATinyCoverage) ----
 // Hard Round gets its light-pressure "pale, thin, still visible" look from
@@ -2059,10 +2113,88 @@ function _sampleTipAlphaBilinear(buf,w,h,u,v){
   const top=a00+(a10-a00)*fx, bot=a01+(a11-a01)*fx;
   return top+(bot-top)*fy;
 }
+// Tiny custom-tip coverage is still evaluated dab-by-dab, pixel-for-pixel,
+// in submission order. The only change is ownership of the destination
+// ImageData: fixed-size tiles retain it until the existing frame-coalesced
+// presentation boundary, amortizing Canvas2D synchronization across all
+// tiny dabs that overlap the same tile in that frame.
+const _TINY_TIP_TILE_SIZE=32;
+const _tinyTipCoverageTiles=new Map();
+let _tinyTipCoverageTileCtx=null;
+function _tinyTipCoverageTileFor(dc,px,py){
+  if(_tinyTipCoverageTileCtx&&_tinyTipCoverageTileCtx!==dc)_flushTinyTipCoverageTiles();
+  _tinyTipCoverageTileCtx=dc;
+  const tx=Math.floor(px/_TINY_TIP_TILE_SIZE)*_TINY_TIP_TILE_SIZE;
+  const ty=Math.floor(py/_TINY_TIP_TILE_SIZE)*_TINY_TIP_TILE_SIZE;
+  const key=tx+'|'+ty;
+  let tile=_tinyTipCoverageTiles.get(key);
+  if(!tile){
+    const w=Math.min(_TINY_TIP_TILE_SIZE,dc.canvas.width-tx),h=Math.min(_TINY_TIP_TILE_SIZE,dc.canvas.height-ty);
+    _brushDiagPerfNote('get-image-data');
+    tile={x:tx,y:ty,w,h,image:dc.getImageData(tx,ty,w,h),dirty:false};
+    _tinyTipCoverageTiles.set(key,tile);
+  }
+  return tile;
+}
+function _flushTinyTipCoverageTiles(){
+  const brushDiagStart=window.BrushDebugPerf?performance.now():0;
+  const dc=_tinyTipCoverageTileCtx;
+  if(dc){
+    for(const tile of _tinyTipCoverageTiles.values()){
+      if(!tile.dirty)continue;
+      _brushDiagPerfNote('put-image-data');
+      dc.putImageData(tile.image,tile.x,tile.y);
+    }
+  }
+  _tinyTipCoverageTiles.clear();
+  _tinyTipCoverageTileCtx=null;
+  if(brushDiagStart)_brushDiagPerfNote('processing',{ms:performance.now()-brushDiagStart});
+}
+function _dabTipTinyCoverageBatched(x,y,r,rgb,alpha,composite,tipInfo){
+  const dc=(_inStroke&&composite!=='erase')?_strokeCtx:ctx;
+  // Erasing and direct-to-artwork paths retain their established immediate
+  // behavior; the normal custom-tip brush path owns a stroke scratch canvas.
+  if(!_inStroke||composite==='erase'||dc!==_strokeCtx){_flushTinyTipCoverageTiles();return false;}
+  const rr=Math.max(0.05,r),softAlpha=!!window.brushTipSoftAlpha,tipMode=window.brushTipMode||'multiply';
+  const baseRoundness=(typeof _activeDabRoundness!=='undefined'&&_activeDabRoundness!=null)?_activeDabRoundness:(window.brushTipRoundness==null?1:window.brushTipRoundness);
+  const tipRoundness=Math.max(window.brushTipMinimumRoundness||0,Math.min(1,baseRoundness));
+  const tipNativeW=tipInfo.w,tipNativeH=tipInfo.h,tipScale=(2*rr)/Math.max(tipNativeW,tipNativeH),compressWidth=tipNativeW<tipNativeH;
+  const dabW=Math.max(0.02,tipNativeW*tipScale*(compressWidth?tipRoundness:1));
+  const dabH=Math.max(0.02,tipNativeH*tipScale*(compressWidth?1:tipRoundness));
+  const semiW=dabW/2,semiH=dabH/2,rotation=_viewAdjustedTipRotation(),cosR=Math.cos(-rotation),sinR=Math.sin(-rotation);
+  const flipXsign=window.brushTipFlipX?-1:1,flipYsign=window.brushTipFlipY?-1:1,pad=1,halfSpan=Math.max(semiW,semiH)+pad;
+  const sx=Math.max(0,Math.floor(x-halfSpan)),sy=Math.max(0,Math.floor(y-halfSpan));
+  const ex=Math.min(dc.canvas.width,Math.ceil(x+halfSpan)),ey=Math.min(dc.canvas.height,Math.ceil(y+halfSpan));
+  if(ex<=sx||ey<=sy)return true;
+  const applyFalloff=softAlpha&&tipMode!=='replace';
+  const inner=applyFalloff?_effectiveInnerFrac(rr,brushHardness,_currentAAMode()):1;
+  const samples=4,invSamples=1/(samples*samples),cr=composite==='erase'?0:rgb[0],cg=composite==='erase'?0:rgb[1],cb=composite==='erase'?0:rgb[2],tipBuf=tipInfo.data;
+  for(let py=sy;py<ey;py++)for(let px=sx;px<ex;px++){
+    let coverage=0;
+    for(let sampleY=0;sampleY<samples;sampleY++)for(let sampleX=0;sampleX<samples;sampleX++){
+      const wx=px+(sampleX+0.5)/samples,wy=py+(sampleY+0.5)/samples;let rx=wx-x,ry=wy-y;
+      if(rotation){const rrx=rx*cosR-ry*sinR,rry=rx*sinR+ry*cosR;rx=rrx;ry=rry;}
+      rx*=flipXsign;ry*=flipYsign;
+      const tipA=_sampleTipAlphaBilinear(tipBuf,tipNativeW,tipNativeH,(rx/dabW+0.5)*tipNativeW,(ry/dabH+0.5)*tipNativeH);
+      if(tipA<=0)continue;
+      coverage+=applyFalloff?tipA*_roundBrushFalloff(Math.sqrt((rx/Math.max(0.02,semiW))**2+(ry/Math.max(0.02,semiH))**2),inner,brushHardness):tipA;
+    }
+    const sourceAlpha=Math.max(0,Math.min(1,alpha*coverage*invSamples));if(sourceAlpha<=0)continue;
+    const tile=_tinyTipCoverageTileFor(dc,px,py),offset=((py-tile.y)*tile.w+(px-tile.x))*4,data=tile.image.data;
+    const destinationAlpha=data[offset+3]/255,outputAlpha=sourceAlpha+destinationAlpha*(1-sourceAlpha);
+    data[offset]=(cr*sourceAlpha+data[offset]*destinationAlpha*(1-sourceAlpha))/outputAlpha;
+    data[offset+1]=(cg*sourceAlpha+data[offset+1]*destinationAlpha*(1-sourceAlpha))/outputAlpha;
+    data[offset+2]=(cb*sourceAlpha+data[offset+2]*destinationAlpha*(1-sourceAlpha))/outputAlpha;
+    data[offset+3]=outputAlpha*255;tile.dirty=true;
+  }
+  return true;
+}
 function _dabTipTinyCoverage(x,y,r,rgb,alpha,composite){
+  _brushDiagPerfNote('tiny');
   if(window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled)window.FirstDabLatencyProbe.renderer('tiny-custom-tip',{effectiveRadius:r});
   const tipInfo=_getTipAlphaBuffer();
-  if(!tipInfo){_dabAATinyCoverage(x,y,r,rgb,alpha,composite);return;}
+  if(!tipInfo){_flushTinyTipCoverageTiles();_dabAATinyCoverage(x,y,r,rgb,alpha,composite);return;}
+  if(_dabTipTinyCoverageBatched(x,y,r,rgb,alpha,composite,tipInfo))return;
   const dc=(_inStroke&&composite!=='erase')?_strokeCtx:ctx;
   const rr=Math.max(0.05,r);
   const softAlpha=!!window.brushTipSoftAlpha;
@@ -2087,6 +2219,7 @@ function _dabTipTinyCoverage(x,y,r,rgb,alpha,composite){
   const ex=Math.min(dc.canvas.width,Math.ceil(x+halfSpan)),ey=Math.min(dc.canvas.height,Math.ceil(y+halfSpan));
   const width=ex-sx,height=ey-sy;
   if(width<=0||height<=0) return;
+  _brushDiagPerfNote('get-image-data');
   const image=dc.getImageData(sx,sy,width,height),data=image.data;
 
   const aaMode=_currentAAMode();
@@ -2136,6 +2269,7 @@ function _dabTipTinyCoverage(x,y,r,rgb,alpha,composite){
       }
     }
   }
+  _brushDiagPerfNote('put-image-data');
   dc.putImageData(image,sx,sy);
 }
 function _dabAA(x,y,r,rgb,alpha,composite){
@@ -2160,6 +2294,10 @@ function _dabAA(x,y,r,rgb,alpha,composite){
   // same class of genuine supersampled-coverage rendering.
   const tinyTipDab=r<=1&&!window._brushAirbrush&&!!window.brushTipCanvas;
   if(tinyTipDab){_dabTipTinyCoverage(x,y,r,rgb,alpha,composite);return;}
+  // A stroke may cross the 1px threshold as pressure changes. Make all
+  // earlier tiny dabs visible before a normal Canvas2D stamp overlaps them.
+  _flushTinyTipCoverageTiles();
+  _brushDiagPerfNote('normal');
   if(_isStandardProceduralSoftRound()){
     _drawSoftRoundMask(x,y,r,rgb,alpha,composite);
     return;
@@ -2744,6 +2882,8 @@ function _dabDirtyRadii(d){
   return {x,y};
 }
 function _drawDabNow(d){
+  const brushDiagStart=window.BrushDebugPerf?performance.now():0;
+  _brushDiagPerfNote('canvas-draw');
   if (window.CustomBrushDebugResolvedDabs && window.brushTipCanvas) {
     window._resolvedCustomTipDrawDabNowCount = (window._resolvedCustomTipDrawDabNowCount || 0) + 1;
   }
@@ -2779,9 +2919,11 @@ function _drawDabNow(d){
   if(perf)perf.measure('dirty-rectangle-expansion',dirtyStart,{radiusX:dirtyRadius.x,radiusY:dirtyRadius.y,rect:_frameDirty&&{minX:_frameDirty.minX,minY:_frameDirty.minY,maxX:_frameDirty.maxX,maxY:_frameDirty.maxY}});
   if(perf)perf.measure('dab-rasterization',perfStart,{dabNumber:_strokeDabCount,radius:d.r,alpha:d.alpha,tip:!!window.brushTipCanvas,airbrush:!!window._brushAirbrush});
   if(customTrace&&customTrace.enabled){customTrace.stage(window.brushTipCanvas?'custom-tip-dab-rasterization':'procedural-dab-rasterization',customTraceStart,{radius:d.r});customTrace.endDab();}
+  if(brushDiagStart)_brushDiagPerfNote('processing',{ms:performance.now()-brushDiagStart});
 }
 function _taperDistance(amount){return 320*amount;}
 function _queueDab(d){
+  _brushDiagPerfNote('resolved',{radius:d.r});
   if (window.brushTipCanvas) {
     _emitResolvedCustomTipDab(d, { isTaperReplay: false });
   }
@@ -2789,6 +2931,7 @@ function _queueDab(d){
   _drawDabNow(d);
 }
 function _flushStrokeTail(){
+  _flushTinyTipCoverageTiles();
   const startAmount=_getStartTaper(),endAmount=_getEndTaper();
   if((startAmount<=0&&endAmount<=0)||!_strokeReplayDabs.length){_strokeReplayDabs.length=0;_strokeReplayBase=null;return;}
   const factors=new Array(_strokeReplayDabs.length).fill(1);
@@ -3852,6 +3995,7 @@ function _walkDabArc(length,pointAt,e,startPressure,endPressure,pressureAt){
     const pressure=pAt(sample.t);
     const spacingR=_computeSpacingRadius(e,pressure);
     const step=_effectiveDabStep(spacingR);
+    _brushDiagPerfNote('spacing',{step});
     const needed=Math.max(0,step-_strokeSegCarryOver);
     const remaining=length-distance;
     if(needed>remaining){
@@ -4548,6 +4692,7 @@ function _scheduleRecomposite(options){
   if(immediate){
     let scheduledWork='none';
     if(_recompRAF&&_recompRAFHandle){cancelAnimationFrame(_recompRAFHandle);_recompRAFHandle=0;_recompRAF=false;_recompCoalescedRequests=0;scheduledWork='cancelled-and-merged';}
+    _flushTinyTipCoverageTiles();
     const rect=(drawing||_inStroke)?_consumeDirtyRect():null;
     if(perf)perf.point('first-dab-immediate-recomposite',{mode:firstDabExperiment?firstDabExperiment.mode:experiment.mode,rect,scheduledWork});
     const immediateStart=performance.now();_flushLiveColorEraserPreview();recomposite(curLayer,curFrame,rect);const immediateDuration=performance.now()-immediateStart;
@@ -4573,6 +4718,7 @@ function _scheduleRecomposite(options){
     if(sessionId!==_activeStrokeSession){_traceStrokeLifecycle('recomposite-rejected',{sessionId,reason:'obsolete-session',sourceLayer:layerIndex,sourceFrame:frameIndex});_flushDeferredKeyVisualRefreshAfterPresentation();return;}
     _recompRAF=false;_recompRAFHandle=0;_recompCoalescedRequests=0;
     if(curLayer!==layerIndex||curFrame!==frameIndex){_traceStrokeLifecycle('recomposite-rejected',{sessionId,reason:'artwork-changed',sourceLayer:layerIndex,sourceFrame:frameIndex});_flushDeferredKeyVisualRefreshAfterPresentation();return;}
+    _flushTinyTipCoverageTiles();
     const rect=(drawing||_inStroke)?_consumeDirtyRect():null;
     const scheduledStart=performance.now();_flushLiveColorEraserPreview();recomposite(layerIndex,frameIndex,rect);const scheduledDuration=performance.now()-scheduledStart;
     _hrMtRecord('_scheduleRecomposite-scheduled-recomposite', scheduledStart, scheduledStart+scheduledDuration);
@@ -6391,6 +6537,7 @@ window.HardRoundAnalyze11B6 = function(){
 };
 function _hardRoundStampSegments(segments, e){
   if(!segments || !segments.length) return;
+  const brushDiagStart=window.BrushDebugPerf?performance.now():0;
   // Phase 9E.4: mark the stroke's true open start/end (not just this
   // batch's first/last -- batches are per pointermove, the stroke's own
   // first/last segment is only ever the single beginStroke() dab and the
@@ -6430,12 +6577,16 @@ function _hardRoundStampSegments(segments, e){
     currentPressure = seg.pressure1;
     const alpha1 = _getEffectiveBrushParams(e).alpha;
 
-    renderSegs.push(adapter.resolveSegmentRenderParams(seg, {
+    const resolved=adapter.resolveSegmentRenderParams(seg, {
       baseSize, minSizeFrac, curveKey, applyPressureCurve: _applyPressureCurve,
       matchPrototypePressure: true,
       rgb, composite, hardness: brushHardness, aaMode,
       getEffectiveAlpha: (pressure) => (pressure===seg.pressure0 ? alpha0 : alpha1),
-    }));
+    });
+    renderSegs.push(resolved);
+    _brushDiagPerfNote('resolved',{count:1,radius:(resolved.r0+resolved.r1)/2,minRadius:Math.min(resolved.r0,resolved.r1),maxRadius:Math.max(resolved.r0,resolved.r1)});
+    const resolvedLength=Math.hypot(resolved.x1-resolved.x0,resolved.y1-resolved.y0);
+    if(resolvedLength>0)_brushDiagPerfNote('spacing',{step:resolvedLength});
   }
   if(_hrMtAdapterStart!=null) _hrMtRecord('HardRoundAdapter.resolveSegmentRenderParams-loop', _hrMtAdapterStart, performance.now());
   // PrototypeRenderer.drawSegments() accumulates into its own private SS=4
@@ -6467,6 +6618,7 @@ function _hardRoundStampSegments(segments, e){
   _hr11b6Log('stampSegments-pushed-pending', e);
   const _hrMtReqPreviewStart = _hrMtActive() ? performance.now() : null;
   _hardRoundRequestLivePreview(renderer);
+  if(brushDiagStart)_brushDiagPerfNote('processing',{ms:performance.now()-brushDiagStart});
   if(_hrMtReqPreviewStart!=null) _hrMtRecord('_hardRoundRequestLivePreview', _hrMtReqPreviewStart, performance.now());
 }
 
@@ -7366,6 +7518,7 @@ function _normalizeTipAlpha(canvas){
   return canvas;
 }
 window.setBrushTip=function(canvas,referenceDiameter,invalidationReason){
+  _brushDiagPerfNote('cache-invalidated');
   const trace=window.CustomTipCacheTrace,previousCanvas=window.brushTipCanvas,previousVersion=window.brushTipVersion||0,previousAlphaBuffer=_tipAlphaBuf;
   _lastNormalizedTipPixels=null;
   const normalized=canvas?_normalizeTipAlpha(canvas):null;
@@ -7603,6 +7756,7 @@ function _brushPointerDown(e){
   if(tool==='fill'){pushUndo();ensureKey();floodFill(p.x,p.y,color);saveActiveToKey();recomposite(curLayer,curFrame);return;}
   _activeStrokePointerId=e.pointerId;
   _strokeOwnerLayer=curLayer;_strokeOwnerFrame=curFrame;_activeStrokeSession=++_strokeSessionSerial;
+  _brushDiagPerfBegin(_activeStrokeSession);
   if(_hardRoundStrokeActive) _hrPerfMarkStrokeStart(_activeStrokeSession);
   _traceStrokeLifecycle('stroke-start',{sourceLayer:curLayer,sourceFrame:curFrame});
   _strokeCompletionStarted=false;
@@ -7730,6 +7884,7 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
       };
       window.HardRoundOverlayOwnerStrokeId=_activeStrokeSession;
       hardRoundRenderer.beginStroke();
+      _brushDiagPerfNote('gpu-state',{backend:hardRoundRenderer.isGpuActive&&hardRoundRenderer.isGpuActive()?'webgpu':'cpu'});
       // TEMP DIAGNOSTIC (Phase 11A.19): same region, immediately after
       // beginStroke() returns, before the overlay is toggled visible.
       const _hrProbeAfter=_hrHashActiveCRegion(0,0,activeC.width,activeC.height,'afterBeginStroke');
@@ -7947,6 +8102,7 @@ function _handleMoveEvent(e){
   e.preventDefault();
   const _hrMtCoalesceStart = _hrMtActive() ? performance.now() : null;
   const events=(typeof e.getCoalescedEvents==='function'&&e.getCoalescedEvents().length)?e.getCoalescedEvents():[e];
+  _brushDiagPerfNote('raw-samples',{count:events.length});
   if(_hrMtCoalesceStart!=null) _hrMtRecord('getCoalescedEvents', _hrMtCoalesceStart, performance.now());
   if((tool==='line'||tool==='curve')&&_lineDragging){
     // Record every coalesced sample (position + pressure) at full input
@@ -7967,6 +8123,7 @@ function _handleMoveEvent(e){
     return;
   }
   for(const ev of events){
+    _brushDiagPerfNote('stabilized-sample');
     if(window.HardRoundDebugRoutingTrace && !_hardRoundStrokeActive) _hrRtNoteLegacyPathEntered();
     const newPressure = _hardRoundStrokeActive ? _getPrototypePressure(ev) : _getPressure(ev);
     const raw=getPos(ev);
@@ -8403,6 +8560,7 @@ function _finalizePointerEndStroke(e,originStrokeId=_activeStrokeSession,fromAsy
   mutate('colorEraserStrokeState','active','ended',()=>_endColorEraserStroke());
   mutate('postStrokePresentation','pending','complete',()=>_completePostStrokePresentation(_strokeOwnerLayer,_strokeOwnerFrame));
   mutate('strokeCompletionObservers','active','finished',()=>{
+    _brushDiagPerfEnd(originStrokeId);
     const latencyProfiler=_brushPerf();if(latencyProfiler)latencyProfiler.finishStroke({tool,sourceLayer:_strokeOwnerLayer,sourceFrame:_strokeOwnerFrame});
     if(window.CompositionPrewarm)window.CompositionPrewarm.noteStrokeComplete();
     if(window.BrushRafExperiment)window.BrushRafExperiment.strokeEnds({dabCount:_strokeDabCount});

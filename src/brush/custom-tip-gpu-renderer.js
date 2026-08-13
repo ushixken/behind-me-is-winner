@@ -216,6 +216,7 @@
 
     async initPipeline() {
       if (this.paintPipeline) return true;
+      const brushPerfInitStart=(typeof window!=='undefined'&&window.BrushDebugPerf)?performance.now():0;
 
       if (typeof window.CustomTipGpuResources === 'undefined') {
         this.fallbackReason = 'CustomTipGpuResources module unavailable';
@@ -314,9 +315,11 @@
         });
 
         this.bindGroupLayout = bindGroupLayout;
+        if(brushPerfInitStart&&window.BrushPerfNote)window.BrushPerfNote('gpu-init',{ms:performance.now()-brushPerfInitStart,first:true});
         return true;
       } catch (e) {
         this.fallbackReason = 'Failed to create WebGPU pipelines: ' + (e.message || String(e));
+        if(brushPerfInitStart&&window.BrushPerfNote)window.BrushPerfNote('gpu-init',{ms:performance.now()-brushPerfInitStart,first:true});
         return false;
       }
     }
@@ -686,6 +689,7 @@
 
       this.batchCount++;
       this.drawCallCount++;
+      if(typeof window!=='undefined'&&window.BrushDebugPerf&&window.BrushPerfNote)window.BrushPerfNote('gpu-work',{instances:this.instanceCount,batches:1,drawCalls:1});
       this.instanceCount = 0;
     }
 
