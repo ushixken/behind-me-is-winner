@@ -7309,6 +7309,29 @@ window.HardRoundIsLivePreviewCurrent = function(session, previewGeneration, rend
   return strokeId===_activeStrokeSession&&previewGeneration===_hardRoundPreviewGeneration && _hardRoundActiveContext&&_hardRoundActiveContext.renderer===renderer && window.HardRoundOverlayOwnerStrokeId===strokeId;
 };
 
+let _hardRoundGpuBaseGateSession = null;
+let _hardRoundGpuBaseGateRevision = null;
+let _hardRoundGpuBaseGatePromise = null;
+
+function _getOrCreateHardRoundGpuBaseGate(session, targetRevision) {
+  if (_hardRoundGpuBaseGatePromise &&
+      _hardRoundGpuBaseGateSession === session &&
+      _hardRoundGpuBaseGateRevision === targetRevision) {
+    return _hardRoundGpuBaseGatePromise;
+  }
+  _hardRoundGpuBaseGateSession = session;
+  _hardRoundGpuBaseGateRevision = targetRevision;
+  _hardRoundGpuBaseGatePromise = new Promise(resolve => {
+    window.DisplayBackend.whenRevisionPresented(targetRevision, () => {
+      if (_hardRoundGpuBaseGateSession === session && _hardRoundGpuBaseGateRevision === targetRevision) {
+        _hardRoundGpuBaseGatePromise = null;
+      }
+      resolve();
+    });
+  });
+  return _hardRoundGpuBaseGatePromise;
+}
+
 function _hardRoundPresentLivePreview(renderer){
   if(!renderer || !_inStroke || !_strokeCtx || !_strokeCanvas){
     _hrFirstPresentCount(_activeStrokeSession,'presentLivePreviewRejectedCount',!renderer?'no-renderer':'pending-preview-cancelled');
@@ -7379,13 +7402,26 @@ function _hardRoundPresentLivePreview(renderer){
   // window.HardRoundLivePreviewSubmitInfo above. Neither field affects
   // which frame is requested, resolved, or accepted.
   const gpuLivePreview=!!(renderer.isGpuActive&&renderer.isGpuActive());
-  const presentationBarrier=!gpuLivePreview&&_hardRoundActiveContext
-    ?_hardRoundActiveContext.presentationBarrier:null;
+  const staleBaseRevision = (gpuLivePreview &&
+    window.DisplayBackend &&
+    window.DisplayBackend.mode === 'webgpu' &&
+    typeof window.DisplayBackend.artworkRevision === 'number' &&
+    typeof window.DisplayBackend.presentedArtworkRevision === 'number' &&
+    window.DisplayBackend.artworkRevision > window.DisplayBackend.presentedArtworkRevision &&
+    typeof window.DisplayBackend.whenRevisionPresented === 'function')
+    ? window.DisplayBackend.artworkRevision
+    : null;
+  const basePresentationGate = staleBaseRevision != null
+    ? _getOrCreateHardRoundGpuBaseGate(session, staleBaseRevision)
+    : null;
+  const presentationBarrier = _hardRoundActiveContext
+    ? _hardRoundActiveContext.presentationBarrier : null;
+  const waitBarrier = basePresentationGate || presentationBarrier;
   _hrInputLatencyNote(session,'presentationBarrierStartTime');
-  return Promise.resolve(presentationBarrier).then(()=>{
+  return Promise.resolve(waitBarrier).then(()=>{
     _hrInputLatencyNote(session,'presentationBarrierEndTime');
-    if(previewGeneration!==_hardRoundPreviewGeneration||session!==_activeStrokeSession||!_inStroke)return null;
-    return renderer.peekStroke({ strokeId: session, previewGeneration, renderer, segmentCount: renderer._segmentCount, livePreviewId, presentationBarrierDependency:gpuLivePreview?'none-private-gpu-renderer':'ordered-canvas-base' });
+    if(!_inStroke || !window.HardRoundIsLivePreviewCurrent(session, previewGeneration, renderer, session)) return null;
+    return renderer.peekStroke({ strokeId: session, previewGeneration, renderer, segmentCount: renderer._segmentCount, livePreviewId, presentationBarrierDependency:gpuLivePreview?(staleBaseRevision!=null?'gated-stale-base-webgpu':'none-private-gpu-renderer'):'ordered-canvas-base' });
   }).then(async result=>{
     if(previewGeneration!==_hardRoundPreviewGeneration)return;
     // --- 11B.13 frame-stall diagnostic: resolve-time bookkeeping ---
@@ -8138,7 +8174,6 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
         _hardRoundStampSegments([beginSeg],e);
       }
       const hardRoundRenderer=_hardRoundGetRenderer();
-      _hardRoundRequestLivePreview(hardRoundRenderer,true);
       const hardRoundAaMode=_currentAAMode();
       const gpuLiveCompatible=hardRoundAaMode!=='off'&&hardRoundAaMode!=='none'&&
         (!window.brushBlendMode||window.brushBlendMode==='normal')&&
@@ -8169,6 +8204,7 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
       const hardRoundBeginStarted=window.BrushDebugPerf?performance.now():0;
       hardRoundRenderer._brushPerfStrokeBeginAt=hardRoundBeginStarted||0;
       hardRoundRenderer.beginStroke();
+      _hardRoundRequestLivePreview(hardRoundRenderer,true);
       const inputLatencyRecord=_hrInputLatencyRecord(_activeStrokeSession);
       if(inputLatencyRecord)inputLatencyRecord.backend=hardRoundRenderer.isGpuActive&&hardRoundRenderer.isGpuActive()?'webgpu':'cpu';
       _hrFirstPresentNote(_activeStrokeSession,'beginStrokeEnd');
@@ -8216,7 +8252,8 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
         _traceStrokeLifecycle('hardround-overlay-show-suppressed-canvas-live-presentation',{gpuActive:!!(hardRoundRenderer.isGpuActive&&hardRoundRenderer.isGpuActive())});
       }else{
         const priorOverlay=_hardRoundGpuOverlay();
-        const preservePriorUntilCommit=!!(hardRoundRenderer.isGpuActive&&hardRoundRenderer.isGpuActive()&&_hardRoundPendingCommitCount>0&&priorOverlay&&!priorOverlay.hidden&&priorOverlay.style.display!=='none'&&priorOverlay.style.opacity!=='0');
+        const basePresentationStale=!!(window.DisplayBackend&&window.DisplayBackend.mode==='webgpu'&&typeof window.DisplayBackend.artworkRevision==='number'&&typeof window.DisplayBackend.presentedArtworkRevision==='number'&&window.DisplayBackend.artworkRevision>window.DisplayBackend.presentedArtworkRevision);
+        const preservePriorUntilCommit=!!(hardRoundRenderer.isGpuActive&&hardRoundRenderer.isGpuActive()&&(_hardRoundPendingCommitCount>0||basePresentationStale)&&priorOverlay&&!priorOverlay.hidden&&priorOverlay.style.display!=='none'&&priorOverlay.style.opacity!=='0');
         if(!preservePriorUntilCommit){
           if(window.HardRoundPresenterWarm)_hardRoundConcealMountedOverlay('beginStroke-await-first-present-mounted-transparent');
           else _hardRoundSetGpuOverlayVisible(false,'beginStroke-await-first-present');

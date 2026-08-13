@@ -1078,15 +1078,16 @@
         _diagEntry.beforeRenderPassTime = _diagEntry.afterGetCurrentTextureTime;
       }
       const pass = enc.beginRenderPass({
-        colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } }],
+colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } }],
       });
       pass.setPipeline(this.presentPipeline);
       pass.setBindGroup(0, this.presentBindGroup);
       pass.draw(3);
       pass.end();
       if (_diagEntry) _diagEntry.beforeSubmitTime = performance.now();
+      const submitSequence=++_hardRoundPreviewFlightSubmitSequence;
       this.device.queue.submit([enc.finish()]);
-      const lifecycleSubmitSequence=++_hardRoundPreviewFlightSubmitSequence;
+      const lifecycleSubmitSequence=submitSequence;
       if(flightEntry)flightEntry.submitSequence=lifecycleSubmitSequence;
       presentationLifecycleTrace('presentation-queue-submit',{strokeId:producingStrokeId,previewGeneration:meta&&meta.previewGeneration,submitPurpose:presentPurpose,submitSequence:lifecycleSubmitSequence,segmentCount:meta&&meta.segmentCount,opacity:strokeOpacity,containsGeometry});
       if (typeof window !== 'undefined' && window.HardRoundInputLatencyNote && meta && meta.strokeId != null) {
@@ -2375,6 +2376,64 @@
       } catch (err) {
         result.A = { error: 'CPU variant failed: ' + (err && err.message ? err.message : String(err)) };
       }
+      // --- B: GPU, production dispatch (unmerged) ---
+      try {
+        const rB = new PrototypeRenderer({ width, height, ss, preferGpu: true });
+        if (rB._gpuInitPromise) await rB._gpuInitPromise;
+        rB.beginStroke();
+        if (!rB._usingGpu) {
+          result.B = { error: 'GPU unavailable in this environment -- cannot run the GPU-production variant here.' };
+        } else {
+          const batchesB = _hrDeepCloneBatches(captured.batches);
+          let submittedB = 0;
+          batchesB.forEach(batch => { submittedB += batch.length; rB.drawSegments(batch); });
+          const outB = await rB.endStroke({ readback: true });
+          capB = _hrDiagCaptureCanvas(outB.canvas);
+          result.B = { backend: 'gpu-production-unmerged', usingGpu: true, ...capB, data: undefined };
+          result.segmentCounts.gpuUnmergedSubmittedRaw = submittedB;
+          result.segmentCounts.gpuUnmergedFinalSegmentCount = outB.segmentCount;
+        }
+      } catch (err) {
+        result.B = { error: 'GPU-production variant failed: ' + (err && err.message ? err.message : String(err)) };
+      }
+      if (capA && capB) result.AvB = _hrDiagCompareCaptures(capA, capB);
+
+      // --- C: GPU, diagnostic dispatch (merged before gpu.drawSegment()) ---
+      try {
+        const rC = new PrototypeRenderer({ width, height, ss, preferGpu: true });
+        if (rC._gpuInitPromise) await rC._gpuInitPromise;
+        rC.beginStroke();
+        if (!rC._usingGpu) {
+          result.C = { error: 'GPU unavailable in this environment -- cannot run the GPU-merged-diagnostic variant here.' };
+        } else {
+          const batchesC = _hrDeepCloneBatches(captured.batches);
+          let submittedC = 0;
+          batchesC.forEach(batch => {
+            if (!batch.length) return;
+            const merged = mergeEquivalentConstantCapsules(batch);
+            submittedC += merged.length;
+            for (const seg of merged) {
+              if (!seg) continue;
+              rC._rgb = seg.rgb || rC._rgb;
+              rC._composite = seg.composite || rC._composite;
+              rC.gpu.drawSegment(seg);
+            }
+            rC._segmentCount += batch.reduce((n, s) => n + (s ? 1 : 0), 0);
+            rC.gpu.flush();
+          });
+          const outC = await rC.endStroke({ readback: true });
+          capC = _hrDiagCaptureCanvas(outC.canvas);
+          result.C = { backend: 'gpu-diagnostic-merged', usingGpu: true, ...capC, data: undefined };
+          result.segmentCounts.gpuMergedSubmitted = submittedC;
+          result.segmentCounts.gpuMergedFinalSegmentCount = outC.segmentCount;
+        }
+      } catch (err) {
+        result.C = { error: 'GPU-merged-diagnostic variant failed: ' + (err && err.message ? err.message : String(err)) };
+      }
+      if (capA && capC) result.AvC = _hrDiagCompareCaptures(capA, capC);
+      if (capB && capC) result.BvC = _hrDiagCompareCaptures(capB, capC);
+
+      return result;
 
       // --- B: GPU, production dispatch (unmerged) ---
       try {
@@ -2430,9 +2489,6 @@
       } catch (err) {
         result.C = { error: 'GPU-merged-diagnostic variant failed: ' + (err && err.message ? err.message : String(err)) };
       }
-      // capA/capB/capC are now function-scoped, so both comparisons below
-      // can see whichever pair actually succeeded, independent of block
-      // boundaries -- this is the direct fix for the reported crash.
       if (capA && capC) result.AvC = _hrDiagCompareCaptures(capA, capC);
       if (capB && capC) result.BvC = _hrDiagCompareCaptures(capB, capC);
 
