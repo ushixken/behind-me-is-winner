@@ -124,6 +124,22 @@
       this._coverageFullCounts = new Uint16Array(this._coverageTileCols * Math.ceil(this.bh / this._coverageTileSize));
     }
 
+    reallocate(width, height, ss) {
+      const targetSS = ss || this.ss || DEFAULT_SS;
+      if (this.w === width && this.h === height && this.ss === targetSS) return;
+      this.w = width;
+      this.h = height;
+      this.ss = targetSS;
+      this.bw = width * targetSS;
+      this.bh = height * targetSS;
+      this.coverage = null;
+      this._resolvedAlpha = null;
+      this._dirty = null;
+      this._strokeDirty = null;
+      this._coverageTileCols = Math.ceil(this.bw / this._coverageTileSize);
+      this._coverageFullCounts = new Uint16Array(this._coverageTileCols * Math.ceil(this.bh / this._coverageTileSize));
+    }
+
     _ensureStorage() {
       if (this.coverage && this._resolvedAlpha) return false;
       this.coverage = new Float32Array(this.bw * this.bh);
@@ -459,7 +475,7 @@
           // Phase 9E.1: seg.aaMode (Off/Weak/Medium/Strong) now actually
           // reaches the rasterizer -- see hard-round-capsule-math.js's
           // aaModeScale for the width progression this drives.
-              const cov01 = CapsuleMath.capsuleCoverage(wx, wy, x0, y0, r0, x1, y1, r1, seg.aaMode);
+              const cov01 = CapsuleMath.capsuleCoverage(wx, wy, x0, y0, r0, x1, y1, r1, seg.aaMode, this.ss);
               if (cov01 <= 0) continue;
           // Alpha (Flow/Opacity) is interpolated along the same `h` param
           // as radius, then folded into the accumulated value -- matches
@@ -863,13 +879,74 @@
         return true;
       } catch (err) {
         this.ready = false;
-        if(brushPerfInitStart&&window.BrushPerfNote)window.BrushPerfNote('gpu-init',{ms:performance.now()-brushPerfInitStart,first:true});
+        if (brushPerfInitStart && window.BrushPerfNote) window.BrushPerfNote('gpu-init', { ms: performance.now() - brushPerfInitStart, first: true });
         return false;
       }
     }
 
     isAvailable() {
       return this.ready;
+    }
+
+    reallocate(width, height, ss) {
+      const targetSS = ss || this.ss || DEFAULT_SS;
+      if (this.w === width && this.h === height && this.ss === targetSS && this.strokeMaskTex) return;
+      this.w = width;
+      this.h = height;
+      this.ss = targetSS;
+      this.bw = width * targetSS;
+      this.bh = height * targetSS;
+      if (this.strokeMaskTex) {
+        this.strokeMaskTex.destroy();
+        this.strokeMaskTex = null;
+      }
+      if (this.ready && this.device) {
+        this.strokeMaskTex = this.device.createTexture({
+          size: [this.bw, this.bh], format: 'r8unorm',
+          usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
+        });
+        const blitShader = this.device.createShaderModule({ code: RESOLVE_SHADER_WGSL(this.ss) });
+        this.blitPipeline = this.device.createRenderPipeline({
+          layout: 'auto',
+          vertex: { module: blitShader, entryPoint: 'vs' },
+          fragment: { module: blitShader, entryPoint: 'fs', targets: [{ format: 'rgba8unorm' }] },
+          primitive: { topology: 'triangle-list' },
+        });
+        this.blitBindGroup = this.device.createBindGroup({
+          layout: this.blitPipeline.getBindGroupLayout(0),
+          entries: [{ binding: 0, resource: this.strokeMaskTex.createView() }],
+        });
+        if (this.presenter) {
+          this.presentPipeline = this.presenter.pipelineFor(this.ss);
+          this.presentBindGroup = this.device.createBindGroup({
+            layout: this.presentPipeline.getBindGroupLayout(0),
+            entries: [
+              { binding: 0, resource: this.strokeMaskTex.createView() },
+              { binding: 1, resource: { buffer: this.presentUniformBuf } },
+            ],
+          });
+        }
+      }
+    }
+
+    destroy() {
+      if (this.strokeMaskTex) {
+        this.strokeMaskTex.destroy();
+        this.strokeMaskTex = null;
+      }
+      if (this.strokeUniformBuf) {
+        this.strokeUniformBuf.destroy();
+        this.strokeUniformBuf = null;
+      }
+      if (this.vertexBuf) {
+        this.vertexBuf.destroy();
+        this.vertexBuf = null;
+      }
+      if (this.presentUniformBuf) {
+        this.presentUniformBuf.destroy();
+        this.presentUniformBuf = null;
+      }
+      this.ready = false;
     }
 
     reset() {
@@ -917,7 +994,9 @@
       // (via capsuleCoverage) as a per-vertex attribute, so the GPU
       // fragment shader widens/narrows its fwidth(d)-based band by the
       // identical factor -- CPU and GPU interpret aaMode consistently.
-      const aaScale = CapsuleMath.aaModeScale(seg.aaMode);
+      // Scaled by (ss / 4) so the physical document-space AA band remains
+      // invariant across SS=1/2/3/4.
+      const aaScale = CapsuleMath.aaModeScale(seg.aaMode) * (ss / 4.0);
       const isAaOff = seg.aaMode === 'off' || seg.aaMode === 'none';
       const verts = segmentVerts(
         seg.x0 * ss, seg.y0 * ss, seg.x1 * ss, seg.y1 * ss,
@@ -1496,13 +1575,6 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
     }
     @fragment
     fn fs(in: VSOut) -> @location(0) vec4f {
-      // Phase 9E.2: AA Off is a hard, pixel-perfect step -- not just a
-      // narrower fwidth() band. A per-subpixel binary test alone would
-      // still be box-averaged into fractional (gray) alpha by the SS=4
-      // resolve pass, exactly like the CPU backend's drawSegment(). So
-      // when aaOff is set, sample ONCE at this fragment's ss x ss output
-      // block center (every subpixel in the block agrees), giving a
-      // uniform 0/1 value that resolves to exactly 0.0 or 1.0.
       let ss = max(u.ss, 1.0);
       let blockCenter = (floor(in.pos.xy / ss) * ss) + vec2f(ss * 0.5, ss * 0.5);
       let samplePos = select(in.pos.xy, blockCenter, in.aaOff > 0.5);
@@ -1511,19 +1583,12 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
       let rawH = dot(samplePos - in.p0, in.p1 - in.p0) / max(denom, 1e-6);
       let h = clamp(rawH, 0.0, 1.0);
       if (in.aaOff > 0.5) {
-        // Phase 9E.3: conservative pixel-square test (see
-        // hard-round-capsule-math.js's pixelCoveredByCapsule) instead of
-        // an exact d<=0 point test, so a fast-flick's shrinking-radius
-        // tail can't thread between block centers and drop pixels.
         let halfDiag = ss * 0.70710678;
         let cov = select(0.0, 1.0, d <= halfDiag);
         return vec4f(mix(in.alpha0, in.alpha1, h) * cov, 0.0, 0.0, 1.0);
       }
       let localRadius = mix(in.r0, in.r1, h);
       let isRoundDab = denom < 1e-6;
-      // Phase 9E.1: same aaModeScale() multiplier the CPU backend applies
-      // in hard-round-capsule-math.js's capsuleCoverage, so Off/Weak/
-      // Medium/Strong widen the band by the identical factor on GPU.
       let segmentLength = sqrt(max(denom, 1e-6));
       let taperRate = (in.r1 - in.r0) / segmentLength;
       let taperBand = sqrt(1.0 + taperRate * taperRate);
@@ -1539,21 +1604,40 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
     }
   `;
 
-  // Phase 11A.2: SS=4 box-filter/coverage-average core, shared verbatim by
-  // both the commit-time resolve pass (RESOLVE_SHADER_WGSL) and the live
-  // preview present pass (PRESENT_SHADER_WGSL). Before this phase, each
-  // shader carried its own hand-copied version of this loop; the copies
-  // happened to agree at the time (verified by the Phase 11A investigation
-  // -- same sample offsets, same normalization, same source texture) but
-  // had no mechanism keeping them that way, which is exactly the kind of
-  // drift that must not be able to happen silently again. `resolveCoverage`
-  // is now the single source of truth for "what fraction of this output
-  // pixel's ss x ss block is covered" -- neither shader below computes
-  // coverage any other way, so a future change to AA/SS/box-filter math
-  // only has one place to be made, and live/final can never disagree on
-  // the coverage value itself (only on what happens to it afterward, which
-  // is intentionally still different -- see each shader's own comment).
   function COVERAGE_CORE_WGSL(ss) {
+    if (ss === 1) {
+      return `
+        fn resolveCoverage(tex: texture_2d<f32>, outPos: vec2i) -> f32 {
+          return textureLoad(tex, outPos, 0).r;
+        }
+      `;
+    }
+    if (ss === 2) {
+      return `
+        fn resolveCoverage(tex: texture_2d<f32>, outPos: vec2i) -> f32 {
+          let origin = outPos * 2;
+          let s00 = textureLoad(tex, origin + vec2i(0, 0), 0).r;
+          let s10 = textureLoad(tex, origin + vec2i(1, 0), 0).r;
+          let s01 = textureLoad(tex, origin + vec2i(0, 1), 0).r;
+          let s11 = textureLoad(tex, origin + vec2i(1, 1), 0).r;
+          return (s00 + s10 + s01 + s11) * 0.25;
+        }
+      `;
+    }
+    if (ss === 3) {
+      return `
+        fn resolveCoverage(tex: texture_2d<f32>, outPos: vec2i) -> f32 {
+          let origin = outPos * 3;
+          var sum = 0.0;
+          for (var y = 0; y < 3; y = y + 1) {
+            for (var x = 0; x < 3; x = x + 1) {
+              sum = sum + textureLoad(tex, origin + vec2i(x, y), 0).r;
+            }
+          }
+          return sum * (1.0 / 9.0);
+        }
+      `;
+    }
     return `
       fn resolveCoverage(tex: texture_2d<f32>, outPos: vec2i) -> f32 {
         let origin = outPos * ${ss};
@@ -1568,16 +1652,6 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
     `;
   }
 
-  // Ported from prototype's blitShader, minus the *16 4x4 hardcode -- this
-  // module parameterizes the box size by `ss` so it isn't silently wrong
-  // if this renderer is ever constructed with a non-4 supersample factor.
-  //
-  // Deliberately does NOT apply opacity or premultiplication: this pass
-  // feeds the commit/readback path, whose result is colorized (in JS, on
-  // readback) and opacity-composited once, downstream, by
-  // _commitStrokeCanvas()'s Canvas2D globalAlpha -- unchanged by Phase
-  // 11A.2. Coverage is written raw into all four channels; only .r is
-  // ever read back (see resolveInto()).
   function RESOLVE_SHADER_WGSL(ss) {
     return `
       struct VSOut { @builtin(position) pos: vec4f };
@@ -1598,14 +1672,6 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
     `;
   }
 
-  // Live preview pass: same resolveCoverage() core as the commit path
-  // above (Phase 11A.2 -- see its comment), then opacity + premultiply +
-  // color, which stay in-shader here because this pass writes directly to
-  // the visible swapchain (alphaMode:'premultiplied') with no further
-  // downstream compositing stage to apply them -- unlike the resolve pass,
-  // there is no Canvas2D step coming after this one. This is the same
-  // opacity-application behavior as before Phase 11A.2; only the coverage
-  // computation itself was deduplicated.
   function PRESENT_SHADER_WGSL(ss) {
     return `
       struct VSOut { @builtin(position) pos: vec4f };
@@ -1641,10 +1707,6 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
     const c3 = { x: p0.x - nx * hw, y: p0.y - ny * hw };
     const as = aaScale == null ? 1 : aaScale;
     const off = aaOff ? 1 : 0;
-    // Phase 9E.2: aaOff (1/0) travels alongside aaScale so the fragment
-    // shader can switch to block-center point sampling (see fs below)
-    // instead of just narrowing fwidth's band -- narrowing alone still
-    // lets the SS=4 resolve's box filter re-introduce gray edge pixels.
     const v = (p) => [p.x, p.y, x0, y0, x1, y1, r0, r1, alpha0, alpha1, as, off];
     const out = [];
     out.push.apply(out, v(c0)); out.push.apply(out, v(c1)); out.push.apply(out, v(c2));
@@ -1735,6 +1797,26 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
       }
     }
 
+    ensureSize(width, height, ss) {
+      const targetSS = ss || this.ss || DEFAULT_SS;
+      if (this.width === width && this.height === height && this.ss === targetSS) return;
+      this.width = width;
+      this.height = height;
+      this.ss = targetSS;
+      if (this.cpu) this.cpu.reallocate(width, height, targetSS);
+      if (this.gpu) this.gpu.reallocate(width, height, targetSS);
+      if (this._outCanvas) {
+        this._outCanvas.width = width;
+        this._outCanvas.height = height;
+        this._outCtx = this._outCanvas.getContext('2d');
+      }
+    }
+
+    destroy() {
+      if (this.gpu) this.gpu.destroy();
+      this._active = false;
+    }
+
     // Starts a new stroke's accumulation. Resets the backing store.
     //
     // Phase 9C.2: also clears the output canvas immediately, synchronously.
@@ -1749,17 +1831,18 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
     // rectangle, they'd leak into this stroke's live preview instead of
     // being cleared. The clear itself is one clearRect() call, not a
     // per-frame cost.
-    beginStroke() {
+    beginStroke(opts) {
       if (this._hardRoundFinishingOwner != null) {
         throw new Error('PrototypeRenderer.beginStroke(): renderer is owned by finishing stroke '+this._hardRoundFinishingOwner);
+      }
+      if (opts && (opts.ss || opts.width || opts.height)) {
+        this.ensureSize(opts.width || this.width, opts.height || this.height, opts.ss || this.ss);
       }
       if (this._active) this.cancelStroke();
       this._active = true;
       this._segmentCount = 0;
       this._composite = 'paint';
       this._rgb = [0, 0, 0];
-      // Phase 11B.3 TEMP DIAGNOSTIC: fresh per-stroke state for the opt-in
-      // serialized-live-preview experiment (see constructor comment above).
       this._livePresentInFlight = false;
       this._livePreviewDirty = false;
       // TEMP DIAGNOSTIC (Phase 11A.23): fresh, empty per-backend segment

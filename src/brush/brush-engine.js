@@ -6292,19 +6292,27 @@ function _hardRoundFlushPending(renderer){
   _hr11b6Log('flushPending', null, {flushedCount:pending.length});
   return pending.length;
 }
+function _hardRoundSsForMode(mode) {
+  const m = mode || (typeof _currentAAMode === 'function' ? _currentAAMode() : 'none');
+  if (m === 'off' || m === 'none') return 1;
+  if (m === 'weak') return 2;
+  if (m === 'medium') return 3;
+  if (m === 'strong') return 4;
+  return 1;
+}
+
 function _hardRoundGetRenderer(){
   if(typeof window==='undefined' || !window.PrototypeRenderer) return null;
   const w = activeC.width, h = activeC.height;
+  const targetSS = _hardRoundSsForMode();
   const primary=_hardRoundRenderer;
-  const primaryMatches=!!(primary&&primary.width===w&&primary.height===h&&!primary._hardRoundFinishingOwner);
+  const primaryMatches=!!(primary&&primary.width===w&&primary.height===h&&primary.ss===targetSS&&!primary._hardRoundFinishingOwner);
   // Never swap a renderer underneath an already-active stroke.
-  if(primaryMatches&&primary._active)return primary;
+  if(primary&&primary._active)return primary;
   const primaryGpuReady=!!(primaryMatches&&primary.gpu&&primary.gpu.isAvailable&&primary.gpu.isAvailable());
   if(primaryGpuReady)return primary;
-  // A cold/non-matching primary must not block a prepared spare. This was
-  // the first-stroke bug: pool lookup previously happened only when the
-  // primary was null or resized, so any non-null cold primary won.
-  const readyIndex=_hardRoundRendererPool.findIndex(renderer=>renderer.width===w&&renderer.height===h&&!renderer._hardRoundFinishingOwner&&renderer.gpu&&renderer.gpu.isAvailable&&renderer.gpu.isAvailable());
+  // A cold/non-matching primary must not block a prepared spare.
+  const readyIndex=_hardRoundRendererPool.findIndex(renderer=>renderer.width===w&&renderer.height===h&&renderer.ss===targetSS&&!renderer._hardRoundFinishingOwner&&renderer.gpu&&renderer.gpu.isAvailable&&renderer.gpu.isAvailable());
   if(readyIndex>=0){
     if(primary&&!primary._active&&!primary._hardRoundFinishingOwner&&!_hardRoundRendererPool.includes(primary))_hardRoundRendererPool.push(primary);
     _hardRoundRenderer=_hardRoundRendererPool.splice(readyIndex,1)[0];
@@ -6313,12 +6321,19 @@ function _hardRoundGetRenderer(){
     _hardRoundReplenishWarmReserve();
     return _hardRoundRenderer;
   }
-  // Preserve genuine CPU fallback: reuse a compatible cold primary when no
-  // prepared GPU renderer exists, and construct only as the final option.
-  if(primaryMatches)return primary;
-  const resized=!!primary&&(primary.width!==w||primary.height!==h);
-  const pooledIndex=_hardRoundRendererPool.findIndex(renderer=>renderer.width===w&&renderer.height===h&&!renderer._hardRoundFinishingOwner);
-  _hardRoundRenderer=pooledIndex>=0?_hardRoundRendererPool.splice(pooledIndex,1)[0]:new window.PrototypeRenderer({width:w,height:h,preferGpu:true});
+  if(primary&&!primary._active&&!primary._hardRoundFinishingOwner){
+    primary.ensureSize(w, h, targetSS);
+    if(primary.width===w&&primary.height===h&&primary.ss===targetSS)return primary;
+  }
+  const resized=!!primary&&(primary.width!==w||primary.height!==h||primary.ss!==targetSS);
+  const pooledIndex=_hardRoundRendererPool.findIndex(renderer=>!renderer._hardRoundFinishingOwner);
+  if(pooledIndex>=0){
+    const pooled=_hardRoundRendererPool.splice(pooledIndex,1)[0];
+    pooled.ensureSize(w, h, targetSS);
+    _hardRoundRenderer=pooled;
+  } else {
+    _hardRoundRenderer=new window.PrototypeRenderer({width:w,height:h,ss:targetSS,preferGpu:true});
+  }
   _hardRoundRendererCreatedPending=pooledIndex<0&&_hardRoundPointerdownPreparing;
   _hardRoundRendererResizePending=resized&&_hardRoundPointerdownPreparing;
   _hardRoundReplenishWarmReserve();
@@ -6886,16 +6901,17 @@ let _hardRoundPresentationPrewarmPromise=null;
 function _hardRoundReplenishWarmReserve(){
   if(_hardRoundReserveFillPromise||typeof window==='undefined'||!window.PrototypeRenderer||!activeC)return _hardRoundReserveFillPromise||Promise.resolve(false);
   const w=activeC.width,h=activeC.height;
+  const targetSS=_hardRoundSsForMode();
   _hardRoundReserveFillPromise=(async()=>{
     // First finish preparing any same-size renderer already in the pool.
     for(const renderer of _hardRoundRendererPool){
-      if(renderer.width!==w||renderer.height!==h||renderer._hardRoundFinishingOwner)continue;
+      if(renderer.width!==w||renderer.height!==h||renderer.ss!==targetSS||renderer._hardRoundFinishingOwner)continue;
       if(renderer.gpu&&renderer.gpu.isAvailable&&renderer.gpu.isAvailable())continue;
       if(typeof renderer.prepareGpuPresentation==='function')await renderer.prepareGpuPresentation();
     }
-    let readyCount=_hardRoundRendererPool.filter(renderer=>renderer.width===w&&renderer.height===h&&!renderer._hardRoundFinishingOwner&&renderer.gpu&&renderer.gpu.isAvailable&&renderer.gpu.isAvailable()).length;
+    let readyCount=_hardRoundRendererPool.filter(renderer=>renderer.width===w&&renderer.height===h&&renderer.ss===targetSS&&!renderer._hardRoundFinishingOwner&&renderer.gpu&&renderer.gpu.isAvailable&&renderer.gpu.isAvailable()).length;
     while(readyCount<_HARD_ROUND_WARM_RESERVE){
-      const renderer=new window.PrototypeRenderer({width:w,height:h,preferGpu:true});
+      const renderer=new window.PrototypeRenderer({width:w,height:h,ss:targetSS,preferGpu:true});
       const warmed=typeof renderer.prepareGpuPresentation==='function'&&await renderer.prepareGpuPresentation();
       if(!warmed)break;
       _hardRoundRendererPool.push(renderer);readyCount++;
@@ -8519,7 +8535,7 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
       _hrFirstPresentNote(_activeStrokeSession,'beginStrokeStart');
       const hardRoundBeginStarted=window.BrushDebugPerf?performance.now():0;
       hardRoundRenderer._brushPerfStrokeBeginAt=hardRoundBeginStarted||0;
-      hardRoundRenderer.beginStroke();
+      hardRoundRenderer.beginStroke({ss:_hardRoundSsForMode(hardRoundAaMode)});
       _hardRoundRequestLivePreview(hardRoundRenderer,true);
       const inputLatencyRecord=_hrInputLatencyRecord(_activeStrokeSession);
       if(inputLatencyRecord)inputLatencyRecord.backend=hardRoundRenderer.isGpuActive&&hardRoundRenderer.isGpuActive()?'webgpu':'cpu';
@@ -8609,6 +8625,7 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
           strokeId: window._hrDebugStrokeId,
           route: 'migrated',
           backend: usingGpu ? 'GPU' : 'CPU',
+          ss: hardRoundRenderer.ss,
           gpuLiveCompatible: !!gpuLiveCompatible,
           preferGpuFlagAtBeginStroke: !!gpuLiveCompatible,
           hasCustomTip: !!window.brushTipCanvas,

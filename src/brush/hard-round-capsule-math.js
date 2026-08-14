@@ -126,7 +126,7 @@ function aaModeScale(mode) {
 // @param {string} [aaMode] - 'off'|'none'|'weak'|'medium'|'strong'; see
 //   AA_MODE_SCALE/aaModeScale above. Omit to keep the original unscaled band.
 // @returns {number} coverage 0..1
-function capsuleCoverage(px, py, ax, ay, r0, bx, by, r1, aaMode) {
+function capsuleCoverage(px, py, ax, ay, r0, bx, by, r1, aaMode, ss) {
   const { dist, h, isRoundDab } = capsuleAxisDistance(px, py, ax, ay, bx, by);
   const localRadius = r0 + (r1 - r0) * h;
   const d = isRoundDab ? (dist - r0) : (dist - localRadius);
@@ -146,7 +146,8 @@ function capsuleCoverage(px, py, ax, ay, r0, bx, by, r1, aaMode) {
   // the straight, unclamped part of a tapered capsule needs the wider
   // taper-aware band (see aaBand's doc comment above).
   const baseAa = (isRoundDab || h <= 0 || h >= 1) ? 1.0 : aaBand(r0, r1, ax, ay, bx, by);
-  const aa = baseAa * aaModeScale(aaMode);
+  const ssScale = (typeof ss === 'number' && ss > 0) ? (ss / 4.0) : 1.0;
+  const aa = baseAa * aaModeScale(aaMode) * ssScale;
   const cov = edgeCoverage(d, aa);
   const area = subpixelAreaFactor(localRadius, isRoundDab);
   return cov * area;
