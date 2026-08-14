@@ -48,13 +48,24 @@ function _showSiteDialog(message, opts, mode){
   const cancelBtn = overlay.querySelector('#site-dialog-cancel');
 
   titleEl.textContent = opts.title || (mode === 'alert' ? 'Notice' : 'Confirm');
-  // Preserve newlines from messages that were originally written for
-  // window.confirm/alert (which used \n for line breaks).
   msgEl.innerHTML = '';
-  String(message).split('\n').forEach((line, i) => {
-    if(i > 0) msgEl.appendChild(document.createElement('br'));
-    msgEl.appendChild(document.createTextNode(line));
-  });
+  const paragraphs = String(message).split(/\n\s*\n/);
+  if(paragraphs.length > 1){
+    paragraphs.forEach((pText, i) => {
+      const p = document.createElement('div');
+      if(i > 0) p.style.marginTop = '6px';
+      pText.split('\n').forEach((line, j) => {
+        if(j > 0) p.appendChild(document.createElement('br'));
+        p.appendChild(document.createTextNode(line));
+      });
+      msgEl.appendChild(p);
+    });
+  } else {
+    String(message).split('\n').forEach((line, i) => {
+      if(i > 0) msgEl.appendChild(document.createElement('br'));
+      msgEl.appendChild(document.createTextNode(line));
+    });
+  }
 
   okBtn.textContent = opts.okText || 'OK';
   okBtn.className = 'modal-btn primary' + (opts.danger ? ' danger' : '');

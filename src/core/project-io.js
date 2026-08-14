@@ -263,7 +263,7 @@
           }
           if(typeof window.markProjectClean==='function')window.markProjectClean('save');
         }else{
-          const msg='Download started for "'+result.name+'".\n\nFor the most reliable Save Project experience, use a browser that supports verified file saving, such as Chrome or Edge.\n\nYour browser is managing this download.';
+          const msg='"'+result.name+'" is downloading.\n\nFor better file saving support, use Chrome or Edge.';
           if(typeof window.siteAlert==='function'){
             await window.siteAlert(msg,{title:'Download Started',okText:'OK'});
           }else if(typeof siteAlert==='function'){
