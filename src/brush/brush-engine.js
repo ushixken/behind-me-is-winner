@@ -2843,6 +2843,8 @@ function _drawAutoHardRoundSegment(d){
 let _customTipGpuStrokeActive = false;
 let _customTipGpuFallbackDabs = [];
 let _customTipCommitTail = Promise.resolve();
+let _customTipPendingCommitCount = 0;
+let _lastArtworkCommitError = null;
 
 function _customTipGpuEligibleNow() {
   if (typeof window === 'undefined') return false;
@@ -3108,13 +3110,19 @@ function _finishCustomTipOrCanvasCommit(e, strokeSession) {
       _inStroke = false;
     }
 
-    _customTipCommitTail = _customTipCommitTail.then(async () => {
+    _customTipPendingCommitCount++;
+    const commit = _customTipCommitTail.then(async () => {
       await _executeCustomTipDetachedCommit(gpuTask, {
         sessionId, ownerLayer, ownerFrame, targetCanvas,
         styleId, brushOpacityVal, blendModeVal, isSmartRaster,
         fallbackDabs, selectionMaskSnapshot
       });
-    }).catch(err => {
+    });
+    const settled = commit.finally(() => {
+      _customTipPendingCommitCount = Math.max(0, _customTipPendingCommitCount - 1);
+    });
+    _customTipCommitTail = settled.catch(err => {
+      _lastArtworkCommitError = err;
       console.error('[CustomTipGpu] Commit tail error:', err);
     });
 
@@ -5173,6 +5181,38 @@ window.finishActiveDrawingBeforeArtworkChange=function(nextLayer,nextFrame){
   }
   return true;
 };
+/**
+ * Public Artwork-Commit Barrier
+ *
+ * Awaits completion of all currently pending asynchronous brush/artwork commits
+ * that write into persistent layer/frame canvases (e.g. Hard Round GPU readbacks,
+ * Custom Tip detached GPU commits).
+ *
+ * Future-proofing: Any future engine, tool, or asynchronous operation that
+ * mutates persistent artwork after an event returns must participate in this barrier.
+ */
+window.awaitPendingBrushCommits=async function(){
+  while(true){
+    const tails=[];
+    if(typeof _hardRoundCommitTail!=='undefined'&&_hardRoundCommitTail){
+      tails.push(_hardRoundCommitTail);
+    }
+    if(typeof _customTipCommitTail!=='undefined'&&_customTipCommitTail){
+      tails.push(_customTipCommitTail);
+    }
+    await Promise.all(tails);
+    const pendingHardRound=typeof _hardRoundPendingCommitCount==='number'&&_hardRoundPendingCommitCount>0;
+    const pendingCustomTip=typeof _customTipPendingCommitCount==='number'&&_customTipPendingCommitCount>0;
+    if(!pendingHardRound&&!pendingCustomTip){
+      break;
+    }
+  }
+  if(_lastArtworkCommitError){
+    const err=_lastArtworkCommitError;
+    _lastArtworkCommitError=null;
+    throw new Error('A pending brush stroke could not be committed to the canvas: '+(err&&err.message?err.message:String(err)));
+  }
+};
 document.addEventListener('visibilitychange',()=>{
   if(document.hidden){_endStroke();}
   else{
@@ -6546,7 +6586,7 @@ function _hardRoundFinalizeOwnedContext(context,e){
     }
   });
   const settled=commit.finally(()=>{_hardRoundPendingCommitCount=Math.max(0,_hardRoundPendingCommitCount-1);_hrRapidPresentation('finalizerCompleted',context.strokeId);});
-  _hardRoundCommitTail=settled.catch(err=>{console.error('[Hard Round finalization]',err);});
+  _hardRoundCommitTail=settled.catch(err=>{_lastArtworkCommitError=err;console.error('[Hard Round finalization]',err);});
   return settled;
 }
 // TEMP DIAGNOSTIC (Phase 11A routing probe). Purely visual, appended once,
