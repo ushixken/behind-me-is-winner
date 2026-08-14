@@ -2840,6 +2840,297 @@ function _drawAutoHardRoundSegment(d){
   return true;
 }
 
+let _customTipGpuStrokeActive = false;
+let _customTipGpuFallbackDabs = [];
+let _customTipCommitTail = Promise.resolve();
+
+function _customTipGpuEligibleNow() {
+  if (typeof window === 'undefined') return false;
+  if (!navigator.gpu) return false;
+  if (typeof window.CustomTipGpuResources === 'undefined' || typeof window.CustomTipGpuRenderer === 'undefined') return false;
+  if (!window.brushTipCanvas || (window.brushTipCanvas.width || 0) <= 0 || (window.brushTipCanvas.height || 0) <= 0) return false;
+  if (typeof tool !== 'undefined' && tool !== 'brush') return false;
+  if (typeof _usesBrushPaintPipeline === 'function' && !_usesBrushPaintPipeline()) return false;
+  if (window._brushAirbrush) return false;
+  const renderer = (window._customTipGpuRenderer && window._customTipGpuRenderer.instance) ? window._customTipGpuRenderer.instance : null;
+  if (!renderer || renderer.deviceLost) return false;
+  return true;
+}
+
+function _renderFallbackDabsToPrivateCanvas(fallbackDabs) {
+  if (!fallbackDabs || fallbackDabs.length === 0) return null;
+  const c = document.createElement('canvas');
+  c.width = typeof CW !== 'undefined' ? CW : (activeC ? activeC.width : 1000);
+  c.height = typeof CH !== 'undefined' ? CH : (activeC ? activeC.height : 1000);
+  const dc = c.getContext('2d');
+  for (let i = 0; i < fallbackDabs.length; i++) {
+    const d = fallbackDabs[i];
+    const stamp = window.brushTipCanvas
+      ? _buildTipStamp(d.r, d.rgb, d.alpha, d.composite, typeof brushHardness !== 'undefined' ? brushHardness : 1)
+      : _getAliasedStamp(d.r, d.rgb, d.alpha, d.composite);
+    if (!stamp || !stamp.canvas) continue;
+    const x0 = d.x - stamp.w / 2, y0 = d.y - stamp.h / 2;
+    dc.save();
+    dc.globalCompositeOperation = (typeof _strokeDabComposite === 'function') ? _strokeDabComposite(d.composite) : 'source-over';
+    const rot = d.rotation || 0;
+    if (rot || window.brushTipFlipX || window.brushTipFlipY) {
+      dc.translate(d.x, d.y);
+      if (rot) dc.rotate(rot);
+      if (window.brushTipFlipX || window.brushTipFlipY) dc.scale(window.brushTipFlipX ? -1 : 1, window.brushTipFlipY ? -1 : 1);
+      dc.drawImage(stamp.canvas, -stamp.w / 2, -stamp.h / 2);
+    } else {
+      dc.drawImage(stamp.canvas, x0, y0);
+    }
+    dc.restore();
+  }
+  if (window.brushTextureEnabled && window.brushTextureCanvas && typeof _getTexturedStrokeCanvas === 'function') {
+    return _getTexturedStrokeCanvas(c, true);
+  }
+  return c;
+}
+
+function _saveExplicitFrameToKey(ownerLayer, ownerFrame) {
+  if (typeof isDrawingFrameHidden === 'function' && isDrawingFrameHidden(ownerLayer, ownerFrame)) return;
+  const layer = layers[ownerLayer];
+  if (!layer || !layer.frames) return;
+  const kf = layer.frames[ownerFrame];
+  if (!kf) return;
+
+  if (ownerLayer === curLayer && ownerFrame === curFrame) {
+    if (typeof saveActiveToKey === 'function') {
+      saveActiveToKey();
+    }
+    return;
+  }
+
+  const extended = (typeof getExtendedLayerFrame === 'function') ? getExtendedLayerFrame(ownerLayer, ownerFrame) : null;
+  if (extended && typeof setExtendedLayerFrame === 'function') {
+    const cw = typeof CW !== 'undefined' ? CW : 1000;
+    const ch = typeof CH !== 'undefined' ? CH : 1000;
+    const minX = Math.min(extended.x, 0), minY = Math.min(extended.y, 0),
+          maxX = Math.max(extended.x + extended.canvas.width, cw),
+          maxY = Math.max(extended.y + extended.canvas.height, ch);
+    const full = document.createElement('canvas');
+    full.width = maxX - minX;
+    full.height = maxY - minY;
+    const fullContext = full.getContext('2d');
+    fullContext.drawImage(extended.canvas, extended.x - minX, extended.y - minY);
+    fullContext.clearRect(-minX, -minY, cw, ch);
+    fullContext.drawImage(kf, -minX, -minY);
+    setExtendedLayerFrame(ownerLayer, ownerFrame, full, minX, minY);
+  }
+}
+
+function _retireCustomTipOverlay(strokeId) {
+  const overlayOwner = window.CustomTipOverlayOwnerStrokeId;
+  const isNewerOwner = (overlayOwner != null && overlayOwner !== strokeId);
+  if (isNewerOwner) {
+    return;
+  }
+  const committedRevision = (window.DisplayBackend && window.DisplayBackend.mode === 'webgpu' && typeof window.DisplayBackend.artworkRevision === 'number')
+    ? window.DisplayBackend.artworkRevision
+    : null;
+  const retire = () => {
+    const ownerNow = window.CustomTipOverlayOwnerStrokeId;
+    const activeNow = _activeStrokeSession;
+    const isNewerNow = (ownerNow != null && ownerNow !== strokeId) ||
+                       (_customTipGpuStrokeActive && activeNow != null && activeNow !== strokeId);
+    if (isNewerNow) {
+      return;
+    }
+    if (window._customTipGpuRenderer && typeof window._customTipGpuRenderer.hideLiveOverlay === 'function') {
+      window._customTipGpuRenderer.hideLiveOverlay(strokeId);
+    }
+  };
+  if (committedRevision != null && window.DisplayBackend && typeof window.DisplayBackend.whenRevisionPresented === 'function') {
+    window.DisplayBackend.whenRevisionPresented(committedRevision, retire);
+  } else {
+    retire();
+  }
+}
+
+async function _executeCustomTipDetachedCommit(gpuTask, ctxData) {
+  const { sessionId, ownerLayer, ownerFrame, targetCanvas, styleId, brushOpacityVal, blendModeVal, isSmartRaster, fallbackDabs, selectionMaskSnapshot } = ctxData;
+  let imgData = null;
+  let rect = gpuTask ? gpuTask.rect : null;
+
+  if (gpuTask) {
+    try {
+      imgData = await gpuTask.mapAndExtractImageData();
+    } catch (e) {
+      imgData = null;
+    }
+  }
+
+  let finishingCanvas = null;
+  if (imgData && rect && rect.w > 0 && rect.h > 0) {
+    finishingCanvas = document.createElement('canvas');
+    finishingCanvas.width = rect.w;
+    finishingCanvas.height = rect.h;
+    const fctx = finishingCanvas.getContext('2d');
+    fctx.putImageData(imgData, 0, 0);
+  } else if (fallbackDabs && fallbackDabs.length > 0) {
+    finishingCanvas = _renderFallbackDabsToPrivateCanvas(fallbackDabs);
+    rect = { x: 0, y: 0, w: finishingCanvas ? finishingCanvas.width : (typeof CW !== 'undefined' ? CW : 1000), h: finishingCanvas ? finishingCanvas.height : (typeof CH !== 'undefined' ? CH : 1000) };
+  }
+
+  if (!finishingCanvas || !rect) {
+    if (gpuTask && typeof gpuTask.destroy === 'function') gpuTask.destroy();
+    _retireCustomTipOverlay(sessionId);
+    return;
+  }
+
+  // 1. Push Undo snapshot for this exact layer & frame before applying commit
+  if (typeof pushUndoAt === 'function') {
+    pushUndoAt(ownerLayer, ownerFrame);
+  } else if (typeof pushUndo === 'function' && ownerLayer === curLayer && ownerFrame === curFrame) {
+    pushUndo();
+  }
+
+  // 2. Selection clipping using captured mask snapshot
+  let finalSource = finishingCanvas;
+  let drawX = rect.x, drawY = rect.y;
+  if (selectionMaskSnapshot) {
+    const full = document.createElement('canvas');
+    full.width = selectionMaskSnapshot.width;
+    full.height = selectionMaskSnapshot.height;
+    const fCtx = full.getContext('2d');
+    fCtx.drawImage(finishingCanvas, rect.x, rect.y);
+    fCtx.globalCompositeOperation = 'destination-in';
+    fCtx.drawImage(selectionMaskSnapshot, 0, 0);
+    fCtx.globalCompositeOperation = 'source-over';
+    finalSource = full;
+    drawX = 0;
+    drawY = 0;
+  }
+
+  // 3. Target layer context
+  const isCurrent = (ownerLayer === curLayer && ownerFrame === curFrame);
+  const destCtx = isCurrent ? ctx : (layers[ownerLayer] && layers[ownerLayer].frames && layers[ownerLayer].frames[ownerFrame] ? layers[ownerLayer].frames[ownerFrame].getContext('2d') : null);
+  if (!destCtx) {
+    if (gpuTask && typeof gpuTask.destroy === 'function') gpuTask.destroy();
+    return;
+  }
+
+  const dirtyRect = { x: rect.x, y: rect.y, w: rect.w, h: rect.h };
+  let ownershipBefore = null;
+  if (isSmartRaster && typeof commitSmartRasterBrush === 'function') {
+    ownershipBefore = destCtx.getImageData(dirtyRect.x, dirtyRect.y, dirtyRect.w, dirtyRect.h);
+  }
+
+  // 4. Composite finishingCanvas onto destination canvas
+  destCtx.save();
+  destCtx.globalAlpha = Math.max(0, Math.min(1, brushOpacityVal != null ? brushOpacityVal : 1));
+  if (typeof _brushPaintCompositeOperation === 'function') {
+    destCtx.globalCompositeOperation = _brushPaintCompositeOperation();
+  }
+  destCtx.drawImage(finalSource, drawX, drawY);
+  destCtx.restore();
+
+  // 5. Smart raster commit metadata
+  if (isSmartRaster && typeof commitSmartRasterBrush === 'function') {
+    commitSmartRasterBrush(finalSource, styleId, brushOpacityVal, dirtyRect, ownershipBefore, blendModeVal);
+  }
+
+  // 6. Save keyframe state for the exact owner
+  _saveExplicitFrameToKey(ownerLayer, ownerFrame);
+
+  // 7. Expand dirty bounds and schedule recomposite
+  if (typeof _growDirtyRect === 'function') {
+    _growDirtyRect(rect.x, rect.y, rect.w, rect.h);
+  }
+  if (typeof _scheduleRecomposite === 'function') {
+    _scheduleRecomposite();
+  } else if (typeof recomposite === 'function') {
+    recomposite(ownerLayer, ownerFrame, dirtyRect);
+  }
+
+  if (gpuTask && typeof gpuTask.destroy === 'function') {
+    gpuTask.destroy();
+  }
+
+  // 9. Safely retire live overlay once committed base revision is presented
+  _retireCustomTipOverlay(sessionId);
+}
+
+function _finishCustomTipOrCanvasCommit(e, strokeSession) {
+  if (_customTipGpuStrokeActive) {
+    const sessionId = strokeSession;
+    const ownerLayer = curLayer;
+    const ownerFrame = curFrame;
+    const targetCanvas = (layers[curLayer] && layers[curLayer].frames && layers[curLayer].frames[curFrame]) ? layers[curLayer].frames[curFrame] : activeC;
+    const styleId = typeof activeAdvancedStyleIdForPainting === 'function' ? activeAdvancedStyleIdForPainting() : null;
+    const brushOpacityVal = brushOpacity;
+    const blendModeVal = typeof window.brushBlendMode === 'string' ? window.brushBlendMode : 'normal';
+    const isSmartRaster = !!(styleId && typeof advancedPalettePaintingEnabled === 'function' && advancedPalettePaintingEnabled() && layers[curLayer] && layers[curLayer].type === 'smart-raster');
+    const fallbackDabs = _customTipGpuFallbackDabs.slice();
+
+    let selectionMaskSnapshot = null;
+    if (window.pixelSelectionState && window.pixelSelectionState.active && window.pixelSelectionState.maskCanvas) {
+      if (window.SelectionScope && typeof window.SelectionScope.isRestricted === 'function' && window.SelectionScope.isRestricted()) {
+        selectionMaskSnapshot = document.createElement('canvas');
+        selectionMaskSnapshot.width = window.pixelSelectionState.maskCanvas.width;
+        selectionMaskSnapshot.height = window.pixelSelectionState.maskCanvas.height;
+        selectionMaskSnapshot.getContext('2d').drawImage(window.pixelSelectionState.maskCanvas, 0, 0);
+      }
+    }
+
+    let gpuTask = null;
+    try {
+      if (window._customTipGpuRenderer && window._customTipGpuRenderer.instance) {
+        // Ensure final dabs (e.g. taper tail) are visible on the live overlay before capturing
+        if (typeof window._customTipGpuRenderer.presentLiveImmediately === 'function') {
+          window._customTipGpuRenderer.presentLiveImmediately();
+        }
+        // Read pre-cached paper texture (warmed at stroke-begin)
+        let paperResource = null;
+        if (window.brushTextureEnabled && window.brushTextureCanvas && typeof window.CustomTipGpuResources !== 'undefined') {
+          const mgr = window.CustomTipGpuResources.instance;
+          if (mgr && mgr.cachedPaperTexture && mgr.cachedPaperTextureCanvas === window.brushTextureCanvas) {
+            paperResource = {
+              texture: mgr.cachedPaperTexture,
+              view: mgr.cachedPaperTextureView,
+              sampler: mgr.sharedRepeatSampler,
+              width: window.brushTextureCanvas.width,
+              height: window.brushTextureCanvas.height
+            };
+          }
+        }
+        gpuTask = window._customTipGpuRenderer.instance.captureFinishingTask({ paperResource });
+      }
+    } catch (err) {
+      gpuTask = null;
+    }
+
+    _customTipGpuStrokeActive = false;
+    _customTipGpuFallbackDabs = [];
+    if (_inStroke) {
+      _inStroke = false;
+    }
+
+    _customTipCommitTail = _customTipCommitTail.then(async () => {
+      await _executeCustomTipDetachedCommit(gpuTask, {
+        sessionId, ownerLayer, ownerFrame, targetCanvas,
+        styleId, brushOpacityVal, blendModeVal, isSmartRaster,
+        fallbackDabs, selectionMaskSnapshot
+      });
+    }).catch(err => {
+      console.error('[CustomTipGpu] Commit tail error:', err);
+    });
+
+    _restoreSelectionScopePixels();
+    _cleanupErasedSmartOwnership();
+  } else {
+    if (_inStroke) {
+      _inStroke = false;
+      _commitStrokeCanvas();
+    }
+    _restoreSelectionScopePixels();
+    _cleanupErasedSmartOwnership();
+    saveActiveToKey();
+  }
+}
+
 function _shouldRunCustomTipGpuDiagnostic() {
   return typeof window !== 'undefined' && (
     !!window.CustomBrushDebugGpuTipRenderer ||
@@ -2869,7 +3160,7 @@ function _emitResolvedCustomTipDab(d, options = {}) {
   if (window._customTipRenderer && typeof window._customTipRenderer.onResolvedDab === 'function') {
     window._customTipRenderer.onResolvedDab(d, options);
   }
-  if (_shouldRunCustomTipGpuDiagnostic() && window._customTipGpuRenderer && typeof window._customTipGpuRenderer.onResolvedDab === 'function') {
+  if ((_customTipGpuStrokeActive || _shouldRunCustomTipGpuDiagnostic()) && window._customTipGpuRenderer && typeof window._customTipGpuRenderer.onResolvedDab === 'function') {
     window._customTipGpuRenderer.onResolvedDab(d, options);
   }
 }
@@ -2936,7 +3227,11 @@ function _queueDab(d){
     _emitResolvedCustomTipDab(d, { isTaperReplay: false });
   }
   if(!_replayingTaper&&(_getStartTaper()>0||_getEndTaper()>0)) _strokeReplayDabs.push(Object.assign({},d,{rgb:d.rgb.slice()}));
-  _drawDabNow(d);
+  if (_customTipGpuStrokeActive) {
+    _customTipGpuFallbackDabs.push(Object.assign({}, d, { rgb: d.rgb ? d.rgb.slice() : null }));
+  } else {
+    _drawDabNow(d);
+  }
 }
 function _flushStrokeTail(){
   _flushTinyTipCoverageTiles();
@@ -2965,18 +3260,25 @@ function _flushStrokeTail(){
   if(tool==='eraser'){
     if(!_strokeReplayBase){_strokeReplayDabs.length=0;return;}
     ctx.save();ctx.globalAlpha=1;ctx.globalCompositeOperation='copy';ctx.drawImage(_strokeReplayBase,0,0);ctx.restore();
-  }else if(_strokeCtx){
+  }else if(_strokeCtx && !_customTipGpuStrokeActive){
     _strokeCtx.clearRect(0,0,_strokeCanvas.width,_strokeCanvas.height);
   }
   _autoHardRoundPrevDab=null;
   _replayingTaper=true;
+  if (_customTipGpuStrokeActive) {
+    _customTipGpuFallbackDabs = [];
+  }
   for(let i=0;i<_strokeReplayDabs.length;i++){
     const d=_strokeReplayDabs[i];
     const replayedDab=Object.assign({},d,{r:Math.max(0.05,d.r*factors[i])});
     if (window.brushTipCanvas) {
-      _emitResolvedCustomTipDab(replayedDab, { isTaperReplay: true });
+      _emitResolvedCustomTipDab(replayedDab, { isTaperReplay: true, taperIndex: i });
     }
-    _drawDabNow(replayedDab);
+    if (_customTipGpuStrokeActive) {
+      _customTipGpuFallbackDabs.push(Object.assign({}, replayedDab, { rgb: replayedDab.rgb ? replayedDab.rgb.slice() : null }));
+    } else {
+      _drawDabNow(replayedDab);
+    }
   }
   _replayingTaper=false;
   _autoHardRoundPrevDab=null;
@@ -8024,9 +8326,6 @@ function _brushPointerDown(e){
     window._customTipRasterDabsSeen = 0;
     window._customTipRasterMaxRadiusSeen = 0;
   }
-  if (_shouldRunCustomTipGpuDiagnostic() && window._customTipGpuRenderer && typeof window._customTipGpuRenderer.beginStroke === 'function') {
-    window._customTipGpuRenderer.beginStroke();
-  }
   if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('latencyHooksInitialization',diagnosticSetupStart);
   const inputStateStart=latencyProfiler?performance.now():0;
   diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
@@ -8079,6 +8378,21 @@ function _brushPointerDown(e){
   if(tool==='fill'){pushUndo();ensureKey();floodFill(p.x,p.y,color);saveActiveToKey();recomposite(curLayer,curFrame);return;}
   _activeStrokePointerId=e.pointerId;
   _strokeOwnerLayer=curLayer;_strokeOwnerFrame=curFrame;_activeStrokeSession=++_strokeSessionSerial;
+  _customTipGpuStrokeActive = _customTipGpuEligibleNow();
+  if (_customTipGpuStrokeActive) {
+    _customTipGpuFallbackDabs = [];
+    const targetW = _strokeCanvas ? _strokeCanvas.width : (activeC ? activeC.width : 1000);
+    const targetH = _strokeCanvas ? _strokeCanvas.height : (activeC ? activeC.height : 1000);
+    if (window._customTipGpuRenderer && typeof window._customTipGpuRenderer.beginStroke === 'function') {
+      window._customTipGpuRenderer.beginStroke({ width: targetW, height: targetH, strokeId: _activeStrokeSession });
+    }
+    // Pre-cache paper texture at stroke-begin so it's warm at pointer-up
+    if (window.brushTextureEnabled && window.brushTextureCanvas && typeof window.CustomTipGpuResources !== 'undefined') {
+      window.CustomTipGpuResources.getOrCreatePaperTexture(window.brushTextureCanvas, window.brushTextureVersion).catch(() => {});
+    }
+  } else if (_shouldRunCustomTipGpuDiagnostic() && window._customTipGpuRenderer && typeof window._customTipGpuRenderer.beginStroke === 'function') {
+    window._customTipGpuRenderer.beginStroke();
+  }
   if(_hardRoundStrokeActive)_hrFirstPresentRecord(_activeStrokeSession);
   _brushDiagPerfBegin(_activeStrokeSession);
   if(_hardRoundStrokeActive){_brushDiagPerfNote('hard-round-renderer',{created:_hardRoundRendererCreatedPending});if(_hardRoundRendererResizePending)_brushDiagPerfNote('hard-round-resize');_hardRoundRendererCreatedPending=false;_hardRoundRendererResizePending=false;}
@@ -8107,7 +8421,7 @@ function _brushPointerDown(e){
   if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('setPointerCapture',diagnosticSetupStart);
 const strokeSetupStart=latencyProfiler?performance.now():0;
   diagnosticSetupStart=window.FirstDabLatencyProbe&&window.FirstDabLatencyProbe.enabled?performance.now():0;
-  let stageStart=latencyProfiler?performance.now():0;if(!_hardRoundStrokeActive)pushUndo();
+  let stageStart=latencyProfiler?performance.now():0;if(!_hardRoundStrokeActive&&!_customTipGpuStrokeActive)pushUndo();
   if(window.FirstDabLatencyProbe)window.FirstDabLatencyProbe.setupMeasure('pushUndo',diagnosticSetupStart,{pushUndoSnapshotMethod:layers[curLayer]&&layers[curLayer].type==='smart-raster'?'style-bundle-copy':'canvas-drawImage'});
   if(latencyProfiler)latencyProfiler.point('push-undo-complete');
   if(latencyProfiler)latencyProfiler.measure('undo-snapshot-setup',stageStart,{canvas:{width:CW,height:CH},snapshotMethod:layers[curLayer]&&layers[curLayer].type==='smart-raster'?'style-bundle-copy':'canvas-drawImage',getImageData:false,layerIndex:curLayer,frameIndex:curFrame});
@@ -8314,18 +8628,22 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
       // movement remains coalesced to one preview per animation frame.
       _hardRoundRequestLivePreview(_hardRoundRenderer,true);
     } else {
-      // TEMP DIAGNOSTIC (Phase 11A routing probe) -- read-only.
       window._hrDebugStrokeId = (window._hrDebugStrokeId||0)+1;
+      _stampDab(p.x,p.y,e);
+      let isLive = false;
+      if (_customTipGpuStrokeActive && window._customTipGpuRenderer && typeof window._customTipGpuRenderer.presentLiveImmediately === 'function') {
+        const pres = window._customTipGpuRenderer.presentLiveImmediately();
+        isLive = !!(pres && pres.presented);
+      }
       window.HardRoundDebug = {
         strokeId: window._hrDebugStrokeId,
-        route: 'legacy',
-        backend: 'LEGACY',
+        route: _customTipGpuStrokeActive ? 'custom-tip-gpu' : 'legacy',
+        backend: _customTipGpuStrokeActive ? (isLive ? 'WEBGPU-LIVE' : 'WEBGPU-OFFSCREEN') : 'LEGACY',
         hasCustomTip: !!window.brushTipCanvas,
         textureEnabled: !!window.brushTextureEnabled,
       };
       // Phase 11A.30: routine [HR-DEBUG] console spam removed.
       _hrDebugBadge(window.HardRoundDebug);
-      _stampDab(p.x,p.y,e);
     }
   }
   finally{_flowSpacingRatio=previousSpacingRatio;}
@@ -8898,8 +9216,7 @@ function _pointerEndStroke(e){
       _stabilizerFinalize(finalRaw.x,finalRaw.y,_stabilizerTargetPressure,e,()=>{
         _flushCurveTail(_lastPointerEvent||e);
         _flushStrokeTail();
-        if(_inStroke){_inStroke=false;_commitStrokeCanvas();}
-        _restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();
+        _finishCustomTipOrCanvasCommit(e, finalizingStrokeSession);
         _finalizePointerEndStroke(e);
       });
       return;
@@ -8915,8 +9232,7 @@ function _pointerEndStroke(e){
     }
     _flushCurveTail(e);
     _flushStrokeTail();
-    if(_inStroke){_inStroke=false;_commitStrokeCanvas();}
-    _restoreSelectionScopePixels();_cleanupErasedSmartOwnership();saveActiveToKey();
+    _finishCustomTipOrCanvasCommit(e, finalizingStrokeSession);
   }
   _finalizePointerEndStroke(e);
 }

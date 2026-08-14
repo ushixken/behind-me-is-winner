@@ -245,6 +245,7 @@ const activeC=document.getElementById('active-canvas');
 // that function's comment for why this canvas being left out of that list
 // is exactly what made the live stroke look softer than the committed one.
 const hardRoundOverlayC=document.getElementById('hard-round-gpu-overlay');
+const customTipOverlayC=document.getElementById('custom-tip-gpu-overlay');
 // Transparent current-frame composite used only for display ordering. compC
 // remains the exact background + artwork composite used by export and sampling.
 const artworkCompositeC=document.createElement('canvas');
@@ -456,7 +457,8 @@ function applyTransform(){
   // property across every canvas in the stack does.
   const useNN=zoom>=1.5;
   const transformC=document.getElementById('transform-canvas');
-  [displayC,onionC,activeC,hardRoundOverlayC,transformC].forEach(c=>{
+  const customTipC=document.getElementById('custom-tip-gpu-overlay')||customTipOverlayC;
+  [displayC,onionC,activeC,hardRoundOverlayC,customTipC,transformC].forEach(c=>{
     if(c)c.style.imageRendering=useNN?'pixelated':'auto';
   });
   const previousDisplayBlur=_displayBlurPx;
