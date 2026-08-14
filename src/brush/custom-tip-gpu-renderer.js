@@ -168,6 +168,10 @@
 
     @group(0) @binding(0) var ssTexture: texture_2d<f32>;
 
+    fn resolveBox1x1(tex: texture_2d<f32>, outPos: vec2i) -> vec4f {
+      return textureLoad(tex, outPos, 0);
+    }
+
     fn resolveBox2x2(tex: texture_2d<f32>, outPos: vec2i) -> vec4f {
       let origin = outPos * 2;
       let s00 = textureLoad(tex, origin + vec2i(0, 0), 0);
@@ -177,8 +181,31 @@
       return (s00 + s10 + s01 + s11) * 0.25;
     }
 
-    fn resolveBox1x1(tex: texture_2d<f32>, outPos: vec2i) -> vec4f {
-      return textureLoad(tex, outPos, 0);
+    fn resolveBox3x3(tex: texture_2d<f32>, outPos: vec2i) -> vec4f {
+      let origin = outPos * 3;
+      var sum = vec4f(0.0, 0.0, 0.0, 0.0);
+      for (var y = 0; y < 3; y++) {
+        for (var x = 0; x < 3; x++) {
+          sum += textureLoad(tex, origin + vec2i(x, y), 0);
+        }
+      }
+      return sum * (1.0 / 9.0);
+    }
+
+    fn resolveBox4x4(tex: texture_2d<f32>, outPos: vec2i) -> vec4f {
+      let origin = outPos * 4;
+      var sum = vec4f(0.0, 0.0, 0.0, 0.0);
+      for (var y = 0; y < 4; y++) {
+        for (var x = 0; x < 4; x++) {
+          sum += textureLoad(tex, origin + vec2i(x, y), 0);
+        }
+      }
+      return sum * 0.0625;
+    }
+
+    @fragment
+    fn fs1x(in: VertexOutput) -> @location(0) vec4f {
+      return resolveBox1x1(ssTexture, vec2i(in.clipPos.xy));
     }
 
     @fragment
@@ -187,8 +214,13 @@
     }
 
     @fragment
-    fn fs1x(in: VertexOutput) -> @location(0) vec4f {
-      return resolveBox1x1(ssTexture, vec2i(in.clipPos.xy));
+    fn fs3x(in: VertexOutput) -> @location(0) vec4f {
+      return resolveBox3x3(ssTexture, vec2i(in.clipPos.xy));
+    }
+
+    @fragment
+    fn fs4x(in: VertexOutput) -> @location(0) vec4f {
+      return resolveBox4x4(ssTexture, vec2i(in.clipPos.xy));
     }
   `;
 
@@ -325,6 +357,8 @@
       this.resolvePipeline = null;
       this.resolve1xPipeline = null;
       this.resolve2xPipeline = null;
+      this.resolve3xPipeline = null;
+      this.resolve4xPipeline = null;
       this.resolveBindGroupLayout = null;
       this.resolveDevice = null;
 
@@ -495,6 +529,17 @@
           bindGroupLayouts: [this.resolveBindGroupLayout]
         });
 
+        this.resolve1xPipeline = this.device.createRenderPipeline({
+          layout: pipelineLayout,
+          vertex: { module: shaderModule, entryPoint: 'vs' },
+          fragment: {
+            module: shaderModule,
+            entryPoint: 'fs1x',
+            targets: [{ format: 'rgba8unorm' }]
+          },
+          primitive: { topology: 'triangle-list' }
+        });
+
         this.resolve2xPipeline = this.device.createRenderPipeline({
           layout: pipelineLayout,
           vertex: { module: shaderModule, entryPoint: 'vs' },
@@ -506,12 +551,23 @@
           primitive: { topology: 'triangle-list' }
         });
 
-        this.resolve1xPipeline = this.device.createRenderPipeline({
+        this.resolve3xPipeline = this.device.createRenderPipeline({
           layout: pipelineLayout,
           vertex: { module: shaderModule, entryPoint: 'vs' },
           fragment: {
             module: shaderModule,
-            entryPoint: 'fs1x',
+            entryPoint: 'fs3x',
+            targets: [{ format: 'rgba8unorm' }]
+          },
+          primitive: { topology: 'triangle-list' }
+        });
+
+        this.resolve4xPipeline = this.device.createRenderPipeline({
+          layout: pipelineLayout,
+          vertex: { module: shaderModule, entryPoint: 'vs' },
+          fragment: {
+            module: shaderModule,
+            entryPoint: 'fs4x',
             targets: [{ format: 'rgba8unorm' }]
           },
           primitive: { topology: 'triangle-list' }
@@ -740,11 +796,11 @@
     }
 
     ensureShadowTexture(w, h) {
-      this.ensureTextures(w, h, this.ss || 2);
+      this.ensureTextures(w, h, this.ss || 3);
     }
 
     ensureTexturedShadowTexture(w, h) {
-      this.ensureTextures(w, h, this.ss || 2);
+      this.ensureTextures(w, h, this.ss || 3);
     }
 
     renderResolvePass() {
@@ -768,7 +824,15 @@
         }]
       });
 
-      const pipeline = (this.ss === 2) ? this.resolve2xPipeline : this.resolve1xPipeline;
+      let pipeline = this.resolve1xPipeline;
+      if (this.ss === 2) {
+        pipeline = this.resolve2xPipeline;
+      } else if (this.ss === 3) {
+        pipeline = this.resolve3xPipeline;
+      } else if (this.ss === 4) {
+        pipeline = this.resolve4xPipeline;
+      }
+
       pass.setPipeline(pipeline);
       pass.setBindGroup(0, bindGroup);
       pass.draw(6);
@@ -916,12 +980,24 @@
       const h = settings.height || (targetCanvas ? targetCanvas.height : 1000);
 
       const aaMode = typeof _currentAAMode === 'function' ? _currentAAMode() : 'medium';
-      const ss = (aaMode === 'none' || aaMode === 'off') ? 1 : 2;
+      let ss = 3;
+      if (aaMode === 'none' || aaMode === 'off') {
+        ss = 1;
+      } else if (aaMode === 'weak') {
+        ss = 2;
+      } else if (aaMode === 'medium') {
+        ss = 3;
+      } else if (aaMode === 'strong') {
+        ss = 4;
+      }
 
       this.active = true;
       this.currentStrokeId = settings.strokeId || (typeof _activeStrokeSession !== 'undefined' ? _activeStrokeSession : 1);
       window.CustomTipOverlayOwnerStrokeId = this.currentStrokeId;
       window.CustomTipOverlayVisibilityOwnerStrokeId = this.currentStrokeId;
+      if (typeof window !== 'undefined') {
+        window.CustomTipGpuActiveSS = ss;
+      }
       this.resolvedDabCount = 0;
       this.liveDabCount = 0;
       this.taperReplayDabCount = 0;

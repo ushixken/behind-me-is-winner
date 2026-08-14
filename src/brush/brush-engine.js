@@ -6547,8 +6547,10 @@ function _hrDebugBadge(info){
       'background:rgba(0,0,0,0.75);color:#0f0;padding:4px 8px;border-radius:4px;pointer-events:none;white-space:pre;';
     document.body.appendChild(el);
   }
-  el.textContent='HR#'+info.strokeId+' route='+info.route+' backend='+info.backend+
+  let text = 'HR#'+info.strokeId+' route='+info.route+' backend='+info.backend+
     ' tip='+info.hasCustomTip+' tex='+info.textureEnabled;
+  if (info.ss != null) text += ' ss=' + info.ss;
+  el.textContent = text;
 }
 function _hardRoundGpuOverlay(){return document.getElementById('hard-round-gpu-overlay');}
 // Phase 11B.9 TEMP DIAGNOSTIC (opt-in, default off, off by default and never
@@ -8635,12 +8637,14 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
         const pres = window._customTipGpuRenderer.presentLiveImmediately();
         isLive = !!(pres && pres.presented);
       }
+      const activeSS = (_customTipGpuStrokeActive && window._customTipGpuRenderer && window._customTipGpuRenderer.instance) ? window._customTipGpuRenderer.instance.ss : (window.CustomTipGpuActiveSS || null);
       window.HardRoundDebug = {
         strokeId: window._hrDebugStrokeId,
         route: _customTipGpuStrokeActive ? 'custom-tip-gpu' : 'legacy',
         backend: _customTipGpuStrokeActive ? (isLive ? 'WEBGPU-LIVE' : 'WEBGPU-OFFSCREEN') : 'LEGACY',
         hasCustomTip: !!window.brushTipCanvas,
         textureEnabled: !!window.brushTextureEnabled,
+        ss: _customTipGpuStrokeActive ? activeSS : null,
       };
       // Phase 11A.30: routine [HR-DEBUG] console spam removed.
       _hrDebugBadge(window.HardRoundDebug);
