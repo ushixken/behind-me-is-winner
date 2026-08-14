@@ -9,7 +9,7 @@
 (() => {
   'use strict';
 
-  const INSTANCE_FLOAT_COUNT = 14; // pos(2), radius(1), rotation(1), roundness(1), opacity(1), color(3), composite(1), flipX(1), flipY(1), inner(1), pad(1)
+  const INSTANCE_FLOAT_COUNT = 14; // pos(2), radius(1), rotation(1), roundness(1), opacity(1), color(3), composite(1), flipX(1), flipY(1), inner(1), pad0(1)
   const MAX_INSTANCES_PER_BATCH = 2048;
 
   const SHADER_WGSL = `
@@ -53,7 +53,6 @@
       @builtin(vertex_index) vertexIndex: u32,
       instance: InstanceInput
     ) -> VertexOutput {
-      // Unit quad centered at (0,0): 6 vertices for 2 triangles
       var quadOffsets = array<vec2f, 6>(
         vec2f(-0.5, -0.5),
         vec2f( 0.5, -0.5),
@@ -142,6 +141,54 @@
         // Paint / source-over mode (premultiplied alpha)
         return vec4f(in.color * finalAlpha, finalAlpha);
       }
+    }
+  `;
+
+  const RESOLVE_SHADER_WGSL = `
+    struct VertexOutput {
+      @builtin(position) clipPos: vec4f,
+      @location(0) uv: vec2f,
+    };
+
+    @vertex
+    fn vs(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
+      var pos = array<vec2f, 6>(
+        vec2f(-1.0, -1.0), vec2f( 1.0, -1.0), vec2f(-1.0,  1.0),
+        vec2f(-1.0,  1.0), vec2f( 1.0, -1.0), vec2f( 1.0,  1.0)
+      );
+      var uvs = array<vec2f, 6>(
+        vec2f(0.0, 1.0), vec2f(1.0, 1.0), vec2f(0.0, 0.0),
+        vec2f(0.0, 0.0), vec2f(1.0, 1.0), vec2f(1.0, 0.0)
+      );
+      var out: VertexOutput;
+      out.clipPos = vec4f(pos[vertexIndex], 0.0, 1.0);
+      out.uv = uvs[vertexIndex];
+      return out;
+    }
+
+    @group(0) @binding(0) var ssTexture: texture_2d<f32>;
+
+    fn resolveBox2x2(tex: texture_2d<f32>, outPos: vec2i) -> vec4f {
+      let origin = outPos * 2;
+      let s00 = textureLoad(tex, origin + vec2i(0, 0), 0);
+      let s10 = textureLoad(tex, origin + vec2i(1, 0), 0);
+      let s01 = textureLoad(tex, origin + vec2i(0, 1), 0);
+      let s11 = textureLoad(tex, origin + vec2i(1, 1), 0);
+      return (s00 + s10 + s01 + s11) * 0.25;
+    }
+
+    fn resolveBox1x1(tex: texture_2d<f32>, outPos: vec2i) -> vec4f {
+      return textureLoad(tex, outPos, 0);
+    }
+
+    @fragment
+    fn fs2x(in: VertexOutput) -> @location(0) vec4f {
+      return resolveBox2x2(ssTexture, vec2i(in.clipPos.xy));
+    }
+
+    @fragment
+    fn fs1x(in: VertexOutput) -> @location(0) vec4f {
+      return resolveBox1x1(ssTexture, vec2i(in.clipPos.xy));
     }
   `;
 
@@ -262,12 +309,24 @@
       this.instanceData = new Float32Array(MAX_INSTANCES_PER_BATCH * INSTANCE_FLOAT_COUNT);
       this.instanceCount = 0;
 
+      this.ss = 1;
+      this.ssWidth = 1000;
+      this.ssHeight = 1000;
+
       this.shadowTexture = null;
       this.shadowTextureView = null;
+      this.resolvedShadowTexture = null;
+      this.resolvedShadowTextureView = null;
       this.texturedShadowTexture = null;
       this.texturedShadowTextureView = null;
       this.targetWidth = 1000;
       this.targetHeight = 1000;
+
+      this.resolvePipeline = null;
+      this.resolve1xPipeline = null;
+      this.resolve2xPipeline = null;
+      this.resolveBindGroupLayout = null;
+      this.resolveDevice = null;
 
       this.textureStencilPipeline = null;
       this.textureStencilBindGroupLayout = null;
@@ -421,6 +480,52 @@
       }
     }
 
+    initResolvePipeline() {
+      if (this.resolvePipeline && this.resolveDevice === this.device) return true;
+      if (!this.device) return false;
+      try {
+        const shaderModule = this.device.createShaderModule({ code: RESOLVE_SHADER_WGSL });
+        this.resolveBindGroupLayout = this.device.createBindGroupLayout({
+          entries: [
+            { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+          ]
+        });
+
+        const pipelineLayout = this.device.createPipelineLayout({
+          bindGroupLayouts: [this.resolveBindGroupLayout]
+        });
+
+        this.resolve2xPipeline = this.device.createRenderPipeline({
+          layout: pipelineLayout,
+          vertex: { module: shaderModule, entryPoint: 'vs' },
+          fragment: {
+            module: shaderModule,
+            entryPoint: 'fs2x',
+            targets: [{ format: 'rgba8unorm' }]
+          },
+          primitive: { topology: 'triangle-list' }
+        });
+
+        this.resolve1xPipeline = this.device.createRenderPipeline({
+          layout: pipelineLayout,
+          vertex: { module: shaderModule, entryPoint: 'vs' },
+          fragment: {
+            module: shaderModule,
+            entryPoint: 'fs1x',
+            targets: [{ format: 'rgba8unorm' }]
+          },
+          primitive: { topology: 'triangle-list' }
+        });
+
+        this.resolvePipeline = this.resolve2xPipeline;
+        this.resolveDevice = this.device;
+        return true;
+      } catch (e) {
+        console.warn('[CustomTipGpuRenderer] Failed to init resolve pipeline:', e);
+        return false;
+      }
+    }
+
     initPresenter() {
       if (this.presentPipeline && this.presentDevice === this.device) return true;
       if (!this.device) return false;
@@ -495,7 +600,11 @@
       overlayCanvas.style.display = 'block';
       overlayCanvas.hidden = false;
 
-      let sourceView = this.shadowTextureView;
+      // 1. Resolve SS shadow texture to 1x resolved texture
+      this.renderResolvePass();
+
+      // 2. Optional 1x paper texture stencil
+      let sourceView = this.resolvedShadowTextureView;
       if (this.shouldApplyTextureStencil() && typeof window.CustomTipGpuResources !== 'undefined') {
         const mgr = window.CustomTipGpuResources.instance;
         if (mgr && mgr.cachedPaperTexture && mgr.cachedPaperTextureCanvas === window.brushTextureCanvas) {
@@ -577,41 +686,96 @@
       this.overlayPresented = false;
     }
 
-    ensureShadowTexture(w, h) {
-      if (this.shadowTexture && this.targetWidth === w && this.targetHeight === h) return;
+    ensureTextures(w, h, ss = 2) {
+      const needRealloc = !this.shadowTexture || this.targetWidth !== w || this.targetHeight !== h || this.ss !== ss;
+      if (!needRealloc) return;
+
       if (this.shadowTexture) {
         try { this.shadowTexture.destroy(); } catch (e) {}
+        this.shadowTexture = null;
+        this.shadowTextureView = null;
+      }
+      if (this.resolvedShadowTexture) {
+        try { this.resolvedShadowTexture.destroy(); } catch (e) {}
+        this.resolvedShadowTexture = null;
+        this.resolvedShadowTextureView = null;
       }
       if (this.texturedShadowTexture) {
         try { this.texturedShadowTexture.destroy(); } catch (e) {}
         this.texturedShadowTexture = null;
         this.texturedShadowTextureView = null;
       }
+
       this.targetWidth = w;
       this.targetHeight = h;
+      this.ss = ss;
+      this.ssWidth = w * ss;
+      this.ssHeight = h * ss;
+
       if (!this.device) return;
 
+      // 1. Supersampled shadow texture
       this.shadowTexture = this.device.createTexture({
-        size: [w, h, 1],
+        size: [this.ssWidth, this.ssHeight, 1],
         format: 'rgba8unorm',
         usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC
       });
       this.shadowTextureView = this.shadowTexture.createView();
-    }
 
-    ensureTexturedShadowTexture(w, h) {
-      if (this.texturedShadowTexture && this.targetWidth === w && this.targetHeight === h) return;
-      if (this.texturedShadowTexture) {
-        try { this.texturedShadowTexture.destroy(); } catch (e) {}
-      }
-      if (!this.device) return;
+      // 2. 1x Resolved shadow texture
+      this.resolvedShadowTexture = this.device.createTexture({
+        size: [this.targetWidth, this.targetHeight, 1],
+        format: 'rgba8unorm',
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC
+      });
+      this.resolvedShadowTextureView = this.resolvedShadowTexture.createView();
 
+      // 3. 1x Textured shadow texture (for paper texture stencil)
       this.texturedShadowTexture = this.device.createTexture({
-        size: [w, h, 1],
+        size: [this.targetWidth, this.targetHeight, 1],
         format: 'rgba8unorm',
         usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC
       });
       this.texturedShadowTextureView = this.texturedShadowTexture.createView();
+    }
+
+    ensureShadowTexture(w, h) {
+      this.ensureTextures(w, h, this.ss || 2);
+    }
+
+    ensureTexturedShadowTexture(w, h) {
+      this.ensureTextures(w, h, this.ss || 2);
+    }
+
+    renderResolvePass() {
+      if (!this.device || !this.shadowTextureView || !this.resolvedShadowTextureView) return false;
+      if (!this.initResolvePipeline()) return false;
+
+      const bindGroup = this.device.createBindGroup({
+        layout: this.resolveBindGroupLayout,
+        entries: [
+          { binding: 0, resource: this.shadowTextureView }
+        ]
+      });
+
+      const encoder = this.device.createCommandEncoder();
+      const pass = encoder.beginRenderPass({
+        colorAttachments: [{
+          view: this.resolvedShadowTextureView,
+          clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          loadOp: 'clear',
+          storeOp: 'store'
+        }]
+      });
+
+      const pipeline = (this.ss === 2) ? this.resolve2xPipeline : this.resolve1xPipeline;
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, bindGroup);
+      pass.draw(6);
+      pass.end();
+
+      this.device.queue.submit([encoder.finish()]);
+      return true;
     }
 
     initTextureStencilPipeline() {
@@ -669,9 +833,8 @@
     }
 
     renderTextureStencilPass(paperResource) {
-      if (!this.device || !this.shadowTextureView || !paperResource || !paperResource.view) return false;
+      if (!this.device || !this.resolvedShadowTextureView || !paperResource || !paperResource.view) return false;
       if (!this.initTextureStencilPipeline()) return false;
-      this.ensureTexturedShadowTexture(this.targetWidth, this.targetHeight);
       if (!this.texturedShadowTextureView) return false;
 
       const scale = typeof window.brushTextureScale === 'number' ? window.brushTextureScale : 1.0;
@@ -690,7 +853,7 @@
         entries: [
           { binding: 0, resource: { buffer: this.textureStencilUniformBuffer } },
           { binding: 1, resource: this.textureStencilSampler },
-          { binding: 2, resource: this.shadowTextureView },
+          { binding: 2, resource: this.resolvedShadowTextureView },
           { binding: 3, resource: paperResource.sampler },
           { binding: 4, resource: paperResource.view },
         ]
@@ -752,6 +915,9 @@
       const w = settings.width || (targetCanvas ? targetCanvas.width : 1000);
       const h = settings.height || (targetCanvas ? targetCanvas.height : 1000);
 
+      const aaMode = typeof _currentAAMode === 'function' ? _currentAAMode() : 'medium';
+      const ss = (aaMode === 'none' || aaMode === 'off') ? 1 : 2;
+
       this.active = true;
       this.currentStrokeId = settings.strokeId || (typeof _activeStrokeSession !== 'undefined' ? _activeStrokeSession : 1);
       window.CustomTipOverlayOwnerStrokeId = this.currentStrokeId;
@@ -776,7 +942,7 @@
         const ok = await this.initPipeline();
         if (!ok) return false;
 
-        this.ensureShadowTexture(w, h);
+        this.ensureTextures(w, h, ss);
         this.clearShadowTarget();
 
         if (typeof window.CustomTipGpuResources !== 'undefined') {
@@ -858,13 +1024,11 @@
       const applyFalloff = softAlpha && tipMode !== 'replace';
       let inner = -1.0;
       if (applyFalloff) {
-        const aaMode = typeof _currentAAMode === 'function' ? _currentAAMode() : 'medium';
         const hardness = Math.max(0, Math.min(1, typeof brushHardness !== 'undefined' ? brushHardness : 1));
-        const aaFloor = aaMode === 'none' ? 0 : (aaMode === 'weak' ? 0.85 : (aaMode === 'strong' ? 2.6 : 1.6));
-        const edgePx = aaMode === 'none' ? (1 - hardness) * effectiveR : Math.max(aaFloor, (1 - hardness) * effectiveR);
-        inner = Math.max(0, Math.min(0.999, 1 - edgePx / Math.max(0.05, effectiveR)));
+        inner = Math.max(0, Math.min(0.999, hardness));
       }
 
+      // Dirty bounds in 1x document pixels
       this._growDirtyBounds(d.x, d.y, effectiveR);
 
       // If composite mode changes within a stroke, we must flush the batch.
@@ -877,10 +1041,12 @@
         this.flushBatch();
       }
 
+      // Scale positions and radii by this.ss into SS instance buffer
+      const ss = this.ss || 1;
       const offset = this.instanceCount * INSTANCE_FLOAT_COUNT;
-      this.instanceData[offset + 0] = d.x;
-      this.instanceData[offset + 1] = d.y;
-      this.instanceData[offset + 2] = effectiveR;
+      this.instanceData[offset + 0] = d.x * ss;
+      this.instanceData[offset + 1] = d.y * ss;
+      this.instanceData[offset + 2] = effectiveR * ss;
       this.instanceData[offset + 3] = rotation;
       this.instanceData[offset + 4] = roundness;
       this.instanceData[offset + 5] = effectiveAlpha;
@@ -920,9 +1086,9 @@
       const tipAspectX = tipNativeW / reference;
       const tipAspectY = tipNativeH / reference;
 
-      // 1. Upload Uniforms
+      // 1. Upload Uniforms for SS target dimensions
       const legacyMask = (res && res.legacyAlphaOnlyMask) ? 1.0 : 0.0;
-      const uniforms = new Float32Array([this.targetWidth, this.targetHeight, tipAspectX, tipAspectY, legacyMask, 0, 0, 0]);
+      const uniforms = new Float32Array([this.ssWidth, this.ssHeight, tipAspectX, tipAspectY, legacyMask, 0, 0, 0]);
       this.device.queue.writeBuffer(this.uniformBuffer, 0, uniforms);
 
       // 2. Upload Instance Buffer
@@ -976,6 +1142,7 @@
       }
 
       this.flushBatch();
+      this.renderResolvePass();
 
       let minX = 0, minY = 0, maxX = this.targetWidth - 1, maxY = this.targetHeight - 1;
       let fullCanvas = true;
@@ -1000,7 +1167,7 @@
       const bytesPerRow = Math.ceil((rectW * 4) / 256) * 256;
       const bufferSize = bytesPerRow * rectH;
 
-      let sourceTexture = this.shadowTexture;
+      let sourceTexture = this.resolvedShadowTexture;
       if (this.shouldApplyTextureStencil() && typeof window.CustomTipGpuResources !== 'undefined') {
         const paperResource = await window.CustomTipGpuResources.getOrCreatePaperTexture(window.brushTextureCanvas, window.brushTextureVersion);
         if (paperResource && this.renderTextureStencilPass(paperResource)) {
@@ -1077,6 +1244,7 @@
       }
 
       this.flushBatch();
+      this.renderResolvePass();
 
       let minX = 0, minY = 0, maxX = this.targetWidth - 1, maxY = this.targetHeight - 1;
       if (options.bounds) {
@@ -1096,9 +1264,8 @@
       const bytesPerRow = Math.ceil((rectW * 4) / 256) * 256;
       const bufferSize = bytesPerRow * rectH;
 
-      let sourceTexture = this.shadowTexture;
+      let sourceTexture = this.resolvedShadowTexture;
       if (this.shouldApplyTextureStencil()) {
-        // Use pre-resolved paperResource from caller (async upload done before this call)
         const paperResource = options.paperResource || null;
         if (paperResource && this.renderTextureStencilPass(paperResource)) {
           sourceTexture = this.texturedShadowTexture;
@@ -1199,7 +1366,8 @@
       const bytesPerRow = Math.ceil((w * 4) / 256) * 256;
       const bufferSize = bytesPerRow * h;
 
-      let sourceTexture = this.shadowTexture;
+      this.renderResolvePass();
+      let sourceTexture = this.resolvedShadowTexture;
       if (this.shouldApplyTextureStencil() && typeof window.CustomTipGpuResources !== 'undefined') {
         const paperResource = await window.CustomTipGpuResources.getOrCreatePaperTexture(window.brushTextureCanvas, window.brushTextureVersion);
         if (paperResource && this.renderTextureStencilPass(paperResource)) {
