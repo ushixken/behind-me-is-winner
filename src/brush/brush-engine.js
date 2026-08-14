@@ -1102,7 +1102,23 @@ function _getLiveStrokePreview(){
   }
   _strokePreviewCtx.drawImage(activeC, 0, 0);
   if(perf)perf.measure('live-preview-buffer-preparation',previewBufferStart,perf.canvasDetail(_strokePreviewCanvas,_strokePreviewCtx,{allocatedOrResized:previewAllocated,source:'activeC',getImageData:false}));
-  if(_strokeCanvas){
+  if(typeof _hardRoundPendingCpuFinishingContexts!=='undefined'&&_hardRoundPendingCpuFinishingContexts.size>0){
+    for(const finishingCtx of _hardRoundPendingCpuFinishingContexts.values()){
+      const finSrc = finishingCtx.resolvedCanvas || finishingCtx.finishingPreviewCanvas;
+      if(finSrc){
+        _strokePreviewCtx.save();
+        _strokePreviewCtx.globalAlpha = finishingCtx.opacity != null ? Math.max(0, Math.min(1, finishingCtx.opacity)) : 1;
+        _strokePreviewCtx.globalCompositeOperation = finishingCtx.compositeOperation || 'source-over';
+        _strokePreviewCtx.drawImage(finSrc, 0, 0);
+        if(finishingCtx.blendMode==='add-glow'){
+          _strokePreviewCtx.globalAlpha = (finishingCtx.opacity != null ? finishingCtx.opacity : 1) * .65;
+          _strokePreviewCtx.drawImage(finSrc, 0, 0);
+        }
+        _strokePreviewCtx.restore();
+      }
+    }
+  }
+  if(_inStroke && _strokeCanvas){
     const textureStart=perf?performance.now():0,textureCanvasExisted=!!_texturedStrokeCanvas;
     const src = _getTexturedStrokeCanvas(_strokeCanvas, false);
     if(perf)perf.measure('texture-mask-processing',textureStart,{canvas:'textured-stroke',width:src.width,height:src.height,enabled:!!window.brushTextureEnabled,cacheHit:!window.brushTextureEnabled||textureCanvasExisted,getImageData:!!window.brushTextureEnabled});
@@ -5714,6 +5730,11 @@ const _hardRoundRendererPool = [];
 const _HARD_ROUND_WARM_RESERVE = 2;
 let _hardRoundReserveFillPromise=null;
 const _hardRoundFinishingContexts = new Map();
+const _hardRoundPendingCpuFinishingContexts = new Map();
+function _hardRoundPendingCpuFinishing(){
+  return _hardRoundPendingCpuFinishingContexts.size > 0;
+}
+window._hardRoundPendingCpuFinishing = _hardRoundPendingCpuFinishing;
 let _hardRoundCommitTail = Promise.resolve();
 let _hardRoundPendingCommitCount = 0;
 if(typeof window.HardRoundDebugFirstPresentTiming==='undefined')window.HardRoundDebugFirstPresentTiming=false;
@@ -6506,6 +6527,9 @@ function _hardRoundFinalizeOwnedContext(context,e){
   _hrRapidPresentation('commitStarted',context.strokeId,{kind:context.smartRaster?'smart-raster':'normal-raster'});
   context.state='finishing';context.renderer._hardRoundFinishingOwner=context.strokeId;
   _hardRoundFinishingContexts.set(context.strokeId,context);
+  if(!context.gpuCommit){
+    _hardRoundPendingCpuFinishingContexts.set(context.strokeId,context);
+  }
   // Reserve this stroke's queue position synchronously at pointerup. The
   // finished-frame paint and GPU readback may resolve in any order across
   // strokes, but authoritative commits must remain in input order.
@@ -6529,11 +6553,13 @@ function _hardRoundFinalizeOwnedContext(context,e){
     const stable=_hardRoundCopyCanvas(result&&result.canvas);
     _hrSmartPointerupStage(context.pointerupTiming,'maskCopyMs',copyStarted);
     if(context.smartRaster){context.resolvedMaskCanvas=stable;context.resolvedMaskData=result&&result.maskData||null;}else context.resolvedCanvas=stable;
+    context.finishingPreviewCanvas=stable;
     context.state='ready';
     _hrRapidPresentation('readbackCompleted',context.strokeId);
     _hardRoundReleaseFinishingContext(context);
     resolveOwnedResult(context);
   },error=>{
+    _hardRoundPendingCpuFinishingContexts.delete(context.strokeId);
     if(_hardRoundFinishingContexts.get(context.strokeId)===context)_hardRoundReleaseFinishingContext(context);
     rejectOwnedResult(error);
   });
@@ -6541,9 +6567,15 @@ function _hardRoundFinalizeOwnedContext(context,e){
   const commit=_hardRoundCommitTail.then(()=>resolution).then(ready=>{
     if(ready.smartRaster)_commitFinishedSmartRasterStroke(ready);else _commitFinishedHardRoundStroke(ready);
     _hrRapidPresentation('commitCompleted',ready.strokeId,{kind:ready.smartRaster?'smart-raster':'normal-raster'});
-    const finishingStrokeId=ready.strokeId;
+    _hardRoundPendingCpuFinishingContexts.delete(ready.strokeId);
     if(ready.strokeId===_activeStrokeSession){
       _finalizePointerEndStroke(e,ready.strokeId,false);
+    }
+    if(!ready.gpuCommit){
+      if(_inStroke&&ready.strokeId===_activeStrokeSession){
+        _inStroke=false;
+        if(_strokeCtx&&_strokeCanvas)_strokeCtx.clearRect(0,0,_strokeCanvas.width,_strokeCanvas.height);
+      }
     }
     if(window.HardRoundOverlayPresentedStrokeId===ready.strokeId){
       const overlayOwner=window.HardRoundOverlayOwnerStrokeId;
@@ -6585,7 +6617,7 @@ function _hardRoundFinalizeOwnedContext(context,e){
       }
     }
   });
-  const settled=commit.finally(()=>{_hardRoundPendingCommitCount=Math.max(0,_hardRoundPendingCommitCount-1);_hrRapidPresentation('finalizerCompleted',context.strokeId);});
+  const settled=commit.finally(()=>{_hardRoundPendingCpuFinishingContexts.delete(context.strokeId);_hardRoundPendingCommitCount=Math.max(0,_hardRoundPendingCommitCount-1);_hrRapidPresentation('finalizerCompleted',context.strokeId);});
   _hardRoundCommitTail=settled.catch(err=>{_lastArtworkCommitError=err;console.error('[Hard Round finalization]',err);});
   return settled;
 }
@@ -7774,7 +7806,7 @@ function _hardRoundPresentLivePreview(renderer){
   const basePresentationGate = staleBaseRevision != null
     ? _getOrCreateHardRoundGpuBaseGate(session, staleBaseRevision)
     : null;
-  const presentationBarrier = _hardRoundActiveContext
+  const presentationBarrier = (gpuLivePreview && _hardRoundActiveContext)
     ? _hardRoundActiveContext.presentationBarrier : null;
   const waitBarrier = basePresentationGate || presentationBarrier;
   _hrInputLatencyNote(session,'presentationBarrierStartTime');
@@ -7971,7 +8003,14 @@ function _hardRoundPresentLivePreview(renderer){
     }
     // --- diagnostic (11A.31): this generation's pixels were actually shown ---
     if(_dbgOrderEntry){ _dbgOrderEntry.overlayShown=true; _hardRoundPreviewOrderPush(_dbgOrderEntry); }
-    _scheduleRecomposite();
+    if(_recompRAF&&_recompRAFHandle){
+      cancelAnimationFrame(_recompRAFHandle);
+      _recompRAFHandle=0;
+      _recompRAF=false;
+      _recompCoalescedRequests=0;
+    }
+    const rect=dirty?{x:dirty.x,y:dirty.y,w:dirty.width,h:dirty.height}:null;
+    recomposite(curLayer,curFrame,rect);
   });
 }
 
@@ -8114,6 +8153,10 @@ function _hardRoundPresentFinishedFrame(renderer,originStrokeId=_activeStrokeSes
   }
   return renderer.peekStroke().then(result=>{
     if(result&&result.canvas){
+      const context=_hardRoundFinishingContexts.get(originStrokeId);
+      if(context){
+        context.finishingPreviewCanvas=_hardRoundCopyCanvas(result.canvas);
+      }
       if(_strokeCtx&&_strokeCanvas){
         _hrStaleFinalizerMutation(originStrokeId,'finishedPreviewStrokeScratchCanvas','current-shared-stroke','old-finished-preview',()=>{
           _strokeCtx.clearRect(0,0,_strokeCanvas.width,_strokeCanvas.height);

@@ -392,7 +392,8 @@ function recomposite(li,fi,dirtyRect){
       // the live preview (activeC + in-progress stroke, pre-blended at
       // brushOpacity) so the stroke is visible as it's drawn instead of
       // only appearing once the stroke ends.
-      if(typeof _inStroke!=='undefined'&&_inStroke&&typeof _getLiveStrokePreview==='function'){
+      const hasPendingCpu = typeof _hardRoundPendingCpuFinishing === 'function' && _hardRoundPendingCpuFinishing();
+      if(((typeof _inStroke!=='undefined'&&_inStroke) || hasPendingCpu)&&typeof _getLiveStrokePreview==='function'){
         const liveStart=presentationStart?performance.now():0;
         srcCanvas=_getLiveStrokePreview();livePreviewDraws++;
         if(presentationStart)latencyProfiler.measure('live-preview-draw',liveStart,{layerIndex:idx,width:srcCanvas.width,height:srcCanvas.height});
