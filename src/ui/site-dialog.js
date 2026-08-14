@@ -96,3 +96,6 @@ function siteConfirm(message, opts){
 function siteAlert(message, opts){
   return _showSiteDialog(message, opts, 'alert').then(() => {});
 }
+
+window.siteConfirm = siteConfirm;
+window.siteAlert = siteAlert;

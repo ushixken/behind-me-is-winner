@@ -13,6 +13,33 @@ document.addEventListener('DOMContentLoaded',()=>{
 // ════════════════════════════════════════════════════════════════
 let _projectDirty = false;
 
+window.ProjectDirtyDebug = false;
+const _projectStateTransitions = [];
+
+function _recordStateTransition(action, reason, wasDirty) {
+  const stackHint = (new Error().stack || '')
+    .split('\n')
+    .slice(2, 6)
+    .map(s => s.trim())
+    .filter(Boolean)
+    .join(' -> ');
+  const record = {
+    time: performance.now(),
+    isoDate: new Date().toISOString(),
+    action,
+    reason: String(reason || 'unknown'),
+    alreadyDirty: wasDirty,
+    stackHint
+  };
+  _projectStateTransitions.push(record);
+  if (_projectStateTransitions.length > 50) {
+    _projectStateTransitions.shift();
+  }
+  if (window.ProjectDirtyDebug) {
+    console.log(`[ProjectState] ${action.toUpperCase()}: ${reason} (alreadyDirty=${wasDirty})`);
+  }
+}
+
 function _updateProjectTitleUI() {
   if (typeof document === 'undefined') return;
   const baseTitle = 'Animator — Frame-by-Frame';
@@ -22,22 +49,37 @@ function _updateProjectTitleUI() {
 }
 
 window.markProjectDirty = function(reason) {
-  if (_projectDirty) return;
+  const wasDirty = _projectDirty;
+  _recordStateTransition('dirty', reason, wasDirty);
   _projectDirty = true;
-  _updateProjectTitleUI();
+  if (!wasDirty) {
+    _updateProjectTitleUI();
+  }
+  if (window.ProjectRecovery && typeof window.ProjectRecovery.notifyMutation === 'function') {
+    window.ProjectRecovery.notifyMutation(reason, !wasDirty);
+  }
 };
 
 window.markProjectClean = function(reason) {
-  if (!_projectDirty) {
-    _updateProjectTitleUI();
-    return;
-  }
+  const wasDirty = _projectDirty;
+  _recordStateTransition('clean', reason, wasDirty);
   _projectDirty = false;
   _updateProjectTitleUI();
+  if (window.ProjectRecovery && typeof window.ProjectRecovery.notifyClean === 'function') {
+    window.ProjectRecovery.notifyClean(reason);
+  }
 };
 
 window.isProjectDirty = function() {
   return _projectDirty;
+};
+
+window.ProjectStateAnalyze = function() {
+  return {
+    dirty: _projectDirty,
+    transitions: _projectStateTransitions.slice(),
+    totalTransitions: _projectStateTransitions.length
+  };
 };
 
 window._updateProjectTitleUI = _updateProjectTitleUI;

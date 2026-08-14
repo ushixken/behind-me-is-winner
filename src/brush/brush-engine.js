@@ -5197,6 +5197,15 @@ window.finishActiveDrawingBeforeArtworkChange=function(nextLayer,nextFrame){
   }
   return true;
 };
+window.isDrawingActive=function(){
+  return !!(
+    (typeof drawing!=='undefined'&&drawing) ||
+    (typeof _inStroke!=='undefined'&&_inStroke) ||
+    (typeof lineStart!=='undefined'&&lineStart) ||
+    (typeof _colorEraserOwnership!=='undefined'&&_colorEraserOwnership) ||
+    (typeof _stabilizerFinishing!=='undefined'&&_stabilizerFinishing&&_stabilizerFinalizeCB)
+  );
+};
 /**
  * Public Artwork-Commit Barrier
  *

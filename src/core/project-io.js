@@ -26,10 +26,14 @@
   function paletteState(){if(!window.PaletteDocker||!window.PaletteDocker.serialize)return null;const state=clone(window.PaletteDocker.serialize());if(state)delete state.view;return state;}
   function currentName(){return safeName(window._projectName||'Untitled');}
 
-  async function exportProject(){
-    if(typeof JSZip==='undefined')fail('JSZip is unavailable. Project export cannot continue.');
-    if(window.finishActiveDrawingBeforeArtworkChange)window.finishActiveDrawingBeforeArtworkChange(curLayer,curFrame);
-    if(typeof window.awaitPendingBrushCommits==='function')await window.awaitPendingBrushCommits();
+  async function buildProjectArchive(options={}){
+    if(typeof JSZip==='undefined')fail('JSZip is unavailable. Project serialization cannot continue.');
+    if(options.finishDrawing&&window.finishActiveDrawingBeforeArtworkChange){
+      window.finishActiveDrawingBeforeArtworkChange(curLayer,curFrame);
+    }
+    if(options.awaitCommits!==false&&typeof window.awaitPendingBrushCommits==='function'){
+      await window.awaitPendingBrushCommits();
+    }
     const zip=new JSZip(),savedLayers=[];
     for(let li=0;li<layers.length;li++){
       const layer=layers[li],saved={properties:properties(layer),frameMeta:clone(layer.frameMeta||{}),frames:[]};
@@ -48,9 +52,117 @@
       savedLayers.push(saved);
     }
     const manifest={format:FORMAT,version:VERSION,createdAt:new Date().toISOString(),document:{name:currentName(),width:CW,height:CH,totalFrames:TOTAL,maxFps:MAX_FPS,framesPerSecond:typeof getFPS==='function'?getFPS():Number(fpsTl.value)||PROJECT_DEFAULTS.fps,backgroundColor:bgColor,currentFrame:curFrame,currentLayer:curLayer,rangeStart,rangeEnd,loopRange:!!loopRange},camera:window.CameraSystem?CameraSystem.serialize():null,groups:clone(groups||[]),layers:savedLayers,timeline:{frameLabelOffset:typeof frameLabelOffset==='number'?frameLabelOffset:0,audioWaveformHeight:window.AudioWaveformHeight?AudioWaveformHeight.value:48},palette:paletteState()};
-    zip.file(MANIFEST,JSON.stringify(manifest,null,2));const blob=await zip.generateAsync({type:'blob',compression:'DEFLATE',compressionOptions:{level:6}}),url=URL.createObjectURL(blob),anchor=document.createElement('a');anchor.href=url;anchor.download=currentName()+EXT;document.body.appendChild(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
-    if(typeof window.markProjectClean==='function')window.markProjectClean('save');
-    return{name:anchor.download,size:blob.size,layers:savedLayers.length};
+    zip.file(MANIFEST,JSON.stringify(manifest,null,2));
+    const compressionLevel=options.compressionLevel!=null?options.compressionLevel:6;
+    const blob=await zip.generateAsync({type:'blob',compression:'DEFLATE',compressionOptions:{level:compressionLevel}});
+    return {
+      blob,
+      manifest,
+      name: currentName(),
+      filename: currentName()+EXT,
+      size: blob.size,
+      layers: savedLayers.length
+    };
+  }
+
+  let _activeFileHandle = null;
+  const _lastSaveDiagnostics = {
+    path: null,
+    fallbackReason: null,
+    chosenFilename: null,
+    canceled: false,
+    writeSucceeded: false
+  };
+
+  async function exportProject(){
+    const result = await buildProjectArchive({
+      finishDrawing: true,
+      awaitCommits: true,
+      compressionLevel: 6
+    });
+
+    const hasPicker = typeof window !== 'undefined' && typeof window.showSaveFilePicker === 'function';
+
+    if(hasPicker){
+      _lastSaveDiagnostics.path = 'file-system-access';
+      _lastSaveDiagnostics.fallbackReason = null;
+      _lastSaveDiagnostics.canceled = false;
+      _lastSaveDiagnostics.writeSucceeded = false;
+
+      let handle = null;
+      try {
+        handle = await window.showSaveFilePicker({
+          suggestedName: result.filename,
+          types: [{
+            description: 'Animator Project (*.awproj)',
+            accept: {
+              'application/octet-stream': [EXT],
+              'application/zip': [EXT]
+            }
+          }]
+        });
+      } catch(pickerErr) {
+        if(pickerErr && (pickerErr.name === 'AbortError' || pickerErr.code === 20)){
+          _lastSaveDiagnostics.canceled = true;
+          return { canceled: true };
+        }
+        throw pickerErr;
+      }
+
+      if(!handle){
+        _lastSaveDiagnostics.canceled = true;
+        return { canceled: true };
+      }
+
+      const writable = await handle.createWritable();
+      try {
+        await writable.write(result.blob);
+      } finally {
+        await writable.close();
+      }
+
+      const chosenFilename = handle.name || result.filename;
+      _activeFileHandle = handle;
+      _lastSaveDiagnostics.chosenFilename = chosenFilename;
+      _lastSaveDiagnostics.writeSucceeded = true;
+
+      const baseName = chosenFilename.endsWith(EXT)
+        ? chosenFilename.slice(0, -EXT.length)
+        : chosenFilename;
+      window._projectName = safeName(baseName);
+
+      return {
+        name: chosenFilename,
+        size: result.size,
+        layers: result.layers,
+        savedViaPicker: true
+      };
+    }
+
+    // Fallback for browsers / contexts without File System Access API
+    _lastSaveDiagnostics.path = 'anchor-fallback';
+    _lastSaveDiagnostics.fallbackReason = (typeof window !== 'undefined' && !window.isSecureContext)
+      ? 'insecure-context'
+      : 'showSaveFilePicker-unsupported';
+    _lastSaveDiagnostics.chosenFilename = result.filename;
+    _lastSaveDiagnostics.canceled = false;
+    _lastSaveDiagnostics.writeSucceeded = false;
+
+    const url = URL.createObjectURL(result.blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = result.filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+    return {
+      name: result.filename,
+      size: result.size,
+      layers: result.layers,
+      savedViaPicker: false
+    };
   }
 
   function validate(manifest){
@@ -67,7 +179,7 @@
       for(const item of saved.frames){const blob=await zipBlob(zip,item.path,'Layer '+(li+1)+', frame '+(item.frame+1));layer.frames[item.frame]=await decodePng(blob,dimensions.width,dimensions.height,'Layer '+(li+1)+', frame '+(item.frame+1));}
       if(saved.extendedFrames&&saved.extendedFrames.length){layer.extendedFrames={};for(const item of saved.extendedFrames){const blob=await zipBlob(zip,item.path,'Extended artwork for layer '+(li+1)+', frame '+(item.frame+1)),canvas=await decodePng(blob,null,null,'Extended artwork for layer '+(li+1)+', frame '+(item.frame+1));if(canvas.width!==item.width||canvas.height!==item.height)fail('Extended artwork dimensions are invalid');layer.extendedFrames[item.frame]={canvas,x:Number(item.x)||0,y:Number(item.y)||0};}}
       if(saved.smartRaster){const smart=clone(saved.smartRaster);for(const [fi,frame] of Object.entries(smart.frames||{})){if(frame&&frame.rgbaPath){const blob=await zipBlob(zip,frame.rgbaPath,'Smart Raster artwork for layer '+(li+1)+', frame '+(Number(fi)+1));await decodePng(blob,dimensions.width,dimensions.height,'Smart Raster artwork for layer '+(li+1)+', frame '+(Number(fi)+1));frame.rgba=await blobDataUrl(blob);delete frame.rgbaPath;}}const oldW=CW,oldH=CH;try{CW=dimensions.width;CH=dimensions.height;await window.SmartRasterLayer.deserializeLayer(layer,smart);}finally{CW=oldW;CH=oldH;}}
-      if(saved.cmFrames){layer.cmFrames={};Object.entries(saved.cmFrames).forEach(([fi,frame])=>{const width=int(frame.width,'CM frame width',1,16384),height=int(frame.height,'CM frame height',1,16384);if(width!==dimensions.width||height!==dimensions.height)fail('CM frame dimensions do not match the project canvas');const bytes=base64Bytes(frame.pixels,width*height*4,'CM frame');layer.cmFrames[fi]={width,height,pixels:new Uint32Array(bytes.buffer)};});}
+      if(saved.cmFrames){layer.cmFrames={};Object.entries(layer.cmFrames).forEach(([fi,frame])=>{const width=int(frame.width,'CM frame width',1,16384),height=int(frame.height,'CM frame height',1,16384);if(width!==dimensions.width||height!==dimensions.height)fail('CM frame dimensions do not match the project canvas');const bytes=base64Bytes(frame.pixels,width*height*4,'CM frame');layer.cmFrames[fi]={width,height,pixels:new Uint32Array(bytes.buffer)};});}
       stagedLayers.push(layer);
     }
     return{manifest,dimensions,layers:stagedLayers};
@@ -94,8 +206,51 @@
   function report(error,title){console.error('[ProjectIO]',error);showInfo(error&&error.message?error.message:String(error),title);}
   function bind(){
     const save=document.getElementById('dd-export-project'),open=document.getElementById('dd-open-project'),input=document.getElementById('project-file-input');
-    save.onclick=async()=>{closeAllDropdowns();busy(true);try{const result=await exportProject();showInfo('Saved '+result.layers+' layer'+(result.layers===1?'':'s')+' to '+result.name+'.','Project Saved');}catch(error){report(error,'Project Save Failed');}finally{busy(false);}};
+    save.onclick=async()=>{
+      closeAllDropdowns();
+      busy(true);
+      try{
+        const result=await exportProject();
+        if(!result || result.canceled) return;
+        if(result.savedViaPicker){
+          const msg='Saved '+result.layers+' layer'+(result.layers===1?'':'s')+' to '+result.name+'.';
+          if(typeof window.siteAlert==='function'){
+            await window.siteAlert(msg,{title:'Project Saved',okText:'OK'});
+          }else if(typeof siteAlert==='function'){
+            await siteAlert(msg,{title:'Project Saved',okText:'OK'});
+          }else{
+            showInfo(msg,'Project Saved');
+          }
+          if(typeof window.markProjectClean==='function')window.markProjectClean('save');
+        }else{
+          const msg='Download initiated for "'+result.name+'".\n\nYour browser is managing this download. The project will remain marked as unsaved.';
+          if(typeof window.siteAlert==='function'){
+            await window.siteAlert(msg,{title:'Download Started',okText:'OK'});
+          }else if(typeof siteAlert==='function'){
+            await siteAlert(msg,{title:'Download Started',okText:'OK'});
+          }else{
+            showInfo(msg,'Download Started');
+          }
+        }
+      }catch(error){
+        if(error && (error.name === 'AbortError' || error.code === 20)) return;
+        report(error,'Project Save Failed');
+      }finally{
+        busy(false);
+      }
+    };
     open.onclick=async()=>{closeAllDropdowns();if(typeof window.confirmDiscardUnsavedChanges==='function'){if(!await window.confirmDiscardUnsavedChanges())return;}input.value='';input.click();};input.addEventListener('change',async()=>{const file=input.files&&input.files[0];if(!file)return;busy(true);try{const result=await importProject(file);showInfo('Opened "'+result.name+'" with '+result.layers+' layer'+(result.layers===1?'':'s')+'.','Project Opened');}catch(error){report(error,'Project Open Failed');}finally{busy(false);input.value='';}});
   }
-  window.ProjectIO={format:FORMAT,version:VERSION,extension:EXT,exportProject,importProject,stageProject};document.addEventListener('DOMContentLoaded',bind);
+  window.ProjectIOSaveAnalyze=function(){
+    return {
+      showSaveFilePickerAvailable: typeof window !== 'undefined' && typeof window.showSaveFilePicker === 'function',
+      secureContext: typeof window !== 'undefined' ? !!window.isSecureContext : false,
+      lastSavePath: _lastSaveDiagnostics.path,
+      lastFallbackReason: _lastSaveDiagnostics.fallbackReason,
+      lastChosenFilename: _lastSaveDiagnostics.chosenFilename,
+      lastSaveCanceled: _lastSaveDiagnostics.canceled,
+      lastWriteSucceeded: _lastSaveDiagnostics.writeSucceeded
+    };
+  };
+  window.ProjectIO={format:FORMAT,version:VERSION,extension:EXT,exportProject,importProject,stageProject,buildProjectArchive,serializeProjectToBlob:buildProjectArchive,saveAnalyze:window.ProjectIOSaveAnalyze};document.addEventListener('DOMContentLoaded',bind);
 })();

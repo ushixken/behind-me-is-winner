@@ -302,7 +302,12 @@
     selectedId=active.selectedId&&swatches.some(s=>s.id===active.selectedId)?active.selectedId:null;
     active.selectedId=selectedId;
   }
-  function persist(){try{localStorage.setItem(STORE_KEY,JSON.stringify(serialize()));}catch(e){}if(typeof window.markProjectDirty==='function')window.markProjectDirty('palette');}
+  function persist(options){
+    try{localStorage.setItem(STORE_KEY,JSON.stringify(serialize()));}catch(e){}
+    if(!options || options.markDirty !== false){
+      if(typeof window.markProjectDirty==='function')window.markProjectDirty('palette');
+    }
+  }
   function persistView(){
     const grid=document.getElementById('palette-grid');
     if(grid) savedScrollTop=grid.scrollTop;
@@ -368,9 +373,11 @@
     syncAdvancedRefs();
     restoreScrollPending=true;
     applyViewSettings(false);
-    synchronizeActiveContext(false);
+    synchronizeActiveContext(false,{markDirty:options?options.markDirty:false});
     render();
-    persist();
+    if(!options || options.persist !== false){
+      persist({ markDirty: options ? options.markDirty : false });
+    }
   }
   function loadPersisted(){
     loadView();
@@ -380,8 +387,8 @@
       const raw=localStorage.getItem(STORE_KEY);
       if(raw) saved=JSON.parse(raw);
     }catch(e){saved=null;}
-    if(saved&&(Array.isArray(saved.swatches)||Array.isArray(saved.palettes))){load(saved);return;}
-    load(createDefaultPaletteState());
+    if(saved&&(Array.isArray(saved.swatches)||Array.isArray(saved.palettes))){load(saved,{persist:false,markDirty:false});return;}
+    load(createDefaultPaletteState(),{persist:false,markDirty:false});
   }
   function setForeground(hex,openPicker,skipPaletteRender){
     const safeHex=normalizeHex(hex);
@@ -572,7 +579,9 @@
       syncToolbarSelection();
     }
     if(opts.setForeground&&isSwatch(swatch)) setForeground(swatch.hex,false,!!opts.skipPaletteRender);
-    persist();
+    if(opts.persist!==false){
+      persist({ markDirty: opts.markDirty });
+    }
   }
   function selectSwatch(swatch,applyColor){
     advancedColorPanelStyleId=null;
@@ -988,14 +997,15 @@
     isSyncingColorPanel=true;
     try{setForeground(styleHex(style),false,true);}finally{isSyncingColorPanel=false;}
   }
-  function scheduleAdvancedSelectionPersist(){
+  function scheduleAdvancedSelectionPersist(options){
+    if(options&&options.persist===false) return;
     if(advancedSelectionPersistTimer!==null) clearTimeout(advancedSelectionPersistTimer);
     advancedSelectionPersistTimer=setTimeout(()=>{
       advancedSelectionPersistTimer=null;
-      persist();
+      persist(options);
     },120);
   }
-  function selectStyle(id,setBrush,paletteId){
+  function selectStyle(id,setBrush,paletteId,options){
     const style=advancedStyles.find(s=>!isAdvancedSeparator(s)&&s.id===id);
     if(!style) return;
     const selectionChanged=activeAdvancedStyleId!==style.id;
@@ -1008,21 +1018,22 @@
     if(previous&&previous!==next) previous.classList.remove('selected');
     if(next) next.classList.add('selected');
     if(setBrush!==false) syncAdvancedStyleToColorPanel(style);
-    if(selectionChanged) scheduleAdvancedSelectionPersist();
+    if(selectionChanged) scheduleAdvancedSelectionPersist(options);
   }
   let activeContextSyncing=false;
-  function synchronizeActiveContext(renderAfter){
+  function synchronizeActiveContext(renderAfter,options){
     if(activeContextSyncing||!palettes.length) return;
     activeContextSyncing=true;
+    const syncOptions=Object.assign({markDirty:false},options||{});
     try{
       syncActiveRefs();
       syncAdvancedRefs();
       if(activeLayerUsesAdvancedPalette()){
         const style=activeAdvancedStyle();
-        if(style) selectStyle(style.id,true,activePaletteId);
+        if(style) selectStyle(style.id,true,activePaletteId,syncOptions);
       }else{
         const swatch=selectedSwatch();
-        if(swatch) activatePaletteSwatch(swatch.id,{select:true,setForeground:true,skipPaletteRender:true});
+        if(swatch) activatePaletteSwatch(swatch.id,Object.assign({select:true,setForeground:true,skipPaletteRender:true},syncOptions));
       }
       if(renderAfter!==false) render();
     }finally{
@@ -2764,12 +2775,12 @@
     const style=advancedColorPanelStyleId&&advancedColorPanelStyleId===activeAdvancedStyleId?findAdvancedStyleById(activeAdvancedStyleId):null;
     return style&&!style.locked&&Array.isArray(style.rgba)?style.rgba.slice():null;
   }
-  window.PaletteDocker={serialize,load,reset(){load(null);},renderCurrentColors:render,refresh:render,synchronizeActiveContext,isAdvancedPalettePaintingEnabled,getActiveAdvancedPaletteStyleId,getActiveAdvancedStyleColorForHistory,findAdvancedStyleById,getAdvancedStyleOrder,restoreAdvancedStyleOrder,updateActiveAdvancedStyleFromColorPanel,flushAdvancedStyleColorChange,selectAdvancedStyleById,selectMatchingRgba,setForegroundFromSample};
+  window.PaletteDocker={serialize,load,reset(){load(null,{persist:false,markDirty:false});},renderCurrentColors:render,refresh:render,synchronizeActiveContext,isAdvancedPalettePaintingEnabled,getActiveAdvancedPaletteStyleId,getActiveAdvancedStyleColorForHistory,findAdvancedStyleById,getAdvancedStyleOrder,restoreAdvancedStyleOrder,updateActiveAdvancedStyleFromColorPanel,flushAdvancedStyleColorChange,selectAdvancedStyleById,selectMatchingRgba,setForegroundFromSample};
   window.addEventListener('foreground-color-changed',event=>{
     if(isSyncingColorPanel) return; // change originated from the palette itself (swatch click / internal write)
     syncPaletteSelectionToForeground(event.detail&&event.detail.color,'external');
   });
-  window.addEventListener('active-artwork-changed',()=>{synchronizeActiveContext(true);syncStyleLayeringControl();});
+  window.addEventListener('active-artwork-changed',()=>{synchronizeActiveContext(true,{markDirty:false});syncStyleLayeringControl();});
   window.addEventListener('active-layer-changed',syncStyleLayeringControl);
   window.addEventListener('smart-raster-style-layering-changed',syncStyleLayeringControl);
   document.addEventListener('DOMContentLoaded',()=>{bind();loadPersisted();});
