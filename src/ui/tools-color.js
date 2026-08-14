@@ -169,6 +169,7 @@ function _currentUndoSnapshot(){
 }
 
 function pushUndo(){
+  if(typeof window.markProjectDirty==='function') window.markProjectDirty('push-undo');
   undoStack.push(_currentUndoSnapshot());
   if(undoStack.length>40) undoStack.shift();
   redoStack=[];
@@ -178,6 +179,7 @@ function pushUndo(){
 // current when their continuation runs. Capture the authoritative backing
 // store for the stroke's explicit owner immediately before its ordered commit.
 function pushUndoAt(layerIndex,frameIndex){
+  if(typeof window.markProjectDirty==='function') window.markProjectDirty('push-undo-at');
   const layer=layers[layerIndex];
   const selectionSnapshot=window.PixelSelection&&PixelSelection.capture?PixelSelection.capture():null;
   const layerType=layer&&layer.type==='smart-raster'?'smart-raster':'bitmap';
@@ -303,6 +305,7 @@ function _restoreLayerHierarchy(snapshot){
 function undo(){
   if(window.RepeatableTransformController&&RepeatableTransformController.active)RepeatableTransformController.cancelForToolExit();
   if(!undoStack.length)return;
+  if(typeof window.markProjectDirty==='function') window.markProjectDirty('undo');
   const action=undoStack.pop();
   if(action.type==='audio-clips'&&window.AudioClipUI){if(AudioClipUI.restore(action.before))redoStack.push(action);return;}
   if(action.type==='camera-state'&&window.CameraSystem){CameraSystem.restore(action.before);redoStack.push(action);if(typeof renderTimeline==='function')renderTimeline();return;}
@@ -334,6 +337,7 @@ function undo(){
 function redo(){
   if(window.RepeatableTransformController&&RepeatableTransformController.active)RepeatableTransformController.cancelForToolExit();
   if(!redoStack.length)return;
+  if(typeof window.markProjectDirty==='function') window.markProjectDirty('redo');
   const action=redoStack.pop();
   if(action.type==='audio-clips'&&window.AudioClipUI){if(AudioClipUI.restore(action.after))undoStack.push(action);return;}
   if(action.type==='camera-state'&&window.CameraSystem){CameraSystem.restore(action.after);undoStack.push(action);if(typeof renderTimeline==='function')renderTimeline();return;}
@@ -361,7 +365,8 @@ function redo(){
   }
   undoStack.push(_currentUndoSnapshot());
   _restoreUndoAction(action);
-}const szSlider=document.getElementById('ts-size');
+}
+const szSlider=document.getElementById('ts-size');
 const szValEl=document.getElementById('ts-size-val');
 // Swap the Brush Presets docker's contents between the Brush Presets body
 // and the Transform body depending on the active tool, instead of opening

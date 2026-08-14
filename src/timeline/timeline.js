@@ -80,7 +80,7 @@ document.getElementById('btn-stepf').onclick=()=>{
   else if(curFrame>=rangeEnd) goToFrame(rangeStart);
   else goToFrame(curFrame+1);
 };
-fpsTl.oninput=e=>{const v=Math.min(+e.target.value,MAX_FPS);fpsTl.value=v;fpsVal.textContent=v;updateFpsSliderColor();if(playing){clearInterval(playTimer);playing=false;togglePlay();}};
+fpsTl.oninput=e=>{const v=Math.min(+e.target.value,MAX_FPS);fpsTl.value=v;fpsVal.textContent=v;updateFpsSliderColor();if(typeof window.markProjectDirty==='function')window.markProjectDirty('fps');if(playing){clearInterval(playTimer);playing=false;togglePlay();}};
 
 // Update slider color: red if below MAX_FPS
 function updateFpsSliderColor(){

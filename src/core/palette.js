@@ -302,7 +302,7 @@
     selectedId=active.selectedId&&swatches.some(s=>s.id===active.selectedId)?active.selectedId:null;
     active.selectedId=selectedId;
   }
-  function persist(){try{localStorage.setItem(STORE_KEY,JSON.stringify(serialize()));}catch(e){}}
+  function persist(){try{localStorage.setItem(STORE_KEY,JSON.stringify(serialize()));}catch(e){}if(typeof window.markProjectDirty==='function')window.markProjectDirty('palette');}
   function persistView(){
     const grid=document.getElementById('palette-grid');
     if(grid) savedScrollTop=grid.scrollTop;

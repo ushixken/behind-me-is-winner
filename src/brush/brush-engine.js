@@ -8436,6 +8436,7 @@ function _brushPointerDown(e){
   if(tool==='fill'){pushUndo();ensureKey();floodFill(p.x,p.y,color);saveActiveToKey();recomposite(curLayer,curFrame);return;}
   _activeStrokePointerId=e.pointerId;
   _strokeOwnerLayer=curLayer;_strokeOwnerFrame=curFrame;_activeStrokeSession=++_strokeSessionSerial;
+  if(typeof window.markProjectDirty==='function') window.markProjectDirty('brush-stroke');
   _customTipGpuStrokeActive = _customTipGpuEligibleNow();
   if (_customTipGpuStrokeActive) {
     _customTipGpuFallbackDabs = [];

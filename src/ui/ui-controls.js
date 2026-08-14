@@ -194,6 +194,7 @@ document.getElementById('modal-canvas-ok').onclick=()=>{
   updateFpsSliderColor();
   const actSw=document.querySelector('.bg-swatch.active');
   bgColor=actSw?actSw.dataset.color:document.getElementById('canvas-bg-color-input').value;
+  if(typeof window.markProjectDirty==='function') window.markProjectDirty('canvas-settings');
   applyTotalFrames(nf);
   applyCanvasResize(nw,nh);closeCanvasModal();
 };
@@ -252,6 +253,7 @@ document.getElementById('modal-frames-ok').onclick=()=>{
   const n=norm.total;
   if(n<2||n>9999){showInfo('Frame count must be 2–9999.','Invalid Frame Count');return;}
   applyTotalFrames(n);
+  if(typeof window.markProjectDirty==='function') window.markProjectDirty('frame-count');
   document.getElementById('modal-frames').classList.remove('visible');
 };
 
@@ -374,11 +376,3 @@ renderTimeline();
 loadFrame(curLayer,curFrame);
 // Fit & center after layout settles
 requestAnimationFrame(()=>requestAnimationFrame(fitCanvasToView));
-
-// ════════════════════════════════════════════════════════════════
-// IMAGE IMPORT SYSTEM
-// — Drag-and-drop images anywhere on the app
-// — File menu "Import Image…" button
-// — Modal asks: New Layer / Current Layer / New Layer in Group
-// — Fit modes: fit, fill, stretch, center
-// ════════════════════════════════════════════════════════════════

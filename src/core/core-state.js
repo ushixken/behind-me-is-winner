@@ -9,6 +9,59 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('modal-info').addEventListener('click',e=>{if(e.target===document.getElementById('modal-info'))document.getElementById('modal-info').classList.remove('visible');});
 });
 // ════════════════════════════════════════════════════════════════
+// PROJECT DIRTY / UNSAVED-CHANGES STATE
+// ════════════════════════════════════════════════════════════════
+let _projectDirty = false;
+
+function _updateProjectTitleUI() {
+  if (typeof document === 'undefined') return;
+  const baseTitle = 'Animator — Frame-by-Frame';
+  const name = (typeof window !== 'undefined' && window._projectName) ? window._projectName : '';
+  const display = name && name !== 'Untitled' ? `${name} — Animator` : baseTitle;
+  document.title = _projectDirty ? `* ${display}` : display;
+}
+
+window.markProjectDirty = function(reason) {
+  if (_projectDirty) return;
+  _projectDirty = true;
+  _updateProjectTitleUI();
+};
+
+window.markProjectClean = function(reason) {
+  if (!_projectDirty) {
+    _updateProjectTitleUI();
+    return;
+  }
+  _projectDirty = false;
+  _updateProjectTitleUI();
+};
+
+window.isProjectDirty = function() {
+  return _projectDirty;
+};
+
+window._updateProjectTitleUI = _updateProjectTitleUI;
+
+window.confirmDiscardUnsavedChanges = async function() {
+  if (!_projectDirty) return true;
+  const msg = 'You have unsaved changes in this project. Discard them?';
+  if (typeof window.siteConfirm === 'function') {
+    return await window.siteConfirm(msg, { title: 'Unsaved Changes', okText: 'Discard Changes', danger: true });
+  }
+  if (typeof confirm === 'function') {
+    return confirm(msg);
+  }
+  return true;
+};
+
+window.addEventListener('beforeunload', e => {
+  if (_projectDirty) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+
+// ════════════════════════════════════════════════════════════════
 // STATE
 // ════════════════════════════════════════════════════════════════
 const PROJECT_DEFAULTS=(()=>{

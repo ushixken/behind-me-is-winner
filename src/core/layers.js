@@ -549,7 +549,13 @@ document.addEventListener('click',closeAllDropdowns);
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeAllDropdowns();hideAllMenus();}},{capture:true});
 
 // File menu
-document.getElementById('dd-new').onclick=()=>{document.getElementById('modal-new-project').classList.add('visible');closeAllDropdowns();};
+document.getElementById('dd-new').onclick=async()=>{
+  closeAllDropdowns();
+  if(typeof window.confirmDiscardUnsavedChanges==='function'){
+    if(!await window.confirmDiscardUnsavedChanges()) return;
+  }
+  document.getElementById('modal-new-project').classList.add('visible');
+};
 document.getElementById('modal-new-project-cancel').onclick=()=>document.getElementById('modal-new-project').classList.remove('visible');
 document.getElementById('modal-new-project').addEventListener('click',e=>{if(e.target===document.getElementById('modal-new-project'))document.getElementById('modal-new-project').classList.remove('visible');});
 document.getElementById('modal-new-project-ok').onclick=()=>{
@@ -575,9 +581,11 @@ document.getElementById('modal-new-project-ok').onclick=()=>{
   // in initCanvas does NOT clear it, so old drawing would bleed through.
   ctx.clearRect(0,0,CW,CH);
   if(window.PaletteDocker&&typeof window.PaletteDocker.reset==='function') window.PaletteDocker.reset();
+  window._projectName='Untitled';
   renderLayerPanel();renderTimeline();loadFrame(0,0);
   // Re-center the canvas for the new project
   fitCanvasToView();
+  if(typeof window.markProjectClean==='function') window.markProjectClean('new');
 };
 document.getElementById('dd-export').onclick=()=>{closeAllDropdowns();if(window.ExportSystem)ExportSystem.open();};
 
