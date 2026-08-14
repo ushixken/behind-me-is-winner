@@ -9,13 +9,17 @@
 (() => {
   'use strict';
 
-  const INSTANCE_FLOAT_COUNT = 12; // pos(2), radius(1), rotation(1), roundness(1), opacity(1), color(3), composite(1), flipX(1), flipY(1)
+  const INSTANCE_FLOAT_COUNT = 14; // pos(2), radius(1), rotation(1), roundness(1), opacity(1), color(3), composite(1), flipX(1), flipY(1), inner(1), pad(1)
   const MAX_INSTANCES_PER_BATCH = 2048;
 
   const SHADER_WGSL = `
     struct Uniforms {
       canvasSize: vec2f,
       tipAspect: vec2f,
+      legacyAlphaOnlyMask: f32,
+      pad0: f32,
+      pad1: f32,
+      pad2: f32,
     };
 
     struct InstanceInput {
@@ -28,6 +32,7 @@
       @location(6) composite: f32,
       @location(7) flipX: f32,
       @location(8) flipY: f32,
+      @location(9) inner: f32,
     };
 
     struct VertexOutput {
@@ -36,6 +41,7 @@
       @location(1) opacity: f32,
       @location(2) color: vec3f,
       @location(3) composite: f32,
+      @location(4) inner: f32,
     };
 
     @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -101,14 +107,29 @@
       out.opacity = max(0.0, min(1.0, instance.opacity));
       out.color = instance.color;
       out.composite = instance.composite;
+      out.inner = instance.inner;
       return out;
+    }
+
+    fn roundBrushFalloff(t: f32, inner: f32) -> f32 {
+      if (inner < 0.0) { return 1.0; }
+      if (t >= 1.0) { return 0.0; }
+      if (t <= inner) { return 1.0; }
+      let u = (t - inner) / max(0.0001, 1.0 - inner);
+      return 1.0 - u * u * (3.0 - 2.0 * u);
     }
 
     @fragment
     fn fs(in: VertexOutput) -> @location(0) vec4f {
       let sampled = textureSample(tipTexture, tipSampler, in.uv);
-      let maskAlpha = sampled.a;
-      let finalAlpha = maskAlpha * in.opacity;
+      let sourceAlpha = sampled.a;
+      let luminance = dot(sampled.rgb, vec3f(0.2126, 0.7152, 0.0722));
+      let tipAlpha = select(sourceAlpha * luminance, sourceAlpha, u.legacyAlphaOnlyMask > 0.5);
+
+      let normOffset = (in.uv - vec2f(0.5, 0.5)) * 2.0;
+      let t = length(normOffset);
+      let falloff = roundBrushFalloff(t, in.inner);
+      let finalAlpha = tipAlpha * in.opacity * falloff;
 
       if (finalAlpha <= 0.001) {
         discard;
@@ -155,6 +176,74 @@
     }
   `;
 
+  const TEXTURE_STENCIL_SHADER_WGSL = `
+    struct TextureUniforms {
+      canvasSize: vec2f,
+      texScaledSize: vec2f,
+      texInvert: f32,
+      texBrightness: f32,
+      texContrast: f32,
+      texStrength: f32,
+    };
+
+    struct VertexOutput {
+      @builtin(position) clipPos: vec4f,
+      @location(0) uv: vec2f,
+    };
+
+    @vertex
+    fn vs(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
+      var pos = array<vec2f, 6>(
+        vec2f(-1.0, -1.0), vec2f( 1.0, -1.0), vec2f(-1.0,  1.0),
+        vec2f(-1.0,  1.0), vec2f( 1.0, -1.0), vec2f( 1.0,  1.0)
+      );
+      var uvs = array<vec2f, 6>(
+        vec2f(0.0, 1.0), vec2f(1.0, 1.0), vec2f(0.0, 0.0),
+        vec2f(0.0, 0.0), vec2f(1.0, 1.0), vec2f(1.0, 0.0)
+      );
+      var out: VertexOutput;
+      out.clipPos = vec4f(pos[vertexIndex], 0.0, 1.0);
+      out.uv = uvs[vertexIndex];
+      return out;
+    }
+
+    @group(0) @binding(0) var<uniform> u: TextureUniforms;
+    @group(0) @binding(1) var strokeSampler: sampler;
+    @group(0) @binding(2) var strokeTexture: texture_2d<f32>;
+    @group(0) @binding(3) var paperSampler: sampler;
+    @group(0) @binding(4) var paperTexture: texture_2d<f32>;
+
+    @fragment
+    fn fs(in: VertexOutput) -> @location(0) vec4f {
+      let strokeSample = textureSample(strokeTexture, strokeSampler, in.uv);
+      if (strokeSample.a <= 0.0001) {
+        return vec4f(0.0, 0.0, 0.0, 0.0);
+      }
+
+      // Document / canvas coordinate sampling: in.clipPos.xy is anchored to canvas (0,0)
+      let texCoord = in.clipPos.xy / u.texScaledSize;
+      let paperSample = textureSampleLevel(paperTexture, paperSampler, texCoord, 0.0);
+
+      // Paper grain luminance (0.2126*R + 0.7152*G + 0.0722*B)
+      let lum = dot(paperSample.rgb, vec3f(0.2126, 0.7152, 0.0722));
+      var t = select(lum, 1.0 - lum, u.texInvert > 0.5);
+
+      // Brightness shift (-100..100 -> ±0.5)
+      t = t + (u.texBrightness / 100.0) * 0.5;
+
+      // Contrast slope (slope = pow(3, contrast / 100))
+      let contrastSlope = pow(3.0, u.texContrast / 100.0);
+      t = 0.5 + (t - 0.5) * contrastSlope;
+      t = clamp(t, 0.0, 1.0);
+
+      // Effective alpha lerp by strength: strokeAlpha * (1 - strength + strength * t)
+      let effectiveAlphaFactor = (1.0 - u.texStrength + u.texStrength * t);
+      let outAlpha = strokeSample.a * effectiveAlphaFactor;
+      let outColor = strokeSample.rgb * effectiveAlphaFactor;
+      return vec4f(outColor, outAlpha);
+    }
+  `;
+
   function shouldRunCustomTipGpuDiagnostic() {
     return typeof window !== 'undefined' && (
       !!window.CustomBrushDebugGpuTipRenderer ||
@@ -175,8 +264,15 @@
 
       this.shadowTexture = null;
       this.shadowTextureView = null;
+      this.texturedShadowTexture = null;
+      this.texturedShadowTextureView = null;
       this.targetWidth = 1000;
       this.targetHeight = 1000;
+
+      this.textureStencilPipeline = null;
+      this.textureStencilBindGroupLayout = null;
+      this.textureStencilUniformBuffer = null;
+      this.textureStencilSampler = null;
 
       this.active = false;
       this.currentStrokeId = null;
@@ -233,7 +329,7 @@
         const shaderModule = this.device.createShaderModule({ code: SHADER_WGSL });
 
         this.uniformBuffer = this.device.createBuffer({
-          size: 16,
+          size: 32,
           usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
         });
 
@@ -255,12 +351,13 @@
             { shaderLocation: 6, offset: 36, format: 'float32' },   // composite
             { shaderLocation: 7, offset: 40, format: 'float32' },   // flipX
             { shaderLocation: 8, offset: 44, format: 'float32' },   // flipY
+            { shaderLocation: 9, offset: 48, format: 'float32' },   // inner
           ]
         };
 
         const bindGroupLayout = this.device.createBindGroupLayout({
           entries: [
-            { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
+            { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
             { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
             { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: {} },
           ]
@@ -448,6 +545,11 @@
       if (this.shadowTexture) {
         try { this.shadowTexture.destroy(); } catch (e) {}
       }
+      if (this.texturedShadowTexture) {
+        try { this.texturedShadowTexture.destroy(); } catch (e) {}
+        this.texturedShadowTexture = null;
+        this.texturedShadowTextureView = null;
+      }
       this.targetWidth = w;
       this.targetHeight = h;
       if (!this.device) return;
@@ -458,6 +560,121 @@
         usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC
       });
       this.shadowTextureView = this.shadowTexture.createView();
+    }
+
+    ensureTexturedShadowTexture(w, h) {
+      if (this.texturedShadowTexture && this.targetWidth === w && this.targetHeight === h) return;
+      if (this.texturedShadowTexture) {
+        try { this.texturedShadowTexture.destroy(); } catch (e) {}
+      }
+      if (!this.device) return;
+
+      this.texturedShadowTexture = this.device.createTexture({
+        size: [w, h, 1],
+        format: 'rgba8unorm',
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC
+      });
+      this.texturedShadowTextureView = this.texturedShadowTexture.createView();
+    }
+
+    initTextureStencilPipeline() {
+      if (this.textureStencilPipeline || !this.device) return !!this.textureStencilPipeline;
+      try {
+        const shaderModule = this.device.createShaderModule({ code: TEXTURE_STENCIL_SHADER_WGSL });
+        this.textureStencilUniformBuffer = this.device.createBuffer({
+          size: 32,
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+        });
+
+        this.textureStencilBindGroupLayout = this.device.createBindGroupLayout({
+          entries: [
+            { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+            { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+            { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+            { binding: 3, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+            { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+          ]
+        });
+
+        const pipelineLayout = this.device.createPipelineLayout({
+          bindGroupLayouts: [this.textureStencilBindGroupLayout]
+        });
+
+        this.textureStencilPipeline = this.device.createRenderPipeline({
+          layout: pipelineLayout,
+          vertex: { module: shaderModule, entryPoint: 'vs' },
+          fragment: {
+            module: shaderModule,
+            entryPoint: 'fs',
+            targets: [{ format: 'rgba8unorm' }]
+          },
+          primitive: { topology: 'triangle-list' }
+        });
+
+        this.textureStencilSampler = this.device.createSampler({
+          magFilter: 'linear',
+          minFilter: 'linear'
+        });
+
+        return true;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    shouldApplyTextureStencil() {
+      if (typeof window === 'undefined') return false;
+      if (!window.brushTextureEnabled || !window.brushTextureCanvas) return false;
+      const strength = typeof window.brushTextureStrength !== 'undefined' ? window.brushTextureStrength : (typeof window.brushTextureDepth !== 'undefined' ? window.brushTextureDepth : 1.0);
+      if (strength <= 0) return false;
+      if (this.currentBatchErase) return false; // Erase strokes completely bypass texture, matching Canvas2D
+      return true;
+    }
+
+    renderTextureStencilPass(paperResource) {
+      if (!this.device || !this.shadowTextureView || !paperResource || !paperResource.view) return false;
+      if (!this.initTextureStencilPipeline()) return false;
+      this.ensureTexturedShadowTexture(this.targetWidth, this.targetHeight);
+      if (!this.texturedShadowTextureView) return false;
+
+      const scale = typeof window.brushTextureScale === 'number' ? window.brushTextureScale : 1.0;
+      const sw = Math.max(1, Math.round(paperResource.width * scale));
+      const sh = Math.max(1, Math.round(paperResource.height * scale));
+      const inv = window.brushTextureInvert ? 1.0 : 0.0;
+      const brightness = typeof window.brushTextureBrightness === 'number' ? window.brushTextureBrightness : 0.0;
+      const contrast = typeof window.brushTextureContrast === 'number' ? window.brushTextureContrast : 0.0;
+      const strength = typeof window.brushTextureStrength !== 'undefined' ? window.brushTextureStrength : (typeof window.brushTextureDepth !== 'undefined' ? window.brushTextureDepth : 1.0);
+
+      const uniforms = new Float32Array([this.targetWidth, this.targetHeight, sw, sh, inv, brightness, contrast, strength]);
+      this.device.queue.writeBuffer(this.textureStencilUniformBuffer, 0, uniforms);
+
+      const bindGroup = this.device.createBindGroup({
+        layout: this.textureStencilBindGroupLayout,
+        entries: [
+          { binding: 0, resource: { buffer: this.textureStencilUniformBuffer } },
+          { binding: 1, resource: this.textureStencilSampler },
+          { binding: 2, resource: this.shadowTextureView },
+          { binding: 3, resource: paperResource.sampler },
+          { binding: 4, resource: paperResource.view },
+        ]
+      });
+
+      const encoder = this.device.createCommandEncoder();
+      const pass = encoder.beginRenderPass({
+        colorAttachments: [{
+          view: this.texturedShadowTextureView,
+          clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          loadOp: 'clear',
+          storeOp: 'store'
+        }]
+      });
+      pass.setPipeline(this.textureStencilPipeline);
+      pass.setBindGroup(0, bindGroup);
+      pass.draw(6);
+      pass.end();
+
+      this.device.queue.submit([encoder.finish()]);
+      return true;
     }
 
     clearShadowTarget() {
@@ -590,6 +807,18 @@
       const fX = window.brushTipFlipX ? -1.0 : 1.0;
       const fY = window.brushTipFlipY ? -1.0 : 1.0;
 
+      const softAlpha = typeof window !== 'undefined' && !!window.brushTipSoftAlpha;
+      const tipMode = typeof window !== 'undefined' && window.brushTipMode ? window.brushTipMode : 'multiply';
+      const applyFalloff = softAlpha && tipMode !== 'replace';
+      let inner = -1.0;
+      if (applyFalloff) {
+        const aaMode = typeof _currentAAMode === 'function' ? _currentAAMode() : 'medium';
+        const hardness = Math.max(0, Math.min(1, typeof brushHardness !== 'undefined' ? brushHardness : 1));
+        const aaFloor = aaMode === 'none' ? 0 : (aaMode === 'weak' ? 0.85 : (aaMode === 'strong' ? 2.6 : 1.6));
+        const edgePx = aaMode === 'none' ? (1 - hardness) * r : Math.max(aaFloor, (1 - hardness) * r);
+        inner = Math.max(0, Math.min(0.999, 1 - edgePx / Math.max(0.05, r)));
+      }
+
       this._growDirtyBounds(d.x, d.y, r);
 
       // If composite mode changes within a stroke, we must flush the batch.
@@ -615,6 +844,8 @@
       this.instanceData[offset + 9] = composite;
       this.instanceData[offset + 10] = fX;
       this.instanceData[offset + 11] = fY;
+      this.instanceData[offset + 12] = inner;
+      this.instanceData[offset + 13] = 0.0;
 
       this.instanceCount++;
       this.gpuInstanceCount++;
@@ -646,7 +877,8 @@
       const tipAspectY = tipNativeH / reference;
 
       // 1. Upload Uniforms
-      const uniforms = new Float32Array([this.targetWidth, this.targetHeight, tipAspectX, tipAspectY]);
+      const legacyMask = (res && res.legacyAlphaOnlyMask) ? 1.0 : 0.0;
+      const uniforms = new Float32Array([this.targetWidth, this.targetHeight, tipAspectX, tipAspectY, legacyMask, 0, 0, 0]);
       this.device.queue.writeBuffer(this.uniformBuffer, 0, uniforms);
 
       // 2. Upload Instance Buffer
@@ -654,7 +886,8 @@
       this.device.queue.writeBuffer(this.instanceBuffer, 0, this.instanceData.buffer, 0, byteLength);
 
       // 3. Create Bind Group for current resource
-      const sampler = res.samplerLinear || res.samplerNearest;
+      const isNearest = (typeof _currentAAMode === 'function' && _currentAAMode() === 'none');
+      const sampler = (isNearest && res.samplerNearest) ? res.samplerNearest : (res.samplerLinear || res.samplerNearest);
       if (!sampler || !res.view) return;
 
       const bindGroup = this.device.createBindGroup({
@@ -723,6 +956,14 @@
       const bytesPerRow = Math.ceil((rectW * 4) / 256) * 256;
       const bufferSize = bytesPerRow * rectH;
 
+      let sourceTexture = this.shadowTexture;
+      if (this.shouldApplyTextureStencil() && typeof window.CustomTipGpuResources !== 'undefined') {
+        const paperResource = await window.CustomTipGpuResources.getOrCreatePaperTexture(window.brushTextureCanvas, window.brushTextureVersion);
+        if (paperResource && this.renderTextureStencilPass(paperResource)) {
+          sourceTexture = this.texturedShadowTexture;
+        }
+      }
+
       try {
         const readBuffer = this.device.createBuffer({
           size: bufferSize,
@@ -731,7 +972,7 @@
 
         const encoder = this.device.createCommandEncoder();
         encoder.copyTextureToBuffer(
-          { texture: this.shadowTexture, origin: [minX, minY, 0] },
+          { texture: sourceTexture, origin: [minX, minY, 0] },
           { buffer: readBuffer, bytesPerRow, rowsPerImage: rectH },
           [rectW, rectH, 1]
         );
@@ -812,6 +1053,14 @@
       const bytesPerRow = Math.ceil((w * 4) / 256) * 256;
       const bufferSize = bytesPerRow * h;
 
+      let sourceTexture = this.shadowTexture;
+      if (this.shouldApplyTextureStencil() && typeof window.CustomTipGpuResources !== 'undefined') {
+        const paperResource = await window.CustomTipGpuResources.getOrCreatePaperTexture(window.brushTextureCanvas, window.brushTextureVersion);
+        if (paperResource && this.renderTextureStencilPass(paperResource)) {
+          sourceTexture = this.texturedShadowTexture;
+        }
+      }
+
       try {
         const readBuffer = this.device.createBuffer({
           size: bufferSize,
@@ -820,7 +1069,7 @@
 
         const encoder = this.device.createCommandEncoder();
         encoder.copyTextureToBuffer(
-          { texture: this.shadowTexture },
+          { texture: sourceTexture },
           { buffer: readBuffer, bytesPerRow },
           [w, h, 1]
         );

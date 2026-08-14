@@ -21,6 +21,11 @@
       this.totalCachedBytes = 0;
       this.sharedLinearSampler = null;
       this.sharedNearestSampler = null;
+      this.sharedRepeatSampler = null;
+      this.cachedPaperTexture = null;
+      this.cachedPaperTextureView = null;
+      this.cachedPaperTextureVersion = -1;
+      this.cachedPaperTextureCanvas = null;
     }
 
     resolveCurrentTipAsset() {
@@ -90,6 +95,7 @@
         this.sharedDevice = null;
         this.sharedLinearSampler = null;
         this.sharedNearestSampler = null;
+        this.sharedRepeatSampler = null;
       }).catch(() => {});
     }
 
@@ -105,6 +111,12 @@
           magFilter: 'nearest',
           minFilter: 'nearest',
           mipmapFilter: 'nearest'
+        });
+        this.sharedRepeatSampler = device.createSampler({
+          addressModeU: 'repeat',
+          addressModeV: 'repeat',
+          magFilter: 'linear',
+          minFilter: 'linear'
         });
       } catch (e) {
         // Sampler creation failed
@@ -177,6 +189,21 @@
         const view = texture.createView();
         const resourceBytes = w * h * 4;
 
+        let legacyAlphaOnlyMask = false;
+        try {
+          const sourceCtx = canvas.getContext('2d', { willReadFrequently: true });
+          const sourceData = sourceCtx.getImageData(0, 0, w, h).data;
+          let maxLum = 0;
+          for (let p = 0; p < sourceData.length; p += 4) {
+            if (sourceData[p + 3] === 0) continue;
+            const lum = (sourceData[p] * 0.2126 + sourceData[p + 1] * 0.7152 + sourceData[p + 2] * 0.0722) / 255;
+            if (lum > maxLum) maxLum = lum;
+          }
+          legacyAlphaOnlyMask = maxLum < 0.01;
+        } catch (_) {
+          legacyAlphaOnlyMask = false;
+        }
+
         const resource = {
           key,
           assetId,
@@ -188,6 +215,7 @@
           samplerNearest: this.sharedNearestSampler,
           tipVersion: version,
           resourceBytes,
+          legacyAlphaOnlyMask,
           lastUsed: performance.now()
         };
 
@@ -220,6 +248,63 @@
       return this.getOrCreateResource(asset);
     }
 
+    async getOrCreatePaperTexture(canvas, version) {
+      if (!canvas) return null;
+      const w = canvas.width || canvas.naturalWidth || 1;
+      const h = canvas.height || canvas.naturalHeight || 1;
+      if (w <= 0 || h <= 0) return null;
+
+      const v = version != null ? version : (typeof window !== 'undefined' && window.brushTextureVersion ? window.brushTextureVersion : 0);
+      if (this.cachedPaperTexture && this.cachedPaperTextureVersion === v && this.cachedPaperTextureCanvas === canvas) {
+        return {
+          texture: this.cachedPaperTexture,
+          view: this.cachedPaperTextureView,
+          sampler: this.sharedRepeatSampler,
+          width: w,
+          height: h
+        };
+      }
+
+      const device = await this.getDevice();
+      if (!device) return null;
+      this.initSamplers(device);
+
+      if (this.cachedPaperTexture) {
+        try { this.cachedPaperTexture.destroy(); } catch (e) {}
+        this.cachedPaperTexture = null;
+        this.cachedPaperTextureView = null;
+      }
+
+      try {
+        const texture = device.createTexture({
+          size: [w, h, 1],
+          format: 'rgba8unorm',
+          usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+        });
+
+        device.queue.copyExternalImageToTexture(
+          { source: canvas },
+          { texture: texture },
+          [w, h, 1]
+        );
+
+        this.cachedPaperTexture = texture;
+        this.cachedPaperTextureView = texture.createView();
+        this.cachedPaperTextureVersion = v;
+        this.cachedPaperTextureCanvas = canvas;
+
+        return {
+          texture: this.cachedPaperTexture,
+          view: this.cachedPaperTextureView,
+          sampler: this.sharedRepeatSampler,
+          width: w,
+          height: h
+        };
+      } catch (e) {
+        return null;
+      }
+    }
+
     invalidateAsset(assetId, version) {
       for (const [key, res] of this.cache.entries()) {
         const matchAsset = assetId && res.assetId === assetId;
@@ -246,6 +331,13 @@
       }
       this.cache.clear();
       this.totalCachedBytes = 0;
+      if (this.cachedPaperTexture) {
+        try { this.cachedPaperTexture.destroy(); } catch (e) {}
+        this.cachedPaperTexture = null;
+        this.cachedPaperTextureView = null;
+        this.cachedPaperTextureCanvas = null;
+        this.cachedPaperTextureVersion = -1;
+      }
     }
   }
 
@@ -257,6 +349,7 @@
       getOrCreateResource: (assetDescriptor) => manager.getOrCreateResource(assetDescriptor),
       getOrCreateCurrentTipResource: () => manager.getOrCreateCurrentTipResource(),
       getResourceForTip: (canvas, version) => manager.getResourceForTip(canvas, version),
+      getOrCreatePaperTexture: (canvas, version) => manager.getOrCreatePaperTexture(canvas, version),
       invalidateAsset: (assetId, version) => manager.invalidateAsset(assetId, version),
       invalidateTipVersion: (version) => manager.invalidateTipVersion(version),
       clear: () => manager.clear(),
