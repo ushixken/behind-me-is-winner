@@ -1065,6 +1065,7 @@ const FloatPanels=(function(){
     _removeFromAllDockOrders(key);
     delete mergedHost[key];
     panelMode[key]='docked';
+    hiddenState[key]=false;
     if(atIndex==null||atIndex<0||atIndex>dockOrder[side].length) dockOrder[side].push(key);
     else dockOrder[side].splice(atIndex,0,key);
     if(dockSize[key]==null){
@@ -1848,7 +1849,11 @@ const FloatPanels=(function(){
       // Skip top/bottom edge-dock scan when we're hovering a panel's top/bottom half
       const _skipSides=_earlyStackDrop?['top','bottom']:[];
       ['left','right','top','bottom'].filter(s=>!_skipSides.includes(s)).forEach(side=>{
-        const stack=dockOrder[side].filter(k=>k!==key);
+        const stack=(dockOrder[side]||[]).filter(hostKey=>{
+          if(hostKey===key) return false;
+          const members=_stackKeys(hostKey);
+          return members.some(k=>k!==key&&panelMode[k]==='docked'&&!hiddenState[k]);
+        });
         const axisPos=(side==='left'||side==='right')?e.clientX:e.clientY;
         const within=(side==='left'||side==='right')
           ?(e.clientY>=car.top&&e.clientY<=car.bottom)
@@ -1864,8 +1869,35 @@ const FloatPanels=(function(){
           const dist=Math.abs(axisPos-linePos);
           const threshold=curDock===side&&curAtIndex===i
             ?EDGE_DOCK_EXIT_THRESHOLD:EDGE_DOCK_ENTER_THRESHOLD;
-          if(dist<=threshold&&(!best||dist<best.dist)) best={side,atIndex:i,dist,lineOffset};
-          if(i<stack.length) cum+=dockSize[stack[i]]||0;
+          if(dist<=threshold&&(!best||dist<best.dist)){
+            let dockIdx=i;
+            if(i<stack.length){
+              const targetHost=stack[i];
+              dockIdx=dockOrder[side].indexOf(targetHost);
+              if(dockIdx===-1) dockIdx=dockOrder[side].length;
+            }else{
+              dockIdx=dockOrder[side].length;
+            }
+            best={side,atIndex:dockIdx,dist,lineOffset};
+          }
+          if(i<stack.length){
+            const hostKey=stack[i];
+            const hp=panelByKey(hostKey);
+            let colWidth=0;
+            if(hp&&panelMode[hostKey]==='docked'&&!hiddenState[hostKey]&&hp.classList.contains('docked')){
+              const r=hp.getBoundingClientRect();
+              colWidth=(side==='left'||side==='right')?r.width:r.height;
+            }
+            if(!colWidth||!Number.isFinite(colWidth)){
+              let size=dockSize[hostKey];
+              if(side==='left'||side==='right'){
+                const limits=_stackWidthLimits(hostKey);
+                size=Math.max(limits.min,Math.min(limits.max,Number.isFinite(+size)?+size:220));
+              }
+              colWidth=Number.isFinite(+size)?+size:0;
+            }
+            cum+=colWidth;
+          }
         }
       });
 
