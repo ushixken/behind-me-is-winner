@@ -40,21 +40,39 @@ function _recordStateTransition(action, reason, wasDirty) {
   }
 }
 
+let _currentProjectName = (typeof window !== 'undefined' && window._projectName) ? String(window._projectName) : 'Untitled';
+
 function _updateProjectTitleUI() {
   if (typeof document === 'undefined') return;
-  const baseTitle = 'Animator — Frame-by-Frame';
-  const name = (typeof window !== 'undefined' && window._projectName) ? window._projectName : '';
-  const display = name && name !== 'Untitled' ? `${name} — Animator` : baseTitle;
-  document.title = _projectDirty ? `* ${display}` : display;
+  const dirty = !!_projectDirty;
+  const projectName = _currentProjectName || '';
+  const display = projectName && projectName !== 'Untitled' ? `${projectName} — Animator` : 'Animator — Frame-by-Frame';
+  document.title = dirty ? `* ${display}` : display;
+}
+
+if (typeof window !== 'undefined') {
+  try {
+    Object.defineProperty(window, '_projectName', {
+      get() {
+        return _currentProjectName;
+      },
+      set(val) {
+        _currentProjectName = val ? String(val).trim() : 'Untitled';
+        _updateProjectTitleUI();
+      },
+      configurable: true,
+      enumerable: true
+    });
+  } catch(_) {
+    window._projectName = _currentProjectName;
+  }
 }
 
 window.markProjectDirty = function(reason) {
   const wasDirty = _projectDirty;
   _recordStateTransition('dirty', reason, wasDirty);
   _projectDirty = true;
-  if (!wasDirty) {
-    _updateProjectTitleUI();
-  }
+  _updateProjectTitleUI();
   if (window.ProjectRecovery && typeof window.ProjectRecovery.notifyMutation === 'function') {
     window.ProjectRecovery.notifyMutation(reason, !wasDirty);
   }
@@ -83,6 +101,11 @@ window.ProjectStateAnalyze = function() {
 };
 
 window._updateProjectTitleUI = _updateProjectTitleUI;
+
+if (typeof document !== 'undefined') {
+  _updateProjectTitleUI();
+  document.addEventListener('DOMContentLoaded', _updateProjectTitleUI);
+}
 
 window.confirmDiscardUnsavedChanges = async function() {
   if (!_projectDirty) return true;

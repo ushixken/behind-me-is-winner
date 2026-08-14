@@ -75,15 +75,15 @@
   };
 
   async function exportProject(){
-    const result = await buildProjectArchive({
-      finishDrawing: true,
-      awaitCommits: true,
-      compressionLevel: 6
-    });
-
     const hasPicker = typeof window !== 'undefined' && typeof window.showSaveFilePicker === 'function';
 
     if(hasPicker){
+      const result = await buildProjectArchive({
+        finishDrawing: true,
+        awaitCommits: true,
+        compressionLevel: 6
+      });
+
       _lastSaveDiagnostics.path = 'file-system-access';
       _lastSaveDiagnostics.fallbackReason = null;
       _lastSaveDiagnostics.canceled = false;
@@ -144,21 +144,61 @@
     _lastSaveDiagnostics.fallbackReason = (typeof window !== 'undefined' && !window.isSecureContext)
       ? 'insecure-context'
       : 'showSaveFilePicker-unsupported';
-    _lastSaveDiagnostics.chosenFilename = result.filename;
     _lastSaveDiagnostics.canceled = false;
     _lastSaveDiagnostics.writeSucceeded = false;
+
+    let chosenInput = null;
+    if(typeof window.promptProjectDownload === 'function'){
+      chosenInput = await window.promptProjectDownload({
+        title: 'Download Project',
+        defaultValue: currentName(),
+        okText: 'Download Project',
+        cancelText: 'Cancel'
+      });
+    } else if(typeof promptProjectDownload === 'function'){
+      chosenInput = await promptProjectDownload({
+        title: 'Download Project',
+        defaultValue: currentName(),
+        okText: 'Download Project',
+        cancelText: 'Cancel'
+      });
+    } else {
+      chosenInput = currentName();
+    }
+
+    if(chosenInput === null){
+      _lastSaveDiagnostics.canceled = true;
+      return { canceled: true };
+    }
+
+    let sanitizedBase = String(chosenInput || '').trim();
+    if(sanitizedBase.toLowerCase().endsWith(EXT.toLowerCase())){
+      sanitizedBase = sanitizedBase.slice(0, -EXT.length).trim();
+    }
+    sanitizedBase = safeName(sanitizedBase);
+    if(!sanitizedBase || sanitizedBase === '.') sanitizedBase = 'Untitled';
+
+    window._projectName = sanitizedBase;
+    const finalFilename = sanitizedBase + EXT;
+    _lastSaveDiagnostics.chosenFilename = finalFilename;
+
+    const result = await buildProjectArchive({
+      finishDrawing: true,
+      awaitCommits: true,
+      compressionLevel: 6
+    });
 
     const url = URL.createObjectURL(result.blob);
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = result.filename;
+    anchor.download = finalFilename;
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
 
     return {
-      name: result.filename,
+      name: finalFilename,
       size: result.size,
       layers: result.layers,
       savedViaPicker: false
@@ -179,7 +219,7 @@
       for(const item of saved.frames){const blob=await zipBlob(zip,item.path,'Layer '+(li+1)+', frame '+(item.frame+1));layer.frames[item.frame]=await decodePng(blob,dimensions.width,dimensions.height,'Layer '+(li+1)+', frame '+(item.frame+1));}
       if(saved.extendedFrames&&saved.extendedFrames.length){layer.extendedFrames={};for(const item of saved.extendedFrames){const blob=await zipBlob(zip,item.path,'Extended artwork for layer '+(li+1)+', frame '+(item.frame+1)),canvas=await decodePng(blob,null,null,'Extended artwork for layer '+(li+1)+', frame '+(item.frame+1));if(canvas.width!==item.width||canvas.height!==item.height)fail('Extended artwork dimensions are invalid');layer.extendedFrames[item.frame]={canvas,x:Number(item.x)||0,y:Number(item.y)||0};}}
       if(saved.smartRaster){const smart=clone(saved.smartRaster);for(const [fi,frame] of Object.entries(smart.frames||{})){if(frame&&frame.rgbaPath){const blob=await zipBlob(zip,frame.rgbaPath,'Smart Raster artwork for layer '+(li+1)+', frame '+(Number(fi)+1));await decodePng(blob,dimensions.width,dimensions.height,'Smart Raster artwork for layer '+(li+1)+', frame '+(Number(fi)+1));frame.rgba=await blobDataUrl(blob);delete frame.rgbaPath;}}const oldW=CW,oldH=CH;try{CW=dimensions.width;CH=dimensions.height;await window.SmartRasterLayer.deserializeLayer(layer,smart);}finally{CW=oldW;CH=oldH;}}
-      if(saved.cmFrames){layer.cmFrames={};Object.entries(layer.cmFrames).forEach(([fi,frame])=>{const width=int(frame.width,'CM frame width',1,16384),height=int(frame.height,'CM frame height',1,16384);if(width!==dimensions.width||height!==dimensions.height)fail('CM frame dimensions do not match the project canvas');const bytes=base64Bytes(frame.pixels,width*height*4,'CM frame');layer.cmFrames[fi]={width,height,pixels:new Uint32Array(bytes.buffer)};});}
+      if(saved.cmFrames){layer.cmFrames={};Object.entries(saved.cmFrames).forEach(([fi,frame])=>{const width=int(frame.width,'CM frame width',1,16384),height=int(frame.height,'CM frame height',1,16384);if(width!==dimensions.width||height!==dimensions.height)fail('CM frame dimensions do not match the project canvas');const bytes=base64Bytes(frame.pixels,width*height*4,'CM frame');layer.cmFrames[fi]={width,height,pixels:new Uint32Array(bytes.buffer)};});}
       stagedLayers.push(layer);
     }
     return{manifest,dimensions,layers:stagedLayers};
@@ -223,7 +263,7 @@
           }
           if(typeof window.markProjectClean==='function')window.markProjectClean('save');
         }else{
-          const msg='Download initiated for "'+result.name+'".\n\nYour browser is managing this download. The project will remain marked as unsaved.';
+          const msg='Download started for "'+result.name+'".\n\nFor the most reliable Save Project experience, use a browser that supports verified file saving, such as Chrome or Edge.\n\nYour browser is managing this download.';
           if(typeof window.siteAlert==='function'){
             await window.siteAlert(msg,{title:'Download Started',okText:'OK'});
           }else if(typeof siteAlert==='function'){
@@ -231,6 +271,7 @@
           }else{
             showInfo(msg,'Download Started');
           }
+          if(typeof window.markProjectClean==='function')window.markProjectClean('save');
         }
       }catch(error){
         if(error && (error.name === 'AbortError' || error.code === 20)) return;
