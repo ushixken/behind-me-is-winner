@@ -471,8 +471,30 @@ function recomposite(li,fi,dirtyRect){
   if(typeof _hrStageDiagCaptureE1==='function')_hrStageDiagCaptureE1(artworkCompositeC);
   drawBg();
   if(window.LightTable&&typeof window.LightTable.render==='function') window.LightTable.render(compCtx);
+  // Onion skin must render BELOW the current artwork and ABOVE the
+  // background/LightTable layer. At this exact point compC holds ONLY the
+  // background (+ optional LightTable) -- artworkCompositeC has not been
+  // drawn into it yet -- so this is the correct moment to source the
+  // display's background layer, before compC gets artwork baked on top of
+  // it below. displayCtx itself is never clipped to the dirty rect (see
+  // the existing full-canvas-blit note further down), matching prior
+  // behavior.
+  displayCtx.clearRect(0,0,CW,CH);
+  displayCtx.imageSmoothingEnabled=true;
+  displayCtx.imageSmoothingQuality='high';
+  displayCtx.filter = _displayBlurPx>0.05 ? `blur(${_displayBlurPx}px)` : 'none';
+  const firstDabDisplayBlitStart=firstDabDiagnosticStart?performance.now():0;
+  displayCtx.drawImage(compC,0,0);   // background (+ LightTable)
+  displayCtx.drawImage(onionC,0,0);  // onion, above background, below artwork
   compCtx.globalAlpha=1;
   compCtx.drawImage(artworkCompositeC,0,0);
+  // Current artwork, drawn to the display exactly once (directly from
+  // artworkCompositeC, not via compC) so it ends up on top of onion
+  // without being double-composited -- compC below still gets the exact
+  // same bg+artwork bake it always has, preserving its invariant for
+  // export/color-sampling consumers.
+  displayCtx.drawImage(artworkCompositeC,0,0);
+  const firstDabDisplayBlitDuration=firstDabDisplayBlitStart?performance.now()-firstDabDisplayBlitStart:0;
   // Phase 11A.37 Stage E2: compC immediately after artworkCompositeC has
   // been composited into it (bg fill + optional LightTable render already
   // applied above, artwork now drawn on top). Read-only, guarded no-op
@@ -501,32 +523,6 @@ function recomposite(li,fi,dirtyRect){
   const displayUploadStart=presentationStart?performance.now():0;
   if(presentationStart)latencyProfiler.point('display-upload-begins');
   if(presentationStart)latencyProfiler.point('final-composite-copy-ready',{canvas:{width:CW,height:CH}});
-  displayCtx.clearRect(0,0,CW,CH);
-  displayCtx.imageSmoothingEnabled=true;
-  displayCtx.imageSmoothingQuality='high';
-  displayCtx.filter = _displayBlurPx>0.05 ? `blur(${_displayBlurPx}px)` : 'none';
-  const firstDabDisplayBlitStart=firstDabDiagnosticStart?performance.now():0;
-  // Phase 11A.39 fix: artworkCompositeC was ALREADY composited into compC
-  // above (line ~469: `compCtx.drawImage(artworkCompositeC,0,0)`), so compC
-  // already contains the full, correctly-stacked artwork (including the
-  // active/in-progress stroke). The old code then drew artworkCompositeC
-  // into displayC a THIRD time (after compC and after onionC), which
-  // re-applied source-over compositing of every partial-alpha/AA pixel of
-  // the active stroke a second time. That double source-over is exactly
-  // what darkened committed strokes relative to the live GPU preview
-  // (opaque core pixels were unaffected by design -- opaque-over-opaque
-  // does not change -- only AA/partial-alpha edges visibly darkened),
-  // matching the E2->E3 diagnostic exactly.
-  //
-  // Fix: draw onionC UNDERNEATH compC instead of drawing artworkCompositeC
-  // on top a second time. compC already has the artwork on top of bg/other
-  // layers, so onion skin must render below it (onion is reference-only and
-  // should never cover the active artwork). This preserves the original
-  // visual intent (current work drawn over onion skin) without the
-  // duplicate artwork composite.
-  displayCtx.drawImage(onionC,0,0);
-  displayCtx.drawImage(compC,0,0);
-  const firstDabDisplayBlitDuration=firstDabDisplayBlitStart?performance.now()-firstDabDisplayBlitStart:0;
   displayCtx.filter='none';
   // Phase 11A.37 Stage E3: displayC is the final visible Canvas2D surface
   // -- this is the last point at which its pixels change for this
