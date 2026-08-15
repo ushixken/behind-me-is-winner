@@ -6,9 +6,11 @@
   const DB_VERSION = 1;
   const STORE_NAME = 'recoverySnapshots';
   const MAX_GENERATIONS = 5;
-  const DEBOUNCE_MS = 15000;    // 15 seconds after latest mutation
-  const MAX_INTERVAL_MS = 60000; // 60 seconds maximum dirty interval
-  const RETRY_DEFER_MS = 2500;   // 2.5 seconds retry if stylus/drawing active
+  const PREF_STORAGE_KEY = 'animator_recovery_autosave_delay';
+  const DEFAULT_DEBOUNCE_MS = 5000;  // 5 seconds default
+  const ALLOWED_DELAYS = [2000, 5000, 10000, 15000, 30000];
+  const MAX_INTERVAL_MS = 60000;     // 60 seconds maximum dirty interval
+  const RETRY_DEFER_MS = 2500;       // 2.5 seconds retry if stylus/drawing active
 
   let _dbPromise = null;
   let _debounceTimer = null;
@@ -21,6 +23,71 @@
   let _latestBytes = 0;
   let _cachedCount = 0;
   let _lastError = null;
+
+  function getAutosaveDelayMs(){
+    try {
+      const stored = localStorage.getItem(PREF_STORAGE_KEY);
+      if(stored === 'off' || stored === '0') return 0;
+      if(stored !== null){
+        const num = Number(stored);
+        if(ALLOWED_DELAYS.includes(num)) return num;
+      }
+    } catch(e) {}
+    return DEFAULT_DEBOUNCE_MS;
+  }
+
+  function setAutosaveDelayMs(val){
+    let toStore = '5000';
+    let delayMs = DEFAULT_DEBOUNCE_MS;
+    if(val === 'off' || val === 0 || val === '0'){
+      toStore = 'off';
+      delayMs = 0;
+    } else {
+      const num = Number(val);
+      if(ALLOWED_DELAYS.includes(num)){
+        toStore = String(num);
+        delayMs = num;
+      }
+    }
+    try {
+      localStorage.setItem(PREF_STORAGE_KEY, toStore);
+    } catch(e) {}
+
+    // Reschedule or cancel pending timers immediately
+    if(delayMs <= 0){
+      clearTimers();
+    } else {
+      if(typeof window.isProjectDirty === 'function' && window.isProjectDirty()){
+        scheduleAutosave();
+      } else {
+        clearTimers();
+      }
+    }
+    _syncPreferenceUI();
+  }
+
+  function _syncPreferenceUI(){
+    if(typeof document === 'undefined') return;
+    const select = document.getElementById('pref-recovery-delay');
+    if(!select) return;
+    const delay = getAutosaveDelayMs();
+    select.value = delay === 0 ? 'off' : String(delay);
+  }
+
+  function _initPreferenceUI(){
+    if(typeof document === 'undefined') return;
+    const select = document.getElementById('pref-recovery-delay');
+    if(select){
+      _syncPreferenceUI();
+      select.onchange = e => {
+        setAutosaveDelayMs(e.target.value);
+      };
+    }
+    const prefBtn = document.getElementById('dd-preferences');
+    if(prefBtn){
+      prefBtn.addEventListener('click', _syncPreferenceUI);
+    }
+  }
 
   function isSupported(){
     return typeof window !== 'undefined' && 'indexedDB' in window && window.indexedDB !== null;
@@ -123,6 +190,11 @@
       clearTimers();
       return;
     }
+    const delayMs = getAutosaveDelayMs();
+    if(delayMs <= 0){
+      clearTimers();
+      return;
+    }
     if(_firstDirtyTime === null){
       _firstDirtyTime = Date.now();
     }
@@ -132,7 +204,7 @@
     _debounceTimer = setTimeout(() => {
       _debounceTimer = null;
       triggerAutosave('debounce');
-    }, DEBOUNCE_MS);
+    }, delayMs);
 
     if(_maxTimer === null){
       _maxTimer = setTimeout(() => {
@@ -360,6 +432,7 @@
     return {
       supported: isSupported(),
       dirty: typeof window.isProjectDirty === 'function' ? window.isProjectDirty() : false,
+      autosaveDelayMs: getAutosaveDelayMs(),
       saveInProgress: _isSaving,
       pendingAutosave: _debounceTimer !== null || _maxTimer !== null,
       snapshotCount: count,
@@ -368,6 +441,148 @@
       lastSuccessTime: _lastSuccessTime,
       lastError: _lastError ? (_lastError.message || String(_lastError)) : null
     };
+  }
+
+  function formatRelativeTime(timestamp){
+    if(!timestamp) return 'Recently';
+    const elapsedSec = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+    if(elapsedSec < 30) return 'Just now';
+    if(elapsedSec < 90) return '1 minute ago';
+    const elapsedMin = Math.floor(elapsedSec / 60);
+    if(elapsedMin < 60) return elapsedMin + ' minutes ago';
+    const elapsedHours = Math.floor(elapsedMin / 60);
+    if(elapsedHours === 1) return '1 hour ago';
+    if(elapsedHours < 24) return elapsedHours + ' hours ago';
+    const elapsedDays = Math.floor(elapsedHours / 24);
+    if(elapsedDays === 1) return 'Yesterday';
+    if(elapsedDays < 30) return elapsedDays + ' days ago';
+    return new Date(timestamp).toLocaleDateString();
+  }
+
+  let _recoveryModalEl = null;
+  function _ensureRecoveryModal(){
+    if(_recoveryModalEl && document.body && document.body.contains(_recoveryModalEl)) return _recoveryModalEl;
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'modal-project-recovery';
+    overlay.innerHTML =
+      '<div class="modal site-dialog-modal" style="min-width:320px;max-width:400px;">' +
+        '<h2 id="recovery-dialog-title">Recover Project?</h2>' +
+        '<div class="site-dialog-message" style="margin-bottom:12px;font-size:12px;color:var(--text2);line-height:1.4;">' +
+          'An unsaved project was found.' +
+        '</div>' +
+        '<div style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:10px 12px;margin-bottom:14px;font-size:12px;color:var(--text);display:flex;flex-direction:column;gap:5px;">' +
+          '<div style="display:flex;justify-content:space-between;"><span style="color:var(--text2);">Project:</span><span style="font-weight:500;word-break:break-all;margin-left:8px;" id="recovery-meta-name">Untitled</span></div>' +
+          '<div style="display:flex;justify-content:space-between;"><span style="color:var(--text2);">Recovered:</span><span id="recovery-meta-time">Recently</span></div>' +
+          '<div style="display:flex;justify-content:space-between;"><span style="color:var(--text2);">Layers:</span><span id="recovery-meta-layers">1</span></div>' +
+          '<div style="display:flex;justify-content:space-between;"><span style="color:var(--text2);">Frames:</span><span id="recovery-meta-frames">1</span></div>' +
+        '</div>' +
+        '<div style="font-size:12px;color:var(--text2);margin-bottom:16px;">' +
+          'Would you like to recover it?' +
+        '</div>' +
+        '<div class="modal-actions" id="recovery-dialog-actions" style="display:flex;gap:8px;justify-content:flex-end;">' +
+          '<button class="modal-btn" id="recovery-dialog-discard">Discard</button>' +
+          '<button class="modal-btn primary" id="recovery-dialog-recover">Recover Project</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    _recoveryModalEl = overlay;
+    return overlay;
+  }
+
+  function showRecoveryPrompt(snapshot){
+    const overlay = _ensureRecoveryModal();
+    const nameEl = overlay.querySelector('#recovery-meta-name');
+    const timeEl = overlay.querySelector('#recovery-meta-time');
+    const layersEl = overlay.querySelector('#recovery-meta-layers');
+    const framesEl = overlay.querySelector('#recovery-meta-frames');
+    const recoverBtn = overlay.querySelector('#recovery-dialog-recover');
+    const discardBtn = overlay.querySelector('#recovery-dialog-discard');
+
+    nameEl.textContent = snapshot.projectName || 'Untitled';
+    timeEl.textContent = formatRelativeTime(snapshot.timestamp);
+    layersEl.textContent = String(snapshot.layerCount || 1);
+    framesEl.textContent = String(snapshot.frameCount || 1);
+
+    overlay.classList.add('visible');
+
+    return new Promise(resolve => {
+      function cleanup(action){
+        overlay.classList.remove('visible');
+        recoverBtn.removeEventListener('click', onRecover);
+        discardBtn.removeEventListener('click', onDiscard);
+        document.removeEventListener('keydown', onKey);
+        resolve(action);
+      }
+      function onRecover(){ cleanup('recover'); }
+      function onDiscard(){ cleanup('discard'); }
+      function onKey(e){
+        if(e.key === 'Escape'){ e.stopPropagation(); cleanup('discard'); }
+        else if(e.key === 'Enter'){ e.stopPropagation(); cleanup('recover'); }
+      }
+      recoverBtn.addEventListener('click', onRecover);
+      discardBtn.addEventListener('click', onDiscard);
+      document.addEventListener('keydown', onKey);
+      setTimeout(() => recoverBtn.focus(), 30);
+    });
+  }
+
+  async function showRecoveryFailedPrompt(){
+    if(typeof window.siteConfirm === 'function'){
+      const discard = await window.siteConfirm(
+        'The recovery snapshot could not be opened.\n\nWould you like to discard this recovery snapshot?',
+        {
+          title: 'Recovery Failed',
+          okText: 'Discard Recovery',
+          cancelText: 'Continue',
+          danger: true
+        }
+      );
+      return discard ? 'discard' : 'continue';
+    } else if(typeof window.siteAlert === 'function'){
+      await window.siteAlert('The recovery snapshot could not be opened.', { title: 'Recovery Failed' });
+      return 'discard';
+    }
+    return 'discard';
+  }
+
+  let _recoveryCheckRan = false;
+  async function checkStartupRecovery(){
+    if(_recoveryCheckRan) return;
+    _recoveryCheckRan = true;
+
+    if(!isSupported()) return;
+    let latest = null;
+    try {
+      latest = await getLatest();
+    } catch(err) {
+      console.warn('[ProjectRecovery] Startup check error:', err);
+      return;
+    }
+
+    if(!latest || !latest.blob) return;
+
+    const action = await showRecoveryPrompt(latest);
+    if(action === 'recover'){
+      try {
+        if(!window.ProjectIO || typeof window.ProjectIO.importProject !== 'function'){
+          throw new Error('Project loader is unavailable');
+        }
+        await window.ProjectIO.importProject(latest.blob, { isRecovery: true });
+      } catch(err) {
+        console.error('[ProjectRecovery] Recovery import failed:', err);
+        const failedAction = await showRecoveryFailedPrompt();
+        if(failedAction === 'discard'){
+          await deleteSnapshot(latest.id);
+        }
+      }
+    } else if(action === 'discard'){
+      try {
+        await clearAll();
+      } catch(err) {
+        console.warn('[ProjectRecovery] Discard clear error:', err);
+      }
+    }
   }
 
   function notifyMutation(reason, isFirstMutation){
@@ -397,9 +612,26 @@
     });
   }
 
-  // Initialize count on startup
+  // Initialize count and preference UI on startup
   if(isSupported()){
     countSnapshots().catch(() => {});
+  }
+
+  if(typeof window !== 'undefined'){
+    if(document.readyState === 'loading'){
+      document.addEventListener('DOMContentLoaded', _initPreferenceUI);
+    } else {
+      _initPreferenceUI();
+    }
+  }
+
+  // Startup recovery check hook
+  if(typeof window !== 'undefined'){
+    if(document.readyState === 'complete'){
+      setTimeout(checkStartupRecovery, 50);
+    } else {
+      window.addEventListener('load', () => setTimeout(checkStartupRecovery, 50));
+    }
   }
 
   window.ProjectRecovery = {
@@ -411,7 +643,11 @@
     deleteSnapshot,
     analyze,
     notifyMutation,
-    notifyClean
+    notifyClean,
+    checkStartupRecovery,
+    getAutosaveDelay: getAutosaveDelayMs,
+    setAutosaveDelay: setAutosaveDelayMs,
+    schedule: scheduleAutosave
   };
 
 })();

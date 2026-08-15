@@ -243,7 +243,7 @@
     return{manifest,dimensions,layers:stagedLayers,projectName:resolvedProjectName};
   }
   function applyUi(fps){fpsTl.max=MAX_FPS;fpsTl.value=Math.min(MAX_FPS,fps);fpsVal.textContent=fpsTl.value;selectedFrames.clear();selectedFrames.add(curFrame);selectedKFs.clear();}
-  async function commit(staged){
+  async function commit(staged, options = {}){
     const old={CW,CH,TOTAL,MAX_FPS,curFrame,curLayer,rangeStart,rangeEnd,loopRange,bgColor,layers,groups,palette:paletteState(),camera:window.CameraSystem?CameraSystem.snapshot():null,projectName:window._projectName,labelOffset:typeof frameLabelOffset==='number'?frameLabelOffset:0,audioWaveformHeight:window.AudioWaveformHeight?AudioWaveformHeight.value:48},doc=staged.manifest.document;
     const wasDirty=typeof window.isProjectDirty==='function'?window.isProjectDirty():false;
     try{
@@ -251,7 +251,11 @@
       if(typeof window.awaitPendingBrushCommits==='function')await window.awaitPendingBrushCommits();
       CW=staged.dimensions.width;CH=staged.dimensions.height;TOTAL=staged.dimensions.total;MAX_FPS=Number(doc.maxFps);layers=staged.layers;groups=clone(staged.manifest.groups||[]);curLayer=Number(doc.currentLayer);curFrame=Number(doc.currentFrame);rangeStart=Math.max(0,Math.min(TOTAL-1,Number(doc.rangeStart)||0));rangeEnd=Math.max(rangeStart,Math.min(TOTAL-1,Number(doc.rangeEnd==null?TOTAL-1:doc.rangeEnd)));loopRange=!!doc.loopRange;bgColor=typeof doc.backgroundColor==='string'?doc.backgroundColor:'#ffffff';window._projectName=staged.projectName||safeName(doc.name||'Untitled');if(typeof frameLabelOffset==='number')frameLabelOffset=Math.max(0,Number(staged.manifest.timeline&&staged.manifest.timeline.frameLabelOffset)||0);if(window.AudioWaveformHeight)AudioWaveformHeight.restore({audioWaveformHeight:Number(staged.manifest.timeline&&staged.manifest.timeline.audioWaveformHeight)||48});
       undoStack=[];redoStack=[];clipboard=null;styleClipboard=null;initCanvas();applyUi(Number(doc.framesPerSecond));if(window.CameraSystem)CameraSystem.load(staged.manifest.camera||null);if(staged.manifest.palette&&window.PaletteDocker)window.PaletteDocker.load(staged.manifest.palette,{persist:false});loadFrame(curLayer,curFrame);renderLayerPanel();renderTimeline();updateOnion();updateStatus();fitCanvasToView();window.dispatchEvent(new CustomEvent('project-loaded',{detail:{format:FORMAT,version:VERSION,name:window._projectName}}));
-      if(typeof window.markProjectClean==='function')window.markProjectClean('open');
+      if(options && (options.isRecovery || options.markDirty)){
+        if(typeof window.markProjectDirty==='function')window.markProjectDirty('recovered-snapshot');
+      }else{
+        if(typeof window.markProjectClean==='function')window.markProjectClean('open');
+      }
     }catch(error){
       CW=old.CW;CH=old.CH;TOTAL=old.TOTAL;MAX_FPS=old.MAX_FPS;curFrame=old.curFrame;curLayer=old.curLayer;rangeStart=old.rangeStart;rangeEnd=old.rangeEnd;loopRange=old.loopRange;bgColor=old.bgColor;layers=old.layers;groups=old.groups;if(window.CameraSystem)CameraSystem.restore(old.camera);window._projectName=old.projectName;if(typeof frameLabelOffset==='number')frameLabelOffset=old.labelOffset;if(window.AudioWaveformHeight)AudioWaveformHeight.restore({audioWaveformHeight:old.audioWaveformHeight});initCanvas();if(old.palette&&window.PaletteDocker)window.PaletteDocker.load(old.palette,{persist:false});applyUi(Math.min(Number(fpsTl.value)||PROJECT_DEFAULTS.fps,MAX_FPS));loadFrame(curLayer,curFrame);renderLayerPanel();renderTimeline();
       if(wasDirty&&typeof window.markProjectDirty==='function')window.markProjectDirty('rollback');
@@ -259,7 +263,7 @@
       throw error;
     }
   }
-  async function importProject(file){const staged=await stageProject(file);await commit(staged);return{name:window._projectName,layers:layers.length,frames:TOTAL};}
+  async function importProject(file, options = {}){const staged=await stageProject(file);await commit(staged, options);return{name:window._projectName,layers:layers.length,frames:TOTAL};}
   function busy(value){document.documentElement.style.cursor=value?'progress':'';['dd-export-project','dd-open-project'].forEach(id=>{const item=document.getElementById(id);if(item)item.classList.toggle('disabled',value);});}
   function report(error,title){console.error('[ProjectIO]',error);showInfo(error&&error.message?error.message:String(error),title);}
   function bind(){
@@ -311,5 +315,5 @@
       lastWriteSucceeded: _lastSaveDiagnostics.writeSucceeded
     };
   };
-  window.ProjectIO={format:FORMAT,version:VERSION,extension:EXT,exportProject,importProject,stageProject,buildProjectArchive,serializeProjectToBlob:buildProjectArchive,saveAnalyze:window.ProjectIOSaveAnalyze};document.addEventListener('DOMContentLoaded',bind);
+  window.ProjectIO={format:FORMAT,version:VERSION,extension:EXT,exportProject,importProject,stageProject,commit,buildProjectArchive,serializeProjectToBlob:buildProjectArchive,saveAnalyze:window.ProjectIOSaveAnalyze};document.addEventListener('DOMContentLoaded',bind);
 })();

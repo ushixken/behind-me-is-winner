@@ -21,7 +21,8 @@
     'animator_kfexp_amount':{name:'Keyframe Exposure Amount'},
     'animator_kfexp_bypass':{name:'Keyframe Exposure Bypass'},
     'animator_kfsw_step':{name:'Keyframe Switcher Step'},
-    'animator_kfsw_bypass':{name:'Keyframe Switcher Bypass'}
+    'animator_kfsw_bypass':{name:'Keyframe Switcher Bypass'},
+    'animator_recovery_autosave_delay':{name:'Recovery Autosave Delay',description:'Resets the Recovery Autosave timing interval to 5 seconds.'}
   };
   function _meta(key){return STORAGE_META[key]||{name:key,description:''};}
   function _friendlyName(key){return _meta(key).name;}

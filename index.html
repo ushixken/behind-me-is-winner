@@ -1341,6 +1341,7 @@
     <div id="pref-body">
       <div class="pref-ps-sidebar" id="pref-ps-sidebar">
         <div class="pref-ps-nav-item active" data-panel="cursor">Cursor</div>
+        <div class="pref-ps-nav-item" data-panel="recovery">Recovery</div>
         <div class="pref-ps-nav-item" data-panel="storage">Local Storage</div>
       </div>
 
@@ -1375,6 +1376,25 @@
               <span style="font-size:11px;color:var(--text2);">The active round or custom brush-tip silhouette, including roundness and rotation.</span>
             </span>
           </label>
+        </div>
+
+        <div class="pref-ps-panel" data-panel="recovery">
+          <p style="font-size:11px;color:var(--text2);margin-bottom:12px;">Controls how frequently unsaved project changes are backed up for crash recovery.</p>
+          <div style="padding:12px;border-radius:8px;border:1px solid var(--border2);background:var(--bg2);max-width:480px;display:flex;flex-direction:column;gap:8px;">
+            <div style="font-weight:600;color:var(--text);font-size:12px;">Recovery Autosave</div>
+            <div style="font-size:11px;color:var(--text2);line-height:1.4;">Keeps a temporary recovery copy of unsaved work in IndexedDB.</div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;gap:12px;">
+              <label for="pref-recovery-delay" style="font-size:12px;color:var(--text);font-weight:500;">Save recovery after:</label>
+              <select id="pref-recovery-delay" style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;color:var(--text);font-size:12px;padding:6px 10px;outline:none;cursor:pointer;">
+                <option value="off">Off</option>
+                <option value="2000">2 seconds</option>
+                <option value="5000">5 seconds</option>
+                <option value="10000">10 seconds</option>
+                <option value="15000">15 seconds</option>
+                <option value="30000">30 seconds</option>
+              </select>
+            </div>
+          </div>
         </div>
 
         <div class="pref-ps-panel" data-panel="storage">
