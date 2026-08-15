@@ -246,12 +246,22 @@
       return out;
     }
 
+    struct PresentUniforms {
+      opacity: f32,
+    };
+
     @group(0) @binding(0) var texSampler: sampler;
     @group(0) @binding(1) var texTarget: texture_2d<f32>;
+    @group(0) @binding(2) var<uniform> presentUniforms: PresentUniforms;
 
     @fragment
     fn fs(in: VertexOutput) -> @location(0) vec4f {
-      return textureSample(texTarget, texSampler, in.uv);
+      let sample = textureSample(texTarget, texSampler, in.uv);
+      // texTarget is premultiplied-alpha; scale rgb and alpha together by
+      // stroke-level presentation opacity to preserve premultiplied
+      // semantics (never scale alpha alone).
+      let opacity = presentUniforms.opacity;
+      return vec4f(sample.rgb * opacity, sample.a * opacity);
     }
   `;
 
@@ -414,6 +424,14 @@
       this.presentBindGroupLayout = null;
       this.presentSampler = null;
       this.overlayPresented = false;
+
+      // Stroke-level live-presentation opacity (mirrors Hard Round GPU's
+      // `presentationOpacity`). Presentation-only: never baked into the
+      // authoritative shadow/resolved textures or individual dab alpha.
+      // Reset to 1.0 on every beginStroke() so a stale value can never
+      // leak into a later stroke.
+      this.presentationOpacity = 1;
+      this.presentUniformBuffer = null;
 
       this.dirtyBounds = null;
       this.resolveCount = 0;
@@ -625,6 +643,7 @@
           entries: [
             { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
             { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+            { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
           ]
         });
 
@@ -647,6 +666,14 @@
           magFilter: 'linear',
           minFilter: 'linear'
         });
+
+        // Minimal uniform buffer holding just the stroke-level presentation
+        // opacity. WebGPU uniform buffers must be a multiple of 16 bytes.
+        this.presentUniformBuffer = this.device.createBuffer({
+          size: 16,
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+        });
+
         this.presentDevice = this.device;
 
         return true;
@@ -699,12 +726,19 @@
       }
 
       try {
+        const rawOpacity = this.presentationOpacity;
+        const opacity = (typeof rawOpacity === 'number' && isFinite(rawOpacity))
+          ? Math.max(0, Math.min(1, rawOpacity))
+          : 1;
+        this.device.queue.writeBuffer(this.presentUniformBuffer, 0, new Float32Array([opacity, 0, 0, 0]));
+
         const currentView = this.presentContext.getCurrentTexture().createView();
         const bindGroup = this.device.createBindGroup({
           layout: this.presentBindGroupLayout,
           entries: [
             { binding: 0, resource: this.presentSampler },
-            { binding: 1, resource: sourceView }
+            { binding: 1, resource: sourceView },
+            { binding: 2, resource: { buffer: this.presentUniformBuffer } }
           ]
         });
 
@@ -1034,6 +1068,9 @@
       this.nonTransparentPixelCount = 0;
       this.dirtyBounds = null;
       this.sessionSafe = true;
+      this.presentationOpacity = (typeof settings.presentationOpacity === 'number' && isFinite(settings.presentationOpacity))
+        ? Math.max(0, Math.min(1, settings.presentationOpacity))
+        : 1;
 
       this.resourcePromise = (async () => {
         const ok = await this.initPipeline();

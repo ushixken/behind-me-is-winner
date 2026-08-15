@@ -1,4 +1,4 @@
-//
+﻿//
 // DRAWING Ã¢â‚¬â€ getPos uses activeC's own getBoundingClientRect()
 // which accounts for the CSS transform, giving pixel-perfect coords
 //
@@ -8570,7 +8570,11 @@ function _brushPointerDown(e){
     const targetW = _strokeCanvas ? _strokeCanvas.width : (activeC ? activeC.width : 1000);
     const targetH = _strokeCanvas ? _strokeCanvas.height : (activeC ? activeC.height : 1000);
     if (window._customTipGpuRenderer && typeof window._customTipGpuRenderer.beginStroke === 'function') {
-      window._customTipGpuRenderer.beginStroke({ width: targetW, height: targetH, strokeId: _activeStrokeSession });
+      // Stroke-level live-presentation opacity only (mirrors Hard Round's
+      // hardRoundRenderer.presentationOpacity = brushOpacity). Never baked
+      // into dab alpha/authoritative textures; final commit still applies
+      // brushOpacity once via destCtx.globalAlpha in _commitStrokeCanvas.
+      window._customTipGpuRenderer.beginStroke({ width: targetW, height: targetH, strokeId: _activeStrokeSession, presentationOpacity: Math.max(0, Math.min(1, brushOpacity)) });
     }
     // Pre-cache paper texture at stroke-begin so it's warm at pointer-up
     if (window.brushTextureEnabled && window.brushTextureCanvas && typeof window.CustomTipGpuResources !== 'undefined') {
@@ -9315,4 +9319,3 @@ window.CustomBrushAnalyzeResolvedDabs = function() {
     taperReplayCount
   };
 };
-
