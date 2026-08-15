@@ -8386,6 +8386,77 @@ function _endVisibleCanvasColorSampling(pointerId){
 // crosses into the canvas, dab-walking naturally starts producing visible
 // pixels exactly where the stroke path enters the canvas Ã¢â‚¬â€ no special
 // "entry" case needed, no gap, no restart.
+let _pendingDeferredStroke = null;
+
+function _hasPendingBrushCommits(){
+  const pendingHardRound = typeof _hardRoundPendingCommitCount === 'number' && _hardRoundPendingCommitCount > 0;
+  const pendingCustomTip = typeof _customTipPendingCommitCount === 'number' && _customTipPendingCommitCount > 0;
+  return pendingHardRound || pendingCustomTip;
+}
+
+function _clonePointerEvent(e){
+  if(!e) return null;
+  const coalesced = typeof e.getCoalescedEvents === 'function'
+    ? e.getCoalescedEvents().map(ev => _clonePointerEvent(ev))
+    : [];
+  return {
+    type: e.type,
+    pointerId: e.pointerId,
+    pointerType: e.pointerType,
+    button: e.button,
+    buttons: e.buttons,
+    clientX: e.clientX,
+    clientY: e.clientY,
+    pressure: e.pressure,
+    timeStamp: Number.isFinite(e.timeStamp) ? e.timeStamp : performance.now(),
+    preventDefault: () => {},
+    getCoalescedEvents: () => coalesced,
+  };
+}
+
+function _deferBrushPointerDown(e){
+  const deferred = {
+    pointerId: e.pointerId,
+    pointerType: e.pointerType,
+    downEvent: _clonePointerEvent(e),
+    queuedMoves: [],
+    upEvent: null,
+    cancelled: false,
+  };
+  _pendingDeferredStroke = deferred;
+  try {
+    if (typeof activeC.setPointerCapture === 'function') {
+      activeC.setPointerCapture(e.pointerId);
+    }
+  } catch(_) {}
+
+  if (typeof window.awaitPendingBrushCommits === 'function') {
+    window.awaitPendingBrushCommits().then(() => {
+      if (_pendingDeferredStroke !== deferred || deferred.cancelled) return;
+      _pendingDeferredStroke = null;
+      if (typeof _hardRoundSetGpuOverlayVisible === 'function' && window.HardRoundOverlayOwnerStrokeId == null) {
+        _hardRoundSetGpuOverlayVisible(false, 'deferred-stroke-barrier-settled');
+      }
+      _brushPointerDown(deferred.downEvent);
+      for (const mv of deferred.queuedMoves) {
+        if (deferred.cancelled) break;
+        _handleMoveEvent(mv);
+      }
+      if (deferred.upEvent && !deferred.cancelled) {
+        _pointerEndStroke(deferred.upEvent);
+      }
+    }).catch(err => {
+      console.error('[BrushEngine] Commit barrier failed before stroke initialization:', err);
+      if (_pendingDeferredStroke === deferred) {
+        _pendingDeferredStroke = null;
+      }
+    });
+  } else {
+    _pendingDeferredStroke = null;
+    _brushPointerDown(deferred.downEvent);
+  }
+}
+
 function _brushPointerDown(e){
   _hardRoundPointerDownAt=performance.now();
   _hrFsRecordInput('pointerdown', e);
@@ -8412,6 +8483,10 @@ function _brushPointerDown(e){
   if(drawing||_inStroke||lineStart||_colorEraserOwnership){
     _traceStrokeLifecycle('next-pointerdown-ends-previous',{nextPointerId:e.pointerId});
     _endStroke(_activeStrokePointerId);
+  }
+  if(_hasPendingBrushCommits()){
+    _deferBrushPointerDown(e);
+    return;
   }
   if(tool==='curve'&&_curveToolGesture&&_curveToolGesture.phase==='bending'){_curveCommitPointerId=e.pointerId;_commitCurveTool(e);return;}
   if((tool==='brush'||tool==='eraser')&&window.FirstDabLatencyProbe){window.FirstDabLatencyProbe.begin({layerType:layers[curLayer]&&layers[curLayer].type,pointerdownAt:diagnosticPointerdownEntry});window.FirstDabLatencyProbe.setupMeasure('eventValidationAndPreventDefault',diagnosticPointerdownEntry);}
@@ -8864,6 +8939,10 @@ window.cancelCurveTool=_cancelCurveTool;
 // before the browser throttles events to display refresh rate Ã¢â‚¬â€ giving every
 // real pressure value the tablet digitizer reports, not just the surviving ones.
 function _handleMoveEvent(e){
+  if(_pendingDeferredStroke && e.pointerId === _pendingDeferredStroke.pointerId){
+    _pendingDeferredStroke.queuedMoves.push(_clonePointerEvent(e));
+    return;
+  }
   const _hrMtMoveStart = _hrMtActive() ? performance.now() : null;
   _hrFsRecordInput(e.type||'pointermove', e);
   if(tool==='curve'&&_curveToolGesture&&_curveToolGesture.phase==='bending'){
@@ -8944,6 +9023,10 @@ if(_hasRawUpdate){
   });
 }
 function _pointerEndStroke(e){
+  if(_pendingDeferredStroke && e.pointerId === _pendingDeferredStroke.pointerId){
+    _pendingDeferredStroke.upEvent = _clonePointerEvent(e);
+    return;
+  }
   const finalizingStrokeSession=_activeStrokeSession;
   const smartPointerupTiming=drawing&&_hardRoundStrokeActive&&_hardRoundActiveContext?_hrSmartPointerupBegin(finalizingStrokeSession,!!_hardRoundActiveContext.smartRaster,e.timeStamp):null;
   if(_hardRoundStrokeActive) _hrPerfMarkPointerup(_activeStrokeSession);
@@ -9006,11 +9089,15 @@ function _pointerEndStroke(e){
     if(_inStroke){_inStroke=false;_commitStrokeCanvas();}_cleanupErasedSmartOwnership();_clearLinePreviewCanvas(_strokeCanvas,_strokeCtx);_clearLinePreviewCanvas(_texturedStrokeCanvas,_texturedStrokeCtx);_clearLinePreviewCanvas(_strokePreviewCanvas,_strokePreviewCtx);lineStart=null;_lineDragging=false;_linePressureSamples=[];_lineGesture=null;_linePreviewBounds=null;_linePreviewPreviousEndpoint=null;saveActiveToKey();
   }else if(drawing && _hardRoundStrokeActive && _hardRoundCore){
     drawing=false;
+    _hideStabilizerLeash();
     const finalRaw=getPos(e);
     const finalPressure=_getPrototypePressure(e);
 
     _stabilizerFinalize(finalRaw.x, finalRaw.y, finalPressure, e, ()=>{
-      const finish=_hardRoundCore.finishStroke({x:finalRaw.x,y:finalRaw.y,pressure:finalPressure,pointerType:e.pointerType,timeStamp:e.timeStamp||performance.now()});
+      const endpoint = (_hardRoundCore.lastInputRaw && Number.isFinite(_hardRoundCore.lastInputRaw.x) && Number.isFinite(_hardRoundCore.lastInputRaw.y))
+        ? _hardRoundCore.lastInputRaw
+        : finalRaw;
+      const finish=_hardRoundCore.finishStroke({x:endpoint.x,y:endpoint.y,pressure:finalPressure,pointerType:e.pointerType,timeStamp:e.timeStamp||performance.now()});
       _traceStrokeLifecycle('hardround-finishStroke',{segmentCount:finish.segments?finish.segments.length:0,submittedSegmentCount:0,mode:finish.mode});
       if(window.HardRoundDebugCaptureLastLiveFrame&&window.HardRoundGeometryMutationLog){
         window.HardRoundGeometryMutationLog.push({
@@ -9321,6 +9408,13 @@ function _pointerEndStroke(e){
       finishHardRoundStroke();
     }
     });
+    const firstStepDt = 1 / 60;
+    const firstStepNow = performance.now() + 16.67;
+    _stabilizerAdvance(firstStepDt, firstStepNow);
+    _stabilizerLastAdvanceT = firstStepNow;
+    if(_hardRoundStrokeActive && _hardRoundRenderer){
+      _hardRoundRequestLivePreview(_hardRoundRenderer, true);
+    }
     return; // finalization happens in the continuation above, not the shared tail below
   }else if(drawing){
     const finalRaw=getPos(e);
@@ -9395,8 +9489,20 @@ activeC.addEventListener('pointerup',e=>{
   _pointerEndStroke(e);
   if(activeC.hasPointerCapture(e.pointerId))activeC.releasePointerCapture(e.pointerId);
 });
-activeC.addEventListener('pointercancel',e=>{_endVisibleCanvasColorSampling(e.pointerId);_endStroke(e.pointerId);});
-activeC.addEventListener('lostpointercapture',e=>{_endVisibleCanvasColorSampling(e.pointerId);if(tool==='curve'&&_curveToolGesture&&_curveToolGesture.phase==='bending')return;_endStroke(e.pointerId);});
+activeC.addEventListener('pointercancel',e=>{
+  if(_pendingDeferredStroke && e.pointerId === _pendingDeferredStroke.pointerId){
+    _pendingDeferredStroke.cancelled = true;
+    _pendingDeferredStroke = null;
+  }
+  _endVisibleCanvasColorSampling(e.pointerId);_endStroke(e.pointerId);
+});
+activeC.addEventListener('lostpointercapture',e=>{
+  if(_pendingDeferredStroke && e.pointerId === _pendingDeferredStroke.pointerId){
+    _pendingDeferredStroke.cancelled = true;
+    _pendingDeferredStroke = null;
+  }
+  _endVisibleCanvasColorSampling(e.pointerId);if(tool==='curve'&&_curveToolGesture&&_curveToolGesture.phase==='bending')return;_endStroke(e.pointerId);
+});
 
 window.CustomBrushAnalyzeResolvedDabs = function() {
   const log = window._resolvedCustomTipDabLog || [];
