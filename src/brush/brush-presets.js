@@ -283,26 +283,53 @@ function updateBlendModeUI(){
   // on/off checkbox. Selecting weak/medium/strong here always implies AA is
   // ON (matches Requirement 11); it never sets 'none' itself -- that's only
   // reachable via the Tool Settings checkbox.
-  function _setBrushAAMode(mode){
+  function _setBrushAAMode(mode, forceEnable=true){
     const m=(mode==='weak'||mode==='medium'||mode==='strong')?mode:'medium';
     _lastEnabledAAMode=m;
     window.brushAAMode=m;
-    if(!brushAA) _setBrushAA(true); else { _aaDabCache.clear();_stampCache.clear();_tipDabCache.clear(); }
+    if(forceEnable && !brushAA) _setBrushAA(true); else { _aaDabCache.clear();_stampCache.clear();_tipDabCache.clear(); }
     _syncAAModeUI();
     if(typeof applyTransform==='function')applyTransform();
   }
   window._setBrushAAMode=_setBrushAAMode;
+  window._syncAAModeUI=_syncAAModeUI;
+
+  function _bindMouseBlurOnToggle(checkbox){
+    if(!checkbox) return;
+    let pointerOrigin = false;
+    const markPointer = () => { pointerOrigin = true; };
+    checkbox.addEventListener('pointerdown', markPointer);
+    checkbox.addEventListener('mousedown', markPointer);
+    const label = checkbox.closest('label') || checkbox.parentElement;
+    if(label && label !== checkbox){
+      label.addEventListener('pointerdown', markPointer);
+      label.addEventListener('mousedown', markPointer);
+    }
+    const releaseFocus = () => {
+      if(pointerOrigin){
+        pointerOrigin = false;
+        checkbox.blur();
+      }
+    };
+    checkbox.addEventListener('change', releaseFocus);
+    checkbox.addEventListener('click', releaseFocus);
+  }
 
   // AA checkbox in Tool Settings owns the AA enabled state.
   const tsAA=document.getElementById('ts-aa');
   tsAA.checked=brushAA;
   tsAA.onchange=()=>{
     _setBrushAA(tsAA.checked);
+    if(typeof captureLiveState==='function' && (tool==='brush'||tool==='eraser')) captureLiveState(tool);
   };
+  _bindMouseBlurOnToggle(tsAA);
   const tsAAMode=document.getElementById('ts-aa-mode');
   if(tsAAMode){
     tsAAMode.value=_lastEnabledAAMode;
-    tsAAMode.onchange=()=>{ _setBrushAAMode(tsAAMode.value); };
+    tsAAMode.onchange=()=>{
+      _setBrushAAMode(tsAAMode.value);
+      if(typeof captureLiveState==='function' && (tool==='brush'||tool==='eraser')) captureLiveState(tool);
+    };
   }
   _syncAAModeUI();
 
@@ -737,6 +764,7 @@ function updateBlendModeUI(){
       });
       source.addEventListener('input',syncFromSource);
       source.addEventListener('change',syncFromSource);
+      if(mirror.type==='checkbox') _bindMouseBlurOnToggle(mirror);
       mirrorSyncers.push(syncFromSource);
       syncFromSource();
     });
@@ -2782,25 +2810,17 @@ function applyToolPreset(json){
     ['ts-size-pressure-curve','ts-flow-pressure-curve','ts-opacity-pressure-curve'].forEach(id=>{
       const el=document.getElementById(id);if(el){el.value=s[id]||'linear';el.dispatchEvent(new Event('input',{bubbles:true}));}
     });
+    const targetAAMode = (s['ts-aa-mode']==='weak'||s['ts-aa-mode']==='strong'||s['ts-aa-mode']==='medium') ? s['ts-aa-mode'] : 'medium';
+    const isAAEnabled = s['ts-aa'] !== false && s['ts-aa'] !== 0 && s['ts-aa-mode'] !== 'none';
+    if(typeof window._setBrushAAMode === 'function'){
+      window._setBrushAAMode(targetAAMode, false);
+    }
+    if(typeof window._setBrushAA === 'function'){
+      window._setBrushAA(isAAEnabled);
+    }
+
     Object.entries(s).forEach(([key,val])=>{
-      if(key==='ts-pressure-curves') return;
-      if(key==='ts-aa-mode'){
-        // Only apply an explicit mode if AA is (or will be) enabled; a
-        // 'none' from old exports is ignored here since ts-aa itself
-        // already governs on/off (see backward-compat mapping below).
-        if(val&&val!=='none') window._setBrushAAMode(val);
-        return;
-      }
-      if(key==='ts-aa'){
-        // Backward compatibility: legacy boolean. false -> AA mode 'none',
-        // true -> AA mode 'medium' (unless a ts-aa-mode value elsewhere in
-        // this same settings object overrides it -- handled by relying on
-        // object key order: modern saves always include both keys, so
-        // ts-aa-mode is processed too and simply wins by being applied
-        // after/independently of this boolean's mode side-effect).
-        _setBrushAA(!!val);
-        return;
-      }
+      if(key==='ts-pressure-curves'||key==='ts-aa'||key==='ts-aa-mode') return;
       if(key==='ts-airbrush'){
         if(typeof window._setAirbrush==='function') window._setAirbrush(!!val);
         return;
@@ -2952,7 +2972,6 @@ function applyToolPreset(json){
     if(!preset.custom && preset.settings){
       PRESET_STRUCTURAL_KEYS.forEach(k=>{ if(k in preset.settings) savedSettings[k]=preset.settings[k]; });
     }
-    if(t==='eraser') savedSettings['ts-aa']=true;
     _applyingPresetSettings=true;
     try{
       applyPresetSettings({settings:savedSettings,runtimeAssets:preset._runtimeAssets,presetId});
@@ -2995,7 +3014,6 @@ function applyToolPreset(json){
     if(!p.custom && p.settings){
       PRESET_STRUCTURAL_KEYS.forEach(k=>{ if(k in p.settings) savedSettings[k]=p.settings[k]; });
     }
-    if(targetTool==='eraser') savedSettings['ts-aa']=true;
     _activePresetId = id;
     window._activeBrushPresetId = _activePresetId;
     _toolState[targetTool].presetId = id;
