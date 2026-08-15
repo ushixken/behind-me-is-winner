@@ -331,6 +331,27 @@
     );
   }
 
+  // The GPU paint pipeline (SHADER_WGSL's fs) writes premultiplied alpha --
+  // vec4(color * finalAlpha, finalAlpha) -- into the rgba8unorm accumulation
+  // texture, matching the premultiplied blend equations and the live
+  // WebGPU canvas's `alphaMode: 'premultiplied'` configure() call. Canvas2D
+  // ImageData/putImageData, however, always expects straight (non-
+  // premultiplied) RGBA: the byte in each channel is taken as the true
+  // color, not color*alpha. Copying the premultiplied texture bytes
+  // directly into ImageData (as the readback previously did) therefore
+  // under-represents RGB in proportion to alpha, which is most visible for
+  // light colors at low alpha where the premultiplied byte range collapses
+  // into a handful of discrete levels and reads as grain/speckle once
+  // composited. This converts a single premultiplied byte back to its
+  // straight equivalent given the pixel's alpha byte.
+  function unpremultiplyByte(premulByte, alphaByte) {
+    if (alphaByte === 0) return 0;
+    const straight = Math.round((premulByte * 255) / alphaByte);
+    if (straight < 0) return 0;
+    if (straight > 255) return 255;
+    return straight;
+  }
+
   class CustomTipGpuRenderer {
     constructor() {
       this.device = null;
@@ -1392,10 +1413,14 @@
             for (let x = 0; x < this.rectW; x++) {
               const sIdx = srcRow + x * 4;
               const dIdx = dstRow + x * 4;
-              data[dIdx + 0] = mapped[sIdx + 0];
-              data[dIdx + 1] = mapped[sIdx + 1];
-              data[dIdx + 2] = mapped[sIdx + 2];
-              data[dIdx + 3] = mapped[sIdx + 3];
+              // Source texel is premultiplied (see unpremultiplyByte above);
+              // ImageData requires straight alpha, so undo the premultiply
+              // per-channel here. Alpha itself is copied through unchanged.
+              const a = mapped[sIdx + 3];
+              data[dIdx + 0] = unpremultiplyByte(mapped[sIdx + 0], a);
+              data[dIdx + 1] = unpremultiplyByte(mapped[sIdx + 1], a);
+              data[dIdx + 2] = unpremultiplyByte(mapped[sIdx + 2], a);
+              data[dIdx + 3] = a;
             }
           }
           this.readBuffer.unmap();
