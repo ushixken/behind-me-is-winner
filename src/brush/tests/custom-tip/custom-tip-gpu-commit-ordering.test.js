@@ -203,9 +203,10 @@ test('production source: readback rejection inside _executeCustomTipDetachedComm
   // to null on failure -- so a hard GPU rejection there does not throw past
   // the commit tail uncaught; it degrades to "no committable canvas" and
   // the function returns early via the fallback-dabs / null-check path.
-  const start = engine.indexOf('async function _executeCustomTipDetachedCommit(');
-  const tryBlock = engine.indexOf('if (gpuTask) {\n    try {', start);
-  const catchBlock = engine.indexOf('} catch (e) {\n      imgData = null;\n    }', tryBlock);
+  const normalized = engine.replace(/\r\n/g, '\n');
+  const start = normalized.indexOf('async function _executeCustomTipDetachedCommit(');
+  const tryBlock = normalized.indexOf('if (gpuTask) {\n    try {', start);
+  const catchBlock = normalized.indexOf('} catch (e) {\n      imgData = null;\n    }', tryBlock);
   assert.ok(tryBlock >= 0 && catchBlock > tryBlock,
     'a rejected mapAndExtractImageData() must be caught locally, degrading to null imgData rather than throwing');
 });

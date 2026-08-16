@@ -1,4 +1,4 @@
-﻿//
+//
 // DRAWING Ã¢â‚¬â€ getPos uses activeC's own getBoundingClientRect()
 // which accounts for the CSS transform, giving pixel-perfect coords
 //

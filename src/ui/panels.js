@@ -479,7 +479,15 @@ function recomposite(li,fi,dirtyRect){
   // it below. displayCtx itself is never clipped to the dirty rect (see
   // the existing full-canvas-blit note further down), matching prior
   // behavior.
-  displayCtx.clearRect(0,0,CW,CH);
+  if(clip){
+    displayCtx.save();
+    displayCtx.beginPath();
+    displayCtx.rect(clip.x,clip.y,clip.w,clip.h);
+    displayCtx.clip();
+    displayCtx.clearRect(clip.x,clip.y,clip.w,clip.h);
+  } else {
+    displayCtx.clearRect(0,0,CW,CH);
+  }
   displayCtx.imageSmoothingEnabled=true;
   displayCtx.imageSmoothingQuality='high';
   displayCtx.filter = _displayBlurPx>0.05 ? `blur(${_displayBlurPx}px)` : 'none';
@@ -494,6 +502,9 @@ function recomposite(li,fi,dirtyRect){
   // same bg+artwork bake it always has, preserving its invariant for
   // export/color-sampling consumers.
   displayCtx.drawImage(artworkCompositeC,0,0);
+  if(clip){
+    displayCtx.restore();
+  }
   const firstDabDisplayBlitDuration=firstDabDisplayBlitStart?performance.now()-firstDabDisplayBlitStart:0;
   // Phase 11A.37 Stage E2: compC immediately after artworkCompositeC has
   // been composited into it (bg fill + optional LightTable render already
