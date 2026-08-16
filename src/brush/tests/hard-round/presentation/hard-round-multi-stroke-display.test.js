@@ -69,7 +69,11 @@ test('mandatory old-stroke commit is independent of shared live scratch state',(
   const handoffBody=source.slice(pointerup,handoff);
   assert.match(handoffBody,/_hardRoundActiveContext=null/);
   assert.match(handoffBody,/ownedContext\.renderer=renderer/);
-  assert.match(handoffBody,/ownedContext\.presentFinishedFrame=true/);
+  // presentFinishedFrame is no longer unconditionally true: the CPU path no
+  // longer needs the finished-frame presentation step (see the removal of
+  // the artificial 2-rAF paint wait), so this now only applies when the
+  // stroke is a GPU commit.
+  assert.match(handoffBody,/ownedContext\.presentFinishedFrame=ownedContext\.gpuCommit/);
 });
 
 test('ten reversed resolve completions still commit exactly once in pointerup order',async()=>{
@@ -90,7 +94,11 @@ test('ordered commits capture undo from their explicit layer/frame immediately b
   const normalEnd=source.indexOf('function _commitFinishedSmartRasterStroke(',normalStart);
   const normal=source.slice(normalStart,normalEnd);
   assert.ok(normal.indexOf('pushUndoAt(context.layerIndex,context.frameIndex)')<normal.indexOf('target.drawImage(src,0,0)'));
-  assert.match(source,/if\(!_hardRoundStrokeActive\)pushUndo\(\)/);
+  // The pushUndo() guard has since been extended to also exclude Custom Tip
+  // GPU strokes (which, like Hard Round, push their own undo snapshot via
+  // pushUndoAt at their explicit layer/frame instead) -- the invariant that
+  // Hard Round strokes never trigger the generic pushUndo() is unchanged.
+  assert.match(source,/if\(!_hardRoundStrokeActive&&!_customTipGpuStrokeActive\)pushUndo\(\)/);
   assert.match(toolsColorSource,/function pushUndoAt\(layerIndex,frameIndex\)/);
   assert.match(toolsColorSource,/layer\.frames\[frameIndex\]/);
   assert.match(toolsColorSource,/getStyleFrameBundle\(layerIndex,frameIndex\)/);

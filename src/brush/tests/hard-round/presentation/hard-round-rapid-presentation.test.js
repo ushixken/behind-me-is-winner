@@ -12,9 +12,17 @@ test('new GPU strokes retain the preceding overlay without waiting for its autho
   assert.match(engine,/preservePriorUntilCommit=.*_hardRoundPendingCommitCount>0/);
   assert.match(engine,/preserve-prior-until-commit/);
   assert.match(engine,/const gpuLivePreview=!!\(renderer\.isGpuActive&&renderer\.isGpuActive\(\)\)/);
-  assert.match(engine,/const presentationBarrier=!gpuLivePreview&&_hardRoundActiveContext/);
-  assert.match(engine,/presentationBarrierDependency:gpuLivePreview\?'none-private-gpu-renderer':'ordered-canvas-base'/);
-  assert.match(engine,/Promise\.resolve\(presentationBarrier\)[\s\S]*?renderer\.peekStroke/);
+  // The presentation-barrier gate has since evolved across two further
+  // intentional fixes (rapid-handoff and AA-none-latency reductions): it
+  // now waits on the active context's barrier specifically when GPU live
+  // preview is active (previously it was skipped for GPU live preview and
+  // applied for canvas preview -- the opposite), and is combined with a
+  // second gate (basePresentationGate) that guards against presenting a
+  // stale WebGPU base revision. Assert on the current, more precise gate.
+  assert.match(engine,/const presentationBarrier = \(gpuLivePreview && _hardRoundActiveContext\)/);
+  assert.match(engine,/const waitBarrier = basePresentationGate \|\| presentationBarrier/);
+  assert.match(engine,/presentationBarrierDependency:gpuLivePreview\?\(staleBaseRevision!=null\?'gated-stale-base-webgpu':'none-private-gpu-renderer'\):'ordered-canvas-base'/);
+  assert.match(engine,/Promise\.resolve\(waitBarrier\)[\s\S]*?renderer\.peekStroke/);
 });
 
 test('authoritative ordering remains tied to the commit tail, not GPU live presentation',()=>{
@@ -42,7 +50,15 @@ test('private GPU preview can run while an older ordered commit remains pending'
 
 test('committed replacement retires only the overlay pixels belonging to that stroke',()=>{
   assert.match(engine,/window\.HardRoundOverlayPresentedStrokeId=session/);
-  assert.match(engine,/window\.HardRoundOverlayPresentedStrokeId===ready\.strokeId/);
+  // The outer `HardRoundOverlayPresentedStrokeId===ready.strokeId` gate was
+  // intentionally removed: retirement is now always attempted on commit
+  // completion (previously it silently no-op'd if that presentation-
+  // tracking flag had been reassigned/cleared elsewhere, potentially
+  // leaving a stale overlay visible indefinitely). Ownership safety is
+  // preserved instead via the isNewerOwner / isNewerNow checks against
+  // HardRoundOverlayOwnerStrokeId / HardRoundOverlayVisibilityOwnerStrokeId
+  // and the active session, asserted below.
+  assert.match(engine,/isNewerOwner=\(overlayOwner!=null&&overlayOwner!==ready\.strokeId\)\|\|\(visibilityOwner!=null&&visibilityOwner!==ready\.strokeId\)/);
   assert.match(engine,/owned-finalization-retire-committed-overlay/);
   assert.match(engine,/overlayHideSuppressed/);
   assert.match(engine,/older-finalizer-newer-owner/);
@@ -50,16 +66,16 @@ test('committed replacement retires only the overlay pixels belonging to that st
 });
 
 test('old finalizer preserves continuity when a newer session owns the shared overlay',()=>{
-  const retireStart=engine.indexOf('}else if(window.HardRoundOverlayPresentedStrokeId===ready.strokeId)');
-  const retireEnd=engine.indexOf('\n    }\n  });',retireStart);
+  const retireStart=engine.indexOf('function _hardRoundFinalizeOwnedContext(');
+  assert.ok(retireStart>=0,'_hardRoundFinalizeOwnedContext not found');
+  const retireEnd=engine.indexOf('\n}\n',retireStart);
   const body=engine.slice(retireStart,retireEnd);
-  assert.match(body,/overlayOwner!==ready\.strokeId/);
-  assert.match(body,/visibilityOwner!==ready\.strokeId/);
+  assert.match(body,/overlayOwner!=null&&overlayOwner!==ready\.strokeId/);
+  assert.match(body,/visibilityOwner!=null&&visibilityOwner!==ready\.strokeId/);
   assert.match(body,/_hrRapidPresentation\('overlayHideSuppressed'/);
   assert.match(body,/_hardRoundSetGpuOverlayVisible\(false,'owned-finalization-retire-committed-overlay'\)/);
 
   const retire=(state,finalizingStrokeId)=>{
-    if(state.presented!==finalizingStrokeId)return;
     if((state.owner!=null&&state.owner!==finalizingStrokeId)||(state.visibilityOwner!=null&&state.visibilityOwner!==finalizingStrokeId)){state.events.push('overlayHideSuppressed');return;}
     state.visible=false;state.events.push('overlayHidden');
   };
@@ -91,7 +107,10 @@ test('a stale queued RAF is replaced rather than consuming the next stroke reque
 
 test('normal brush native cursor remains hidden and GPU overlay cannot become hit target',()=>{
   assert.match(cursorPrefs,/if\(paintTool&&\(cursorStyle==='crosshair'[\s\S]*?return 'none'/);
-  assert.match(css,/#hard-round-gpu-overlay\{pointer-events:none;z-index:1;\}/);
+  // Same selector-grouping change as elsewhere: #hard-round-gpu-overlay's
+  // pointer-events/z-index rule is now shared with #custom-tip-gpu-overlay
+  // rather than standalone; the declared properties are unchanged.
+  assert.match(css,/#hard-round-gpu-overlay[^{]*\{[^}]*pointer-events:none;[^}]*z-index:1;[^}]*\}/);
   assert.doesNotMatch(engine,/hard-round-gpu-overlay[^\n]*pointerEvents\s*=\s*['"]auto/);
 });
 

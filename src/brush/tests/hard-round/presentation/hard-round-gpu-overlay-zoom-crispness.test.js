@@ -27,8 +27,16 @@ test('applyTransform()\'s zoom image-rendering sync includes the overlay canvas 
   const fnMatch=src.match(/function applyTransform\(\)\{[\s\S]*?\n\}/);
   assert.ok(fnMatch,'applyTransform() not found');
   const body=fnMatch[0];
-  assert.ok(/\[displayC,onionC,activeC,hardRoundOverlayC,transformC\]\.forEach/.test(body),
-    'the image-rendering forEach list must include hardRoundOverlayC alongside displayC/onionC/activeC/transformC');
+  // A further sibling (customTipC, the Custom Tip GPU overlay) has since
+  // been added to the same synchronized list -- hardRoundOverlayC's
+  // membership and treatment is unaffected. Match membership in the
+  // forEach array rather than pinning its exact (now longer) contents.
+  const listMatch=body.match(/\[([^\]]*)\]\.forEach/);
+  assert.ok(listMatch,'applyTransform() must have an image-rendering forEach list');
+  const members=listMatch[1].split(',').map(s=>s.trim());
+  for(const required of ['displayC','onionC','activeC','hardRoundOverlayC','transformC']){
+    assert.ok(members.includes(required),`the image-rendering forEach list must include ${required}`);
+  }
 });
 
 test('the image-rendering assignment is null-guarded (overlay element may be absent in non-browser test harnesses)',()=>{

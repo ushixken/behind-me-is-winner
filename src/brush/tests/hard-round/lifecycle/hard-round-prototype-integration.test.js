@@ -312,11 +312,17 @@ test('post-commit overlay retirement defers until paint opportunity and honors n
   const fnEnd = src.indexOf('\n}', fnStart);
   const body = src.slice(fnStart, fnEnd);
 
-  assert.ok(/schedulePostPaint/.test(body), 'finalization must schedule overlay retirement post-paint');
-  assert.ok(/requestAnimationFrame/.test(body), 'post-paint scheduling must use requestAnimationFrame');
+  // Post-paint deferral no longer uses a raw requestAnimationFrame guess --
+  // it now waits on DisplayBackend.whenRevisionPresented(), a revision-keyed
+  // callback that fires once the committed artwork revision has actually
+  // been presented by the GPU backend (falling back to an immediate retire
+  // when that precise signal isn't available, e.g. non-WebGPU backends).
+  // This is a strictly more accurate "paint opportunity" signal than a
+  // fixed-count rAF wait, so assert on the current mechanism instead.
+  assert.ok(/whenRevisionPresented/.test(body), 'finalization must defer overlay retirement until the committed revision is actually presented');
   assert.ok(/older-finalizer-newer-owner/.test(body), 'immediate check must preserve older-finalizer-newer-owner continuity guard');
   assert.ok(/newer-stroke-started-before-paint/.test(body), 'post-paint check must cancel hide if newer stroke started before paint boundary');
-  assert.ok(/owned-finalization-post-paint-retire/.test(body), 'overlay must retire with owned-finalization-post-paint-retire');
+  assert.ok(/owned-finalization-retire-committed-overlay/.test(body), 'overlay must retire via owned-finalization-retire-committed-overlay');
 });
 
 Promise.all(pending).then(() => {

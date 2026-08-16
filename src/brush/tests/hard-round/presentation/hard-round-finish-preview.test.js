@@ -52,8 +52,21 @@ test('pointer-up lifecycle detaches the renderer, resolves an owned result, then
   const commit=src.indexOf("if(ready.smartRaster)_commitFinishedSmartRasterStroke(ready);else _commitFinishedHardRoundStroke(ready)",copy);
   assert.ok(finish<flush&&flush<detach&&detach<finalize&&ownedEnd<copy&&copy<commit,{finish,flush,detach,finalize,ownedEnd,copy,commit});
 });
-test('finished frame survives a browser paint before overlay exchange',()=>{
+test('finished frame presentation no longer pays an artificial CPU paint delay',()=>{
+  // The old CPU path added a fixed 2-rAF wait after peekStroke() before
+  // resolving, purely to give the browser a chance to paint the finished
+  // frame before the overlay was exchanged. This was intentionally removed
+  // because it added latency after every lift; GPU synchronization safety
+  // is preserved separately, via the isGpuActive() early-return (skip
+  // presenting when the shared GPU presenter is still live) and the
+  // readback barrier in endStroke({readback:...}) at commit time.
   const src=fs.readFileSync(path.join(__dirname, '..', '..', '..', 'brush-engine.js'),'utf8');
-  assert.ok(/function _hardRoundPresentFinishedFrame[\s\S]*?requestAnimationFrame\(\(\)=>requestAnimationFrame\(resolve\)\)/.test(src));
+  const start=src.indexOf('function _hardRoundPresentFinishedFrame(');
+  assert.ok(start>=0,'_hardRoundPresentFinishedFrame not found');
+  const end=src.indexOf('\n}\n',start);
+  const body=src.slice(start,end);
+  assert.ok(!/requestAnimationFrame\(\(\)=>requestAnimationFrame\(resolve\)\)/.test(body),'CPU path must not reintroduce the artificial 2-rAF wait');
+  assert.ok(/isGpuActive\(\)\)return Promise\.resolve\(\)/.test(body),'must still bail out when the shared GPU presenter is live');
+  assert.ok(/renderer\.peekStroke\(\)/.test(body),'must still peek the renderer to capture the finished preview canvas');
 });
 console.log(`\n${passed} passed, ${failed} failed`);if(failed)process.exit(1);

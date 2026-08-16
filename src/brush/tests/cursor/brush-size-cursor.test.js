@@ -10,7 +10,13 @@ test('brush cursor consumes high-rate raw pointer input',()=>{
 });
 
 test('cursor event ordering rejects an older position',()=>{
-  assert.match(src,/if\(eventTime<latestPointerTime\)return/);
+  // The stale-rejection guard now routes through a diagnostic trace() call
+  // before returning (instead of a bare `return`), but the behavioral
+  // invariant -- an event older than latestPointerTime is rejected and
+  // never advances latestPointerTime -- is unchanged. Match the guard
+  // condition and its early return without pinning the exact statement
+  // shape inside the braces.
+  assert.match(src,/if\(eventTime<latestPointerTime\)\{[\s\S]*?return;\}/);
   assert.match(src,/latestPointerTime=eventTime/);
 });
 
@@ -27,4 +33,3 @@ test('all four custom paint cursor renderers draw the white center point',()=>{
     assert.match(src.slice(start,next<0?src.length:next),/drawCenterDot\(c\)/,name);
   }
 });
-

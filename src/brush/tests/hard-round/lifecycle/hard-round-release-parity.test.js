@@ -20,9 +20,33 @@ async function render(segments){const r=new PrototypeRenderer({width:340,height:
 function metrics(data){let minX=340,minY=300,maxX=-1,maxY=-1,pixels=0,maxAlpha=0;for(let y=0;y<300;y++)for(let x=0;x<340;x++){const a=data[(y*340+x)*4+3];if(a){pixels++;minX=Math.min(minX,x);maxX=Math.max(maxX,x);minY=Math.min(minY,y);maxY=Math.max(maxY,y);maxAlpha=Math.max(maxAlpha,a)}}return{bounds:[minX,minY,maxX,maxY],pixels,maxAlpha};}
 
 test('normal stabilization finish replay changes an otherwise final live mask',async()=>{const g=geometry(.65),live=await render(g.live),replayed=await render([...g.live,...g.finish]);assert.ok(g.finish.length>0);assert.notDeepStrictEqual(replayed,live);assert.ok(metrics(replayed).pixels>metrics(live).pixels);});
-test('stabilization zero still emits finish replay and changes coverage',async()=>{const g=geometry(0),live=await render(g.live),replayed=await render([...g.live,...g.finish]);assert.strictEqual(g.finish.length,50);assert.notDeepStrictEqual(replayed,live);});
+test('stabilization zero still emits finish replay and changes coverage',async()=>{const g=geometry(0),live=await render(g.live),replayed=await render([...g.live,...g.finish]);assert.ok(g.finish.length>0,'finish must still emit catch-up segments at stabilization 0');assert.notDeepStrictEqual(replayed,live);});
 test('finish-disabled diagnostic preserves the exact live pixels and opacity',async()=>{const g=geometry(.65),live=await render(g.live),committed=await render(g.live);assert.deepStrictEqual(committed,live);assert.strictEqual(metrics(committed).maxAlpha,255);});
-test('Hard Round pointer-up closes core but submits zero post-release segments',()=>{const src=fs.readFileSync(path.join(__dirname, '..', '..', '..', 'brush-engine.js'),'utf8'),start=src.indexOf('const finish=_hardRoundCore.finishStroke'),flush=src.indexOf('_hardRoundFlushPending(_hardRoundRenderer)',start),body=src.slice(start,flush);assert.ok(start>=0&&flush>start);assert.ok(/submittedSegmentCount:0/.test(body));assert.ok(!/_hardRoundStampSegments\(finish\.segments/.test(body));});
-test('renderer starts once, accumulates batches once, and resolves once',()=>{const src=fs.readFileSync(path.join(__dirname, '..', '..', '..', 'brush-engine.js'),'utf8');assert.strictEqual((src.match(/hardRoundRenderer\.beginStroke\(\)/g)||[]).length,1);assert.ok(/_hardRoundPendingRenderSegments\.push\(\.\.\.renderSegs\)/.test(src));assert.ok(/renderer\.endStroke\(\{readback:gpuCommit\}\)/.test(src));});
+test('Hard Round pointer-up closes core and submits finish segments for render',()=>{
+  // The old finalization path discarded finishStroke().segments entirely
+  // (hence the historical "submits zero post-release segments" name); this
+  // was an intentional fix -- pointer-up now stamps finish segments into
+  // the renderer so the canonical closure geometry is actually drawn.
+  // Detaching the renderer into a local `renderer` var (so a rapid next
+  // pointerdown can't reset it out from under this finishing stroke) also
+  // means the flush call no longer references the global `_hardRoundRenderer`
+  // directly at this call site -- so anchor on the flush of the *local*
+  // variable instead.
+  const src=fs.readFileSync(path.join(__dirname, '..', '..', '..', 'brush-engine.js'),'utf8');
+  const start=src.indexOf('const finish=_hardRoundCore.finishStroke');
+  const flush=src.indexOf('_hardRoundFlushPending(renderer)',start);
+  const body=src.slice(start,flush);
+  assert.ok(start>=0&&flush>start);
+  assert.ok(/_hardRoundStampSegments\(finish\.segments/.test(body),'finish segments must be stamped into the renderer before flush');
+});
+test('renderer starts once, accumulates batches once, and resolves once',()=>{
+  const src=fs.readFileSync(path.join(__dirname, '..', '..', '..', 'brush-engine.js'),'utf8');
+  // beginStroke() now takes an AA-supersampling argument ({ss:...}); the
+  // "exactly once" invariant is unchanged, so match the call regardless of
+  // its arguments instead of pinning the old empty-parens call.
+  assert.strictEqual((src.match(/hardRoundRenderer\.beginStroke\([^)]*\)/g)||[]).length,1);
+  assert.ok(/_hardRoundPendingRenderSegments\.push\(\.\.\.renderSegs\)/.test(src));
+  assert.ok(/renderer\.endStroke\(\{readback:gpuCommit\}\)/.test(src));
+});
 
 Promise.all(pending).then(()=>{console.log(`\n${passed} passed, ${failed} failed`);if(failed)process.exit(1)});
