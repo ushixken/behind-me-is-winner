@@ -1118,7 +1118,19 @@ function _getLiveStrokePreview(){
       }
     }
   }
-  if(_inStroke && _strokeCanvas){
+  // Same-stroke double-preview guard: if the pending Hard Round CPU
+  // finishing map already holds an entry for the currently active stroke,
+  // that finishing preview above already represents this stroke's pixels.
+  // Drawing the raw _strokeCanvas on top of it would composite the same
+  // stroke a second time (see Stage 1/Stage 2 overlap investigation).
+  // Older, still-finishing strokes (different strokeId) are unaffected --
+  // this only suppresses a match against _activeStrokeSession, so a newer
+  // stroke (B) drawn while an older one (A) is still finishing still shows
+  // both A's finishing preview and B's raw _strokeCanvas.
+  const currentStrokeAlreadyRepresented =
+    typeof _hardRoundPendingCpuFinishingContexts!=='undefined' &&
+    _hardRoundPendingCpuFinishingContexts.has(_activeStrokeSession);
+  if(_inStroke && _strokeCanvas && !currentStrokeAlreadyRepresented){
     const textureStart=perf?performance.now():0,textureCanvasExisted=!!_texturedStrokeCanvas;
     const src = _getTexturedStrokeCanvas(_strokeCanvas, false);
     if(perf)perf.measure('texture-mask-processing',textureStart,{canvas:'textured-stroke',width:src.width,height:src.height,enabled:!!window.brushTextureEnabled,cacheHit:!window.brushTextureEnabled||textureCanvasExisted,getImageData:!!window.brushTextureEnabled});
@@ -1223,13 +1235,32 @@ window.addEventListener('project-loaded',()=>{
   _pendingDabs.length=0;_frameDirty=null;_strokeDirty=null;
 });
 
-// Exercise the same clipped live-stroke composition branch used by the first
-// painted dab without changing artwork or stroke state. CompositionPrewarm
-// calls this between strokes; the empty scratch mask makes the recomposited
-// pixel identical while still touching the persistent preview/texture/tint
-// surfaces that Chromium otherwise initializes on the first real dab.
+// Exercise the same live-stroke preview path used by the first painted dab
+// (_ensureStrokeCanvas + _getLiveStrokePreview -> _texturedStrokeCanvas /
+// _srPreviewTintCanvas / _strokePreviewCanvas allocation, drawImage, and
+// Canvas2D compositing JIT paths) WITHOUT ever calling the real
+// recomposite(). CompositionPrewarm calls this between strokes.
+//
+// Fix (darkening-on-focus-return investigation): this function used to
+// force _inStroke=true and call the real recomposite(curLayer,curFrame,
+// {x,y,w:1,h:1}) to warm these paths. Runtime diagnostics proved that
+// call's unconditional full-canvas displayC rebuild (recomposite()
+// clips compC/artworkCompositeC to the 1x1 dirty rect but always
+// rebuilds displayC in full — see recomposite()'s display-assembly
+// block in panels.js) could commit a different displayC byte-state than
+// was already visible, producing a visible darkening with no change to
+// activeC/artworkCompositeC/compC. Runtime diagnostics confirmed this
+// call site as the cause: disabling only this call's route through
+// recomposite() made the bug disappear entirely.
+//
+// _getLiveStrokePreview() itself only ever reads activeC/_strokeCanvas
+// and writes to the disposable _strokePreviewCanvas / _texturedStrokeCanvas
+// / _srPreviewTintCanvas scratch surfaces (see that function) — it never
+// touches compC, artworkCompositeC, or displayC. Calling it directly here,
+// instead of through recomposite(), warms the exact same allocation/JIT/
+// GPU-driver paths while remaining fully visually inert.
 function _prewarmLiveStrokeComposition(){
-  if(_inStroke||drawing||!activeC||typeof recomposite!=='function')return false;
+  if(_inStroke||drawing||!activeC||typeof _getLiveStrokePreview!=='function')return false;
   const previousFrameDirty=_frameDirty;
   const previousStrokeDirty=_strokeDirty;
   const previousTexPending=_texPendingRect;
@@ -1240,7 +1271,7 @@ function _prewarmLiveStrokeComposition(){
     const y=Math.max(0,Math.min(activeC.height-1,Math.floor(activeC.height/2)));
     _strokeDirty={minX:x,minY:y,maxX:x+1,maxY:y+1};
     _inStroke=true;
-    recomposite(curLayer,curFrame,{x,y,w:1,h:1});
+    _getLiveStrokePreview();
     return true;
   }finally{
     _inStroke=previousInStroke;
@@ -6586,7 +6617,18 @@ function _hardRoundFinalizeOwnedContext(context,e){
         if(_strokeCtx&&_strokeCanvas)_strokeCtx.clearRect(0,0,_strokeCanvas.width,_strokeCanvas.height);
       }
     }
-    if(window.HardRoundOverlayPresentedStrokeId===ready.strokeId){
+    // Retirement is now ALWAYS attempted on commit completion. Previously
+    // this was gated behind an outer equality check against a separate
+    // presentation-tracking flag; if that flag had been reassigned or
+    // cleared by an unrelated overlay-visibility change elsewhere in the
+    // stroke lifecycle before this async finalizer resolved, retirement was
+    // skipped with no fallback -- the overlay could then remain visible
+    // with the last stroke's stale pixels indefinitely (only ever cleared
+    // by a subsequent stroke's own beginStroke()). Ownership safety (never
+    // hide a newer stroke's live overlay) is preserved unchanged below via
+    // isNewerOwner/isNewerNow -- this mirrors the Custom Tip retirement
+    // helper's existing unconditional-attempt pattern.
+    {
       const overlayOwner=window.HardRoundOverlayOwnerStrokeId;
       const visibilityOwner=window.HardRoundOverlayVisibilityOwnerStrokeId;
       const isNewerOwner=(overlayOwner!=null&&overlayOwner!==ready.strokeId)||(visibilityOwner!=null&&visibilityOwner!==ready.strokeId);
