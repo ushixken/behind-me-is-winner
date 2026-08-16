@@ -706,7 +706,7 @@ document.getElementById('dd-reset-rotation').onclick=()=>{resetRotation();closeA
 // Settings menu
 document.getElementById('dd-canvas-settings').onclick=()=>{openCanvasModal();closeAllDropdowns();};
 document.getElementById('dd-zoom-settings').onclick=()=>{
-  document.getElementById('zoom-speed-input').value=zoomSpeed;
+  document.getElementById('zoom-speed-input').value=zoomSpeedLevel;
   document.getElementById('zoom-min-input').value=zoomMin;
   document.getElementById('zoom-max-input').value=zoomMax;
   document.getElementById('modal-zoom').classList.add('visible');closeAllDropdowns();

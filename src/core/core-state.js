@@ -336,7 +336,42 @@ window.isLayerLocked=isLayerLocked;window.setLayerLocked=setLayerLocked;
 
 // Zoom / Pan / Rotate — stored in canvas-area coordinate space
 let zoom=1,panX=0,panY=0;
-let zoomSpeed=0.15,zoomMin=0.1,zoomMax=16;
+const ZOOM_SPEED_FACTORS={
+  1: 0.05,
+  2: 0.08,
+  3: 0.11,
+  4: 0.15,
+  5: 0.20,
+  6: 0.25,
+  7: 0.31,
+  8: 0.37,
+  9: 0.43,
+  10: 0.50
+};
+const DEFAULT_ZOOM_SPEED_LEVEL=4;
+function clampZoomSpeedLevel(v){
+  const n=Math.round(Number(v));
+  if(!Number.isFinite(n)||n<1||n>10)return DEFAULT_ZOOM_SPEED_LEVEL;
+  return n;
+}
+let zoomSpeedLevel=DEFAULT_ZOOM_SPEED_LEVEL;
+try{
+  const storedZoomSpeed=localStorage.getItem('animator_zoom_speed');
+  if(storedZoomSpeed!=null){
+    zoomSpeedLevel=clampZoomSpeedLevel(storedZoomSpeed);
+  }
+}catch(e){}
+let zoomSpeed=ZOOM_SPEED_FACTORS[zoomSpeedLevel];
+let zoomMin=0.1,zoomMax=16;
+function setZoomSpeedLevel(level){
+  zoomSpeedLevel=clampZoomSpeedLevel(level);
+  zoomSpeed=ZOOM_SPEED_FACTORS[zoomSpeedLevel];
+  try{ localStorage.setItem('animator_zoom_speed',String(zoomSpeedLevel)); }catch(e){}
+  return zoomSpeedLevel;
+}
+window.clampZoomSpeedLevel=clampZoomSpeedLevel;
+window.setZoomSpeedLevel=setZoomSpeedLevel;
+window.ZOOM_SPEED_FACTORS=ZOOM_SPEED_FACTORS;
 let rotation=0; // canvas rotation in degrees, clockwise
 let flipX=false,flipY=false; // canvas mirrored horizontally / vertically (view-only, like rotation)
 
@@ -709,7 +744,8 @@ function doZoom(delta,cx,cy){
   if(window.CameraView&&CameraView.active)return;
   ({x:cx,y:cy}=_toUnflippedNavPoint(cx,cy));
   const oldZoom=zoom;
-  zoom=Math.max(zoomMin,Math.min(zoomMax,zoom*(1+delta*zoomSpeed)));
+  const factor=delta>0?(1+zoomSpeed):(1/(1+zoomSpeed));
+  zoom=Math.max(zoomMin,Math.min(zoomMax,zoom*factor));
   // Adjust pan so that the canvas-space point under cursor stays fixed:
   // canvasX = (cx - panX) / oldZoom  →  after zoom: panX_new = cx - canvasX * zoom
   panX=cx-(cx-panX)*(zoom/oldZoom);

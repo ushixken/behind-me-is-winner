@@ -261,7 +261,7 @@ document.getElementById('modal-frames-ok').onclick=()=>{
 document.getElementById('modal-zoom-cancel').onclick=()=>document.getElementById('modal-zoom').classList.remove('visible');
 document.getElementById('modal-zoom').addEventListener('click',e=>{if(e.target===document.getElementById('modal-zoom'))document.getElementById('modal-zoom').classList.remove('visible');});
 document.getElementById('modal-zoom-ok').onclick=()=>{
-  zoomSpeed=Math.max(0.001,Math.min(1,parseFloat(document.getElementById('zoom-speed-input').value)||0.15));
+  setZoomSpeedLevel(document.getElementById('zoom-speed-input').value);
   zoomMin=Math.max(0.05,Math.min(1,parseFloat(document.getElementById('zoom-min-input').value)||0.1));
   zoomMax=Math.max(1,Math.min(32,parseFloat(document.getElementById('zoom-max-input').value)||16));
   document.getElementById('modal-zoom').classList.remove('visible');
