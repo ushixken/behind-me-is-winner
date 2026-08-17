@@ -1,318 +1,531 @@
 // ════════════════════════════════════════════════════════════════
 // DELETE LAYER / GROUP
 // ════════════════════════════════════════════════════════════════
-let skipLayerDeleteConfirm=false;
-let _pendingDeleteLayerIdx=null;
-let _pendingDeleteGroupId=null;
+let skipLayerDeleteConfirm = false;
+let _pendingDeleteLayerIdx = null;
+let _pendingDeleteGroupId = null;
 
-function deleteLayer(idx){
-  if(skipLayerDeleteConfirm&&layers.length>1){
-    _doDeleteLayer(idx);return;
+function deleteLayer(idx) {
+  if (skipLayerDeleteConfirm && layers.length > 1) {
+    _doDeleteLayer(idx);
+    return;
   }
-  _pendingDeleteLayerIdx=idx;
-  const name=layers[idx]?.name||'this layer';
-  const isLast=layers.length<=1;
-  document.getElementById('del-layer-msg').textContent=isLast
-    ?`"${name}" is the last layer. Deleting it will create a new blank layer.`
-    :`Are you sure you want to delete "${name}"? This cannot be undone.`;
-  document.getElementById('del-layer-skip-confirm').checked=false;
-  document.getElementById('modal-del-layer').classList.add('visible');
+  _pendingDeleteLayerIdx = idx;
+  const name = layers[idx]?.name || "this layer";
+  const isLast = layers.length <= 1;
+  document.getElementById("del-layer-msg").textContent = isLast
+    ? `"${name}" is the last layer. Deleting it will create a new blank layer.`
+    : `Are you sure you want to delete "${name}"? This cannot be undone.`;
+  document.getElementById("del-layer-skip-confirm").checked = false;
+  document.getElementById("modal-del-layer").classList.add("visible");
 }
-function _doDeleteLayer(idx){
-  layers.splice(idx,1);
-  if(layers.length===0) layers.push(makeBlankLayer('bitmap'));
-  if(curLayer>=layers.length) curLayer=layers.length-1;
-  if(curLayer<0) curLayer=0;
+function _doDeleteLayer(idx) {
+  layers.splice(idx, 1);
+  if (layers.length === 0) layers.push(makeBlankLayer("bitmap"));
+  if (curLayer >= layers.length) curLayer = layers.length - 1;
+  if (curLayer < 0) curLayer = 0;
   selectedLayerIndices.clear();
   // Stencil/clip always targets the item immediately below in visual order.
   // After deletion, re-point any active clip (layers and groups) at the new neighbor below.
   _reanchorAllStencils();
-  loadFrame(curLayer,curFrame);renderLayerPanel();renderTimeline();
+  loadFrame(curLayer, curFrame);
+  renderLayerPanel();
+  renderTimeline();
 }
-function deleteGroup(gid){
-  _pendingDeleteGroupId=gid;
-  const grp=groups.find(g=>g.id===gid);
-  const name=grp?.name||'this group';
-  document.getElementById('del-group-msg').textContent=`How do you want to delete "${name}"?`;
-  document.querySelector('input[name="del-group-mode"][value="with-children"]').checked=true;
-  document.getElementById('modal-del-group').classList.add('visible');
+function deleteGroup(gid) {
+  _pendingDeleteGroupId = gid;
+  const grp = groups.find((g) => g.id === gid);
+  const name = grp?.name || "this group";
+  document.getElementById("del-group-msg").textContent =
+    `How do you want to delete "${name}"?`;
+  document.querySelector(
+    'input[name="del-group-mode"][value="with-children"]',
+  ).checked = true;
+  document.getElementById("modal-del-group").classList.add("visible");
 }
 
 // Modal wiring — delete layer
-document.getElementById('del-layer-cancel').onclick=()=>{
-  document.getElementById('modal-del-layer').classList.remove('visible');
-  _pendingDeleteLayerIdx=null;
+document.getElementById("del-layer-cancel").onclick = () => {
+  document.getElementById("modal-del-layer").classList.remove("visible");
+  _pendingDeleteLayerIdx = null;
 };
-document.getElementById('del-layer-ok').onclick=()=>{
-  skipLayerDeleteConfirm=document.getElementById('del-layer-skip-confirm').checked;
-  document.getElementById('modal-del-layer').classList.remove('visible');
-  if(_pendingDeleteLayerIdx!=null){_doDeleteLayer(_pendingDeleteLayerIdx);_pendingDeleteLayerIdx=null;}
+document.getElementById("del-layer-ok").onclick = () => {
+  skipLayerDeleteConfirm = document.getElementById(
+    "del-layer-skip-confirm",
+  ).checked;
+  document.getElementById("modal-del-layer").classList.remove("visible");
+  if (_pendingDeleteLayerIdx != null) {
+    _doDeleteLayer(_pendingDeleteLayerIdx);
+    _pendingDeleteLayerIdx = null;
+  }
 };
 
 // ── Bulk delete
-let _pendingDeleteAllLayers=false;
-function _selectedGroupsFullIdSet(){
+let _pendingDeleteAllLayers = false;
+function _selectedGroupsFullIdSet() {
   // selectedGroupIds + every subgroup nested inside any of them, at any depth
-  const out=new Set();
-  selectedGroupIds.forEach(gid=>{_allDescendantGroupIds(gid).forEach(id=>out.add(id));});
+  const out = new Set();
+  selectedGroupIds.forEach((gid) => {
+    _allDescendantGroupIds(gid).forEach((id) => out.add(id));
+  });
   return out;
 }
-function deleteBulk(){
-  const layerCount=selectedLayerIndices.size;
-  const groupCount=selectedGroupIds.size;
-  const fullGroupIds=_selectedGroupsFullIdSet();
-  let childCount=0;
-  fullGroupIds.forEach(gid=>{childCount+=layers.filter(l=>l.groupId===gid).length;});
-  const unselectedLayers=layers.filter((_,i)=>!selectedLayerIndices.has(i)&&!fullGroupIds.has(layers[i].groupId)).length;
-  _pendingDeleteAllLayers=(unselectedLayers===0);
-  const parts=[];
-  if(layerCount>0) parts.push(layerCount===1?'1 layer':`${layerCount} layers`);
-  if(groupCount>0) parts.push(groupCount===1?'1 group':`${groupCount} groups`);
-  document.getElementById('del-bulk-msg').textContent=`Are you sure you want to delete ${parts.join(' and ')}? This cannot be undone.`;
-  const warnEl=document.getElementById('del-bulk-group-warn');
-  if(_pendingDeleteAllLayers){
-    warnEl.textContent='⚠ This deletes ALL layers and groups. A new blank layer will be created afterward.';
-    warnEl.style.display='';
-  } else if(groupCount>0){
-    const childNote=childCount>0?` (includes ${childCount} layer${childCount===1?'':'s'} inside the group${groupCount===1?'':'s'}, including any nested subgroups)`:'';
-    warnEl.textContent=`⚠ Selected group${groupCount===1?'':'s'} and all their contents will be permanently deleted${childNote}.`;
-    warnEl.style.display='';
+function deleteBulk() {
+  const layerCount = selectedLayerIndices.size;
+  const groupCount = selectedGroupIds.size;
+  const fullGroupIds = _selectedGroupsFullIdSet();
+  let childCount = 0;
+  fullGroupIds.forEach((gid) => {
+    childCount += layers.filter((l) => l.groupId === gid).length;
+  });
+  const unselectedLayers = layers.filter(
+    (_, i) =>
+      !selectedLayerIndices.has(i) && !fullGroupIds.has(layers[i].groupId),
+  ).length;
+  _pendingDeleteAllLayers = unselectedLayers === 0;
+  const parts = [];
+  if (layerCount > 0)
+    parts.push(layerCount === 1 ? "1 layer" : `${layerCount} layers`);
+  if (groupCount > 0)
+    parts.push(groupCount === 1 ? "1 group" : `${groupCount} groups`);
+  document.getElementById("del-bulk-msg").textContent =
+    `Are you sure you want to delete ${parts.join(" and ")}? This cannot be undone.`;
+  const warnEl = document.getElementById("del-bulk-group-warn");
+  if (_pendingDeleteAllLayers) {
+    warnEl.textContent =
+      "⚠ This deletes ALL layers and groups. A new blank layer will be created afterward.";
+    warnEl.style.display = "";
+  } else if (groupCount > 0) {
+    const childNote =
+      childCount > 0
+        ? ` (includes ${childCount} layer${childCount === 1 ? "" : "s"} inside the group${groupCount === 1 ? "" : "s"}, including any nested subgroups)`
+        : "";
+    warnEl.textContent = `⚠ Selected group${groupCount === 1 ? "" : "s"} and all their contents will be permanently deleted${childNote}.`;
+    warnEl.style.display = "";
   } else {
-    warnEl.style.display='none';
+    warnEl.style.display = "none";
   }
-  document.getElementById('modal-del-bulk').classList.add('visible');
+  document.getElementById("modal-del-bulk").classList.add("visible");
 }
-document.getElementById('del-bulk-cancel').onclick=()=>{
-  document.getElementById('modal-del-bulk').classList.remove('visible');
-  _pendingDeleteAllLayers=false;
+document.getElementById("del-bulk-cancel").onclick = () => {
+  document.getElementById("modal-del-bulk").classList.remove("visible");
+  _pendingDeleteAllLayers = false;
 };
-document.getElementById('del-bulk-ok').onclick=()=>{
-  document.getElementById('modal-del-bulk').classList.remove('visible');
-  const fullGroupIds=_selectedGroupsFullIdSet();
-  const toRemove=new Set(selectedLayerIndices);
-  fullGroupIds.forEach(gid=>{layers.forEach((l,i)=>{if(l.groupId===gid) toRemove.add(i);});});
-  groups=groups.filter(g=>!fullGroupIds.has(g.id));
-  if(activeGroupId&&fullGroupIds.has(activeGroupId)) activeGroupId=null;
+document.getElementById("del-bulk-ok").onclick = () => {
+  document.getElementById("modal-del-bulk").classList.remove("visible");
+  const fullGroupIds = _selectedGroupsFullIdSet();
+  const toRemove = new Set(selectedLayerIndices);
+  fullGroupIds.forEach((gid) => {
+    layers.forEach((l, i) => {
+      if (l.groupId === gid) toRemove.add(i);
+    });
+  });
+  groups = groups.filter((g) => !fullGroupIds.has(g.id));
+  if (activeGroupId && fullGroupIds.has(activeGroupId)) activeGroupId = null;
   selectedGroupIds.clear();
-  const sorted=[...toRemove].sort((a,b)=>b-a);
-  if(_pendingDeleteAllLayers){
-    layers=[];
-    groups=[];
-    activeGroupId=null;
+  const sorted = [...toRemove].sort((a, b) => b - a);
+  if (_pendingDeleteAllLayers) {
+    layers = [];
+    groups = [];
+    activeGroupId = null;
   } else {
-    sorted.forEach(idx=>{if(layers.length>1) layers.splice(idx,1);});
+    sorted.forEach((idx) => {
+      if (layers.length > 1) layers.splice(idx, 1);
+    });
   }
-  _pendingDeleteAllLayers=false;
+  _pendingDeleteAllLayers = false;
   // If every layer was removed, create a fresh blank layer so the project always has at least one.
-  if(layers.length===0) layers.push(makeBlankLayer('bitmap'));
-  if(curLayer>=layers.length) curLayer=layers.length-1;
-  if(curLayer<0) curLayer=0;
+  if (layers.length === 0) layers.push(makeBlankLayer("bitmap"));
+  if (curLayer >= layers.length) curLayer = layers.length - 1;
+  if (curLayer < 0) curLayer = 0;
   selectedLayerIndices.clear();
   _reanchorAllStencils();
-  loadFrame(curLayer,curFrame);renderLayerPanel();renderTimeline();
+  loadFrame(curLayer, curFrame);
+  renderLayerPanel();
+  renderTimeline();
 };
-
 
 // Modal wiring — delete group
-document.getElementById('del-group-cancel').onclick=()=>{
-  document.getElementById('modal-del-group').classList.remove('visible');
-  _pendingDeleteGroupId=null;
+document.getElementById("del-group-cancel").onclick = () => {
+  document.getElementById("modal-del-group").classList.remove("visible");
+  _pendingDeleteGroupId = null;
 };
-document.getElementById('del-group-ok').onclick=()=>{
-  document.getElementById('modal-del-group').classList.remove('visible');
-  if(_pendingDeleteGroupId==null) return;
-  const gid=_pendingDeleteGroupId;_pendingDeleteGroupId=null;
-  const mode=document.querySelector('input[name="del-group-mode"]:checked')?.value||'group-only';
-  const idSet=_allDescendantGroupIds(gid); // gid + every nested subgroup, at any depth
-  if(mode==='with-children'){
+document.getElementById("del-group-ok").onclick = () => {
+  document.getElementById("modal-del-group").classList.remove("visible");
+  if (_pendingDeleteGroupId == null) return;
+  const gid = _pendingDeleteGroupId;
+  _pendingDeleteGroupId = null;
+  const mode =
+    document.querySelector('input[name="del-group-mode"]:checked')?.value ||
+    "group-only";
+  const idSet = _allDescendantGroupIds(gid); // gid + every nested subgroup, at any depth
+  if (mode === "with-children") {
     // Remove this group, every nested subgroup, and all of their layers
-    layers=layers.filter(l=>!(l.groupId&&idSet.has(l.groupId)));
+    layers = layers.filter((l) => !(l.groupId && idSet.has(l.groupId)));
     // If no layers remain, add a blank raster layer
-    if(layers.length===0) layers.push(makeBlankLayer('bitmap'));
-    if(curLayer>=layers.length) curLayer=Math.max(0,layers.length-1);
+    if (layers.length === 0) layers.push(makeBlankLayer("bitmap"));
+    if (curLayer >= layers.length) curLayer = Math.max(0, layers.length - 1);
     selectedLayerIndices.clear();
     // Stencil/clip always targets the item immediately below in visual order.
     // After removal, re-point any active clip (layers and groups) at the new neighbor below.
     _reanchorAllStencils();
-    loadFrame(curLayer,curFrame);
-    groups=groups.filter(g=>!idSet.has(g.id));
+    loadFrame(curLayer, curFrame);
+    groups = groups.filter((g) => !idSet.has(g.id));
   } else {
     // Ungroup: remove ONLY this group's own folder, moving its direct contents
     // (layers and nested subgroups) up to where it used to sit.
-    const grp=groups.find(g=>g.id===gid);
-    const newParentId=grp?grp.parentId:null;
-    layers.forEach(l=>{if(l.groupId===gid) l.groupId=newParentId;});
-    groups.forEach(g=>{if(g.parentId===gid) g.parentId=newParentId;});
-    groups=groups.filter(g=>g.id!==gid);
+    const grp = groups.find((g) => g.id === gid);
+    const newParentId = grp ? grp.parentId : null;
+    layers.forEach((l) => {
+      if (l.groupId === gid) l.groupId = newParentId;
+    });
+    groups.forEach((g) => {
+      if (g.parentId === gid) g.parentId = newParentId;
+    });
+    groups = groups.filter((g) => g.id !== gid);
   }
-  idSet.forEach(id=>{if(activeGroupId===id) activeGroupId=null;selectedGroupIds.delete(id);});
-  renderLayerPanel();renderTimeline();
+  idSet.forEach((id) => {
+    if (activeGroupId === id) activeGroupId = null;
+    selectedGroupIds.delete(id);
+  });
+  renderLayerPanel();
+  renderTimeline();
 };
 
 // ── Drag a layer's label FROM THE TIMELINE (not the layers panel) onto the "Hide" zone
 // beside the ruler to remove its row from the timeline. Its frames/keyframes stay intact
 // on the layer — only the timeline row disappears.
-const tlHideZone=document.getElementById('tl-hide-zone');
+const tlHideZone = document.getElementById("tl-hide-zone");
 // Native HTML5 drag listeners removed — drag-to-hide is now handled via pointer events
 // in timeline.js (onTlLabelDragMove/onTlLabelDragUp) so it works with pen/stylus input too.
 
 // ── Drag a hidden layer from the layers panel onto the timeline body to restore its row
 // (with all its stored keyframes/drawings still there)
-const tlBodyEl=document.getElementById('tl-body');
-tlBodyEl.addEventListener('dragover',e=>{if(dragLayerIdx===null) return;e.preventDefault();tlBodyEl.classList.add('tl-drop-restore');});
-tlBodyEl.addEventListener('dragleave',()=>tlBodyEl.classList.remove('tl-drop-restore'));
-tlBodyEl.addEventListener('drop',e=>{
-  e.preventDefault();tlBodyEl.classList.remove('tl-drop-restore');
-  if(dragLayerIdx===null) return;
-  if(layers[dragLayerIdx].onTimeline===false){layers[dragLayerIdx].onTimeline=true;renderLayerPanel();renderTimeline();}
+const tlBodyEl = document.getElementById("tl-body");
+tlBodyEl.addEventListener("dragover", (e) => {
+  if (dragLayerIdx === null) return;
+  e.preventDefault();
+  tlBodyEl.classList.add("tl-drop-restore");
+});
+tlBodyEl.addEventListener("dragleave", () =>
+  tlBodyEl.classList.remove("tl-drop-restore"),
+);
+tlBodyEl.addEventListener("drop", (e) => {
+  e.preventDefault();
+  tlBodyEl.classList.remove("tl-drop-restore");
+  if (dragLayerIdx === null) return;
+  if (layers[dragLayerIdx].onTimeline === false) {
+    layers[dragLayerIdx].onTimeline = true;
+    renderLayerPanel();
+    renderTimeline();
+  }
 });
 
 // ════════════════════════════════════════════════════════════════
 // COPY / CUT / PASTE / DUPLICATE
 // ════════════════════════════════════════════════════════════════
-function copyFrame(){
-  if(window.CameraTimeline&&CameraTimeline.selected)return CameraTimeline.handleShortcut('copy');
-  const layer=layers[curLayer],k=layer.frames[curFrame];
-  if(!k){clipboard=null;styleClipboard=null;return;}
-  clipboard=mkLayerCanvas();
-  clipboard.getContext('2d').drawImage(k,0,0);
-  styleClipboard=layer.type==='smart-raster'&&typeof getStyleFrameBundle==='function'
-    ?getStyleFrameBundle(curLayer,curFrame):null;
-}
-function cutFrame(){
-  if(window.CameraTimeline&&CameraTimeline.selected)return CameraTimeline.handleShortcut('cut');
-  copyFrame();
-  const layer=layers[curLayer];
-  if(layer.type==='smart-raster')pushUndo();
-  delete layer.frames[curFrame];
-  if(typeof deleteStyleFrame==='function')deleteStyleFrame(curLayer,curFrame);
-  ctx.clearRect(0,0,CW,CH);
-  const h=getHeldKey(curLayer,curFrame);if(h)ctx.drawImage(h,0,0);
-  saveActiveToKey();loadFrame(curLayer,curFrame);renderTimeline();
-}
-function _pasteSmartRasterClipboardOwnership(li,fi,rgbaCanvas,payload,dx,dy){
-  const layer=layers[li];
-  if(!layer||layer.type!=='smart-raster'||!rgbaCanvas||!window.SmartRasterLayer)return;
-  dx=dx||0;dy=dy||0;
-  const destination=SmartRasterLayer.ensureFrame(li,fi);
-  if(!destination)return;
-  const width=rgbaCanvas.width,height=rgbaCanvas.height;
-  const rgba=rgbaCanvas.getContext('2d',{willReadFrequently:true}).getImageData(0,0,width,height).data;
-  const sourceIds=payload&&payload.styleIds instanceof Uint16Array?payload.styleIds:null;
-  const sourceMeta=payload&&payload.meta;
-  const sourceWidth=payload&&payload.width||width;
-  const sourceHeight=payload&&payload.height||height;
-  const maxX=Math.min(width,sourceWidth),maxY=Math.min(height,sourceHeight);
-  const remapped=Object.create(null);
-  for(let y=0;y<maxY;y++)for(let x=0;x<maxX;x++){
-    const sourceOffset=y*width+x;
-    if(rgba[sourceOffset*4+3]===0)continue;
-    const nx=x+dx,ny=y+dy;
-    if(nx<0||nx>=destination.width||ny<0||ny>=destination.height)continue;
-    let destinationIndex=0;
-    if(sourceIds&&sourceMeta){
-      const sourceIndex=sourceIds[y*sourceWidth+x]||0;
-      const stableStyleId=sourceIndex&&sourceMeta.indexToStyleId&&sourceMeta.indexToStyleId[sourceIndex];
-      if(stableStyleId){
-        if(remapped[stableStyleId]===undefined)remapped[stableStyleId]=SmartRasterLayer.ensureStyleIndex(li,fi,stableStyleId);
-        destinationIndex=remapped[stableStyleId]||0;
-      }
-    }
-    destination.styleIds[ny*destination.width+nx]=destinationIndex;
+function copyFrame() {
+  if (window.CameraTimeline && CameraTimeline.selected)
+    return CameraTimeline.handleShortcut("copy");
+  const layer = layers[curLayer],
+    k = layer.frames[curFrame];
+  if (!k) {
+    clipboard = null;
+    styleClipboard = null;
+    return;
   }
+  clipboard = mkLayerCanvas();
+  clipboard.getContext("2d").drawImage(k, 0, 0);
+  styleClipboard =
+    layer.type === "smart-raster" && typeof getStyleFrameBundle === "function"
+      ? getStyleFrameBundle(curLayer, curFrame)
+      : null;
 }
-function pasteFrame(){
-  if(window.CameraTimeline&&CameraTimeline.selected)return CameraTimeline.handleShortcut('paste');
-  if(!clipboard)return;
-  const layer=layers[curLayer],isSmartRaster=layer.type==='smart-raster';
-  if(isSmartRaster)pushUndo();
+function cutFrame() {
+  if (window.CameraTimeline && CameraTimeline.selected)
+    return CameraTimeline.handleShortcut("cut");
+  copyFrame();
+  const layer = layers[curLayer];
+  if (layer.type === "smart-raster") pushUndo();
+  delete layer.frames[curFrame];
+  if (typeof deleteStyleFrame === "function")
+    deleteStyleFrame(curLayer, curFrame);
+  ctx.clearRect(0, 0, CW, CH);
+  const h = getHeldKey(curLayer, curFrame);
+  if (h) ctx.drawImage(h, 0, 0);
+  saveActiveToKey();
+  loadFrame(curLayer, curFrame);
+  renderTimeline();
+}
+function _pasteSmartRasterClipboardOwnership(
+  li,
+  fi,
+  rgbaCanvas,
+  payload,
+  dx,
+  dy,
+) {
+  const layer = layers[li];
+  if (
+    !layer ||
+    layer.type !== "smart-raster" ||
+    !rgbaCanvas ||
+    !window.SmartRasterLayer
+  )
+    return;
+  dx = dx || 0;
+  dy = dy || 0;
+  const destination = SmartRasterLayer.ensureFrame(li, fi);
+  if (!destination) return;
+  const width = rgbaCanvas.width,
+    height = rgbaCanvas.height;
+  const rgba = rgbaCanvas
+    .getContext("2d", { willReadFrequently: true })
+    .getImageData(0, 0, width, height).data;
+  const sourceIds =
+    payload && payload.styleIds instanceof Uint16Array
+      ? payload.styleIds
+      : null;
+  const sourceMeta = payload && payload.meta;
+  const sourceWidth = (payload && payload.width) || width;
+  const sourceHeight = (payload && payload.height) || height;
+  const maxX = Math.min(width, sourceWidth),
+    maxY = Math.min(height, sourceHeight);
+  const remapped = Object.create(null);
+  for (let y = 0; y < maxY; y++)
+    for (let x = 0; x < maxX; x++) {
+      const sourceOffset = y * width + x;
+      if (rgba[sourceOffset * 4 + 3] === 0) continue;
+      const nx = x + dx,
+        ny = y + dy;
+      if (
+        nx < 0 ||
+        nx >= destination.width ||
+        ny < 0 ||
+        ny >= destination.height
+      )
+        continue;
+      let destinationIndex = 0;
+      if (sourceIds && sourceMeta) {
+        const sourceIndex = sourceIds[y * sourceWidth + x] || 0;
+        const stableStyleId =
+          sourceIndex &&
+          sourceMeta.indexToStyleId &&
+          sourceMeta.indexToStyleId[sourceIndex];
+        if (stableStyleId) {
+          if (remapped[stableStyleId] === undefined)
+            remapped[stableStyleId] = SmartRasterLayer.ensureStyleIndex(
+              li,
+              fi,
+              stableStyleId,
+            );
+          destinationIndex = remapped[stableStyleId] || 0;
+        }
+      }
+      destination.styleIds[ny * destination.width + nx] = destinationIndex;
+    }
+}
+function pasteFrame() {
+  if (window.CameraTimeline && CameraTimeline.selected)
+    return CameraTimeline.handleShortcut("paste");
+  if (!clipboard) return;
+  const layer = layers[curLayer],
+    isSmartRaster = layer.type === "smart-raster";
+  if (isSmartRaster) pushUndo();
   ensureKey();
-  ctx.clearRect(0,0,CW,CH);
-  ctx.drawImage(clipboard,0,0);
-  if(isSmartRaster){_pasteSmartRasterClipboardOwnership(curLayer,curFrame,clipboard,styleClipboard,0,0);if(window.SmartRasterV4Document&&typeof window.SmartRasterV4Document.restoreFrame==='function')window.SmartRasterV4Document.restoreFrame(layer,curFrame,styleClipboard&&styleClipboard.v4||null);}
-  saveActiveToKey();recomposite(curLayer,curFrame);
+  ctx.clearRect(0, 0, CW, CH);
+  ctx.drawImage(clipboard, 0, 0);
+  if (isSmartRaster) {
+    _pasteSmartRasterClipboardOwnership(
+      curLayer,
+      curFrame,
+      clipboard,
+      styleClipboard,
+      0,
+      0,
+    );
+    if (
+      window.SmartRasterV4Document &&
+      typeof window.SmartRasterV4Document.restoreFrame === "function"
+    )
+      window.SmartRasterV4Document.restoreFrame(
+        layer,
+        curFrame,
+        (styleClipboard && styleClipboard.v4) || null,
+      );
+  }
+  saveActiveToKey();
+  recomposite(curLayer, curFrame);
 }
-function _captureSmartRasterFrameSlot(li,fi){
-  const l=layers[li];
-  const hasArtwork=!!(l&&l.frames&&Object.prototype.hasOwnProperty.call(l.frames,fi));
-  const hasOwnership=!!(l&&l.smartStyleFrames&&Object.prototype.hasOwnProperty.call(l.smartStyleFrames,fi));
+function _captureSmartRasterFrameSlot(li, fi) {
+  const l = layers[li];
+  const hasArtwork = !!(
+    l &&
+    l.frames &&
+    Object.prototype.hasOwnProperty.call(l.frames, fi)
+  );
+  const hasOwnership = !!(
+    l &&
+    l.smartStyleFrames &&
+    Object.prototype.hasOwnProperty.call(l.smartStyleFrames, fi)
+  );
   return {
     hasArtwork,
     hasOwnership,
-    bundle:(hasArtwork||hasOwnership)&&typeof getStyleFrameBundle==='function'?getStyleFrameBundle(li,fi):null,
-    frameMeta:l&&l.frameMeta&&l.frameMeta[fi]?Object.assign({},l.frameMeta[fi]):null
+    bundle:
+      (hasArtwork || hasOwnership) && typeof getStyleFrameBundle === "function"
+        ? getStyleFrameBundle(li, fi)
+        : null,
+    frameMeta:
+      l && l.frameMeta && l.frameMeta[fi]
+        ? Object.assign({}, l.frameMeta[fi])
+        : null,
   };
 }
-function _restoreSmartRasterFrameSlot(li,fi,slot){
-  const l=layers[li];if(!l)return;
-  if(slot&&(slot.hasArtwork||slot.hasOwnership)){
-    restoreStyleFrameBundle(li,fi,slot.bundle);
-    if(!slot.hasArtwork&&l.frames)delete l.frames[fi];
-  }else{
-    if(l.frames)delete l.frames[fi];
-    if(typeof deleteStyleFrame==='function')deleteStyleFrame(li,fi);
+function _restoreSmartRasterFrameSlot(li, fi, slot) {
+  const l = layers[li];
+  if (!l) return;
+  if (slot && (slot.hasArtwork || slot.hasOwnership)) {
+    restoreStyleFrameBundle(li, fi, slot.bundle);
+    if (!slot.hasArtwork && l.frames) delete l.frames[fi];
+  } else {
+    if (l.frames) delete l.frames[fi];
+    if (typeof deleteStyleFrame === "function") deleteStyleFrame(li, fi);
   }
-  if(!l.frameMeta)l.frameMeta={};
-  if(slot&&slot.frameMeta)l.frameMeta[fi]=Object.assign({},slot.frameMeta);
+  if (!l.frameMeta) l.frameMeta = {};
+  if (slot && slot.frameMeta)
+    l.frameMeta[fi] = Object.assign({}, slot.frameMeta);
   else delete l.frameMeta[fi];
 }
-function duplicateFrame(){
-  if(window.CameraTimeline&&CameraTimeline.selected)return CameraTimeline.handleShortcut('duplicate');
-  const l=layers[curLayer];const k=l.frames[curFrame];const n=curFrame+1;
-  if(n>=TOTAL) return;
-  const isSmartRaster=l.type==='smart-raster';
-  const beforeSlot=isSmartRaster?_captureSmartRasterFrameSlot(curLayer,n):null;
-  const sourceFrame=curFrame,layerIndex=curLayer;
-  const d=mkLayerCanvas();if(k) d.getContext('2d').drawImage(k,0,0);
-  l.frames[n]=d;const sourceExtended=typeof getExtendedLayerFrame==='function'?getExtendedLayerFrame(curLayer,curFrame):null;if(sourceExtended&&typeof cloneExtendedFrameRecord==='function'&&typeof setExtendedLayerFrame==='function'){const copy=cloneExtendedFrameRecord(sourceExtended);setExtendedLayerFrame(curLayer,n,copy.canvas,copy.x,copy.y);}else if(typeof clearExtendedLayerFrame==='function')clearExtendedLayerFrame(curLayer,n);
-  if(typeof getStyleFrameBundle==='function'&&typeof restoreStyleFrameBundle==='function') restoreStyleFrameBundle(curLayer,n,getStyleFrameBundle(curLayer,curFrame));
+function duplicateFrame() {
+  if (window.CameraTimeline && CameraTimeline.selected)
+    return CameraTimeline.handleShortcut("duplicate");
+  const l = layers[curLayer];
+  const k = l.frames[curFrame];
+  const n = curFrame + 1;
+  if (n >= TOTAL) return;
+  const isSmartRaster = l.type === "smart-raster";
+  const beforeSlot = isSmartRaster
+    ? _captureSmartRasterFrameSlot(curLayer, n)
+    : null;
+  const sourceFrame = curFrame,
+    layerIndex = curLayer;
+  const d = mkLayerCanvas();
+  if (k) d.getContext("2d").drawImage(k, 0, 0);
+  l.frames[n] = d;
+  const sourceExtended =
+    typeof getExtendedLayerFrame === "function"
+      ? getExtendedLayerFrame(curLayer, curFrame)
+      : null;
+  if (
+    sourceExtended &&
+    typeof cloneExtendedFrameRecord === "function" &&
+    typeof setExtendedLayerFrame === "function"
+  ) {
+    const copy = cloneExtendedFrameRecord(sourceExtended);
+    setExtendedLayerFrame(curLayer, n, copy.canvas, copy.x, copy.y);
+  } else if (typeof clearExtendedLayerFrame === "function")
+    clearExtendedLayerFrame(curLayer, n);
+  if (
+    typeof getStyleFrameBundle === "function" &&
+    typeof restoreStyleFrameBundle === "function"
+  )
+    restoreStyleFrameBundle(
+      curLayer,
+      n,
+      getStyleFrameBundle(curLayer, curFrame),
+    );
   // Carry the source frame's mark to the duplicate
-  if(!l.frameMeta) l.frameMeta={};
-  const srcMeta=l.frameMeta[curFrame];
-  if(srcMeta&&srcMeta.markType) l.frameMeta[n]=Object.assign({},srcMeta);
+  if (!l.frameMeta) l.frameMeta = {};
+  const srcMeta = l.frameMeta[curFrame];
+  if (srcMeta && srcMeta.markType) l.frameMeta[n] = Object.assign({}, srcMeta);
   else delete l.frameMeta[n]; // clear any pre-existing mark at destination
-  if(isSmartRaster){
-    undoStack.push({type:'smart-raster-duplicate-frame',layer:layerIndex,sourceFrame,targetFrame:n,before:beforeSlot,after:_captureSmartRasterFrameSlot(layerIndex,n)});
-    if(undoStack.length>40)undoStack.shift();
-    redoStack=[];
+  if (isSmartRaster) {
+    undoStack.push({
+      type: "smart-raster-duplicate-frame",
+      layer: layerIndex,
+      sourceFrame,
+      targetFrame: n,
+      before: beforeSlot,
+      after: _captureSmartRasterFrameSlot(layerIndex, n),
+    });
+    if (undoStack.length > 40) undoStack.shift();
+    redoStack = [];
   }
-  goToFrame(n);renderTimeline();
+  goToFrame(n);
+  renderTimeline();
 }
 
 // ════════════════════════════════════════════════════════════════
 // CONTEXT MENUS
 // ════════════════════════════════════════════════════════════════
-const ctxMenu=document.getElementById('ctx-menu');
-const rulerCtxMenu=document.getElementById('ruler-ctx-menu');
-const layerCtxMenu=document.getElementById('layer-ctx-menu');
-let _layerCtxTargetIdx=null,_layerCtxTargetGid=null;
-function hideAllMenus(){ctxMenu.classList.remove('visible');rulerCtxMenu.classList.remove('visible');layerCtxMenu.classList.remove('visible');const bpCtx=document.getElementById('brush-preset-ctx-menu');if(bpCtx)bpCtx.classList.remove('visible');const bgCtx=document.getElementById('brush-group-ctx-menu');if(bgCtx)bgCtx.classList.remove('visible');closeAllDropdowns();}
-document.addEventListener('contextmenu',e=>{
-  if(window.PlatformInput&&typeof window.PlatformInput.shouldAllowContextMenu==='function'){
-    if(!window.PlatformInput.shouldAllowContextMenu(e)){
+const ctxMenu = document.getElementById("ctx-menu");
+const rulerCtxMenu = document.getElementById("ruler-ctx-menu");
+const layerCtxMenu = document.getElementById("layer-ctx-menu");
+let _layerCtxTargetIdx = null,
+  _layerCtxTargetGid = null;
+function hideAllMenus() {
+  ctxMenu.classList.remove("visible");
+  rulerCtxMenu.classList.remove("visible");
+  layerCtxMenu.classList.remove("visible");
+  const bpCtx = document.getElementById("brush-preset-ctx-menu");
+  if (bpCtx) bpCtx.classList.remove("visible");
+  const bgCtx = document.getElementById("brush-group-ctx-menu");
+  if (bgCtx) bgCtx.classList.remove("visible");
+  closeAllDropdowns();
+}
+document.addEventListener("contextmenu", (e) => {
+  if (
+    window.PlatformInput &&
+    typeof window.PlatformInput.shouldAllowContextMenu === "function"
+  ) {
+    if (!window.PlatformInput.shouldAllowContextMenu(e)) {
       e.preventDefault();
       return;
     }
   }
-  if(rulerEl.contains(e.target)) return; // ruler has its own contextmenu listener
-  const inLayerPanel=document.getElementById('right-panel').contains(e.target);
-  if(inLayerPanel) return; // handled by the layer panel's own contextmenu listener
-  const inTimelineGrid=!!(e.target.closest&&e.target.closest('#tl-scroll'));
-  const canvasWrap=document.getElementById('canvas-wrap'),canvasRect=canvasWrap&&canvasWrap.getBoundingClientRect();
-  const inDocumentCanvas=!!(canvasRect&&e.clientX>=canvasRect.left&&e.clientX<=canvasRect.right&&e.clientY>=canvasRect.top&&e.clientY<=canvasRect.bottom);
-  if(!inTimelineGrid&&!inDocumentCanvas){e.preventDefault();hideAllMenus();return;}
+  if (rulerEl.contains(e.target)) return; // ruler has its own contextmenu listener
+  const inLayerPanel = document
+    .getElementById("right-panel")
+    .contains(e.target);
+  if (inLayerPanel) return; // handled by the layer panel's own contextmenu listener
+  const inTimelineGrid = !!(e.target.closest && e.target.closest("#tl-scroll"));
+  const canvasWrap = document.getElementById("canvas-wrap"),
+    canvasRect = canvasWrap && canvasWrap.getBoundingClientRect();
+  const inDocumentCanvas = !!(
+    canvasRect &&
+    e.clientX >= canvasRect.left &&
+    e.clientX <= canvasRect.right &&
+    e.clientY >= canvasRect.top &&
+    e.clientY <= canvasRect.bottom
+  );
+  if (!inTimelineGrid && !inDocumentCanvas) {
+    e.preventDefault();
+    hideAllMenus();
+    return;
+  }
   // Everything else: any element with a more specific context menu (brush preset
   // items, timeline rows, palette cards, etc.) calls stopPropagation() in its own
   // listener, so this only runs when nothing more specific handled it. Rather than
   // silently eating the right-click, show the general app ctx-menu here.
-  e.preventDefault();hideAllMenus();
-  ctxMenu.style.left=Math.min(e.clientX,window.innerWidth-180)+'px';ctxMenu.style.top=Math.min(e.clientY,window.innerHeight-220)+'px';
-  ctxMenu.classList.add('visible');
+  e.preventDefault();
+  hideAllMenus();
+  ctxMenu.style.left = Math.min(e.clientX, window.innerWidth - 180) + "px";
+  ctxMenu.style.top = Math.min(e.clientY, window.innerHeight - 220) + "px";
+  ctxMenu.classList.add("visible");
 });
 
 // Track last known pointer position so a keybind can open a menu there
-let _lastPtrX=0,_lastPtrY=0;
-document.addEventListener('pointermove',e=>{_lastPtrX=e.clientX;_lastPtrY=e.clientY;},{passive:true});
+let _lastPtrX = 0,
+  _lastPtrY = 0;
+document.addEventListener(
+  "pointermove",
+  (e) => {
+    _lastPtrX = e.clientX;
+    _lastPtrY = e.clientY;
+  },
+  { passive: true },
+);
 
 // Tablet pens can't reliably fire a native contextmenu event in Chrome when
 // Windows Ink is enabled (a Chromium bug), so pen buttons should be mapped
@@ -322,184 +535,369 @@ document.addEventListener('pointermove',e=>{_lastPtrX=e.clientX;_lastPtrY=e.clie
 // position — so whatever's actually under the pen (a layer row, brush
 // preset, palette color, canvas, etc.) gets its own correct context menu,
 // exactly as if a real right-click happened there.
-document.addEventListener('keydown',e=>{
-  if(!matchBind(e,'penContextMenu')) return;
+document.addEventListener("keydown", (e) => {
+  if (!matchBind(e, "penContextMenu")) return;
   e.preventDefault();
-  const target=document.elementFromPoint(_lastPtrX,_lastPtrY);
-  if(!target) return;
-  const synthEv = new MouseEvent('contextmenu',{
-    bubbles:true,
-    cancelable:true,
-    clientX:_lastPtrX,
-    clientY:_lastPtrY,
-    button:2,
-    buttons:2
+  const target = document.elementFromPoint(_lastPtrX, _lastPtrY);
+  if (!target) return;
+  const synthEv = new MouseEvent("contextmenu", {
+    bubbles: true,
+    cancelable: true,
+    clientX: _lastPtrX,
+    clientY: _lastPtrY,
+    button: 2,
+    buttons: 2,
   });
   synthEv.isSynthesizedKeybind = true;
   target.dispatchEvent(synthEv);
 });
 
-document.addEventListener('click',e=>{const bpCtx=document.getElementById('brush-preset-ctx-menu');const bgCtx=document.getElementById('brush-group-ctx-menu');if(!ctxMenu.contains(e.target)&&!rulerCtxMenu.contains(e.target)&&!layerCtxMenu.contains(e.target)&&(!bpCtx||!bpCtx.contains(e.target))&&(!bgCtx||!bgCtx.contains(e.target))) hideAllMenus();});
-document.addEventListener('mousedown',e=>{if(e.button===2) return;const bpCtx=document.getElementById('brush-preset-ctx-menu');const bgCtx=document.getElementById('brush-group-ctx-menu');if(!ctxMenu.contains(e.target)&&!rulerCtxMenu.contains(e.target)&&!layerCtxMenu.contains(e.target)&&(!bpCtx||!bpCtx.contains(e.target))&&(!bgCtx||!bgCtx.contains(e.target))){if(ctxMenu.classList.contains('visible')||rulerCtxMenu.classList.contains('visible')||layerCtxMenu.classList.contains('visible')||(bpCtx&&bpCtx.classList.contains('visible'))||(bgCtx&&bgCtx.classList.contains('visible'))) hideAllMenus();}},{capture:true});
-document.getElementById('ctx-cut').onclick=()=>{cutFrame();hideAllMenus();};
-document.getElementById('ctx-copy').onclick=()=>{copyFrame();hideAllMenus();};
-document.getElementById('ctx-paste').onclick=()=>{pasteFrame();hideAllMenus();};
-document.getElementById('ctx-duplicate').onclick=()=>{duplicateFrame();hideAllMenus();};
-document.getElementById('ctx-delete').onclick=()=>{deleteKeyframe();hideAllMenus();};
+document.addEventListener(
+  "mousedown",
+  (e) => {
+    if (e.button === 2) return;
+    const bpCtx = document.getElementById("brush-preset-ctx-menu");
+    const bgCtx = document.getElementById("brush-group-ctx-menu");
+    if (
+      !ctxMenu.contains(e.target) &&
+      !rulerCtxMenu.contains(e.target) &&
+      !layerCtxMenu.contains(e.target) &&
+      (!bpCtx || !bpCtx.contains(e.target)) &&
+      (!bgCtx || !bgCtx.contains(e.target))
+    ) {
+      if (
+        ctxMenu.classList.contains("visible") ||
+        rulerCtxMenu.classList.contains("visible") ||
+        layerCtxMenu.classList.contains("visible") ||
+        (bpCtx && bpCtx.classList.contains("visible")) ||
+        (bgCtx && bgCtx.classList.contains("visible"))
+      )
+        hideAllMenus();
+    }
+  },
+  { capture: true },
+);
+document.getElementById("ctx-cut").onclick = () => {
+  cutFrame();
+  hideAllMenus();
+};
+document.getElementById("ctx-copy").onclick = () => {
+  copyFrame();
+  hideAllMenus();
+};
+document.getElementById("ctx-paste").onclick = () => {
+  pasteFrame();
+  hideAllMenus();
+};
+document.getElementById("ctx-duplicate").onclick = () => {
+  duplicateFrame();
+  hideAllMenus();
+};
+document.getElementById("ctx-delete").onclick = () => {
+  deleteKeyframe();
+  hideAllMenus();
+};
 // Layer panel context menu actions
-function _startLayerRename(idx,gid){
-  if(gid!=null){
+function _startLayerRename(idx, gid) {
+  if (gid != null) {
     // Rename group: find the name span in the group row
-    const row=document.querySelector(`.layer-group-row[data-gid="${gid}"]`);
-    if(!row) return;
-    const span=row.querySelector('.layer-group-name');
-    if(!span) return;
-    const grp=groups.find(g=>g.id===gid);if(!grp) return;
-    const old=span.textContent;
-    span.contentEditable='true';span.focus();
-    const sel=window.getSelection();const range=document.createRange();range.selectNodeContents(span);sel.removeAllRanges();sel.addRange(range);
-    const done=()=>{span.contentEditable='false';grp.name=span.textContent.trim()||old;renderLayerPanel();};
-    span.addEventListener('blur',done,{once:true});
-    span.addEventListener('keydown',ev=>{if(ev.key==='Enter'){ev.preventDefault();span.blur();}if(ev.key==='Escape'){span.textContent=old;span.blur();}});
+    const row = document.querySelector(`.layer-group-row[data-gid="${gid}"]`);
+    if (!row) return;
+    const span = row.querySelector(".layer-group-name");
+    if (!span) return;
+    const grp = groups.find((g) => g.id === gid);
+    if (!grp) return;
+    const old = span.textContent;
+    span.contentEditable = "true";
+    span.focus();
+    const sel = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(span);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    const done = () => {
+      span.contentEditable = "false";
+      grp.name = span.textContent.trim() || old;
+      renderLayerPanel();
+    };
+    span.addEventListener("blur", done, { once: true });
+    span.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        span.blur();
+      }
+      if (ev.key === "Escape") {
+        span.textContent = old;
+        span.blur();
+      }
+    });
   } else {
     // Rename layer: find the name span in the layer row
-    const row=document.querySelector(`.layer-row[data-idx="${idx}"]`);
-    if(!row) return;
-    const span=row.querySelector('.layer-name');
-    if(!span) return;
-    const l=layers[idx];if(!l) return;
-    const old=span.textContent;
-    span.contentEditable='true';span.focus();
-    const sel=window.getSelection();const range=document.createRange();range.selectNodeContents(span);sel.removeAllRanges();sel.addRange(range);
-    const done=()=>{span.contentEditable='false';l.name=span.textContent.trim()||old;renderLayerPanel();};
-    span.addEventListener('blur',done,{once:true});
-    span.addEventListener('keydown',ev=>{if(ev.key==='Enter'){ev.preventDefault();span.blur();}if(ev.key==='Escape'){span.textContent=old;span.blur();}});
-  }
-}
-document.getElementById('layer-ctx-rename').onclick=()=>{hideAllMenus();_startLayerRename(_layerCtxTargetIdx,_layerCtxTargetGid);};
-
-// ── Layer-level operations
-let _layerObjClipboard=null; // stores a deep copy of a layer object
-
-function _deepCopyLayer(l){
-  const copy={...l,frames:{},extendedFrames:{},frameMeta:{},indexFrames:{},indexMeta:{},smartStyleFrames:{},type:l.type||'bitmap'};
-  Object.entries(l.frames).forEach(([f,src])=>{
-    const c=mkLayerCanvas();
-    if(l.type==='smart-raster'){
-      const source=src.getContext('2d',{willReadFrequently:true});
-      c.getContext('2d').putImageData(source.getImageData(0,0,src.width,src.height),0,0);
-    }else c.getContext('2d').drawImage(src,0,0);
-    copy.frames[f]=c;
-  });
-  if(l.extendedFrames&&typeof cloneExtendedFrameRecord==='function')Object.entries(l.extendedFrames).forEach(([f,record])=>{const cloned=cloneExtendedFrameRecord(record);if(cloned)copy.extendedFrames[f]=cloned;});
-  // Deep-copy per-frame metadata so the duplicate is fully independent
-  if(l.frameMeta){
-    Object.entries(l.frameMeta).forEach(([f,meta])=>{copy.frameMeta[f]=Object.assign({},meta);});
-  }
-  if(l.indexFrames){
-    Object.entries(l.indexFrames).forEach(([f,src])=>{copy.indexFrames[f]=cloneStyleCanvas(src);});
-  }
-  if(l.indexMeta){
-    Object.entries(l.indexMeta).forEach(([f,meta])=>{copy.indexMeta[f]=cloneStyleMeta(meta);});
-  }
-  if(l.smartStyleFrames){
-    Object.entries(l.smartStyleFrames).forEach(([f,frame])=>{
-      const underlays={};Object.keys(frame.underlays||{}).forEach(key=>{underlays[key]=(frame.underlays[key]||[]).map(entry=>({index:entry.index,rgba:(entry.rgba||[]).slice()}));});
-      copy.smartStyleFrames[f]={width:frame.width,height:frame.height,styleIds:frame.styleIds.slice(),underlays,meta:SmartRasterLayer.cloneMeta(frame.meta)};
+    const row = document.querySelector(`.layer-row[data-idx="${idx}"]`);
+    if (!row) return;
+    const span = row.querySelector(".layer-name");
+    if (!span) return;
+    const l = layers[idx];
+    if (!l) return;
+    const old = span.textContent;
+    span.contentEditable = "true";
+    span.focus();
+    const sel = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(span);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    const done = () => {
+      span.contentEditable = "false";
+      l.name = span.textContent.trim() || old;
+      renderLayerPanel();
+    };
+    span.addEventListener("blur", done, { once: true });
+    span.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        span.blur();
+      }
+      if (ev.key === "Escape") {
+        span.textContent = old;
+        span.blur();
+      }
     });
   }
-  if(window.SmartRasterV4Document&&typeof window.SmartRasterV4Document.cloneLayer==='function')window.SmartRasterV4Document.cloneLayer(l,copy);
+}
+document.getElementById("layer-ctx-rename").onclick = () => {
+  hideAllMenus();
+  _startLayerRename(_layerCtxTargetIdx, _layerCtxTargetGid);
+};
+
+// ── Layer-level operations
+let _layerObjClipboard = null; // stores a deep copy of a layer object
+
+function _deepCopyLayer(l) {
+  const copy = {
+    ...l,
+    frames: {},
+    extendedFrames: {},
+    frameMeta: {},
+    indexFrames: {},
+    indexMeta: {},
+    smartStyleFrames: {},
+    type: l.type || "bitmap",
+  };
+  Object.entries(l.frames).forEach(([f, src]) => {
+    const c = mkLayerCanvas();
+    if (l.type === "smart-raster") {
+      const source = src.getContext("2d", { willReadFrequently: true });
+      c.getContext("2d").putImageData(
+        source.getImageData(0, 0, src.width, src.height),
+        0,
+        0,
+      );
+    } else c.getContext("2d").drawImage(src, 0, 0);
+    copy.frames[f] = c;
+  });
+  if (l.extendedFrames && typeof cloneExtendedFrameRecord === "function")
+    Object.entries(l.extendedFrames).forEach(([f, record]) => {
+      const cloned = cloneExtendedFrameRecord(record);
+      if (cloned) copy.extendedFrames[f] = cloned;
+    });
+  // Deep-copy per-frame metadata so the duplicate is fully independent
+  if (l.frameMeta) {
+    Object.entries(l.frameMeta).forEach(([f, meta]) => {
+      copy.frameMeta[f] = Object.assign({}, meta);
+    });
+  }
+  if (l.indexFrames) {
+    Object.entries(l.indexFrames).forEach(([f, src]) => {
+      copy.indexFrames[f] = cloneStyleCanvas(src);
+    });
+  }
+  if (l.indexMeta) {
+    Object.entries(l.indexMeta).forEach(([f, meta]) => {
+      copy.indexMeta[f] = cloneStyleMeta(meta);
+    });
+  }
+  if (l.smartStyleFrames) {
+    Object.entries(l.smartStyleFrames).forEach(([f, frame]) => {
+      const underlays = {};
+      Object.keys(frame.underlays || {}).forEach((key) => {
+        underlays[key] = (frame.underlays[key] || []).map((entry) => ({
+          index: entry.index,
+          rgba: (entry.rgba || []).slice(),
+        }));
+      });
+      copy.smartStyleFrames[f] = {
+        width: frame.width,
+        height: frame.height,
+        styleIds: frame.styleIds.slice(),
+        underlays,
+        meta: SmartRasterLayer.cloneMeta(frame.meta),
+      };
+    });
+  }
+  if (
+    window.SmartRasterV4Document &&
+    typeof window.SmartRasterV4Document.cloneLayer === "function"
+  )
+    window.SmartRasterV4Document.cloneLayer(l, copy);
   return copy;
 }
 
-function copyLayer(idx){
-  const layer=layers[idx];if(!layer)return false;
-  _layerObjClipboard=_deepCopyLayer(layer);
+function copyLayer(idx) {
+  const layer = layers[idx];
+  if (!layer) return false;
+  _layerObjClipboard = _deepCopyLayer(layer);
   return true;
 }
-function cutLayer(idx){
-  const layer=layers[idx];if(!layer)return false;
-  const wasOnlyLayer=layers.length===1;
-  const snapshot=_deepCopyLayer(layer);
-  _layerObjClipboard=_deepCopyLayer(layer);
-  undoStack.push({type:'layer-cut',index:idx,layerSnapshot:snapshot,wasOnlyLayer});
-  if(undoStack.length>40)undoStack.shift();
-  redoStack=[];
+function cutLayer(idx) {
+  const layer = layers[idx];
+  if (!layer) return false;
+  const wasOnlyLayer = layers.length === 1;
+  const snapshot = _deepCopyLayer(layer);
+  _layerObjClipboard = _deepCopyLayer(layer);
+  undoStack.push({
+    type: "layer-cut",
+    index: idx,
+    layerSnapshot: snapshot,
+    wasOnlyLayer,
+  });
+  if (undoStack.length > 40) undoStack.shift();
+  redoStack = [];
   _doDeleteLayer(idx);
   return true;
 }
-function pasteLayer(targetIdx){
-  if(!_layerObjClipboard)return false;
-  const copy=_deepCopyLayer(_layerObjClipboard);
-  copy.name=_layerObjClipboard.name+' Copy';
-  copy.groupId=null; // paste at top level
-  const insertAt=(targetIdx!=null?targetIdx:curLayer)+1;
-  layers.splice(insertAt,0,copy);
-  if(window.SmartRasterV4Document&&typeof window.SmartRasterV4Document.restoreLayer==='function')window.SmartRasterV4Document.restoreLayer(copy);
-  curLayer=insertAt;
+function pasteLayer(targetIdx) {
+  if (!_layerObjClipboard) return false;
+  const copy = _deepCopyLayer(_layerObjClipboard);
+  copy.name = _layerObjClipboard.name + " Copy";
+  copy.groupId = null; // paste at top level
+  const insertAt = (targetIdx != null ? targetIdx : curLayer) + 1;
+  layers.splice(insertAt, 0, copy);
+  if (
+    window.SmartRasterV4Document &&
+    typeof window.SmartRasterV4Document.restoreLayer === "function"
+  )
+    window.SmartRasterV4Document.restoreLayer(copy);
+  curLayer = insertAt;
   selectedLayerIndices.clear();
-  loadFrame(curLayer,curFrame);renderLayerPanel();renderTimeline();
+  loadFrame(curLayer, curFrame);
+  renderLayerPanel();
+  renderTimeline();
   return true;
 }
-function duplicateLayer(idx){
-  const layer=layers[idx];if(!layer)return false;
-  const copy=_deepCopyLayer(layer);
-  copy.name=layer.name+' Copy';
-  layers.splice(idx+1,0,copy);
-  if(window.SmartRasterV4Document&&typeof window.SmartRasterV4Document.restoreLayer==='function')window.SmartRasterV4Document.restoreLayer(copy);
-  curLayer=idx+1;
+function duplicateLayer(idx) {
+  const layer = layers[idx];
+  if (!layer) return false;
+  const copy = _deepCopyLayer(layer);
+  copy.name = layer.name + " Copy";
+  layers.splice(idx + 1, 0, copy);
+  if (
+    window.SmartRasterV4Document &&
+    typeof window.SmartRasterV4Document.restoreLayer === "function"
+  )
+    window.SmartRasterV4Document.restoreLayer(copy);
+  curLayer = idx + 1;
   selectedLayerIndices.clear();
-  if(layer.type==='smart-raster'){
-    undoStack.push({type:'smart-raster-duplicate-layer',index:idx+1,sourceIndex:idx,layerSnapshot:_deepCopyLayer(copy)});
-    if(undoStack.length>40)undoStack.shift();
-    redoStack=[];
+  if (layer.type === "smart-raster") {
+    undoStack.push({
+      type: "smart-raster-duplicate-layer",
+      index: idx + 1,
+      sourceIndex: idx,
+      layerSnapshot: _deepCopyLayer(copy),
+    });
+    if (undoStack.length > 40) undoStack.shift();
+    redoStack = [];
   }
-  loadFrame(curLayer,curFrame);renderLayerPanel();renderTimeline();
+  loadFrame(curLayer, curFrame);
+  renderLayerPanel();
+  renderTimeline();
   return true;
 }
-document.getElementById('layer-ctx-copy-layer').onclick=()=>{copyLayer(_layerCtxTargetIdx);hideAllMenus();};
-document.getElementById('layer-ctx-cut-layer').onclick=()=>{cutLayer(_layerCtxTargetIdx);hideAllMenus();};
-document.getElementById('layer-ctx-paste-layer').onclick=()=>{pasteLayer(_layerCtxTargetIdx);hideAllMenus();};
-document.getElementById('layer-ctx-duplicate-layer').onclick=()=>{duplicateLayer(_layerCtxTargetIdx);hideAllMenus();};
-document.getElementById('layer-ctx-delete-layer').onclick=()=>{
+document.getElementById("layer-ctx-copy-layer").onclick = () => {
+  copyLayer(_layerCtxTargetIdx);
   hideAllMenus();
-  if(_layerCtxTargetIdx!=null)deleteLayer(_layerCtxTargetIdx);
+};
+document.getElementById("layer-ctx-cut-layer").onclick = () => {
+  cutLayer(_layerCtxTargetIdx);
+  hideAllMenus();
+};
+document.getElementById("layer-ctx-paste-layer").onclick = () => {
+  pasteLayer(_layerCtxTargetIdx);
+  hideAllMenus();
+};
+document.getElementById("layer-ctx-duplicate-layer").onclick = () => {
+  duplicateLayer(_layerCtxTargetIdx);
+  hideAllMenus();
+};
+document.getElementById("layer-ctx-delete-layer").onclick = () => {
+  hideAllMenus();
+  if (_layerCtxTargetIdx != null) deleteLayer(_layerCtxTargetIdx);
 };
 
 // ── Group-level operations (Copy / Paste / Duplicate / Delete group)
-let _groupObjClipboard=null; // {groups:[...], layers:[...]}
+let _groupObjClipboard = null; // {groups:[...], layers:[...]}
 
 // Deep-copies a group AND every subgroup nested inside it (any depth), remapping ids
 // so the result can be pasted/duplicated as an independent, fully-nested copy.
-function _deepCopyGroupData(gid){
-  const grp=groups.find(g=>g.id===gid);if(!grp) return null;
-  const idSet=_allDescendantGroupIds(gid);
-  const idMap=new Map();idSet.forEach(id=>idMap.set(id,'g'+(Date.now()+Math.random()).toString(36)+Math.random().toString(36).slice(2,6)));
-  const groupCopies=[...idSet].map(id=>{
-    const g=groups.find(g2=>g2.id===id);
-    return {...g,id:idMap.get(id),parentId:g.parentId&&idMap.has(g.parentId)?idMap.get(g.parentId):null};
+function _deepCopyGroupData(gid) {
+  const grp = groups.find((g) => g.id === gid);
+  if (!grp) return null;
+  const idSet = _allDescendantGroupIds(gid);
+  const idMap = new Map();
+  idSet.forEach((id) =>
+    idMap.set(
+      id,
+      "g" +
+        (Date.now() + Math.random()).toString(36) +
+        Math.random().toString(36).slice(2, 6),
+    ),
+  );
+  const groupCopies = [...idSet].map((id) => {
+    const g = groups.find((g2) => g2.id === id);
+    return {
+      ...g,
+      id: idMap.get(id),
+      parentId:
+        g.parentId && idMap.has(g.parentId) ? idMap.get(g.parentId) : null,
+    };
   });
-  const memberLayers=layers.filter(l=>l.groupId&&idSet.has(l.groupId))
-    .map(l=>{const copy=_deepCopyLayer(l);copy.groupId=idMap.get(l.groupId);return copy;});
-  return {rootId:idMap.get(gid),groups:groupCopies,layers:memberLayers};
+  const memberLayers = layers
+    .filter((l) => l.groupId && idSet.has(l.groupId))
+    .map((l) => {
+      const copy = _deepCopyLayer(l);
+      copy.groupId = idMap.get(l.groupId);
+      return copy;
+    });
+  return { rootId: idMap.get(gid), groups: groupCopies, layers: memberLayers };
 }
 
-document.getElementById('layer-ctx-copy-group').onclick=()=>{
-  const data=_deepCopyGroupData(_layerCtxTargetGid);if(!data){hideAllMenus();return;}
-  _groupObjClipboard=data;
+document.getElementById("layer-ctx-copy-group").onclick = () => {
+  const data = _deepCopyGroupData(_layerCtxTargetGid);
+  if (!data) {
+    hideAllMenus();
+    return;
+  }
+  _groupObjClipboard = data;
   hideAllMenus();
 };
-document.getElementById('layer-ctx-cut-group').onclick=()=>{
-  const gid=_layerCtxTargetGid;if(!gid){hideAllMenus();return;}
-  _groupObjClipboard=_deepCopyGroupData(gid);
+document.getElementById("layer-ctx-cut-group").onclick = () => {
+  const gid = _layerCtxTargetGid;
+  if (!gid) {
+    hideAllMenus();
+    return;
+  }
+  _groupObjClipboard = _deepCopyGroupData(gid);
   hideAllMenus();
   deleteGroup(gid);
 };
 
 // ── Right-click on empty space inside the layer panel → open menu targeting curLayer
-document.getElementById('right-panel').addEventListener('contextmenu',e=>{
-  if(window.PlatformInput&&typeof window.PlatformInput.shouldAllowContextMenu==='function'){
-    if(!window.PlatformInput.shouldAllowContextMenu(e)){
+document.getElementById("right-panel").addEventListener("contextmenu", (e) => {
+  if (
+    window.PlatformInput &&
+    typeof window.PlatformInput.shouldAllowContextMenu === "function"
+  ) {
+    if (!window.PlatformInput.shouldAllowContextMenu(e)) {
       e.preventDefault();
       return;
     }
@@ -507,227 +905,437 @@ document.getElementById('right-panel').addEventListener('contextmenu',e=>{
   // Row-level listeners call stopPropagation, so this only fires on empty panel space
   e.preventDefault();
   hideAllMenus();
-  _layerCtxTargetIdx=curLayer;_layerCtxTargetGid=null;
-  layerCtxMenu.classList.remove('mode-group');layerCtxMenu.classList.add('mode-layer');
-  layerCtxMenu.style.left=Math.min(e.clientX,window.innerWidth-180)+'px';
-  layerCtxMenu.style.top=Math.min(e.clientY,window.innerHeight-200)+'px';
-  layerCtxMenu.classList.add('visible');
+  _layerCtxTargetIdx = curLayer;
+  _layerCtxTargetGid = null;
+  layerCtxMenu.classList.remove("mode-group");
+  layerCtxMenu.classList.add("mode-layer");
+  layerCtxMenu.style.left = Math.min(e.clientX, window.innerWidth - 180) + "px";
+  layerCtxMenu.style.top = Math.min(e.clientY, window.innerHeight - 200) + "px";
+  layerCtxMenu.classList.add("visible");
 });
-document.getElementById('layer-ctx-paste-group').onclick=()=>{
-  if(!_groupObjClipboard){hideAllMenus();return;}
-  const rootSuffix=' Copy';
-  const idMap=new Map();
-  _groupObjClipboard.groups.forEach(g=>{const fresh='g'+(Date.now()+Math.random()).toString(36)+Math.random().toString(36).slice(2,6);idMap.set(g.id,fresh);});
-  _groupObjClipboard.groups.forEach(g=>{
-    const isRoot=g.id===_groupObjClipboard.rootId;
-    groups.push({...g,id:idMap.get(g.id),parentId:g.parentId&&idMap.has(g.parentId)?idMap.get(g.parentId):null,name:isRoot?g.name+rootSuffix:g.name});
+document.getElementById("layer-ctx-paste-group").onclick = () => {
+  if (!_groupObjClipboard) {
+    hideAllMenus();
+    return;
+  }
+  const rootSuffix = " Copy";
+  const idMap = new Map();
+  _groupObjClipboard.groups.forEach((g) => {
+    const fresh =
+      "g" +
+      (Date.now() + Math.random()).toString(36) +
+      Math.random().toString(36).slice(2, 6);
+    idMap.set(g.id, fresh);
   });
-  const newLayers=_groupObjClipboard.layers.map(l=>{const copy=_deepCopyLayer(l);copy.groupId=idMap.get(l.groupId);return copy;});
+  _groupObjClipboard.groups.forEach((g) => {
+    const isRoot = g.id === _groupObjClipboard.rootId;
+    groups.push({
+      ...g,
+      id: idMap.get(g.id),
+      parentId:
+        g.parentId && idMap.has(g.parentId) ? idMap.get(g.parentId) : null,
+      name: isRoot ? g.name + rootSuffix : g.name,
+    });
+  });
+  const newLayers = _groupObjClipboard.layers.map((l) => {
+    const copy = _deepCopyLayer(l);
+    copy.groupId = idMap.get(l.groupId);
+    return copy;
+  });
   layers.push(...newLayers);
-  if(window.SmartRasterV4Document&&typeof window.SmartRasterV4Document.restoreLayer==='function')newLayers.forEach(layer=>window.SmartRasterV4Document.restoreLayer(layer));
-  renderLayerPanel();renderTimeline();
+  if (
+    window.SmartRasterV4Document &&
+    typeof window.SmartRasterV4Document.restoreLayer === "function"
+  )
+    newLayers.forEach((layer) =>
+      window.SmartRasterV4Document.restoreLayer(layer),
+    );
+  renderLayerPanel();
+  renderTimeline();
   hideAllMenus();
 };
-document.getElementById('layer-ctx-duplicate-group').onclick=()=>{
-  const data=_deepCopyGroupData(_layerCtxTargetGid);if(!data){hideAllMenus();return;}
-  const idMap=new Map();
-  data.groups.forEach(g=>{const fresh='g'+(Date.now()+Math.random()).toString(36)+Math.random().toString(36).slice(2,6);idMap.set(g.id,fresh);});
-  data.groups.forEach(g=>{
-    const isRoot=g.id===data.rootId;
-    groups.push({...g,id:idMap.get(g.id),parentId:g.parentId&&idMap.has(g.parentId)?idMap.get(g.parentId):null,name:isRoot?g.name+' Copy':g.name});
+document.getElementById("layer-ctx-duplicate-group").onclick = () => {
+  const data = _deepCopyGroupData(_layerCtxTargetGid);
+  if (!data) {
+    hideAllMenus();
+    return;
+  }
+  const idMap = new Map();
+  data.groups.forEach((g) => {
+    const fresh =
+      "g" +
+      (Date.now() + Math.random()).toString(36) +
+      Math.random().toString(36).slice(2, 6);
+    idMap.set(g.id, fresh);
   });
-  const newLayers=data.layers.map(l=>{const copy=_deepCopyLayer(l);copy.groupId=idMap.get(l.groupId);return copy;});
+  data.groups.forEach((g) => {
+    const isRoot = g.id === data.rootId;
+    groups.push({
+      ...g,
+      id: idMap.get(g.id),
+      parentId:
+        g.parentId && idMap.has(g.parentId) ? idMap.get(g.parentId) : null,
+      name: isRoot ? g.name + " Copy" : g.name,
+    });
+  });
+  const newLayers = data.layers.map((l) => {
+    const copy = _deepCopyLayer(l);
+    copy.groupId = idMap.get(l.groupId);
+    return copy;
+  });
   layers.push(...newLayers);
-  if(window.SmartRasterV4Document&&typeof window.SmartRasterV4Document.restoreLayer==='function')newLayers.forEach(layer=>window.SmartRasterV4Document.restoreLayer(layer));
-  renderLayerPanel();renderTimeline();
+  if (
+    window.SmartRasterV4Document &&
+    typeof window.SmartRasterV4Document.restoreLayer === "function"
+  )
+    newLayers.forEach((layer) =>
+      window.SmartRasterV4Document.restoreLayer(layer),
+    );
+  renderLayerPanel();
+  renderTimeline();
   hideAllMenus();
 };
-document.getElementById('layer-ctx-delete-group').onclick=()=>{
+document.getElementById("layer-ctx-delete-group").onclick = () => {
   hideAllMenus();
-  if(_layerCtxTargetGid!=null) deleteGroup(_layerCtxTargetGid);
+  if (_layerCtxTargetGid != null) deleteGroup(_layerCtxTargetGid);
 };
 
 // ════════════════════════════════════════════════════════════════
 // MENU BAR DROPDOWNS
 // ════════════════════════════════════════════════════════════════
-function closeAllDropdowns(){document.querySelectorAll('.mb-item.open').forEach(m=>m.classList.remove('open'));}
-document.querySelectorAll('.mb-item').forEach(item=>{
-  item.addEventListener('click',e=>{
-    e.stopPropagation();
-    const wasOpen=item.classList.contains('open');
+function closeAllDropdowns() {
+  document
+    .querySelectorAll(".mb-item.open")
+    .forEach((m) => m.classList.remove("open"));
+}
+if (window.TransientManager) {
+  window.TransientManager.register({
+    id: "menubar",
+    isOpen: () => !!document.querySelector(".mb-item.open"),
+    close: () => closeAllDropdowns(),
+    contains: (target) =>
+      !!(target && target.closest && target.closest("#menubar")),
+  });
+  window.TransientManager.register({
+    id: "context-menus",
+    isOpen: () =>
+      !!(
+        ctxMenu?.classList.contains("visible") ||
+        rulerCtxMenu?.classList.contains("visible") ||
+        layerCtxMenu?.classList.contains("visible") ||
+        document
+          .getElementById("brush-preset-ctx-menu")
+          ?.classList.contains("visible") ||
+        document
+          .getElementById("brush-group-ctx-menu")
+          ?.classList.contains("visible") ||
+        document
+          .getElementById("audio-clip-ctx-menu")
+          ?.classList.contains("visible")
+      ),
+    close: () => hideAllMenus(),
+    contains: (target) =>
+      !!(target && target.closest && target.closest(".ctx-menu")),
+  });
+}
+document.querySelectorAll(".mb-item").forEach((item) => {
+  item.addEventListener("click", (e) => {
+    if (e.target.closest(".dropdown")) return;
+    const wasOpen = item.classList.contains("open");
     closeAllDropdowns();
-    if(!wasOpen) item.classList.add('open');
+    if (window.TransientManager)
+      window.TransientManager.dismissAll({ exclude: "menubar" });
+    if (!wasOpen) item.classList.add("open");
   });
 });
-document.addEventListener('click',closeAllDropdowns);
-document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeAllDropdowns();hideAllMenus();}},{capture:true});
 
 // File menu
-document.getElementById('dd-new').onclick=async()=>{
+document.getElementById("dd-new").onclick = async () => {
   closeAllDropdowns();
-  if(typeof window.confirmDiscardUnsavedChanges==='function'){
-    if(!await window.confirmDiscardUnsavedChanges()) return;
+  if (typeof window.confirmDiscardUnsavedChanges === "function") {
+    if (!(await window.confirmDiscardUnsavedChanges())) return;
   }
-  document.getElementById('modal-new-project').classList.add('visible');
+  document.getElementById("modal-new-project").classList.add("visible");
 };
-document.getElementById('modal-new-project-cancel').onclick=()=>document.getElementById('modal-new-project').classList.remove('visible');
-document.getElementById('modal-new-project').addEventListener('click',e=>{if(e.target===document.getElementById('modal-new-project'))document.getElementById('modal-new-project').classList.remove('visible');});
-document.getElementById('modal-new-project-ok').onclick=()=>{
-  document.getElementById('modal-new-project').classList.remove('visible');
-  TOTAL=PROJECT_DEFAULTS.totalFrames;
-  MAX_FPS=PROJECT_DEFAULTS.fps;
-  rangeStart=0;
-  rangeEnd=Math.min(TOTAL,PROJECT_DEFAULTS.outPointFrame)-1;
-  loopRange=false;
-  fpsTl.max=MAX_FPS;
-  fpsTl.value=PROJECT_DEFAULTS.fps;
-  fpsVal.textContent=PROJECT_DEFAULTS.fps;
+document.getElementById("modal-new-project-cancel").onclick = () =>
+  document.getElementById("modal-new-project").classList.remove("visible");
+document.getElementById("modal-new-project").addEventListener("click", (e) => {
+  if (e.target === document.getElementById("modal-new-project"))
+    document.getElementById("modal-new-project").classList.remove("visible");
+});
+document.getElementById("modal-new-project-ok").onclick = () => {
+  document.getElementById("modal-new-project").classList.remove("visible");
+  TOTAL = PROJECT_DEFAULTS.totalFrames;
+  MAX_FPS = PROJECT_DEFAULTS.fps;
+  rangeStart = 0;
+  rangeEnd = Math.min(TOTAL, PROJECT_DEFAULTS.outPointFrame) - 1;
+  loopRange = false;
+  fpsTl.max = MAX_FPS;
+  fpsTl.value = PROJECT_DEFAULTS.fps;
+  fpsVal.textContent = PROJECT_DEFAULTS.fps;
   updateFpsSliderColor();
-  groups=[];
-  if(window.CameraSystem)CameraSystem.reset();
-  layers=[];
-  layers.push(makeBlankLayer('bitmap'));
-  curLayer=0;curFrame=0;
-  undoStack=[];redoStack=[];
-  selectedFrames.clear();selectedFrames.add(0);selectedKFs.clear();
+  groups = [];
+  if (window.CameraSystem) CameraSystem.reset();
+  layers = [];
+  layers.push(makeBlankLayer("bitmap"));
+  curLayer = 0;
+  curFrame = 0;
+  undoStack = [];
+  redoStack = [];
+  selectedFrames.clear();
+  selectedFrames.add(0);
+  selectedKFs.clear();
   initCanvas();
   // Explicitly clear activeC — if canvas dimensions are unchanged, resizing
   // in initCanvas does NOT clear it, so old drawing would bleed through.
-  ctx.clearRect(0,0,CW,CH);
-  if(window.PaletteDocker&&typeof window.PaletteDocker.reset==='function') window.PaletteDocker.reset();
-  window._projectName='Untitled';
-  renderLayerPanel();renderTimeline();loadFrame(0,0);
+  ctx.clearRect(0, 0, CW, CH);
+  if (window.PaletteDocker && typeof window.PaletteDocker.reset === "function")
+    window.PaletteDocker.reset();
+  window._projectName = "Untitled";
+  renderLayerPanel();
+  renderTimeline();
+  loadFrame(0, 0);
   // Re-center the canvas for the new project
   fitCanvasToView();
-  if(typeof window.markProjectClean==='function') window.markProjectClean('new');
+  if (typeof window.markProjectClean === "function")
+    window.markProjectClean("new");
 };
-document.getElementById('dd-export').onclick=()=>{closeAllDropdowns();if(window.ExportSystem)ExportSystem.open();};
+document.getElementById("dd-export").onclick = () => {
+  closeAllDropdowns();
+  if (window.ExportSystem) ExportSystem.open();
+};
 
 // Edit menu
-document.getElementById('dd-undo').onclick=()=>{undo();closeAllDropdowns();};
-document.getElementById('dd-redo').onclick=()=>{redo();closeAllDropdowns();};
-document.getElementById('dd-cut').onclick=()=>{cutLayer(curLayer);closeAllDropdowns();};
-document.getElementById('dd-copy').onclick=()=>{copyLayer(curLayer);closeAllDropdowns();};
-document.getElementById('dd-paste').onclick=()=>{pasteLayer(curLayer);closeAllDropdowns();};
-document.getElementById('dd-duplicate').onclick=()=>{duplicateLayer(curLayer);closeAllDropdowns();};
-async function clearCurrentFrame(){
-  if(window.CameraTimeline&&CameraTimeline.selected){CameraTimeline.handleShortcut('delete');return;}
-  if(typeof window.finishActiveDrawingBeforeArtworkChange==='function')window.finishActiveDrawingBeforeArtworkChange(curLayer,curFrame);
-  if(typeof window.awaitPendingBrushCommits==='function'){
-    try{
+document.getElementById("dd-undo").onclick = () => {
+  undo();
+  closeAllDropdowns();
+};
+document.getElementById("dd-redo").onclick = () => {
+  redo();
+  closeAllDropdowns();
+};
+document.getElementById("dd-cut").onclick = () => {
+  cutLayer(curLayer);
+  closeAllDropdowns();
+};
+document.getElementById("dd-copy").onclick = () => {
+  copyLayer(curLayer);
+  closeAllDropdowns();
+};
+document.getElementById("dd-paste").onclick = () => {
+  pasteLayer(curLayer);
+  closeAllDropdowns();
+};
+document.getElementById("dd-duplicate").onclick = () => {
+  duplicateLayer(curLayer);
+  closeAllDropdowns();
+};
+async function clearCurrentFrame() {
+  if (window.CameraTimeline && CameraTimeline.selected) {
+    CameraTimeline.handleShortcut("delete");
+    return;
+  }
+  if (typeof window.finishActiveDrawingBeforeArtworkChange === "function")
+    window.finishActiveDrawingBeforeArtworkChange(curLayer, curFrame);
+  if (typeof window.awaitPendingBrushCommits === "function") {
+    try {
       await window.awaitPendingBrushCommits();
-    }catch(err){
-      console.error('[clearCurrentFrame] Failed awaiting pending brush commits:',err);
+    } catch (err) {
+      console.error(
+        "[clearCurrentFrame] Failed awaiting pending brush commits:",
+        err,
+      );
     }
   }
-  if(typeof _hardRoundSetGpuOverlayVisible==='function'&&window.HardRoundOverlayOwnerStrokeId==null){
-    _hardRoundSetGpuOverlayVisible(false,'clearCurrentFrame-barrier-settled');
+  if (
+    typeof _hardRoundSetGpuOverlayVisible === "function" &&
+    window.HardRoundOverlayOwnerStrokeId == null
+  ) {
+    _hardRoundSetGpuOverlayVisible(false, "clearCurrentFrame-barrier-settled");
   }
   pushUndo();
   ensureKey();
-  ctx.clearRect(0,0,CW,CH);
-  if(typeof clearExtendedLayerFrame==='function')clearExtendedLayerFrame(curLayer,curFrame);
-  if(typeof deleteStyleFrame==='function') deleteStyleFrame(curLayer,curFrame);
+  ctx.clearRect(0, 0, CW, CH);
+  if (typeof clearExtendedLayerFrame === "function")
+    clearExtendedLayerFrame(curLayer, curFrame);
+  if (typeof deleteStyleFrame === "function")
+    deleteStyleFrame(curLayer, curFrame);
   saveActiveToKey();
-  recomposite(curLayer,curFrame);
+  recomposite(curLayer, curFrame);
 }
-document.getElementById('dd-clear').onclick=()=>{clearCurrentFrame();closeAllDropdowns();};
+document.getElementById("dd-clear").onclick = () => {
+  clearCurrentFrame();
+  closeAllDropdowns();
+};
 
 // Window menu
-function updateWindowChecks(){
-  document.getElementById('chk-tools').textContent=FloatPanels.isVisible('tools')?'✓':'';
-  document.getElementById('chk-brush-presets').textContent=FloatPanels.isVisible('brush-presets')?'✓':'';
-  document.getElementById('chk-palette').textContent=FloatPanels.isVisible('palette')?'\u2713':'';
-  document.getElementById('chk-colorpanel').textContent=FloatPanels.isVisible('color')?'✓':'';
-  document.getElementById('chk-layers').textContent=FloatPanels.isVisible('layers')?'✓':'';
-  document.getElementById('chk-timeline').textContent=showTimeline?'✓':'';
-  document.getElementById('chk-toolbar').textContent=showToolbar?'✓':'';
-  document.getElementById('chk-keyframe-switcher').textContent=FloatPanels.isVisible('keyframe-switcher')?'✓':'';
-  document.getElementById('chk-keyframe-exposure').textContent=FloatPanels.isVisible('keyframe-exposure')?'✓':'';
-  document.getElementById('chk-drawing-marks').textContent=FloatPanels.isVisible('drawing-marks')?'✓':'';
-  document.getElementById('chk-onion-skin-panel').textContent=FloatPanels.isVisible('onion-skin')?'\u2713':'';
-  document.getElementById('chk-light-table').textContent=FloatPanels.isVisible('light-table')?'\u2713':'';
-  document.getElementById('chk-draw-mode').textContent=(typeof window.isDrawModeActive==='function'&&window.isDrawModeActive())?'✓':'';
+function updateWindowChecks() {
+  document.getElementById("chk-tools").textContent = FloatPanels.isVisible(
+    "tools",
+  )
+    ? "✓"
+    : "";
+  document.getElementById("chk-brush-presets").textContent =
+    FloatPanels.isVisible("brush-presets") ? "✓" : "";
+  document.getElementById("chk-palette").textContent = FloatPanels.isVisible(
+    "palette",
+  )
+    ? "\u2713"
+    : "";
+  document.getElementById("chk-colorpanel").textContent = FloatPanels.isVisible(
+    "color",
+  )
+    ? "✓"
+    : "";
+  document.getElementById("chk-layers").textContent = FloatPanels.isVisible(
+    "layers",
+  )
+    ? "✓"
+    : "";
+  document.getElementById("chk-timeline").textContent = showTimeline ? "✓" : "";
+  document.getElementById("chk-toolbar").textContent = showToolbar ? "✓" : "";
+  document.getElementById("chk-keyframe-switcher").textContent =
+    FloatPanels.isVisible("keyframe-switcher") ? "✓" : "";
+  document.getElementById("chk-keyframe-exposure").textContent =
+    FloatPanels.isVisible("keyframe-exposure") ? "✓" : "";
+  document.getElementById("chk-drawing-marks").textContent =
+    FloatPanels.isVisible("drawing-marks") ? "✓" : "";
+  document.getElementById("chk-onion-skin-panel").textContent =
+    FloatPanels.isVisible("onion-skin") ? "\u2713" : "";
+  document.getElementById("chk-light-table").textContent =
+    FloatPanels.isVisible("light-table") ? "\u2713" : "";
+  document.getElementById("chk-draw-mode").textContent =
+    typeof window.isDrawModeActive === "function" && window.isDrawModeActive()
+      ? "✓"
+      : "";
 }
 // Keep the Window-menu checkmarks in sync whenever a panel is shown/hidden/merged
 // from anywhere else (close button, drag-to-merge, drag-tab-out, etc.)
-FloatPanels.setWindowCheckHook(()=>updateWindowChecks());
+FloatPanels.setWindowCheckHook(() => updateWindowChecks());
 updateWindowChecks();
 
-document.getElementById('dd-show-tools').onclick=()=>{
-  FloatPanels.setVisible('tools',!FloatPanels.isVisible('tools'));
-  updateWindowChecks();closeAllDropdowns();
+document.getElementById("dd-show-tools").onclick = () => {
+  FloatPanels.setVisible("tools", !FloatPanels.isVisible("tools"));
+  updateWindowChecks();
+  closeAllDropdowns();
 };
-document.getElementById('dd-show-brush-presets').onclick=()=>{
-  FloatPanels.setVisible('brush-presets',!FloatPanels.isVisible('brush-presets'));
-  updateWindowChecks();closeAllDropdowns();
+document.getElementById("dd-show-brush-presets").onclick = () => {
+  FloatPanels.setVisible(
+    "brush-presets",
+    !FloatPanels.isVisible("brush-presets"),
+  );
+  updateWindowChecks();
+  closeAllDropdowns();
 };
-document.getElementById('dd-show-palette').onclick=()=>{
-  FloatPanels.setVisible('palette',!FloatPanels.isVisible('palette'));
-  updateWindowChecks();closeAllDropdowns();
+document.getElementById("dd-show-palette").onclick = () => {
+  FloatPanels.setVisible("palette", !FloatPanels.isVisible("palette"));
+  updateWindowChecks();
+  closeAllDropdowns();
 };
-document.getElementById('dd-show-colorpanel').onclick=()=>{
-  FloatPanels.setVisible('color',!FloatPanels.isVisible('color'));
-  updateWindowChecks();closeAllDropdowns();
+document.getElementById("dd-show-colorpanel").onclick = () => {
+  FloatPanels.setVisible("color", !FloatPanels.isVisible("color"));
+  updateWindowChecks();
+  closeAllDropdowns();
 };
-document.getElementById('dd-show-layers').onclick=()=>{
-  FloatPanels.setVisible('layers',!FloatPanels.isVisible('layers'));
-  updateWindowChecks();closeAllDropdowns();
+document.getElementById("dd-show-layers").onclick = () => {
+  FloatPanels.setVisible("layers", !FloatPanels.isVisible("layers"));
+  updateWindowChecks();
+  closeAllDropdowns();
 };
-document.getElementById('dd-show-timeline').onclick=()=>{
-  showTimeline=!showTimeline;
-  bottomArea.classList.toggle('hidden',!showTimeline);
-  updateWindowChecks();centerCanvas();closeAllDropdowns();
+document.getElementById("dd-show-timeline").onclick = () => {
+  showTimeline = !showTimeline;
+  bottomArea.classList.toggle("hidden", !showTimeline);
+  updateWindowChecks();
+  centerCanvas();
+  closeAllDropdowns();
 };
-document.getElementById('dd-show-toolbar').onclick=()=>{
-  showToolbar=!showToolbar;
-  toolbarEl.style.display=showToolbar?'':'none';
-  updateWindowChecks();centerCanvas();closeAllDropdowns();
+document.getElementById("dd-show-toolbar").onclick = () => {
+  showToolbar = !showToolbar;
+  toolbarEl.style.display = showToolbar ? "" : "none";
+  updateWindowChecks();
+  centerCanvas();
+  closeAllDropdowns();
 };
-document.getElementById('dd-show-keyframe-switcher').onclick=()=>{
-  FloatPanels.setVisible('keyframe-switcher',!FloatPanels.isVisible('keyframe-switcher'));
-  updateWindowChecks();closeAllDropdowns();
+document.getElementById("dd-show-keyframe-switcher").onclick = () => {
+  FloatPanels.setVisible(
+    "keyframe-switcher",
+    !FloatPanels.isVisible("keyframe-switcher"),
+  );
+  updateWindowChecks();
+  closeAllDropdowns();
 };
-document.getElementById('dd-show-keyframe-exposure').onclick=()=>{
-  FloatPanels.setVisible('keyframe-exposure',!FloatPanels.isVisible('keyframe-exposure'));
-  updateWindowChecks();closeAllDropdowns();
+document.getElementById("dd-show-keyframe-exposure").onclick = () => {
+  FloatPanels.setVisible(
+    "keyframe-exposure",
+    !FloatPanels.isVisible("keyframe-exposure"),
+  );
+  updateWindowChecks();
+  closeAllDropdowns();
 };
-document.getElementById('dd-show-drawing-marks').onclick=()=>{
-  FloatPanels.setVisible('drawing-marks',!FloatPanels.isVisible('drawing-marks'));
-  updateWindowChecks();closeAllDropdowns();
+document.getElementById("dd-show-drawing-marks").onclick = () => {
+  FloatPanels.setVisible(
+    "drawing-marks",
+    !FloatPanels.isVisible("drawing-marks"),
+  );
+  updateWindowChecks();
+  closeAllDropdowns();
 };
-document.getElementById('dd-show-onion-skin').onclick=()=>{
-  FloatPanels.setVisible('onion-skin',!FloatPanels.isVisible('onion-skin'));
-  updateWindowChecks();closeAllDropdowns();
+document.getElementById("dd-show-onion-skin").onclick = () => {
+  FloatPanels.setVisible("onion-skin", !FloatPanels.isVisible("onion-skin"));
+  updateWindowChecks();
+  closeAllDropdowns();
 };
-document.getElementById('dd-show-light-table').onclick=()=>{
-  FloatPanels.setVisible('light-table',!FloatPanels.isVisible('light-table'));
-  updateWindowChecks();closeAllDropdowns();
+document.getElementById("dd-show-light-table").onclick = () => {
+  FloatPanels.setVisible("light-table", !FloatPanels.isVisible("light-table"));
+  updateWindowChecks();
+  closeAllDropdowns();
 };
-document.getElementById('dd-toggle-draw-mode').onclick=()=>{
-  if(typeof window.toggleDrawMode==='function')window.toggleDrawMode();
-  updateWindowChecks();closeAllDropdowns();
+document.getElementById("dd-toggle-draw-mode").onclick = () => {
+  if (typeof window.toggleDrawMode === "function") window.toggleDrawMode();
+  updateWindowChecks();
+  closeAllDropdowns();
 };
-document.getElementById('dd-reset-layout').onclick=()=>{
-  showTimeline=true;showToolbar=true;
-  bottomArea.classList.remove('hidden');toolbarEl.style.display='';
+document.getElementById("dd-reset-layout").onclick = () => {
+  showTimeline = true;
+  showToolbar = true;
+  bottomArea.classList.remove("hidden");
+  toolbarEl.style.display = "";
   FloatPanels.resetLayout();
-  updateWindowChecks();fitCanvasToView();closeAllDropdowns();
+  updateWindowChecks();
+  fitCanvasToView();
+  closeAllDropdowns();
 };
-document.getElementById('dd-center-canvas').onclick=()=>{centerCanvas();closeAllDropdowns();};
-document.getElementById('dd-reset-rotation').onclick=()=>{resetRotation();closeAllDropdowns();};
+document.getElementById("dd-center-canvas").onclick = () => {
+  centerCanvas();
+  closeAllDropdowns();
+};
+document.getElementById("dd-reset-rotation").onclick = () => {
+  resetRotation();
+  closeAllDropdowns();
+};
 
 // Settings menu
-document.getElementById('dd-canvas-settings').onclick=()=>{openCanvasModal();closeAllDropdowns();};
-document.getElementById('dd-zoom-settings').onclick=()=>{
-  document.getElementById('zoom-speed-input').value=zoomSpeedLevel;
-  document.getElementById('zoom-min-input').value=zoomMin;
-  document.getElementById('zoom-max-input').value=zoomMax;
-  document.getElementById('modal-zoom').classList.add('visible');closeAllDropdowns();
+document.getElementById("dd-canvas-settings").onclick = () => {
+  openCanvasModal();
+  closeAllDropdowns();
+};
+document.getElementById("dd-zoom-settings").onclick = () => {
+  document.getElementById("zoom-speed-input").value = zoomSpeedLevel;
+  document.getElementById("zoom-min-input").value = zoomMin;
+  document.getElementById("zoom-max-input").value = zoomMax;
+  document.getElementById("modal-zoom").classList.add("visible");
+  closeAllDropdowns();
 };
 
 // Prevent trackpad/wheel scroll from bubbling to the canvas
-['#right-panel .fp-body','#tools-panel .fp-body'].forEach(sel=>{
-  const el=document.querySelector(sel);
-  if(el) el.addEventListener('wheel',e=>{e.stopPropagation();},{passive:true});
+["#right-panel .fp-body", "#tools-panel .fp-body"].forEach((sel) => {
+  const el = document.querySelector(sel);
+  if (el)
+    el.addEventListener(
+      "wheel",
+      (e) => {
+        e.stopPropagation();
+      },
+      { passive: true },
+    );
 });
