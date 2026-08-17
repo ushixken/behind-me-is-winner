@@ -8721,7 +8721,7 @@ const strokeSetupStart=latencyProfiler?performance.now():0;
       }
       const hardRoundRenderer=_hardRoundGetRenderer();
       const hardRoundAaMode=_currentAAMode();
-      const gpuLiveCompatible=hardRoundAaMode!=='off'&&hardRoundAaMode!=='none'&&
+      const gpuLiveCompatible=
         (!window.brushBlendMode||window.brushBlendMode==='normal')&&
         !(window.SelectionScope&&SelectionScope.isRestricted&&SelectionScope.isRestricted())&&
         !(layers[curLayer]&&layers[curLayer].type==='smart-raster')&&
