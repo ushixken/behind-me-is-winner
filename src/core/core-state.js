@@ -732,6 +732,7 @@ function rotateCanvasTo(newRot,pivotX,pivotY){
  *  nav pivot visually fixed — same pivot-preserving math as rotateCanvasTo().
  *  Pan, zoom, and flip are all preserved; only rotation changes. */
 function resetRotation(){
+  _cancelRotateSettle();
   const p=getNavPivot();
   rotateCanvasTo(0,p.cx,p.cy);
 }
@@ -794,6 +795,48 @@ let panning=false,panSX=0,panSY=0,panSPX=0,panSPY=0;
 let spaceHeld=false,ctrlHeld=false,shiftHeld=false;
 let _zoomDrag=false,_zoomDragSX=0,_zoomDragStartZoom=0,_zoomDragCX=0,_zoomDragCY=0;
 let _rotateDrag=false,_rotateDragSX=0,_rotateDragSY=0,_rotateDragStartRot=0,_rotateDragCX=0,_rotateDragCY=0,_rotateDragGCX=0,_rotateDragGCY=0;
+let _rotateSnapTarget=null;
+let _rotatePrevRawRot=null;
+let _rotatePrevTimestamp=null;
+let _rotateSnapArmedUntil=null;
+let _rotateSettleRaf=null;
+
+function _cancelRotateSettle(){
+  if(_rotateSettleRaf){
+    cancelAnimationFrame(_rotateSettleRaf);
+    _rotateSettleRaf=null;
+  }
+}
+
+function _startRotateSpringSettle(startAngle, targetAngle, pivotX, pivotY){
+  _cancelRotateSettle();
+  if(!Number.isFinite(startAngle)||!Number.isFinite(targetAngle)||Math.abs(startAngle-targetAngle)<0.01){
+    rotateCanvasTo(targetAngle, pivotX, pivotY);
+    return;
+  }
+  const startTime = (typeof performance!=='undefined'&&performance.now)?performance.now():Date.now();
+  const duration = (typeof window!=='undefined'&&window.RotationSnap&&window.RotationSnap.SPRING_DURATION_MS)
+    ? window.RotationSnap.SPRING_DURATION_MS : 220;
+  const progressFn = (typeof window!=='undefined'&&window.RotationSnap&&typeof window.RotationSnap.springProgress==='function')
+    ? window.RotationSnap.springProgress : ((t)=>1-Math.exp(-4.5*t)*Math.cos(7.5*t));
+  const diff = targetAngle - startAngle;
+
+  function step(){
+    const now = (typeof performance!=='undefined'&&performance.now)?performance.now():Date.now();
+    const elapsed = now - startTime;
+    const t = Math.min(1, elapsed / duration);
+    if(t >= 1){
+      rotateCanvasTo(targetAngle, pivotX, pivotY);
+      _rotateSettleRaf = null;
+      return;
+    }
+    const p = progressFn(t);
+    const currentAngle = startAngle + diff * p;
+    rotateCanvasTo(currentAngle, pivotX, pivotY);
+    _rotateSettleRaf = requestAnimationFrame(step);
+  }
+  _rotateSettleRaf = requestAnimationFrame(step);
+}
 
 // Capture phase on window + stopPropagation: Space (and especially Ctrl+Space)
 // must be stopped BEFORE it can reach the browser's own shortcut handling.
@@ -872,6 +915,7 @@ window.addEventListener('keyup',e=>{
 },{capture:true});
 
 function _spaceDragStart(clientX,isCtrl){
+  _cancelRotateSettle();
   if(isCtrl||ctrlHeld){
     _zoomDrag=true;_zoomDragSX=clientX;_zoomDragStartZoom=zoom;
     _writeNavigationCursor(canvasArea,'zoom-in','space-zoom-start');
@@ -879,6 +923,10 @@ function _spaceDragStart(clientX,isCtrl){
     const p=getNavPivot();
     _rotateDrag=true;_rotateDragSX=clientX;_rotateDragSY=0;
     _rotateDragStartRot=rotation;
+    _rotateSnapTarget=null;
+    _rotatePrevRawRot=null;
+    _rotatePrevTimestamp=null;
+    _rotateSnapArmedUntil=null;
     _rotateDragCX=p.cx;_rotateDragCY=p.cy;_rotateDragGCX=p.gcx;_rotateDragGCY=p.gcy;
     _writeNavigationCursor(canvasArea,'alias','space-rotate-start');
     _updateRotPivotVisibility();
@@ -888,9 +936,10 @@ function _spaceDragStart(clientX,isCtrl){
   }
 }
 function _spaceDragStartXY(clientX,clientY,isCtrl){
+  _cancelRotateSettle();
   if(isCtrl||ctrlHeld){
     _zoomDrag=true;_zoomDragSX=clientX;_zoomDragStartZoom=zoom;
-    // Anchor the zoom to wherever the drag actually started (in local
+    // Anchor the zoom to wherever the drag started (in local
     // canvas-area coordinates), not the canvas-area center — this matches
     // how scroll-wheel zoom already anchors to the cursor position.
     const r=canvasArea.getBoundingClientRect();
@@ -901,6 +950,10 @@ function _spaceDragStartXY(clientX,clientY,isCtrl){
     const p=getNavPivot();
     _rotateDrag=true;_rotateDragSX=clientX;_rotateDragSY=clientY;
     _rotateDragStartRot=rotation;
+    _rotateSnapTarget=null;
+    _rotatePrevRawRot=null;
+    _rotatePrevTimestamp=null;
+    _rotateSnapArmedUntil=null;
     _rotateDragCX=p.cx;_rotateDragCY=p.cy;_rotateDragGCX=p.gcx;_rotateDragGCY=p.gcy;
     _writeNavigationCursor(canvasArea,'alias','space-rotate-start-xy');
     _updateRotPivotVisibility();
@@ -909,7 +962,7 @@ function _spaceDragStartXY(clientX,clientY,isCtrl){
     _writeNavigationCursor(canvasArea,'grabbing','space-pan-start-xy');
   }
 }
-function _spaceDragMove(clientX,clientY){
+function _spaceDragMove(clientX,clientY,eventTimestamp){
   if(_zoomDrag){
     // drag right = zoom in, drag left = zoom out; 300px = 2x
     const dx=clientX-_zoomDragSX;
@@ -931,7 +984,30 @@ function _spaceDragMove(clientX,clientY){
     const a1=Math.atan2(clientY-_rotateDragGCY,clientX-_rotateDragGCX);
     const reflectionDirection=(flipX!==flipY)?-1:1;
     const deltaDeg=(a1-a0)*180/Math.PI*reflectionDirection;
-    rotateCanvasTo(_rotateDragStartRot+deltaDeg,_rotateDragCX,_rotateDragCY);
+    const rawRot=_rotateDragStartRot+deltaDeg;
+    const now=(typeof eventTimestamp==='number'&&Number.isFinite(eventTimestamp)&&eventTimestamp>0)
+      ? eventTimestamp
+      : (typeof performance!=='undefined'&&performance.now?performance.now():Date.now());
+    const snapHelper=(typeof window!=='undefined'&&window.RotationSnap&&typeof window.RotationSnap.resolveFlickRotation==='function')
+      ? window.RotationSnap.resolveFlickRotation
+      : (typeof resolveFlickRotation==='function'?resolveFlickRotation:null);
+    let targetRot=rawRot;
+    if(snapHelper){
+      const snapRes=snapHelper({
+        rawAngleDeg: rawRot,
+        timestampMs: now,
+        prevRawAngleDeg: _rotatePrevRawRot,
+        prevTimestampMs: _rotatePrevTimestamp,
+        activeSnapTarget: _rotateSnapTarget,
+        snapArmedUntilMs: _rotateSnapArmedUntil
+      });
+      _rotateSnapTarget=snapRes.snapTarget;
+      _rotateSnapArmedUntil=snapRes.snapArmedUntilMs;
+      targetRot=snapRes.displayAngle;
+    }
+    rotateCanvasTo(targetRot,_rotateDragCX,_rotateDragCY);
+    _rotatePrevRawRot=rawRot;
+    _rotatePrevTimestamp=now;
   } else if(panning){
     // panX/panY live inside the flip mirror (applied outside them in
     // applyTransform), so a screen-space mouse delta must be un-mirrored
@@ -946,7 +1022,25 @@ function _spaceDragMove(clientX,clientY){
 function _spaceDragEnd(){
   if(panning){panning=false;_writeNavigationCursor(canvasArea,'','pan-end');_writeNavigationCursor(activeC,activeGroupId?'not-allowed':_baseCursorCSS(),'pan-end-active');}
   if(_zoomDrag){_zoomDrag=false;_writeNavigationCursor(canvasArea,'','zoom-end');_writeNavigationCursor(activeC,activeGroupId?'not-allowed':_baseCursorCSS(),'zoom-end-active');}
-  if(_rotateDrag){_rotateDrag=false;_writeNavigationCursor(canvasArea,'','rotate-end');_writeNavigationCursor(activeC,activeGroupId?'not-allowed':_baseCursorCSS(),'rotate-end-active');_updateRotPivotVisibility();}
+  if(_rotateDrag){
+    const settleTarget = _rotateSnapTarget;
+    const settlePivotX = _rotateDragCX;
+    const settlePivotY = _rotateDragCY;
+    const currentRot = rotation;
+
+    _rotateDrag=false;
+    _rotateSnapTarget=null;
+    _rotatePrevRawRot=null;
+    _rotatePrevTimestamp=null;
+    _rotateSnapArmedUntil=null;
+    _writeNavigationCursor(canvasArea,'','rotate-end');
+    _writeNavigationCursor(activeC,activeGroupId?'not-allowed':_baseCursorCSS(),'rotate-end-active');
+    _updateRotPivotVisibility();
+
+    if(settleTarget !== null && Number.isFinite(settleTarget)){
+      _startRotateSpringSettle(currentRot, settleTarget, settlePivotX, settlePivotY);
+    }
+  }
 }
 
 // Mouse (and trackpad) — bound to window (capture) rather than just
@@ -961,7 +1055,7 @@ window.addEventListener('mousedown',e=>{
 },{capture:true});
 document.addEventListener('mousemove',e=>{
   if(!panning&&!_zoomDrag&&!_rotateDrag) return;
-  _spaceDragMove(e.clientX,e.clientY);
+  _spaceDragMove(e.clientX,e.clientY,e.timeStamp);
 });
 document.addEventListener('mouseup',()=>{ _spaceDragEnd(); });
 
@@ -989,7 +1083,7 @@ window.addEventListener('pointerdown',e=>{
 },{capture:true});
 document.addEventListener('pointermove',e=>{
   if(e.pointerId===_navPointerId&&(panning||_zoomDrag||_rotateDrag)){
-    _spaceDragMove(e.clientX,e.clientY);
+    _spaceDragMove(e.clientX,e.clientY,e.timeStamp);
   }
 });
 function _endPointerNavigation(e){
