@@ -91,17 +91,17 @@
 // pacing curve) is ported with the same formulas and ordering as the
 // prototype.
 
-'use strict';
+"use strict";
 
 // ---- Ported constants (identical values to prototype/prototype.html) ----
 
 const CONTACT_PRESSURE_FLOOR = 0.02;
 const HOLD_BEFORE_LIFT_MS = 120;
 
-const ZOOM_COMP_MIN_ZOOM = 0.05;   // zoom (5%) at which the hidden minimum is largest
-const ZOOM_COMP_ZERO_ZOOM = 5.0;   // zoom (500%) at which the hidden minimum reaches 0
+const ZOOM_COMP_MIN_ZOOM = 0.05; // zoom (5%) at which the hidden minimum is largest
+const ZOOM_COMP_ZERO_ZOOM = 5.0; // zoom (500%) at which the hidden minimum reaches 0
 const ZOOM_COMP_MAX_AMOUNT = 0.15; // largest hidden stabilization added, at ZOOM_COMP_MIN_ZOOM
-const ZOOM_COMP_FADE_UI_LIMIT = 0.20; // UI stabilization (0-1) above which no compensation remains
+const ZOOM_COMP_FADE_UI_LIMIT = 0.2; // UI stabilization (0-1) above which no compensation remains
 
 const MIN_FINISH_MS = 80;
 const MAX_FINISH_MS = 260;
@@ -125,11 +125,11 @@ function zoomSmoothingFactor(zoom) {
 // Ported from prototype `getPressure`. Callers already know the pointer
 // type and raw hardware pressure; this only normalizes it.
 function normalizeRawPressure(pointerType, rawPressure) {
-  if (pointerType === 'pen' && typeof rawPressure === 'number') {
+  if (pointerType === "pen" && typeof rawPressure === "number") {
     return clamp01(rawPressure);
   }
-  if (pointerType === 'mouse') return 1;
-  return typeof rawPressure === 'number' ? clamp01(rawPressure) : 1;
+  if (pointerType === "mouse") return 1;
+  return typeof rawPressure === "number" ? clamp01(rawPressure) : 1;
 }
 
 // Ported from prototype `pressureInfluence`. Pressure controls a
@@ -142,12 +142,19 @@ function pressureInfluence(pressure) {
 
 // Ported from prototype `isReleaseTailSample`.
 function isReleaseTailSample({
-  pointerType, idleGapMs, screenDistance, pressure,
-  previousContactPressure, continuing, previousTailPressure
+  pointerType,
+  idleGapMs,
+  screenDistance,
+  pressure,
+  previousContactPressure,
+  continuing,
+  previousTailPressure,
 }) {
-  if (pointerType !== 'pen' || idleGapMs <= 250 || screenDistance > 1.25) return false;
-  if (!Number.isFinite(pressure) || pressure > 0.20) return false;
-  const sharplyLower = previousContactPressure > CONTACT_PRESSURE_FLOOR &&
+  if (pointerType !== "pen" || idleGapMs <= 250 || screenDistance > 1.25)
+    return false;
+  if (!Number.isFinite(pressure) || pressure > 0.2) return false;
+  const sharplyLower =
+    previousContactPressure > CONTACT_PRESSURE_FLOOR &&
     pressure <= previousContactPressure * 0.75;
   const stillFalling = continuing && pressure <= previousTailPressure;
   return sharplyLower || stillFalling;
@@ -155,7 +162,10 @@ function isReleaseTailSample({
 
 // Ported from prototype `zoomStabilizationMinimum`.
 function zoomStabilizationMinimum(z) {
-  const clampedZoom = Math.min(Math.max(z, ZOOM_COMP_MIN_ZOOM), ZOOM_COMP_ZERO_ZOOM);
+  const clampedZoom = Math.min(
+    Math.max(z, ZOOM_COMP_MIN_ZOOM),
+    ZOOM_COMP_ZERO_ZOOM,
+  );
   const logMin = Math.log(ZOOM_COMP_MIN_ZOOM);
   const logMax = Math.log(ZOOM_COMP_ZERO_ZOOM);
   const t = (Math.log(clampedZoom) - logMin) / (logMax - logMin);
@@ -164,7 +174,8 @@ function zoomStabilizationMinimum(z) {
 
 // Ported from prototype `zoomCompensationWeight`.
 function zoomCompensationWeight(userAmount) {
-  const edge0 = 0, edge1 = ZOOM_COMP_FADE_UI_LIMIT;
+  const edge0 = 0,
+    edge1 = ZOOM_COMP_FADE_UI_LIMIT;
   const t = Math.min(Math.max((userAmount - edge0) / (edge1 - edge0), 0), 1);
   const smooth = t * t * (3 - 2 * t);
   return 1 - smooth;
@@ -206,14 +217,18 @@ class PrototypeStrokeCore {
   }
 
   updateSettings(settings = {}) {
-    this.settings = Object.assign({
-      brushSize: 10,
-      stabilization: 0,
-      zoom: 1,
-      subdivisionScale: DEFAULT_SUBDIVISION_SCALE,
-      minStepPx: DEFAULT_MIN_STEP_PX,
-      debugConstantPressure: false,
-    }, this.settings || {}, settings);
+    this.settings = Object.assign(
+      {
+        brushSize: 10,
+        stabilization: 0,
+        zoom: 1,
+        subdivisionScale: DEFAULT_SUBDIVISION_SCALE,
+        minStepPx: DEFAULT_MIN_STEP_PX,
+        debugConstantPressure: false,
+      },
+      this.settings || {},
+      settings,
+    );
   }
 
   _resetBuffers() {
@@ -224,7 +239,7 @@ class PrototypeStrokeCore {
     this.lastRaw = null;
     this.lastMid = null;
     this.lastInfluence = null; // last resolved pressureInfluence at lastRaw
-    this.lastPressure = null;  // last resolved (smoothed) pressure at lastRaw
+    this.lastPressure = null; // last resolved (smoothed) pressure at lastRaw
 
     this.smoothBuf = [];
     this.pressureBuf = [];
@@ -253,7 +268,10 @@ class PrototypeStrokeCore {
     const userAmount = clamp01(this.settings.stabilization);
     const zoomMinimum = zoomStabilizationMinimum(this.settings.zoom);
     const compensationWeight = zoomCompensationWeight(userAmount);
-    return Math.min(1, Math.max(0, userAmount + zoomMinimum * compensationWeight));
+    return Math.min(
+      1,
+      Math.max(0, userAmount + zoomMinimum * compensationWeight),
+    );
   }
 
   _movingAverageAmount() {
@@ -277,8 +295,12 @@ class PrototypeStrokeCore {
     this.smoothBuf.push({ x: p.x, y: p.y });
     while (this.smoothBuf.length > maxLen) this.smoothBuf.shift();
     if (maxLen === 1) return { x: p.x, y: p.y };
-    let sx = 0, sy = 0;
-    for (const pt of this.smoothBuf) { sx += pt.x; sy += pt.y; }
+    let sx = 0,
+      sy = 0;
+    for (const pt of this.smoothBuf) {
+      sx += pt.x;
+      sy += pt.y;
+    }
     return { x: sx / this.smoothBuf.length, y: sy / this.smoothBuf.length };
   }
 
@@ -287,11 +309,16 @@ class PrototypeStrokeCore {
   }
 
   _trackVelocity(raw, timeStamp) {
-    const now = Number.isFinite(timeStamp) ? timeStamp : (this.lastVelTime + FINISH_TICK_DT_MS);
+    const now = Number.isFinite(timeStamp)
+      ? timeStamp
+      : this.lastVelTime + FINISH_TICK_DT_MS;
     if (this.lastVelRaw && this.lastVelTime) {
       const dt = now - this.lastVelTime;
       if (dt > 0) {
-        const dist = Math.hypot(raw.x - this.lastVelRaw.x, raw.y - this.lastVelRaw.y);
+        const dist = Math.hypot(
+          raw.x - this.lastVelRaw.x,
+          raw.y - this.lastVelRaw.y,
+        );
         const inst = dist / dt;
         this.recentSpeedPxMs = this.recentSpeedPxMs * 0.7 + inst * 0.3;
       }
@@ -307,7 +334,17 @@ class PrototypeStrokeCore {
   // {x0,y0,pressure0,influence0,x1,y1,pressure1,influence1} instead, per
   // the Phase 8B output contract.
 
-  _drawQuadCurve(out, p0, control, p1, influence0, influence1, pressure0, pressure1, steps) {
+  _drawQuadCurve(
+    out,
+    p0,
+    control,
+    p1,
+    influence0,
+    influence1,
+    pressure0,
+    pressure1,
+    steps,
+  ) {
     let prevPt = p0;
     let prevInfluence = influence0;
     let prevPressure = pressure0;
@@ -319,8 +356,14 @@ class PrototypeStrokeCore {
       const influence = influence0 + (influence1 - influence0) * t;
       const pressure = pressure0 + (pressure1 - pressure0) * t;
       out.push({
-        x0: prevPt.x, y0: prevPt.y, pressure0: prevPressure, influence0: prevInfluence,
-        x1: x, y1: y, pressure1: pressure, influence1: influence,
+        x0: prevPt.x,
+        y0: prevPt.y,
+        pressure0: prevPressure,
+        influence0: prevInfluence,
+        x1: x,
+        y1: y,
+        pressure1: pressure,
+        influence1: influence,
       });
       prevPt = { x, y };
       prevInfluence = influence;
@@ -333,12 +376,24 @@ class PrototypeStrokeCore {
     this.strokeMoved = true;
     const influence = pressureInfluence(pressure);
     const midStart = this.lastMid;
-    const midEnd = { x: (this.lastRaw.x + raw.x) / 2, y: (this.lastRaw.y + raw.y) / 2 };
-    const startInfluence = this.lastInfluence == null ? influence : this.lastInfluence;
-    const startPressure = this.lastPressure == null ? pressure : this.lastPressure;
+    const midEnd = {
+      x: (this.lastRaw.x + raw.x) / 2,
+      y: (this.lastRaw.y + raw.y) / 2,
+    };
+    const startInfluence =
+      this.lastInfluence == null ? influence : this.lastInfluence;
+    const startPressure =
+      this.lastPressure == null ? pressure : this.lastPressure;
     this.lastMid = this._drawQuadCurve(
-      out, midStart, this.lastRaw, midEnd,
-      startInfluence, influence, startPressure, pressure, 10
+      out,
+      midStart,
+      this.lastRaw,
+      midEnd,
+      startInfluence,
+      influence,
+      startPressure,
+      pressure,
+      10,
     );
     this.lastInfluence = influence;
     this.lastPressure = pressure;
@@ -375,7 +430,10 @@ class PrototypeStrokeCore {
     // being constant from the very first move.
     this.smoothBuf = Array.from({ length: amount }, () => ({ x: p.x, y: p.y }));
 
-    const rawPressure = normalizeRawPressure(sample.pointerType, sample.pressure);
+    const rawPressure = normalizeRawPressure(
+      sample.pointerType,
+      sample.pressure,
+    );
     const startPressure = this._effectivePressure(rawPressure);
     this.pressureBuf = Array.from({ length: amount }, () => startPressure);
     this.delayedPressure = startPressure;
@@ -398,8 +456,14 @@ class PrototypeStrokeCore {
     this.lastPressure = startPressure;
 
     return {
-      x0: p.x, y0: p.y, pressure0: startPressure, influence0: influence,
-      x1: p.x, y1: p.y, pressure1: startPressure, influence1: influence,
+      x0: p.x,
+      y0: p.y,
+      pressure0: startPressure,
+      influence0: influence,
+      x1: p.x,
+      y1: p.y,
+      pressure1: startPressure,
+      influence1: influence,
     };
   }
 
@@ -416,7 +480,7 @@ class PrototypeStrokeCore {
 
     const maxStep = Math.max(
       this.settings.minStepPx,
-      this.settings.brushSize * this.settings.subdivisionScale
+      this.settings.brushSize * this.settings.subdivisionScale,
     );
 
     const out = [];
@@ -424,15 +488,22 @@ class PrototypeStrokeCore {
       const inputRaw = { x: ev.x, y: ev.y };
       const rawPressure = normalizeRawPressure(ev.pointerType, ev.pressure);
       const pressure = this._effectivePressure(rawPressure);
-      const timeStamp = Number.isFinite(ev.timeStamp) ? ev.timeStamp : (this.lastVelTime + FINISH_TICK_DT_MS);
+      const timeStamp = Number.isFinite(ev.timeStamp)
+        ? ev.timeStamp
+        : this.lastVelTime + FINISH_TICK_DT_MS;
       this._trackVelocity(inputRaw, timeStamp);
 
-      const JITTER_FLOOR_PX = JITTER_FLOOR_BASE_PX * zoomSmoothingFactor(this.settings.zoom);
+      const JITTER_FLOOR_PX =
+        JITTER_FLOOR_BASE_PX * zoomSmoothingFactor(this.settings.zoom);
       const idleGapMs = timeStamp - this.lastMoveEventTime;
       const movementDistance = this.lastInputRaw
-        ? Math.hypot(inputRaw.x - this.lastInputRaw.x, inputRaw.y - this.lastInputRaw.y) : 0;
+        ? Math.hypot(
+            inputRaw.x - this.lastInputRaw.x,
+            inputRaw.y - this.lastInputRaw.y,
+          )
+        : 0;
       const releaseTailSample = isReleaseTailSample({
-        pointerType: ev.pointerType || 'unknown',
+        pointerType: ev.pointerType || "unknown",
         idleGapMs,
         screenDistance: movementDistance * this.settings.zoom,
         pressure: rawPressure,
@@ -453,24 +524,30 @@ class PrototypeStrokeCore {
 
       this.lastInputRaw = inputRaw;
       this.lastInputPressure = pressure;
-      if (pressure > CONTACT_PRESSURE_FLOOR) this.lastContactPressure = pressure;
+      if (pressure > CONTACT_PRESSURE_FLOOR)
+        this.lastContactPressure = pressure;
 
       this.delayedPressure = this._pushPressureBuf(pressure);
       this.pressureBufferAdvanceCount++;
       const raw = this._pushSmoothBuf(inputRaw);
       this.positionBufferAdvanceCount++;
 
-      const jumpDx = raw.x - this.lastRaw.x, jumpDy = raw.y - this.lastRaw.y;
+      const jumpDx = raw.x - this.lastRaw.x,
+        jumpDy = raw.y - this.lastRaw.y;
       const jumpDist = Math.hypot(jumpDx, jumpDy);
       if (jumpDist > maxStep) {
         const origin = this.lastRaw;
         const steps = Math.ceil(jumpDist / maxStep);
         for (let i = 1; i <= steps; i++) {
           const t = i / steps;
-          this._feedPoint(out, {
-            x: origin.x + jumpDx * t,
-            y: origin.y + jumpDy * t,
-          }, this.delayedPressure);
+          this._feedPoint(
+            out,
+            {
+              x: origin.x + jumpDx * t,
+              y: origin.y + jumpDy * t,
+            },
+            this.delayedPressure,
+          );
         }
       } else {
         this._feedPoint(out, raw, this.delayedPressure);
@@ -505,7 +582,8 @@ class PrototypeStrokeCore {
       this.positionBufferAdvanceCount++;
       this.delayedPressure = this._pushPressureBuf(this.lastInputPressure);
       this.pressureBufferAdvanceCount++;
-      const dx = raw.x - this.lastRaw.x, dy = raw.y - this.lastRaw.y;
+      const dx = raw.x - this.lastRaw.x,
+        dy = raw.y - this.lastRaw.y;
       if (Math.hypot(dx, dy) <= 1e-4) break;
       this._feedPoint(out, raw, this.delayedPressure);
     }
@@ -521,7 +599,9 @@ class PrototypeStrokeCore {
     // no such queue — pushSamples() always processes samples synchronously
     // before finishStroke() can observe them — so that part of the check
     // is not applicable and is omitted.
-    const stationaryDurationMs = (Number.isFinite(nowMs) ? nowMs : this.lastMoveEventTime) - this.lastMoveEventTime;
+    const stationaryDurationMs =
+      (Number.isFinite(nowMs) ? nowMs : this.lastMoveEventTime) -
+      this.lastMoveEventTime;
     return stationaryDurationMs >= HOLD_BEFORE_LIFT_MS;
   }
 
@@ -538,11 +618,12 @@ class PrototypeStrokeCore {
    * @returns {{segments: Array<object>, mode: 'stationary-hold'|'moving-release'|'none', ticksEmitted: number}}
    */
   finishStroke(endpointSample) {
-    if (!this.drawing) return { segments: [], mode: 'none', ticksEmitted: 0 };
+    if (!this.drawing) return { segments: [], mode: "none", ticksEmitted: 0 };
 
-    const nowMs = endpointSample && Number.isFinite(endpointSample.timeStamp)
-      ? endpointSample.timeStamp
-      : this.lastMoveEventTime;
+    const nowMs =
+      endpointSample && Number.isFinite(endpointSample.timeStamp)
+        ? endpointSample.timeStamp
+        : this.lastMoveEventTime;
 
     const wasStoppedBeforeLift = this._computeWasStoppedBeforeLift(nowMs);
 
@@ -555,32 +636,52 @@ class PrototypeStrokeCore {
     this.drawing = false;
 
     const nextFinishPressure = () => {
-      return wasStoppedBeforeLift ? finishPressure : this._pushPressureBuf(finishPressure);
+      return wasStoppedBeforeLift
+        ? finishPressure
+        : this._pushPressureBuf(finishPressure);
     };
 
     if (!(this.strokeMoved && this.lastMid && this.lastRaw)) {
       this._resetBuffers();
-      return { segments: [], mode: wasStoppedBeforeLift ? 'stationary-hold' : 'moving-release', ticksEmitted: 0 };
+      return {
+        segments: [],
+        mode: wasStoppedBeforeLift ? "stationary-hold" : "moving-release",
+        ticksEmitted: 0,
+      };
     }
 
-    const endpoint = endpointSample && Number.isFinite(endpointSample.x) && Number.isFinite(endpointSample.y)
-      ? { x: endpointSample.x, y: endpointSample.y }
-      : this.lastInputRaw;
+    const endpoint =
+      endpointSample &&
+      Number.isFinite(endpointSample.x) &&
+      Number.isFinite(endpointSample.y)
+        ? { x: endpointSample.x, y: endpointSample.y }
+        : this.lastInputRaw;
 
-    const startDist = endpoint ? Math.hypot(endpoint.x - this.lastRaw.x, endpoint.y - this.lastRaw.y) : 0;
+    const startDist = endpoint
+      ? Math.hypot(endpoint.x - this.lastRaw.x, endpoint.y - this.lastRaw.y)
+      : 0;
     const segments = [];
 
     if (!endpoint || startDist < 0.15) {
       if (endpoint) this._feedPoint(segments, endpoint, nextFinishPressure());
       this._resetBuffers();
-      return { segments, mode: wasStoppedBeforeLift ? 'stationary-hold' : 'moving-release', ticksEmitted: segments.length ? 1 : 0 };
+      return {
+        segments,
+        mode: wasStoppedBeforeLift ? "stationary-hold" : "moving-release",
+        ticksEmitted: segments.length ? 1 : 0,
+      };
     }
 
-    const targetDurationMsRaw = mix(
-      MIN_FINISH_MS, MAX_FINISH_MS,
-      Math.max(0, Math.min(1, startDist / 400))
-    ) / Math.max(0.5, Math.min(3, 0.6 + this.recentSpeedPxMs * 1.2));
-    const targetDurationMs = Math.max(MIN_FINISH_MS, Math.min(MAX_FINISH_MS, targetDurationMsRaw));
+    const targetDurationMsRaw =
+      mix(
+        MIN_FINISH_MS,
+        MAX_FINISH_MS,
+        Math.max(0, Math.min(1, startDist / 400)),
+      ) / Math.max(0.5, Math.min(3, 0.6 + this.recentSpeedPxMs * 1.2));
+    const targetDurationMs = Math.max(
+      MIN_FINISH_MS,
+      Math.min(MAX_FINISH_MS, targetDurationMsRaw),
+    );
 
     const totalTicksNeeded = this._movingAverageAmount();
     const avgTicksPerMs = totalTicksNeeded / targetDurationMs;
@@ -592,7 +693,10 @@ class PrototypeStrokeCore {
     let safety = 0;
 
     while (safety++ < FINISH_TICK_MAX_TICKS) {
-      const remaining = Math.hypot(endpoint.x - this.lastRaw.x, endpoint.y - this.lastRaw.y);
+      const remaining = Math.hypot(
+        endpoint.x - this.lastRaw.x,
+        endpoint.y - this.lastRaw.y,
+      );
       if (remaining <= 0.15 || this.smoothBuf.length === 0) {
         const finalPressure = nextFinishPressure();
         this._feedPoint(segments, endpoint, finalPressure);
@@ -602,15 +706,28 @@ class PrototypeStrokeCore {
 
       const dt = FINISH_TICK_DT_MS;
       elapsedMs += dt;
-      const timeProgress = Math.max(0, Math.min(1, elapsedMs / targetDurationMs));
-      const ticksPerMs = mix(startRatePerMs, endRatePerMs, smoothstep01(timeProgress));
+      const timeProgress = Math.max(
+        0,
+        Math.min(1, elapsedMs / targetDurationMs),
+      );
+      const ticksPerMs = mix(
+        startRatePerMs,
+        endRatePerMs,
+        smoothstep01(timeProgress),
+      );
       const maxTicks = this._movingAverageAmount();
-      const ticks = Math.max(1, Math.min(maxTicks, Math.round(dt * ticksPerMs)));
+      const ticks = Math.max(
+        1,
+        Math.min(maxTicks, Math.round(dt * ticksPerMs)),
+      );
 
       let producedThisFrame = false;
       for (let i = 0; i < ticks; i++) {
         const caught = this._pushSmoothBuf(endpoint);
-        const stepDist = Math.hypot(caught.x - this.lastRaw.x, caught.y - this.lastRaw.y);
+        const stepDist = Math.hypot(
+          caught.x - this.lastRaw.x,
+          caught.y - this.lastRaw.y,
+        );
         if (stepDist <= 1e-4) break;
         const emittedPressure = nextFinishPressure();
         this._feedPoint(segments, caught, emittedPressure);
@@ -629,7 +746,11 @@ class PrototypeStrokeCore {
     }
 
     this._resetBuffers();
-    return { segments, mode: wasStoppedBeforeLift ? 'stationary-hold' : 'moving-release', ticksEmitted };
+    return {
+      segments,
+      mode: wasStoppedBeforeLift ? "stationary-hold" : "moving-release",
+      ticksEmitted,
+    };
   }
 
   /**
@@ -656,10 +777,10 @@ const PrototypeStrokeCoreExports = {
 // Node-based deterministic test harness. Export to whichever environment is
 // present instead of assuming Node, so `module.exports` doesn't throw a
 // ReferenceError in the browser.
-if (typeof module !== 'undefined' && module.exports) {
+if (typeof module !== "undefined" && module.exports) {
   module.exports = PrototypeStrokeCoreExports;
 }
-if (typeof window !== 'undefined') {
+if (typeof window !== "undefined") {
   window.PrototypeStrokeCore = PrototypeStrokeCore;
   window.PrototypeStrokeCoreModule = PrototypeStrokeCoreExports;
 }

@@ -13,7 +13,7 @@
 // - Tablet/mobile touch/pen long-press: allowed.
 // - Desktop stylus long-press: suppressed / disabled.
 
-'use strict';
+"use strict";
 
 (function (root) {
   // Track active/recent pointerdown contacts to identify whether a contextmenu event
@@ -30,9 +30,12 @@
   function recordPointerDown(e) {
     if (!e) return;
     _lastDownPointerType = e.pointerType || null;
-    _lastDownButton = typeof e.button === 'number' ? e.button : 0;
-    _lastDownButtons = typeof e.buttons === 'number' ? e.buttons : 0;
-    _lastDownTime = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    _lastDownButton = typeof e.button === "number" ? e.button : 0;
+    _lastDownButtons = typeof e.buttons === "number" ? e.buttons : 0;
+    _lastDownTime =
+      typeof performance !== "undefined" && performance.now
+        ? performance.now()
+        : Date.now();
   }
 
   /**
@@ -54,19 +57,30 @@
    * @returns {boolean}
    */
   function isTabletOrMobileDevice(env) {
-    const nav = env && env.navigator ? env.navigator : (typeof navigator !== 'undefined' ? navigator : null);
-    const win = env && env.window ? env.window : (typeof window !== 'undefined' ? window : null);
+    const nav =
+      env && env.navigator
+        ? env.navigator
+        : typeof navigator !== "undefined"
+          ? navigator
+          : null;
+    const win =
+      env && env.window
+        ? env.window
+        : typeof window !== "undefined"
+          ? window
+          : null;
 
     if (!nav) return false;
 
-    const ua = (nav.userAgent || '') + ' ' + (nav.vendor || '');
-    const platform = nav.platform || '';
+    const ua = (nav.userAgent || "") + " " + (nav.vendor || "");
+    const platform = nav.platform || "";
 
     // Android tablet / phone
     if (/Android/i.test(ua)) return true;
 
     // iPad / iPhone / iPod (including iOS 13+ iPad reporting as MacIntel/Macintosh with multi-touch)
-    if (/iPad|iPhone|iPod/i.test(ua) || /iPad|iPhone|iPod/i.test(platform)) return true;
+    if (/iPad|iPhone|iPod/i.test(ua) || /iPad|iPhone|iPod/i.test(platform))
+      return true;
     if (/Mac/i.test(platform) && nav.maxTouchPoints && nav.maxTouchPoints > 1) {
       // iPadOS reports as MacIntel with touch support
       return true;
@@ -76,10 +90,12 @@
     if (/Mobile|Tablet|Silk|Kindle/i.test(ua)) return true;
 
     // Check pointer media query if window.matchMedia is available
-    if (win && typeof win.matchMedia === 'function') {
-      const coarsePointer = win.matchMedia('(pointer: coarse)').matches;
-      const noHover = win.matchMedia('(hover: none)').matches;
-      const isDesktopPlatform = /Win|Mac|Linux|X11/i.test(platform) && !/Android|iPad|iPhone/i.test(platform);
+    if (win && typeof win.matchMedia === "function") {
+      const coarsePointer = win.matchMedia("(pointer: coarse)").matches;
+      const noHover = win.matchMedia("(hover: none)").matches;
+      const isDesktopPlatform =
+        /Win|Mac|Linux|X11/i.test(platform) &&
+        !/Android|iPad|iPhone/i.test(platform);
 
       // A pure mobile/tablet touch device has coarse pointer and no hover
       if (coarsePointer && noHover && !isDesktopPlatform) {
@@ -110,9 +126,10 @@
     }
 
     // 2. Determine if running on mobile/tablet or desktop
-    const isTabletMobile = (options && typeof options.isTabletMobile === 'boolean')
-      ? options.isTabletMobile
-      : isTabletOrMobileDevice(options && options.env);
+    const isTabletMobile =
+      options && typeof options.isTabletMobile === "boolean"
+        ? options.isTabletMobile
+        : isTabletOrMobileDevice(options && options.env);
 
     // Tablet/mobile environments permit all native context menus (including stylus & touch long-press)
     if (isTabletMobile) {
@@ -120,19 +137,32 @@
     }
 
     // 3. Desktop environment:
-    const pointerType = (event.pointerType) ||
-      (options && options.lastPointerType !== undefined ? options.lastPointerType : _lastDownPointerType);
-    const lastBtn = (options && options.lastButton !== undefined) ? options.lastButton : _lastDownButton;
-    const lastBtns = (options && options.lastButtons !== undefined) ? options.lastButtons : _lastDownButtons;
+    const pointerType =
+      event.pointerType ||
+      (options && options.lastPointerType !== undefined
+        ? options.lastPointerType
+        : _lastDownPointerType);
+    const lastBtn =
+      options && options.lastButton !== undefined
+        ? options.lastButton
+        : _lastDownButton;
+    const lastBtns =
+      options && options.lastButtons !== undefined
+        ? options.lastButtons
+        : _lastDownButtons;
 
     // Check if the current/originating pointer is a pen
-    const isPen = pointerType === 'pen';
+    const isPen = pointerType === "pen";
 
     if (isPen) {
       // Intentional pen secondary/barrel button click:
       // On Windows / Wacom, physical barrel button click sends secondary button 2 and buttons & 2.
       // Press-and-hold stylus tip starts with primary contact (button 0, buttons 1) and later emits synthetic contextmenu.
-      const isBarrelClick = (lastBtns & 2) !== 0 || lastBtn === 2 || (event.buttons & 2) !== 0 || event.button === 2;
+      const isBarrelClick =
+        (lastBtns & 2) !== 0 ||
+        lastBtn === 2 ||
+        (event.buttons & 2) !== 0 ||
+        event.button === 2;
       const isTipHold = (lastBtns & 1) !== 0 || lastBtn === 0;
 
       // If it started as a primary tip hold on desktop (or is not a barrel click), suppress desktop hold contextmenu!
@@ -152,16 +182,20 @@
   // This intercepts ANY contextmenu event before it reaches sub-element listeners.
   // If desktop stylus hold is detected, it immediately cancels and stops propagation
   // so NO app context menu or component popup can be opened.
-  if (typeof window !== 'undefined' && typeof document !== 'undefined') {
-    document.addEventListener('contextmenu', function (e) {
-      if (!shouldAllowContextMenu(e)) {
-        e.preventDefault();
-        e.stopPropagation();
-        if (typeof e.stopImmediatePropagation === 'function') {
-          e.stopImmediatePropagation();
+  if (typeof window !== "undefined" && typeof document !== "undefined") {
+    document.addEventListener(
+      "contextmenu",
+      function (e) {
+        if (!shouldAllowContextMenu(e)) {
+          e.preventDefault();
+          e.stopPropagation();
+          if (typeof e.stopImmediatePropagation === "function") {
+            e.stopImmediatePropagation();
+          }
         }
-      }
-    }, true); // Use capturing phase to protect all elements globally
+      },
+      true,
+    ); // Use capturing phase to protect all elements globally
   }
 
   const PlatformInputExports = {
@@ -171,10 +205,10 @@
     shouldAllowContextMenu,
   };
 
-  if (typeof module !== 'undefined' && module.exports) {
+  if (typeof module !== "undefined" && module.exports) {
     module.exports = PlatformInputExports;
   }
-  if (typeof window !== 'undefined') {
+  if (typeof window !== "undefined") {
     window.PlatformInput = PlatformInputExports;
   }
-})(typeof globalThis !== 'undefined' ? globalThis : this);
+})(typeof globalThis !== "undefined" ? globalThis : this);

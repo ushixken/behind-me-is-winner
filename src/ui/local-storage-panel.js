@@ -4,90 +4,169 @@
 // keybinds, brush presets, panel layout, etc.), with a running total
 // size, per-item delete, bulk delete, "Delete All", and ZIP export.
 // ================================================================
-(function(){
-  const STORAGE_META={
-    'animatorBrushPresetsV2':{name:'Brush Presets',description:'Deletes saved brushes, per-brush settings, folders, and brush/eraser preset sizes.',important:true,reset:'brush presets and brush settings'},
-    'keybinds_v1':{name:'Keyboard Shortcuts',description:'Deletes customized keyboard shortcuts and restores their defaults.',important:true,reset:'keyboard shortcuts'},
-    'animator_panel_layout_v4':{name:'Workspace / Panel Layout',description:'Resets panel positions, sizes, docking, and visibility.',important:true,reset:'workspace and panel layout'},
-    'toolSettingsMode':{name:'Tool Settings',description:'Resets the saved Simple/Advanced Tool Settings mode.',important:true,reset:'Tool Settings preferences'},
-    'tsSimpleFieldVisibility':{name:'Tool Settings Fields',description:'Resets which brush controls appear in Simple mode.',important:true,reset:'Tool Settings field visibility'},
-    'tsSimpleSectionVisibility':{name:'Tool Settings Sections',description:'Resets visible Tool Settings sections.',important:true,reset:'Tool Settings sections'},
-    'tsSimpleSectionOrder':{name:'Tool Settings Section Order',description:'Resets the customized Tool Settings section order.',important:true,reset:'Tool Settings section order'},
-    'animator_cursor_style':{name:'Cursor Preferences',description:'Resets the selected drawing cursor style.'},
-    'brushSizeUnit':{name:'Brush Size Unit',description:'Resets the displayed brush size unit to pixels.'},
-    'brushBlendMode':{name:'Brush Blend Mode',description:'Resets the saved compositing mode for the Brush tool.'},
-    'eraserMode':{name:'Eraser Mode',description:'Resets the Eraser mode to Normal.'},
-    'animator_onion_skin_enabled':{name:'Onion Skin',description:'Resets Onion Skin to off.'},
-    'animator_kfexp_amount':{name:'Keyframe Exposure Amount'},
-    'animator_kfexp_bypass':{name:'Keyframe Exposure Bypass'},
-    'animator_kfsw_step':{name:'Keyframe Switcher Step'},
-    'animator_kfsw_bypass':{name:'Keyframe Switcher Bypass'},
-    'animator_recovery_autosave_delay':{name:'Recovery Autosave Delay',description:'Resets the Recovery Autosave timing interval to 5 seconds.'}
+(function () {
+  const STORAGE_META = {
+    animatorBrushPresetsV2: {
+      name: "Brush Presets",
+      description:
+        "Deletes saved brushes, per-brush settings, folders, and brush/eraser preset sizes.",
+      important: true,
+      reset: "brush presets and brush settings",
+    },
+    keybinds_v1: {
+      name: "Keyboard Shortcuts",
+      description:
+        "Deletes customized keyboard shortcuts and restores their defaults.",
+      important: true,
+      reset: "keyboard shortcuts",
+    },
+    animator_panel_layout_v4: {
+      name: "Workspace / Panel Layout",
+      description: "Resets panel positions, sizes, docking, and visibility.",
+      important: true,
+      reset: "workspace and panel layout",
+    },
+    toolSettingsMode: {
+      name: "Tool Settings",
+      description: "Resets the saved Simple/Advanced Tool Settings mode.",
+      important: true,
+      reset: "Tool Settings preferences",
+    },
+    tsSimpleFieldVisibility: {
+      name: "Tool Settings Fields",
+      description: "Resets which brush controls appear in Simple mode.",
+      important: true,
+      reset: "Tool Settings field visibility",
+    },
+    tsSimpleSectionVisibility: {
+      name: "Tool Settings Sections",
+      description: "Resets visible Tool Settings sections.",
+      important: true,
+      reset: "Tool Settings sections",
+    },
+    tsSimpleSectionOrder: {
+      name: "Tool Settings Section Order",
+      description: "Resets the customized Tool Settings section order.",
+      important: true,
+      reset: "Tool Settings section order",
+    },
+    animator_cursor_style: {
+      name: "Cursor Preferences",
+      description: "Resets the selected drawing cursor style.",
+    },
+    brushSizeUnit: {
+      name: "Brush Size Unit",
+      description: "Resets the displayed brush size unit to pixels.",
+    },
+    brushBlendMode: {
+      name: "Brush Blend Mode",
+      description: "Resets the saved compositing mode for the Brush tool.",
+    },
+    eraserMode: {
+      name: "Eraser Mode",
+      description: "Resets the Eraser mode to Normal.",
+    },
+    animator_onion_skin_enabled: {
+      name: "Onion Skin",
+      description: "Resets Onion Skin to off.",
+    },
+    animator_kfexp_amount: { name: "Keyframe Exposure Amount" },
+    animator_kfexp_bypass: { name: "Keyframe Exposure Bypass" },
+    animator_kfsw_step: { name: "Keyframe Switcher Step" },
+    animator_kfsw_bypass: { name: "Keyframe Switcher Bypass" },
+    animator_recovery_autosave_delay: {
+      name: "Recovery Autosave Delay",
+      description: "Resets the Recovery Autosave timing interval to 5 seconds.",
+    },
   };
-  function _meta(key){return STORAGE_META[key]||{name:key,description:''};}
-  function _friendlyName(key){return _meta(key).name;}
-  function _formatBytes(n){
-    if(n<1024) return n+' B';
-    if(n<1024*1024) return (n/1024).toFixed(1)+' KB';
-    return (n/(1024*1024)).toFixed(1)+' MB';
+  function _meta(key) {
+    return STORAGE_META[key] || { name: key, description: "" };
   }
-  function _byteSize(str){return new Blob([str]).size;}
-  function _collectEntries(){
-    const entries=[];
-    let total=0;
-    for(let i=0;i<localStorage.length;i++){
-      const key=localStorage.key(i);
-      if(key==null) continue;
-      const val=localStorage.getItem(key)||'';
-      const size=_byteSize(val);
-      total+=size;
-      entries.push({key,size,val});
+  function _friendlyName(key) {
+    return _meta(key).name;
+  }
+  function _formatBytes(n) {
+    if (n < 1024) return n + " B";
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+    return (n / (1024 * 1024)).toFixed(1) + " MB";
+  }
+  function _byteSize(str) {
+    return new Blob([str]).size;
+  }
+  function _collectEntries() {
+    const entries = [];
+    let total = 0;
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key == null) continue;
+      const val = localStorage.getItem(key) || "";
+      const size = _byteSize(val);
+      total += size;
+      entries.push({ key, size, val });
     }
-    entries.sort((a,b)=>{
-      const aMeta=_meta(a.key),bMeta=_meta(b.key),importance=Number(!!bMeta.important)-Number(!!aMeta.important);
-      return importance||aMeta.name.localeCompare(bMeta.name,undefined,{sensitivity:'base'});
+    entries.sort((a, b) => {
+      const aMeta = _meta(a.key),
+        bMeta = _meta(b.key),
+        importance = Number(!!bMeta.important) - Number(!!aMeta.important);
+      return (
+        importance ||
+        aMeta.name.localeCompare(bMeta.name, undefined, { sensitivity: "base" })
+      );
     });
-    return {entries,total};
+    return { entries, total };
   }
 
-  const listEl=document.getElementById('ls-list');
-  const totalEl=document.getElementById('ls-total-size');
-  const selectedCount=document.getElementById('ls-selected-count');
-  const clearSelection=document.getElementById('ls-clear-selection');
-  const deleteSelected=document.getElementById('ls-delete-selected');
-  const selectedKeys=new Set();
+  const listEl = document.getElementById("ls-list");
+  const totalEl = document.getElementById("ls-total-size");
+  const selectedCount = document.getElementById("ls-selected-count");
+  const clearSelection = document.getElementById("ls-clear-selection");
+  const deleteSelected = document.getElementById("ls-delete-selected");
+  const selectedKeys = new Set();
 
-  function _checkboxId(key){
-    let hash=2166136261;
-    for(let i=0;i<key.length;i++) hash=Math.imul(hash^key.charCodeAt(i),16777619);
-    return 'ls-item-'+(hash>>>0).toString(36);
+  function _checkboxId(key) {
+    let hash = 2166136261;
+    for (let i = 0; i < key.length; i++)
+      hash = Math.imul(hash ^ key.charCodeAt(i), 16777619);
+    return "ls-item-" + (hash >>> 0).toString(36);
   }
-  function _syncSelection(entries){
-    const visibleKeys=new Set(entries.map(entry=>entry.key));
-    selectedKeys.forEach(key=>{if(!visibleKeys.has(key)) selectedKeys.delete(key);});
-    const count=selectedKeys.size;
-    clearSelection.disabled=count===0;
-    deleteSelected.disabled=count===0;
-    selectedCount.textContent=count+' item'+(count===1?'':'s')+' selected';
-    listEl.querySelectorAll('.ls-section-select').forEach(box=>{
-      const section=box.dataset.section;
-      const sectionEntries=entries.filter(({key})=>(_meta(key).important?'important':'preferences')===section);
-      const sectionSelected=sectionEntries.filter(({key})=>selectedKeys.has(key)).length;
-      box.checked=sectionEntries.length>0&&sectionSelected===sectionEntries.length;
-      box.indeterminate=sectionSelected>0&&sectionSelected<sectionEntries.length;
-      box.disabled=sectionEntries.length===0;
+  function _syncSelection(entries) {
+    const visibleKeys = new Set(entries.map((entry) => entry.key));
+    selectedKeys.forEach((key) => {
+      if (!visibleKeys.has(key)) selectedKeys.delete(key);
+    });
+    const count = selectedKeys.size;
+    clearSelection.disabled = count === 0;
+    deleteSelected.disabled = count === 0;
+    selectedCount.textContent =
+      count + " item" + (count === 1 ? "" : "s") + " selected";
+    listEl.querySelectorAll(".ls-section-select").forEach((box) => {
+      const section = box.dataset.section;
+      const sectionEntries = entries.filter(
+        ({ key }) =>
+          (_meta(key).important ? "important" : "preferences") === section,
+      );
+      const sectionSelected = sectionEntries.filter(({ key }) =>
+        selectedKeys.has(key),
+      ).length;
+      box.checked =
+        sectionEntries.length > 0 && sectionSelected === sectionEntries.length;
+      box.indeterminate =
+        sectionSelected > 0 && sectionSelected < sectionEntries.length;
+      box.disabled = sectionEntries.length === 0;
     });
   }
-  function _refreshRenderedSelection(entries){
-    listEl.querySelectorAll('.ls-select').forEach(checkbox=>{
-      const checked=selectedKeys.has(checkbox.dataset.storageKey);
-      checkbox.checked=checked;
-      checkbox.closest('.ls-row').classList.toggle('is-selected',checked);
+  function _refreshRenderedSelection(entries) {
+    listEl.querySelectorAll(".ls-select").forEach((checkbox) => {
+      const checked = selectedKeys.has(checkbox.dataset.storageKey);
+      checkbox.checked = checked;
+      checkbox.closest(".ls-row").classList.toggle("is-selected", checked);
     });
     _syncSelection(entries);
   }
-  function _setAll(entries,checked){
-    entries.forEach(({key})=>checked?selectedKeys.add(key):selectedKeys.delete(key));
+  function _setAll(entries, checked) {
+    entries.forEach(({ key }) =>
+      checked ? selectedKeys.add(key) : selectedKeys.delete(key),
+    );
     // Always resync against the FULL current list, not just the subset that
     // was (de)selected — otherwise a single-section toggle (e.g. clicking the
     // "Important Saved Data" checkbox) would hand _syncSelection a truncated
@@ -96,127 +175,180 @@
     _refreshRenderedSelection(_collectEntries().entries);
   }
 
-  function render(){
-    const {entries,total}=_collectEntries();
-    totalEl.textContent=_formatBytes(total);
-    const previousScrollTop=listEl.scrollTop;
-    listEl.innerHTML='';
-    if(entries.length===0){
-      const empty=document.createElement('div');
-      empty.id='ls-empty';
-      empty.textContent='Nothing saved yet.';
+  function render() {
+    const { entries, total } = _collectEntries();
+    totalEl.textContent = _formatBytes(total);
+    const previousScrollTop = listEl.scrollTop;
+    listEl.innerHTML = "";
+    if (entries.length === 0) {
+      const empty = document.createElement("div");
+      empty.id = "ls-empty";
+      empty.textContent = "Nothing saved yet.";
       listEl.appendChild(empty);
       _syncSelection(entries);
       return;
     }
-    let currentSection=null;
-    entries.forEach(({key,size})=>{
-      const meta=_meta(key),section=meta.important?'important':'preferences';
-      if(section!==currentSection){
-        currentSection=section;
-        const heading=document.createElement('div');
-        heading.className='ls-section-header '+section;
-        const checkboxId='ls-section-select-'+section;
-        const sectionLabel=document.createElement('label');
-        sectionLabel.className='ls-section-header-inner';
-        sectionLabel.htmlFor=checkboxId;
-        const sectionCheckbox=document.createElement('input');
-        sectionCheckbox.type='checkbox';
-        sectionCheckbox.className='ls-section-select';
-        sectionCheckbox.id=checkboxId;
-        sectionCheckbox.dataset.section=section;
-        sectionCheckbox.setAttribute('aria-label','Select all in '+(meta.important?'Important Saved Data':'Stored Application Preferences'));
-        sectionCheckbox.onchange=()=>{
-          const sectionEntries=entries.filter(({key})=>(_meta(key).important?'important':'preferences')===section);
-          _setAll(sectionEntries,sectionCheckbox.checked);
+    let currentSection = null;
+    entries.forEach(({ key, size }) => {
+      const meta = _meta(key),
+        section = meta.important ? "important" : "preferences";
+      if (section !== currentSection) {
+        currentSection = section;
+        const heading = document.createElement("div");
+        heading.className = "ls-section-header " + section;
+        const checkboxId = "ls-section-select-" + section;
+        const sectionLabel = document.createElement("label");
+        sectionLabel.className = "ls-section-header-inner";
+        sectionLabel.htmlFor = checkboxId;
+        const sectionCheckbox = document.createElement("input");
+        sectionCheckbox.type = "checkbox";
+        sectionCheckbox.className = "ls-section-select";
+        sectionCheckbox.id = checkboxId;
+        sectionCheckbox.dataset.section = section;
+        sectionCheckbox.setAttribute(
+          "aria-label",
+          "Select all in " +
+            (meta.important
+              ? "Important Saved Data"
+              : "Stored Application Preferences"),
+        );
+        sectionCheckbox.onchange = () => {
+          const sectionEntries = entries.filter(
+            ({ key }) =>
+              (_meta(key).important ? "important" : "preferences") === section,
+          );
+          _setAll(sectionEntries, sectionCheckbox.checked);
         };
-        const labelText=document.createElement('span');
-        labelText.className='ls-section-header-label';
-        labelText.textContent=meta.important?'IMPORTANT SAVED DATA':'STORED APPLICATION PREFERENCES';
-        sectionLabel.append(sectionCheckbox,labelText);
+        const labelText = document.createElement("span");
+        labelText.className = "ls-section-header-label";
+        labelText.textContent = meta.important
+          ? "IMPORTANT SAVED DATA"
+          : "STORED APPLICATION PREFERENCES";
+        sectionLabel.append(sectionCheckbox, labelText);
         heading.appendChild(sectionLabel);
         listEl.appendChild(heading);
       }
-      const row=document.createElement('div');
-      const checkboxId=_checkboxId(key);
-      row.className='ls-row'+(meta.important?' ls-row-important':'');
-      row.classList.toggle('is-selected',selectedKeys.has(key));
-      row.innerHTML=
-        '<input class="ls-select" type="checkbox"/>'+
-        '<span class="ls-size"></span>'+
+      const row = document.createElement("div");
+      const checkboxId = _checkboxId(key);
+      row.className = "ls-row" + (meta.important ? " ls-row-important" : "");
+      row.classList.toggle("is-selected", selectedKeys.has(key));
+      row.innerHTML =
+        '<input class="ls-select" type="checkbox"/>' +
+        '<span class="ls-size"></span>' +
         '<label class="ls-info"><span class="ls-name"></span><span class="ls-description"></span></label>';
-      const checkbox=row.querySelector('.ls-select');
-      const info=row.querySelector('.ls-info');
-      checkbox.id=checkboxId;
-      checkbox.name=checkboxId;
-      checkbox.dataset.storageKey=key;
-      checkbox.checked=selectedKeys.has(key);
-      checkbox.setAttribute('aria-label','Select '+meta.name);
-      info.htmlFor=checkboxId;
-      row.querySelector('.ls-size').textContent=_formatBytes(size);
-      row.querySelector('.ls-name').textContent=meta.name;
-      row.querySelector('.ls-name').title=key;
-      row.querySelector('.ls-description').textContent=meta.description||(meta.important?'Deleting this resets '+(meta.reset||meta.name.toLowerCase())+'.':'Stored application preference.');
-      checkbox.onchange=()=>{
-        checkbox.checked?selectedKeys.add(key):selectedKeys.delete(key);
-        row.classList.toggle('is-selected',checkbox.checked);
+      const checkbox = row.querySelector(".ls-select");
+      const info = row.querySelector(".ls-info");
+      checkbox.id = checkboxId;
+      checkbox.name = checkboxId;
+      checkbox.dataset.storageKey = key;
+      checkbox.checked = selectedKeys.has(key);
+      checkbox.setAttribute("aria-label", "Select " + meta.name);
+      info.htmlFor = checkboxId;
+      row.querySelector(".ls-size").textContent = _formatBytes(size);
+      row.querySelector(".ls-name").textContent = meta.name;
+      row.querySelector(".ls-name").title = key;
+      row.querySelector(".ls-description").textContent =
+        meta.description ||
+        (meta.important
+          ? "Deleting this resets " +
+            (meta.reset || meta.name.toLowerCase()) +
+            "."
+          : "Stored application preference.");
+      checkbox.onchange = () => {
+        checkbox.checked ? selectedKeys.add(key) : selectedKeys.delete(key);
+        row.classList.toggle("is-selected", checkbox.checked);
         _syncSelection(entries);
       };
-      row.onclick=event=>{
-        if(event.target.closest('button,input,label')) return;
+      row.onclick = (event) => {
+        if (event.target.closest("button,input,label")) return;
         checkbox.click();
       };
       listEl.appendChild(row);
     });
     _syncSelection(entries);
-    listEl.scrollTop=Math.min(previousScrollTop,Math.max(0,listEl.scrollHeight-listEl.clientHeight));
+    listEl.scrollTop = Math.min(
+      previousScrollTop,
+      Math.max(0, listEl.scrollHeight - listEl.clientHeight),
+    );
   }
 
-  clearSelection.onclick=()=>{selectedKeys.clear();_refreshRenderedSelection(_collectEntries().entries);};
-  deleteSelected.onclick=async()=>{
-    const entries=_collectEntries().entries.filter(({key})=>selectedKeys.has(key));
-    if(entries.length===0) return;
-    const important=entries.filter(({key})=>_meta(key).important);
-    const names=entries.map(({key})=>'- '+_meta(key).name).join('\n');
-    const warning=important.length
-      ? '\n\nWARNING: '+important.length+' important saved data item'+(important.length===1?' is':'s are')+' included. This may reset brushes, shortcuts, workspace layout, or Tool Settings.'
-      : '';
-    const ok=await siteConfirm('Delete '+entries.length+' selected item'+(entries.length===1?'':'s')+'?\n\n'+names+warning+'\n\nThis cannot be undone.',{title:'Delete Saved Data',okText:'Delete',danger:true});
-    if(!ok) return;
-    const failed=[];
-    entries.forEach(({key})=>{
-      try{
+  clearSelection.onclick = () => {
+    selectedKeys.clear();
+    _refreshRenderedSelection(_collectEntries().entries);
+  };
+  deleteSelected.onclick = async () => {
+    const entries = _collectEntries().entries.filter(({ key }) =>
+      selectedKeys.has(key),
+    );
+    if (entries.length === 0) return;
+    const important = entries.filter(({ key }) => _meta(key).important);
+    const names = entries.map(({ key }) => "- " + _meta(key).name).join("\n");
+    const warning = important.length
+      ? "\n\nWARNING: " +
+        important.length +
+        " important saved data item" +
+        (important.length === 1 ? " is" : "s are") +
+        " included. This may reset brushes, shortcuts, workspace layout, or Tool Settings."
+      : "";
+    const ok = await siteConfirm(
+      "Delete " +
+        entries.length +
+        " selected item" +
+        (entries.length === 1 ? "" : "s") +
+        "?\n\n" +
+        names +
+        warning +
+        "\n\nThis cannot be undone.",
+      { title: "Delete Saved Data", okText: "Delete", danger: true },
+    );
+    if (!ok) return;
+    const failed = [];
+    entries.forEach(({ key }) => {
+      try {
         localStorage.removeItem(key);
-        if(localStorage.getItem(key)!==null) failed.push(_meta(key).name);
-        else{
+        if (localStorage.getItem(key) !== null) failed.push(_meta(key).name);
+        else {
           selectedKeys.delete(key);
-          window.dispatchEvent(new CustomEvent('local-storage-preference-removed',{detail:{key}}));
+          window.dispatchEvent(
+            new CustomEvent("local-storage-preference-removed", {
+              detail: { key },
+            }),
+          );
         }
-      }catch(error){failed.push(_meta(key).name);}
+      } catch (error) {
+        failed.push(_meta(key).name);
+      }
     });
     render();
-    if(failed.length) await siteAlert('Could not delete:\n- '+failed.join('\n- '),{title:'Delete Failed'});
+    if (failed.length)
+      await siteAlert("Could not delete:\n- " + failed.join("\n- "), {
+        title: "Delete Failed",
+      });
   };
 
-
-  const getZipBtn=document.getElementById('ls-get-zip');
-  if(getZipBtn){
-    getZipBtn.onclick=async ()=>{
-      const {entries}=_collectEntries();
-      if(entries.length===0) return;
-      if(typeof JSZip==='undefined'){
-        await siteAlert('ZIP export isn\'t available right now.',{title:'Export Unavailable'});
+  const getZipBtn = document.getElementById("ls-get-zip");
+  if (getZipBtn) {
+    getZipBtn.onclick = async () => {
+      const { entries } = _collectEntries();
+      if (entries.length === 0) return;
+      if (typeof JSZip === "undefined") {
+        await siteAlert("ZIP export isn't available right now.", {
+          title: "Export Unavailable",
+        });
         return;
       }
-      const zip=new JSZip();
-      entries.forEach(({key,val})=>{
-        zip.file(_friendlyName(key).replace(/[\\/:*?"<>|]/g,'_')+'.txt',val);
+      const zip = new JSZip();
+      entries.forEach(({ key, val }) => {
+        zip.file(
+          _friendlyName(key).replace(/[\\/:*?"<>|]/g, "_") + ".txt",
+          val,
+        );
       });
-      const blob=await zip.generateAsync({type:'blob'});
-      const url=URL.createObjectURL(blob);
-      const a=document.createElement('a');
-      a.href=url;
-      a.download='local-storage.zip';
+      const blob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "local-storage.zip";
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -224,5 +356,5 @@
     };
   }
 
-  window._renderLocalStorage=render;
+  window._renderLocalStorage = render;
 })();

@@ -5,15 +5,20 @@
 // resolveSegmentRenderParams. Run with:
 //   node src/brush/hard-round-capsule.test.js
 
-'use strict';
+"use strict";
 
-const assert = require('assert');
-const path = require('path');
-const fs = require('fs');
-const Math_ = require('../../../hard-round-capsule-math');
-const { drawHardRoundCapsuleCPU } = require('../../../hard-round-capsule-renderer');
-const { resolveSegmentRenderParams, resolveEffectiveRadius } = require('../../../hard-round-adapter');
-const { PrototypeStrokeCore } = require('../../../prototype-stroke-core');
+const assert = require("assert");
+const path = require("path");
+const fs = require("fs");
+const Math_ = require("../../../hard-round-capsule-math");
+const {
+  drawHardRoundCapsuleCPU,
+} = require("../../../hard-round-capsule-renderer");
+const {
+  resolveSegmentRenderParams,
+  resolveEffectiveRadius,
+} = require("../../../hard-round-adapter");
+const { PrototypeStrokeCore } = require("../../../prototype-stroke-core");
 
 let passed = 0;
 let failed = 0;
@@ -25,7 +30,9 @@ function test(name, fn) {
   } catch (err) {
     failed++;
     console.error(`  FAIL - ${name}`);
-    console.error('    ' + (err && err.stack ? err.stack.split('\n').join('\n    ') : err));
+    console.error(
+      "    " + (err && err.stack ? err.stack.split("\n").join("\n    ") : err),
+    );
   }
 }
 
@@ -43,8 +50,10 @@ function makeFakeCtx(w, h) {
         for (let x = 0; x < rw; x++) {
           const srcI = ((sy + y) * w + (sx + x)) * 4;
           const dstI = (y * rw + x) * 4;
-          out[dstI] = data[srcI]; out[dstI + 1] = data[srcI + 1];
-          out[dstI + 2] = data[srcI + 2]; out[dstI + 3] = data[srcI + 3];
+          out[dstI] = data[srcI];
+          out[dstI + 1] = data[srcI + 1];
+          out[dstI + 2] = data[srcI + 2];
+          out[dstI + 3] = data[srcI + 3];
         }
       }
       return { data: out, width: rw, height: rh };
@@ -55,31 +64,37 @@ function makeFakeCtx(w, h) {
         for (let x = 0; x < rw; x++) {
           const srcI = (y * rw + x) * 4;
           const dstI = ((sy + y) * w + (sx + x)) * 4;
-          data[dstI] = src[srcI]; data[dstI + 1] = src[srcI + 1];
-          data[dstI + 2] = src[srcI + 2]; data[dstI + 3] = src[srcI + 3];
+          data[dstI] = src[srcI];
+          data[dstI + 1] = src[srcI + 1];
+          data[dstI + 2] = src[srcI + 2];
+          data[dstI + 3] = src[srcI + 3];
         }
       }
     },
-    _raw: data, _w: w, _h: h,
-    alphaAt(x, y) { return data[(y * w + x) * 4 + 3]; },
+    _raw: data,
+    _w: w,
+    _h: h,
+    alphaAt(x, y) {
+      return data[(y * w + x) * 4 + 3];
+    },
   };
 }
 
 // ---------------------------------------------------------------------
 // Math module
 
-test('capsuleAxisDistance: zero-length segment is a round dab', () => {
+test("capsuleAxisDistance: zero-length segment is a round dab", () => {
   const r = Math_.capsuleAxisDistance(5, 0, 0, 0, 0, 0);
   assert.ok(r.isRoundDab);
   assert.ok(Math.abs(r.dist - 5) < 1e-9);
 });
 
-test('capsuleSignedDistance: point on axis midpoint is inside for r>0', () => {
+test("capsuleSignedDistance: point on axis midpoint is inside for r>0", () => {
   const d = Math_.capsuleSignedDistance(5, 0, 0, 0, 10, 10, 0, 10);
   assert.ok(d < 0);
 });
 
-test('capsuleSignedDistance: radius interpolates continuously along the axis (r0 -> r1)', () => {
+test("capsuleSignedDistance: radius interpolates continuously along the axis (r0 -> r1)", () => {
   // Horizontal axis (0,0)->(20,0), r0=2 at x=0, r1=10 at x=20. For any t in
   // [0,1], the point directly above the axis at the LOCAL interpolated
   // radius should sit exactly on the boundary (signed distance ~0) --
@@ -92,7 +107,7 @@ test('capsuleSignedDistance: radius interpolates continuously along the axis (r0
   }
 });
 
-test('edgeCoverage: 1 well inside, 0 well outside, ~0.5 at the boundary', () => {
+test("edgeCoverage: 1 well inside, 0 well outside, ~0.5 at the boundary", () => {
   assert.ok(Math_.edgeCoverage(-10, 1) > 0.99);
   assert.ok(Math_.edgeCoverage(10, 1) < 0.01);
   assert.ok(Math.abs(Math_.edgeCoverage(0, 1) - 0.5) < 1e-9);
@@ -101,23 +116,26 @@ test('edgeCoverage: 1 well inside, 0 well outside, ~0.5 at the boundary', () => 
 // Phase 9E: aaBand() taper-awareness. No-taper (r0===r1) segments and
 // round dabs/caps must be untouched (band stays exactly 1) -- only a
 // tapering straight segment should widen.
-test('aaBand: no taper (r0 === r1) keeps a 1px band, matching prior behavior', () => {
+test("aaBand: no taper (r0 === r1) keeps a 1px band, matching prior behavior", () => {
   assert.strictEqual(Math_.aaBand(3, 3, 0, 0, 10, 0), 1);
 });
-test('aaBand: no-argument call keeps a 1px band (round-dab/back-compat fallback)', () => {
+test("aaBand: no-argument call keeps a 1px band (round-dab/back-compat fallback)", () => {
   assert.strictEqual(Math_.aaBand(), 1);
 });
-test('aaBand: a steep taper over a short segment widens the band beyond 1px', () => {
+test("aaBand: a steep taper over a short segment widens the band beyond 1px", () => {
   const band = Math_.aaBand(3, 0.1, 0, 0, 1, 0); // taperRate = -2.9
-  assert.ok(band > 3, `expected a substantially widened band for a steep taper, got ${band}`);
+  assert.ok(
+    band > 3,
+    `expected a substantially widened band for a steep taper, got ${band}`,
+  );
   const expected = Math.sqrt(1 + 2.9 * 2.9);
   assert.ok(Math.abs(band - expected) < 1e-9);
 });
-test('aaBand: degenerate (zero-length) segment falls back to 1px, not divide-by-zero/NaN', () => {
+test("aaBand: degenerate (zero-length) segment falls back to 1px, not divide-by-zero/NaN", () => {
   const band = Math_.aaBand(3, 0.1, 5, 5, 5, 5);
   assert.strictEqual(band, 1);
 });
-test('capsuleCoverage: a thin, steep taper produces a softer (wider) edge transition than a uniform capsule of the same local radius', () => {
+test("capsuleCoverage: a thin, steep taper produces a softer (wider) edge transition than a uniform capsule of the same local radius", () => {
   // Same local radius (1.55) at the sample point in both cases, but one
   // capsule is untapered (r0===r1===1.55) and the other tapers steeply
   // from 3 down to 0.1 over a short 1px run (taperRate=-2.9, matching the
@@ -128,18 +146,25 @@ test('capsuleCoverage: a thin, steep taper produces a softer (wider) edge transi
   const d = 0.6; // distance just outside the boundary
   const uniform = Math_.capsuleCoverage(0.5, 1.55 + d, 0, 0, 1.55, 1, 0, 1.55);
   const tapered = Math_.capsuleCoverage(0.5, 1.55 + d, 0, 0, 3, 1, 0, 0.1);
-  assert.strictEqual(uniform, 0, 'uniform capsule at d=0.6 with a 1px band is fully outside');
-  assert.ok(tapered > 0, `tapered capsule should still show partial coverage at d=0.6, got ${tapered}`);
+  assert.strictEqual(
+    uniform,
+    0,
+    "uniform capsule at d=0.6 with a 1px band is fully outside",
+  );
+  assert.ok(
+    tapered > 0,
+    `tapered capsule should still show partial coverage at d=0.6, got ${tapered}`,
+  );
 });
 
-test('subpixelAreaFactor: sub-pixel round dab scales down by true circle area, not 1', () => {
+test("subpixelAreaFactor: sub-pixel round dab scales down by true circle area, not 1", () => {
   const tiny = Math_.subpixelAreaFactor(0.05, true); // r=0.05 -> area = pi*0.0025 ~ 0.00785
   assert.ok(tiny < 0.01, `expected tiny area factor, got ${tiny}`);
   const big = Math_.subpixelAreaFactor(50, true);
   assert.ok(Math.abs(big - 1) < 1e-9); // clamped to 1 for large dabs
 });
 
-test('capsuleBounds: covers both endpoints plus max radius plus AA margin', () => {
+test("capsuleBounds: covers both endpoints plus max radius plus AA margin", () => {
   const b = Math_.capsuleBounds(0, 0, 10, 0, 2, 4);
   assert.ok(b.sx <= 0 - (4 + Math_.AA_MARGIN));
   assert.ok(b.ex >= 10 + (4 + Math_.AA_MARGIN));
@@ -148,9 +173,20 @@ test('capsuleBounds: covers both endpoints plus max radius plus AA margin', () =
 // ---------------------------------------------------------------------
 // CPU capsule renderer
 
-test('CPU renderer: full-pressure 28px segment paints diameter ~28 across its width', () => {
+test("CPU renderer: full-pressure 28px segment paints diameter ~28 across its width", () => {
   const ctx = makeFakeCtx(80, 80);
-  const seg = { x0: 40, y0: 40, y1: 40, x1: 40, r0: 14, r1: 14, alpha0: 1, alpha1: 1, rgb: [255, 0, 0], composite: 'paint' };
+  const seg = {
+    x0: 40,
+    y0: 40,
+    y1: 40,
+    x1: 40,
+    r0: 14,
+    r1: 14,
+    alpha0: 1,
+    alpha1: 1,
+    rgb: [255, 0, 0],
+    composite: "paint",
+  };
   drawHardRoundCapsuleCPU(ctx, seg);
   // Scan a horizontal line through the dab center; count solid-ish pixels.
   let solid = 0;
@@ -159,17 +195,40 @@ test('CPU renderer: full-pressure 28px segment paints diameter ~28 across its wi
   assert.ok(solid >= 24 && solid <= 30, `expected ~28 solid px, got ${solid}`);
 });
 
-test('CPU renderer: no artificial taper -- alpha is uniform across a constant-alpha capsule interior', () => {
+test("CPU renderer: no artificial taper -- alpha is uniform across a constant-alpha capsule interior", () => {
   const ctx = makeFakeCtx(60, 60);
-  const seg = { x0: 5, y0: 30, x1: 55, y1: 30, r0: 8, r1: 8, alpha0: 1, alpha1: 1, rgb: [0, 255, 0], composite: 'paint' };
+  const seg = {
+    x0: 5,
+    y0: 30,
+    x1: 55,
+    y1: 30,
+    r0: 8,
+    r1: 8,
+    alpha0: 1,
+    alpha1: 1,
+    rgb: [0, 255, 0],
+    composite: "paint",
+  };
   drawHardRoundCapsuleCPU(ctx, seg);
   const samples = [15, 25, 30, 35, 45].map((x) => ctx.alphaAt(x, 30));
-  for (const a of samples) assert.ok(a > 250, `expected solid core alpha, got ${a}`);
+  for (const a of samples)
+    assert.ok(a > 250, `expected solid core alpha, got ${a}`);
 });
 
-test('CPU renderer: continuous r0->r1 taper produces a monotonically shrinking dab, not separated dots', () => {
+test("CPU renderer: continuous r0->r1 taper produces a monotonically shrinking dab, not separated dots", () => {
   const ctx = makeFakeCtx(120, 40);
-  const seg = { x0: 10, y0: 20, x1: 110, y1: 20, r0: 12, r1: 1, alpha0: 1, alpha1: 1, rgb: [0, 0, 255], composite: 'paint' };
+  const seg = {
+    x0: 10,
+    y0: 20,
+    x1: 110,
+    y1: 20,
+    r0: 12,
+    r1: 1,
+    alpha0: 1,
+    alpha1: 1,
+    rgb: [0, 0, 255],
+    composite: "paint",
+  };
   drawHardRoundCapsuleCPU(ctx, seg);
   // Measure the painted width (count of alpha>0 pixels) at several x slices
   // along the taper -- must be present (no gap) and non-increasing overall.
@@ -180,26 +239,55 @@ test('CPU renderer: continuous r0->r1 taper produces a monotonically shrinking d
   }
   const xs = [12, 30, 50, 70, 90, 108];
   const widths = xs.map(widthAt);
-  for (const w of widths) assert.ok(w > 0, 'taper must never gap to zero coverage mid-segment');
+  for (const w of widths)
+    assert.ok(w > 0, "taper must never gap to zero coverage mid-segment");
   for (let i = 1; i < widths.length; i++) {
-    assert.ok(widths[i] <= widths[i - 1] + 1, `width should not grow along the taper: ${widths}`);
+    assert.ok(
+      widths[i] <= widths[i - 1] + 1,
+      `width should not grow along the taper: ${widths}`,
+    );
   }
 });
 
-test('CPU renderer: zero-length segment (r0===r1, same point) renders a round dab, not nothing', () => {
+test("CPU renderer: zero-length segment (r0===r1, same point) renders a round dab, not nothing", () => {
   const ctx = makeFakeCtx(20, 20);
-  const seg = { x0: 10, y0: 10, x1: 10, y1: 10, r0: 5, r1: 5, alpha0: 1, alpha1: 1, rgb: [255, 255, 0], composite: 'paint' };
+  const seg = {
+    x0: 10,
+    y0: 10,
+    x1: 10,
+    y1: 10,
+    r0: 5,
+    r1: 5,
+    alpha0: 1,
+    alpha1: 1,
+    rgb: [255, 255, 0],
+    composite: "paint",
+  };
   drawHardRoundCapsuleCPU(ctx, seg);
   assert.ok(ctx.alphaAt(10, 10) > 250);
   assert.ok(ctx.alphaAt(10, 6) > 200); // inside the r=5 circle
   assert.ok(ctx.alphaAt(10, 19) === 0); // well outside
 });
 
-test('CPU renderer: erase composite reduces existing alpha instead of painting color', () => {
+test("CPU renderer: erase composite reduces existing alpha instead of painting color", () => {
   const ctx = makeFakeCtx(20, 20);
   // Pre-fill with opaque red.
-  for (let i = 0; i < ctx._raw.length; i += 4) { ctx._raw[i] = 255; ctx._raw[i + 3] = 255; }
-  const seg = { x0: 10, y0: 10, x1: 10, y1: 10, r0: 5, r1: 5, alpha0: 1, alpha1: 1, rgb: [0, 0, 0], composite: 'erase' };
+  for (let i = 0; i < ctx._raw.length; i += 4) {
+    ctx._raw[i] = 255;
+    ctx._raw[i + 3] = 255;
+  }
+  const seg = {
+    x0: 10,
+    y0: 10,
+    x1: 10,
+    y1: 10,
+    r0: 5,
+    r1: 5,
+    alpha0: 1,
+    alpha1: 1,
+    rgb: [0, 0, 0],
+    composite: "erase",
+  };
   drawHardRoundCapsuleCPU(ctx, seg);
   assert.ok(ctx.alphaAt(10, 10) < 10); // fully erased at center
   assert.ok(ctx.alphaAt(19, 19) === 255); // untouched far corner
@@ -208,42 +296,111 @@ test('CPU renderer: erase composite reduces existing alpha instead of painting c
 // ---------------------------------------------------------------------
 // Adapter segment-render-params (r0/r1/alpha0/alpha1 derivation)
 
-test('resolveSegmentRenderParams: 28px full pressure -> r0 = r1 = 14', () => {
-  const seg = { x0: 0, y0: 0, pressure0: 1, influence0: 1, x1: 5, y1: 5, pressure1: 1, influence1: 1 };
-  const out = resolveSegmentRenderParams(seg, { baseSize: 28, minSizeFrac: 0, curveKey: 'linear' });
+test("resolveSegmentRenderParams: 28px full pressure -> r0 = r1 = 14", () => {
+  const seg = {
+    x0: 0,
+    y0: 0,
+    pressure0: 1,
+    influence0: 1,
+    x1: 5,
+    y1: 5,
+    pressure1: 1,
+    influence1: 1,
+  };
+  const out = resolveSegmentRenderParams(seg, {
+    baseSize: 28,
+    minSizeFrac: 0,
+    curveKey: "linear",
+  });
   assert.ok(Math.abs(out.r0 - 14) < 1e-9);
   assert.ok(Math.abs(out.r1 - 14) < 1e-9);
 });
 
-test('resolveSegmentRenderParams: 2px full pressure -> r0 = r1 = 1', () => {
-  const seg = { x0: 0, y0: 0, pressure0: 1, influence0: 1, x1: 5, y1: 5, pressure1: 1, influence1: 1 };
-  const out = resolveSegmentRenderParams(seg, { baseSize: 2, minSizeFrac: 0, curveKey: 'linear' });
+test("resolveSegmentRenderParams: 2px full pressure -> r0 = r1 = 1", () => {
+  const seg = {
+    x0: 0,
+    y0: 0,
+    pressure0: 1,
+    influence0: 1,
+    x1: 5,
+    y1: 5,
+    pressure1: 1,
+    influence1: 1,
+  };
+  const out = resolveSegmentRenderParams(seg, {
+    baseSize: 2,
+    minSizeFrac: 0,
+    curveKey: "linear",
+  });
   assert.ok(Math.abs(out.r0 - 1) < 1e-9);
   assert.ok(Math.abs(out.r1 - 1) < 1e-9);
 });
 
-test('resolveSegmentRenderParams: decreasing-pressure segment gives r0 > r1 with no artificial floor jump', () => {
-  const seg = { x0: 0, y0: 0, pressure0: 1, influence0: 1, x1: 5, y1: 5, pressure1: 0.1, influence1: 0.1 };
-  const out = resolveSegmentRenderParams(seg, { baseSize: 20, minSizeFrac: 0, curveKey: 'linear' });
+test("resolveSegmentRenderParams: decreasing-pressure segment gives r0 > r1 with no artificial floor jump", () => {
+  const seg = {
+    x0: 0,
+    y0: 0,
+    pressure0: 1,
+    influence0: 1,
+    x1: 5,
+    y1: 5,
+    pressure1: 0.1,
+    influence1: 0.1,
+  };
+  const out = resolveSegmentRenderParams(seg, {
+    baseSize: 20,
+    minSizeFrac: 0,
+    curveKey: "linear",
+  });
   assert.ok(out.r0 > out.r1);
-  const expectedR1 = resolveEffectiveRadius({ baseSize: 20, minSizeFrac: 0, curveKey: 'linear', influence: 0.1 });
+  const expectedR1 = resolveEffectiveRadius({
+    baseSize: 20,
+    minSizeFrac: 0,
+    curveKey: "linear",
+    influence: 0.1,
+  });
   assert.ok(Math.abs(out.r1 - expectedR1) < 1e-9);
 });
 
-test('resolveSegmentRenderParams: same resolved segment input produces identical output (CPU/GPU share one source)', () => {
-  const seg = { x0: 1, y0: 2, pressure0: 0.4, influence0: 0.35, x1: 6, y1: 8, pressure1: 0.9, influence1: 0.87 };
-  const opts = { baseSize: 40, minSizeFrac: 0.05, curveKey: 'linear', rgb: [1, 2, 3], composite: 'paint' };
+test("resolveSegmentRenderParams: same resolved segment input produces identical output (CPU/GPU share one source)", () => {
+  const seg = {
+    x0: 1,
+    y0: 2,
+    pressure0: 0.4,
+    influence0: 0.35,
+    x1: 6,
+    y1: 8,
+    pressure1: 0.9,
+    influence1: 0.87,
+  };
+  const opts = {
+    baseSize: 40,
+    minSizeFrac: 0.05,
+    curveKey: "linear",
+    rgb: [1, 2, 3],
+    composite: "paint",
+  };
   const a = resolveSegmentRenderParams(seg, opts);
   const b = resolveSegmentRenderParams(seg, opts);
   assert.deepStrictEqual(a, b);
 });
 
-test('resolveSegmentRenderParams: zero-length first segment (beginStroke dab) is valid', () => {
+test("resolveSegmentRenderParams: zero-length first segment (beginStroke dab) is valid", () => {
   const core = new PrototypeStrokeCore();
-  const beginSeg = core.beginStroke({ x: 50, y: 50, pressure: 0.6, pointerType: 'pen', timeStamp: 0 });
+  const beginSeg = core.beginStroke({
+    x: 50,
+    y: 50,
+    pressure: 0.6,
+    pointerType: "pen",
+    timeStamp: 0,
+  });
   assert.strictEqual(beginSeg.x0, beginSeg.x1);
   assert.strictEqual(beginSeg.y0, beginSeg.y1);
-  const out = resolveSegmentRenderParams(beginSeg, { baseSize: 20, minSizeFrac: 0.05, curveKey: 'linear' });
+  const out = resolveSegmentRenderParams(beginSeg, {
+    baseSize: 20,
+    minSizeFrac: 0.05,
+    curveKey: "linear",
+  });
   assert.ok(Number.isFinite(out.r0) && out.r0 > 0);
   assert.ok(Number.isFinite(out.r1) && out.r1 > 0);
 });
@@ -264,22 +421,45 @@ test('resolveSegmentRenderParams: zero-length first segment (beginStroke dab) is
 // longer called from this path. Updated here to assert the new backend
 // instead of the old one; the "_stampDab must never be called" acceptance
 // criterion itself is unchanged and still enforced.
-test('_hardRoundStampSegments source no longer calls _stampDab()', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'brush-engine.js'), 'utf8');
-  const start = src.indexOf('function _hardRoundStampSegments(segments, e){');
-  assert.ok(start >= 0, 'could not locate _hardRoundStampSegments in brush-engine.js');
+test("_hardRoundStampSegments source no longer calls _stampDab()", () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, "..", "..", "..", "brush-engine.js"),
+    "utf8",
+  );
+  const start = src.indexOf("function _hardRoundStampSegments(segments, e){");
+  assert.ok(
+    start >= 0,
+    "could not locate _hardRoundStampSegments in brush-engine.js",
+  );
   // Find the matching closing brace by simple depth counting from the
   // opening brace of the function body.
-  let depth = 0, i = start, bodyEnd = -1;
+  let depth = 0,
+    i = start,
+    bodyEnd = -1;
   for (; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}') { depth--; if (depth === 0) { bodyEnd = i; break; } }
+    if (src[i] === "{") depth++;
+    else if (src[i] === "}") {
+      depth--;
+      if (depth === 0) {
+        bodyEnd = i;
+        break;
+      }
+    }
   }
-  assert.ok(bodyEnd > start, 'could not find end of _hardRoundStampSegments body');
+  assert.ok(
+    bodyEnd > start,
+    "could not find end of _hardRoundStampSegments body",
+  );
   const body = src.slice(start, bodyEnd + 1);
-  assert.ok(!/_stampDab\(/.test(body), 'Hard Round segment stamping must not call _stampDab()');
-  assert.ok(/_hardRoundPendingRenderSegments\.push\(/.test(body) && /renderer\.drawSegments\(pending\)/.test(src),
-    'expected segments to route through the frame-batched PrototypeRenderer.drawSegments() path');
+  assert.ok(
+    !/_stampDab\(/.test(body),
+    "Hard Round segment stamping must not call _stampDab()",
+  );
+  assert.ok(
+    /_hardRoundPendingRenderSegments\.push\(/.test(body) &&
+      /renderer\.drawSegments\(pending\)/.test(src),
+    "expected segments to route through the frame-batched PrototypeRenderer.drawSegments() path",
+  );
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

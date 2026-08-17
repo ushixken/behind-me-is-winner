@@ -1,17 +1,189 @@
-(function(){
-  'use strict';
-  var active=false,pointerId=null,start=null,current=null,startClient=null,mode='replace',shiftConstrained=false;
-  var preview=null;
-  function ensurePreview(){if(preview||!window.EditorOverlayRenderer)return;preview=EditorOverlayRenderer.create('ellipse-selection-preview',{zIndex:7,draw:function(context,geometry){var bounds=ellipseBounds();if(!active||!bounds||!bounds.w||!bounds.h)return;context.strokeStyle='#7f77dd';context.lineWidth=1.5;context.setLineDash([5,3]);context.beginPath();for(var i=0;i<=96;i++){var angle=i/96*Math.PI*2,point=geometry.worldToScreen({x:bounds.x+bounds.w/2+Math.cos(angle)*bounds.w/2,y:bounds.y+bounds.h/2+Math.sin(angle)*bounds.h/2});if(i===0)context.moveTo(point.x,point.y);else context.lineTo(point.x,point.y);}context.closePath();context.stroke();}});}  function ellipseBounds(){if(!start||!current)return null;var dx=current.x-start.x,dy=current.y-start.y;if(shiftConstrained){var size=Math.max(Math.abs(dx),Math.abs(dy));dx=(dx<0?-1:1)*size;dy=(dy<0?-1:1)*size;}var x=Math.min(start.x,start.x+dx),y=Math.min(start.y,start.y+dy);return{x:x,y:y,w:Math.abs(dx),h:Math.abs(dy)};}
-  function clearPreview(){if(preview)preview.setVisible(false);}
-  function schedulePreview(){ensurePreview();if(preview){preview.setVisible(active);preview.invalidate();}}  function cancel(){if(!active)return false;var capturedId=pointerId;active=false;pointerId=null;start=null;current=null;startClient=null;shiftConstrained=false;clearPreview();if(activeC.hasPointerCapture&&activeC.hasPointerCapture(capturedId))activeC.releasePointerCapture(capturedId);return true;}
-  function meaningful(event,bounds){return startClient&&Math.hypot(event.clientX-startClient.x,event.clientY-startClient.y)>=3&&bounds&&bounds.w>=2&&bounds.h>=2;}
-  function commit(event){shiftConstrained=!!event.shiftKey;var bounds=ellipseBounds();if(!meaningful(event,bounds)){cancel();return;}var x0=Math.max(0,Math.floor(bounds.x)),y0=Math.max(0,Math.floor(bounds.y)),x1=Math.min(CW,Math.ceil(bounds.x+bounds.w)),y1=Math.min(CH,Math.ceil(bounds.y+bounds.h));if(x1<=x0||y1<=y0){cancel();return;}var incoming=new Uint8ClampedArray(CW*CH),cx=bounds.x+bounds.w/2,cy=bounds.y+bounds.h/2,rx=bounds.w/2,ry=bounds.h/2;for(var y=y0;y<y1;y++)for(var x=x0;x<x1;x++){var nx=(x+.5-cx)/rx,ny=(y+.5-cy)/ry;if(nx*nx+ny*ny<=1)incoming[y*CW+x]=255;}var selectedMode=mode;cancel();if(window.PixelSelection)PixelSelection.applyMask(incoming,CW,CH,selectedMode,'ellipse');}
-  function pointerDown(event){if(tool!=='ellipse-select'||activeGroupId||panning||spaceHeld)return;if(event.pointerType==='mouse'?event.button!==0:(!(event.buttons&1)&&event.pointerType!=='touch'))return;event.preventDefault();event.stopImmediatePropagation();ensurePreview();active=true;pointerId=event.pointerId;start=current=getPos(event);startClient={x:event.clientX,y:event.clientY};shiftConstrained=!!event.shiftKey;mode=window.SelectionToolSettings?SelectionToolSettings.modeFromEvent('ellipse-select',event):(window.PixelSelection?PixelSelection.modeFromEvent(event):'replace');activeC.setPointerCapture(event.pointerId);schedulePreview();}
-  function pointerMove(event){if(!active||event.pointerId!==pointerId)return;event.preventDefault();event.stopImmediatePropagation();current=getPos(event);shiftConstrained=!!event.shiftKey;schedulePreview();}
-  function pointerEnd(event){if(!active||event.pointerId!==pointerId)return;event.preventDefault();event.stopImmediatePropagation();current=getPos(event);if(event.type==='pointercancel')cancel();else commit(event);}
-  activeC.addEventListener('pointerdown',pointerDown,true);activeC.addEventListener('pointermove',pointerMove,true);activeC.addEventListener('pointerup',pointerEnd,true);activeC.addEventListener('pointercancel',pointerEnd,true);activeC.addEventListener('lostpointercapture',function(event){if(active&&event.pointerId===pointerId)cancel();},true);
-  document.addEventListener('keydown',function(event){if(active&&event.key==='Escape'){event.preventDefault();event.stopImmediatePropagation();cancel();}},true);
-  window.addEventListener('tool-changed',function(event){if(active&&event.detail&&event.detail.tool!=='ellipse-select')cancel();});
-  window.EllipseSelection={cancel:cancel,isActive:function(){return active;}};
+(function () {
+  "use strict";
+  var active = false,
+    pointerId = null,
+    start = null,
+    current = null,
+    startClient = null,
+    mode = "replace",
+    shiftConstrained = false;
+  var preview = null;
+  function ensurePreview() {
+    if (preview || !window.EditorOverlayRenderer) return;
+    preview = EditorOverlayRenderer.create("ellipse-selection-preview", {
+      zIndex: 7,
+      draw: function (context, geometry) {
+        var bounds = ellipseBounds();
+        if (!active || !bounds || !bounds.w || !bounds.h) return;
+        context.strokeStyle = "#7f77dd";
+        context.lineWidth = 1.5;
+        context.setLineDash([5, 3]);
+        context.beginPath();
+        for (var i = 0; i <= 96; i++) {
+          var angle = (i / 96) * Math.PI * 2,
+            point = geometry.worldToScreen({
+              x: bounds.x + bounds.w / 2 + (Math.cos(angle) * bounds.w) / 2,
+              y: bounds.y + bounds.h / 2 + (Math.sin(angle) * bounds.h) / 2,
+            });
+          if (i === 0) context.moveTo(point.x, point.y);
+          else context.lineTo(point.x, point.y);
+        }
+        context.closePath();
+        context.stroke();
+      },
+    });
+  }
+  function ellipseBounds() {
+    if (!start || !current) return null;
+    var dx = current.x - start.x,
+      dy = current.y - start.y;
+    if (shiftConstrained) {
+      var size = Math.max(Math.abs(dx), Math.abs(dy));
+      dx = (dx < 0 ? -1 : 1) * size;
+      dy = (dy < 0 ? -1 : 1) * size;
+    }
+    var x = Math.min(start.x, start.x + dx),
+      y = Math.min(start.y, start.y + dy);
+    return { x: x, y: y, w: Math.abs(dx), h: Math.abs(dy) };
+  }
+  function clearPreview() {
+    if (preview) preview.setVisible(false);
+  }
+  function schedulePreview() {
+    ensurePreview();
+    if (preview) {
+      preview.setVisible(active);
+      preview.invalidate();
+    }
+  }
+  function cancel() {
+    if (!active) return false;
+    var capturedId = pointerId;
+    active = false;
+    pointerId = null;
+    start = null;
+    current = null;
+    startClient = null;
+    shiftConstrained = false;
+    clearPreview();
+    if (activeC.hasPointerCapture && activeC.hasPointerCapture(capturedId))
+      activeC.releasePointerCapture(capturedId);
+    return true;
+  }
+  function meaningful(event, bounds) {
+    return (
+      startClient &&
+      Math.hypot(
+        event.clientX - startClient.x,
+        event.clientY - startClient.y,
+      ) >= 3 &&
+      bounds &&
+      bounds.w >= 2 &&
+      bounds.h >= 2
+    );
+  }
+  function commit(event) {
+    shiftConstrained = !!event.shiftKey;
+    var bounds = ellipseBounds();
+    if (!meaningful(event, bounds)) {
+      cancel();
+      return;
+    }
+    var x0 = Math.max(0, Math.floor(bounds.x)),
+      y0 = Math.max(0, Math.floor(bounds.y)),
+      x1 = Math.min(CW, Math.ceil(bounds.x + bounds.w)),
+      y1 = Math.min(CH, Math.ceil(bounds.y + bounds.h));
+    if (x1 <= x0 || y1 <= y0) {
+      cancel();
+      return;
+    }
+    var incoming = new Uint8ClampedArray(CW * CH),
+      cx = bounds.x + bounds.w / 2,
+      cy = bounds.y + bounds.h / 2,
+      rx = bounds.w / 2,
+      ry = bounds.h / 2;
+    for (var y = y0; y < y1; y++)
+      for (var x = x0; x < x1; x++) {
+        var nx = (x + 0.5 - cx) / rx,
+          ny = (y + 0.5 - cy) / ry;
+        if (nx * nx + ny * ny <= 1) incoming[y * CW + x] = 255;
+      }
+    var selectedMode = mode;
+    cancel();
+    if (window.PixelSelection)
+      PixelSelection.applyMask(incoming, CW, CH, selectedMode, "ellipse");
+  }
+  function pointerDown(event) {
+    if (tool !== "ellipse-select" || activeGroupId || panning || spaceHeld)
+      return;
+    if (
+      event.pointerType === "mouse"
+        ? event.button !== 0
+        : !(event.buttons & 1) && event.pointerType !== "touch"
+    )
+      return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    ensurePreview();
+    active = true;
+    pointerId = event.pointerId;
+    start = current = getPos(event);
+    startClient = { x: event.clientX, y: event.clientY };
+    shiftConstrained = !!event.shiftKey;
+    mode = window.SelectionToolSettings
+      ? SelectionToolSettings.modeFromEvent("ellipse-select", event)
+      : window.PixelSelection
+        ? PixelSelection.modeFromEvent(event)
+        : "replace";
+    activeC.setPointerCapture(event.pointerId);
+    schedulePreview();
+  }
+  function pointerMove(event) {
+    if (!active || event.pointerId !== pointerId) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    current = getPos(event);
+    shiftConstrained = !!event.shiftKey;
+    schedulePreview();
+  }
+  function pointerEnd(event) {
+    if (!active || event.pointerId !== pointerId) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    current = getPos(event);
+    if (event.type === "pointercancel") cancel();
+    else commit(event);
+  }
+  activeC.addEventListener("pointerdown", pointerDown, true);
+  activeC.addEventListener("pointermove", pointerMove, true);
+  activeC.addEventListener("pointerup", pointerEnd, true);
+  activeC.addEventListener("pointercancel", pointerEnd, true);
+  activeC.addEventListener(
+    "lostpointercapture",
+    function (event) {
+      if (active && event.pointerId === pointerId) cancel();
+    },
+    true,
+  );
+  document.addEventListener(
+    "keydown",
+    function (event) {
+      if (active && event.key === "Escape") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        cancel();
+      }
+    },
+    true,
+  );
+  window.addEventListener("tool-changed", function (event) {
+    if (active && event.detail && event.detail.tool !== "ellipse-select")
+      cancel();
+  });
+  window.EllipseSelection = {
+    cancel: cancel,
+    isActive: function () {
+      return active;
+    },
+  };
 })();

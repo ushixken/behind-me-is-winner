@@ -70,7 +70,7 @@
   color: var(--text);
   font: 10px/1.2 sans-serif;
   pointer-events: none;
-  box-shadow: 0 2px 8px rgba(0,0,0,.35);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .35);
 }
 
 .audio-height-tooltip.visible {

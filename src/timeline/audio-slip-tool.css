@@ -23,7 +23,7 @@
   border-color: var(--accent);
   background: var(--accent-bg);
   color: var(--accent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb,var(--accent) 35%,transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 #audio-slip-tool svg {
@@ -61,10 +61,12 @@
   color: var(--text);
   font: 10px/1.2 sans-serif;
   pointer-events: none;
-  box-shadow: 0 2px 8px rgba(0,0,0,.35);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .35);
 }
 
-.audio-slip-tooltip.visible { display: block; }
+.audio-slip-tooltip.visible {
+  display: block;
+}
 
 body.audio-slip-drag-active,
 body.audio-slip-drag-active * {

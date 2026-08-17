@@ -1,81 +1,1511 @@
-(function(){
-  'use strict';
-  const adapters=new Map();let open=false,mode='value',channel='x';
-  const timelineArea=document.getElementById('timeline-area'),splitter=document.getElementById('timeline-graph-resize'),panel=document.getElementById('graph-editor'),toggle=document.getElementById('btn-graph-editor'),canvas=document.getElementById('graph-editor-canvas'),viewport=document.getElementById('graph-editor-viewport'),empty=document.getElementById('graph-editor-empty'),channelSelect=document.getElementById('graph-channel'),interpolationControls=document.getElementById('graph-interpolation-controls'),interpolationSelect=document.getElementById('graph-interpolation'),copyValuesButton=document.getElementById('graph-copy-values'),pasteValuesButton=document.getElementById('graph-paste-values');
-  const colors={x:'#ef6a72',y:'#66c58f',zoom:'#8579e6',rotation:'#e5b55f'},activeAdapter=()=>Array.from(adapters.values()).find(adapter=>adapter.isActive());
-  const clamp=(value,min,max)=>Math.max(min,Math.min(max,value));
-  const cubic=(t,a,b)=>{const mt=1-t;return 3*mt*mt*t*a+3*mt*t*t*b+t*t*t;};
-  const cubicDerivative=(t,a,b)=>{const mt=1-t;return 3*mt*mt*a+6*mt*t*(b-a)+3*t*t*(1-b);};
-  function builtInControl(type){if(type==='ease')return{x1:1/3,y1:0,x2:2/3,y2:1};if(type==='ease-in')return{x1:1/3,y1:0,x2:2/3,y2:1/3};if(type==='ease-out')return{x1:1/3,y1:2/3,x2:2/3,y2:1};return{x1:1/3,y1:1/3,x2:2/3,y2:2/3};}
-  function controlFor(key){const value=key&&key.interpolation==='bezier'&&key.bezier?key.bezier:builtInControl(key&&key.interpolation);return{x1:clamp(Number(value.x1)||0,.001,.999),y1:clamp(Number(value.y1)||0,-8,9),x2:clamp(Number(value.x2)||0,.001,.999),y2:clamp(Number(value.y2)||0,-8,9)};}
-  function cubicTime(control,progress){let lo=0,hi=1,t=progress;for(let i=0;i<12;i++){const x=cubic(t,control.x1,control.x2);if(Math.abs(x-progress)<1e-5)break;if(x<progress)lo=t;else hi=t;t=(lo+hi)/2;}return t;}
-  function speedControlFor(key){const control=controlFor(key);return Object.assign({},control,{x1:control.x1*.5,x2:1-(1-control.x2)*.5});}
-  function speedCurveControlFor(key){const control=controlFor(key);return Object.assign({},control,{x1:Math.min(.95,control.x1),x2:Math.max(.05,control.x2)});}
-  function cameraAllSelection(){
-    if(!window.CameraTimeline||!window.CameraSystem)return{frames:[],properties:[],curves:[],keys:[]};
-    const frames=CameraTimeline.getSelectedFrames().slice().sort((a,b)=>a-b),trackKeys=CameraSystem.value.track.keys,keyAt=frame=>trackKeys.find(key=>key.frame===frame),linked=CameraSystem.value.track.positionLinked!==false,allCandidates=linked?[['position',['x','y']],['zoom',['zoom']],['rotation',['rotation']]]:[['x',['x']],['y',['y']],['zoom',['zoom']],['rotation',['rotation']]],selectedProperties=CameraTimeline.selectedProperties||[],candidates=selectedProperties.length?allCandidates.filter(([property])=>selectedProperties.includes(property)):allCandidates,curves=[];
-    candidates.forEach(([property,fields])=>{const propertyFrames=frames.filter(frame=>{const key=keyAt(frame);return key&&fields.every(field=>Object.prototype.hasOwnProperty.call(key,field));});if(propertyFrames.length<2)return;const sourceMap=new Map(CameraSystem.propertyKeys(property).map(key=>[key.frame,key])),first=propertyFrames[0],span=Math.max(1,propertyFrames[propertyFrames.length-1]-first),keys=propertyFrames.map(frame=>{const copy=JSON.parse(JSON.stringify(sourceMap.get(frame)||keyAt(frame)));copy.graphValue=(frame-first)/span;return copy;});curves.push({property,keys,span:propertyFrames[propertyFrames.length-1]-first});});curves.sort((a,b)=>b.span-a.span);return{frames,properties:curves.map(curve=>curve.property),curves,keys:curves.length?curves[0].keys:[]};
+(function () {
+  "use strict";
+  const adapters = new Map();
+  let open = false,
+    mode = "value",
+    channel = "x";
+  const timelineArea = document.getElementById("timeline-area"),
+    splitter = document.getElementById("timeline-graph-resize"),
+    panel = document.getElementById("graph-editor"),
+    toggle = document.getElementById("btn-graph-editor"),
+    canvas = document.getElementById("graph-editor-canvas"),
+    viewport = document.getElementById("graph-editor-viewport"),
+    empty = document.getElementById("graph-editor-empty"),
+    channelSelect = document.getElementById("graph-channel"),
+    interpolationControls = document.getElementById(
+      "graph-interpolation-controls",
+    ),
+    interpolationSelect = document.getElementById("graph-interpolation"),
+    copyValuesButton = document.getElementById("graph-copy-values"),
+    pasteValuesButton = document.getElementById("graph-paste-values");
+  const colors = {
+      x: "#ef6a72",
+      y: "#66c58f",
+      zoom: "#8579e6",
+      rotation: "#e5b55f",
+    },
+    activeAdapter = () =>
+      Array.from(adapters.values()).find((adapter) => adapter.isActive());
+  const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+  const cubic = (t, a, b) => {
+    const mt = 1 - t;
+    return 3 * mt * mt * t * a + 3 * mt * t * t * b + t * t * t;
+  };
+  const cubicDerivative = (t, a, b) => {
+    const mt = 1 - t;
+    return 3 * mt * mt * a + 6 * mt * t * (b - a) + 3 * t * t * (1 - b);
+  };
+  function builtInControl(type) {
+    if (type === "ease") return { x1: 1 / 3, y1: 0, x2: 2 / 3, y2: 1 };
+    if (type === "ease-in") return { x1: 1 / 3, y1: 0, x2: 2 / 3, y2: 1 / 3 };
+    if (type === "ease-out") return { x1: 1 / 3, y1: 2 / 3, x2: 2 / 3, y2: 1 };
+    return { x1: 1 / 3, y1: 1 / 3, x2: 2 / 3, y2: 2 / 3 };
   }
-  function applyCameraAllGraph(keys){const selection=cameraAllSelection(),sourceSegments=keys.slice(0,-1);selection.curves.forEach(curve=>{const propertyKeys=CameraSystem.propertyKeys(curve.property),targets=new Map(propertyKeys.map(key=>[key.frame,key])),segmentCount=Math.max(1,curve.keys.length-1);curve.keys.forEach((curveKey,index)=>{const target=targets.get(curveKey.frame);if(!target||index>=curve.keys.length-1||!sourceSegments.length)return;const source=sourceSegments[Math.min(sourceSegments.length-1,Math.round(index*Math.max(0,sourceSegments.length-1)/Math.max(1,segmentCount-1)))];target.interpolation=source.interpolation||'linear';target.bezier=source.bezier?JSON.parse(JSON.stringify(source.bezier)):null;});CameraSystem.replacePropertyKeys(curve.property,propertyKeys);});}  function cameraAdapter(){return{id:'camera',preferredChannel:()=>{const property=CameraTimeline.selectedProperty;if(!property)return'all';return property==='position'?(channel==='x'||channel==='y'?channel:'x'):property;},isActive:()=>!!(window.CameraTimeline&&CameraTimeline.selected&&window.CameraSystem&&CameraSystem.value.enabled),keys:()=>{const selectedProperty=CameraTimeline.selectedProperty,linked=CameraSystem.value.track.positionLinked!==false,property=selectedProperty||(channel==='all'?null:((channel==='x'||channel==='y')&&linked?'position':channel));return property?CameraSystem.propertyKeys(property):cameraAllSelection().keys;},selectedFrames:()=>CameraTimeline.getSelectedFrames(),hasAllSelection:()=>cameraAllSelection().properties.length>0,allowsOvershoot:activeChannel=>activeChannel==='all'?!cameraAllSelection().properties.includes('position'):activeChannel!=='x'&&activeChannel!=='y'||CameraSystem.value.track.positionLinked===false,channels:{all:{label:'All',read:key=>key.graphValue,write:()=>{}},x:{label:'Position X',read:key=>key.x,write:(key,value)=>key.x=value},y:{label:'Position Y',read:key=>key.y,write:(key,value)=>key.y=value},zoom:{label:'Zoom',read:key=>key.zoom*100,write:(key,value)=>key.zoom=clamp(value/100,.1,16)},rotation:{label:'Rotation',read:key=>key.rotation,write:(key,value)=>key.rotation=((value+180)%360+360)%360-180,delta:(a,b)=>((b-a+540)%360)-180}},applyInterpolation:(frames,type)=>{if(!CameraTimeline.selectedProperty&&channel==='all'){const before=CameraSystem.trackSnapshot(),keys=cameraAllSelection().keys;keys.forEach(key=>{key.interpolation=type;if(type==='bezier'&&!key.bezier)key.bezier={x1:.333,y1:0,x2:.667,y2:1};});applyCameraAllGraph(keys);CameraSystem.commitTrack(before,'graph-interpolation');CameraSystem.evaluateAt(typeof curFrame==='number'?curFrame:0);return true;}const property=CameraTimeline.selectedProperty||((channel==='x'||channel==='y')&&CameraSystem.value.track.positionLinked!==false?'position':channel);return CameraSystem.setKeyInterpolation(frames,type,property);},snapshot:()=>CameraSystem.trackSnapshot(),preview:keys=>{const selectedProperty=CameraTimeline.selectedProperty,property=selectedProperty||((channel==='x'||channel==='y')&&CameraSystem.value.track.positionLinked!==false?'position':channel);if(!selectedProperty&&channel==='all')applyCameraAllGraph(keys);else if(property)CameraSystem.replacePropertyKeys(property,keys);else CameraSystem.replaceTrackKeys(keys);CameraSystem.evaluateAt(typeof curFrame==='number'?curFrame:0);},commit:before=>{CameraSystem.commitTrack(before,'graph-edit');CameraSystem.evaluateAt(typeof curFrame==='number'?curFrame:0);},restore:before=>CameraSystem.restoreTrack(before)};}
-  function channelDelta(definition,a,b){const from=definition.read(a),to=definition.read(b);return definition.delta?definition.delta(from,to):to-from;}
-  function orientedValueDefinition(keys,definition,adapter){if(mode!=='value'||!adapter||adapter.id!=='camera'||channel==='all'||keys.length<2||definition.read(keys[keys.length-1])>=definition.read(keys[0]))return definition;const start=definition.read(keys[0]),end=definition.read(keys[keys.length-1]),sum=start+end;return{read:key=>sum-definition.read(key),write:(key,value)=>definition.write(key,sum-value),delta:(from,to)=>-(definition.delta?definition.delta(sum-from,sum-to):(sum-to)-(sum-from))};}
-  function segmentValue(a,b,definition,progress){if((a.interpolation||'linear')==='hold')return progress<1?definition.read(a):definition.read(b);const control=controlFor(a),t=cubicTime(control,progress);return definition.read(a)+channelDelta(definition,a,b)*cubic(t,control.y1,control.y2);}
-  function segmentSpeed(a,b,definition,progress){if((a.interpolation||'linear')==='hold')return 0;const control=speedCurveControlFor(a),t=cubicTime(control,progress),dx=Math.max(1e-6,cubicDerivative(t,control.x1,control.x2)),dy=cubicDerivative(t,control.y1,control.y2),duration=Math.max(1,b.frame-a.frame);return Math.abs(channelDelta(definition,a,b))/duration*(dy/dx);}
-  function graphSamples(keys,definition,width){const points=[];if(!keys.length||!definition)return points;if(keys.length===1)return[{frame:keys[0].frame,value:mode==='speed'?0:definition.read(keys[0])}];const span=Math.max(1,keys[keys.length-1].frame-keys[0].frame),pixelsPerFrame=Math.max(1,(width-28)/span);for(let index=0;index<keys.length-1;index++){const a=keys[index],b=keys[index+1],duration=Math.max(1,b.frame-a.frame),steps=Math.max(3,Math.min(240,Math.ceil(duration*pixelsPerFrame/3)));points.push({frame:a.frame,value:mode==='speed'?segmentSpeed(a,b,definition,0):definition.read(a)});if(mode==='value'&&a.interpolation==='hold'){points.push({frame:b.frame,value:definition.read(a)});points.push({frame:b.frame,value:definition.read(b)});continue;}for(let step=1;step<=steps;step++){const progress=step/steps;points.push({frame:a.frame+duration*progress,value:mode==='speed'?segmentSpeed(a,b,definition,progress):segmentValue(a,b,definition,progress)});}}return points;}
-  function keyGraphValue(keys,definition,index){if(mode==='value')return definition.read(keys[index]);if(keys.length<2)return 0;if(index<keys.length-1){const a=keys[index],b=keys[index+1],control=controlFor(a),base=Math.abs(channelDelta(definition,a,b))/Math.max(1,b.frame-a.frame);return base*control.y1/control.x1;}const a=keys[index-1],b=keys[index],control=controlFor(a),base=Math.abs(channelDelta(definition,a,b))/Math.max(1,b.frame-a.frame);return base*(1-control.y2)/(1-control.x2);}
-  function niceGridStep(range){const raw=Math.max(1e-9,range/6),power=Math.pow(10,Math.floor(Math.log10(raw))),scaled=raw/power,nice=scaled<=1?1:scaled<=2?2:scaled<=2.5?2.5:scaled<=5?5:10;return nice*power;}
-  function graphHandleValues(keys,definition){const values=[];for(let index=0;index<keys.length-1;index++){const a=keys[index],b=keys[index+1];if(a.interpolation==='hold')continue;const control=controlFor(a),delta=channelDelta(definition,a,b);if(mode==='value'){values.push(definition.read(a)+delta*control.y1,definition.read(a)+delta*control.y2);}else{const base=Math.abs(delta)/Math.max(1,b.frame-a.frame);values.push(base*control.y1/control.x1,base*(1-control.y2)/(1-control.x2));}}return values.filter(Number.isFinite);}
-  function adjacentValueRange(keys,index,definition){const values=[definition.read(keys[index])];if(index>0)values.push(definition.read(keys[index-1]));if(index+1<keys.length)values.push(definition.read(keys[index+1]));return{minimum:Math.min(...values),maximum:Math.max(...values)};}
-  class GraphViewport{
-    constructor(){this.state=null;this.gridSteps=new Map();}
-    reset(){this.state=null;this.gridSteps.clear();}
-    makeView(options){const state=this.state,padding=state.padding,width=state.width,height=state.height,rawDrawableWidth=Math.max(1,width-padding*2),rawDrawableHeight=Math.max(1,height-padding*2),drawable=Math.max(1,Math.min(rawDrawableWidth,rawDrawableHeight)),paddingX=(width-drawable)/2,paddingY=(height-drawable)/2,frameRange=Math.max(1e-9,state.last-state.first),valueRange=Math.max(1e-12,state.maximum-state.minimum),xAt=frame=>paddingX+(frame-state.first)/frameRange*drawable,yAt=value=>height-paddingY-(value-state.minimum)/valueRange*drawable,frameAt=x=>state.first+(x-paddingX)/drawable*frameRange,valueAt=y=>state.minimum+(height-paddingY-y)/drawable*valueRange;return{first:state.first,last:state.last,minimum:state.minimum,maximum:state.maximum,width,height,padding,paddingX,paddingY,drawable,referenceFrame:options.referenceFrame,referenceValue:options.referenceValue,xAt,yAt,frameAt,valueAt};}
-    fit(options){const padding=options.padding||20,width=options.width,height=options.height,rawDrawableWidth=Math.max(1,width-padding*2),rawDrawableHeight=Math.max(1,height-padding*2),drawable=Math.max(1,Math.min(rawDrawableWidth,rawDrawableHeight)),rawFirst=Math.min(...options.frames),rawLast=Math.max(...options.frames),coreFrameSpan=Math.max(1e-9,rawLast-rawFirst);if(options.graphMode==='speed'){const finiteValues=options.values.filter(Number.isFinite),low=Math.min(0,...finiteValues),high=Math.max(0,...finiteValues),span=Math.max(1e-6,high-low),timePad=.1,valuePad=span*.12;this.state={key:options.key,dataSignature:options.dataSignature,padding,width,height,first:rawFirst-coreFrameSpan*timePad,last:rawLast+coreFrameSpan*timePad,minimum:low-valuePad,maximum:high+valuePad};return this.makeView(options);}const coreValueMin=options.coreValueMin,coreValueMax=options.coreValueMax,coreValueSpanRaw=coreValueMax-coreValueMin,coreValueSpan=coreValueSpanRaw>1e-9?coreValueSpanRaw:Math.max(1,Math.abs(coreValueMax)*.1,1e-6),pad=.12,normYs=options.values.map(value=>(value-coreValueMin)/coreValueSpan),nYmin=Math.min(0,...normYs.map(value=>value-pad)),nYmax=Math.max(1,...normYs.map(value=>value+pad)),nXmin=-pad,nXmax=1+pad,xspan=nXmax-nXmin,yspan=nYmax-nYmin,span=Math.max(xspan,yspan),xmid=(nXmin+nXmax)/2,ymid=(nYmin+nYmax)/2,fXmin=xmid-span/2,fXmax=xmid+span/2,fYmin=ymid-span/2,fYmax=ymid+span/2;this.state={key:options.key,dataSignature:options.dataSignature,padding,width,height,first:rawFirst+fXmin*coreFrameSpan,last:rawFirst+fXmax*coreFrameSpan,minimum:coreValueMin+fYmin*coreValueSpan,maximum:coreValueMin+fYmax*coreValueSpan};return this.makeView(options);}
-    resolve(options){if(!this.state||this.state.key!==options.key)return this.fit(options);if(options.autoFit&&this.state.dataSignature!==options.dataSignature)return this.fit(options);const padding=options.padding||20;Object.assign(this.state,{padding,width:options.width,height:options.height});return this.makeView(options);}
-    values(minimum,maximum,step){const values=[],start=Math.ceil(minimum/step)*step;for(let value=start;value<=maximum+step*.001;value+=step)values.push(Math.abs(value)<step*1e-8?0:value);return values;}
-    grid(view,key,core){const drawableWidth=view.drawable,drawableHeight=view.drawable,pixelsPerFrame=drawableWidth/Math.max(1e-9,view.last-view.first),pixelsPerValue=drawableHeight/Math.max(1e-12,view.maximum-view.minimum),coreFrameSpan=core?core.lastFrame-core.firstFrame:0,coreValueSpan=core?core.valueMax-core.valueMin:0,timeStep=coreFrameSpan>1e-6?coreFrameSpan/5:Math.max(1,niceGridStep(56/pixelsPerFrame)),valueStep=coreValueSpan>1e-9?coreValueSpan/5:niceGridStep(56/pixelsPerValue),frameOrigin=core&&coreFrameSpan>1e-6?core.firstFrame:0,valueOrigin=core&&coreValueSpan>1e-9?core.valueMin:0;return{timeStep,valueStep,frames:this.alignedValues(view.first,view.last,timeStep,frameOrigin),values:this.alignedValues(view.minimum,view.maximum,valueStep,valueOrigin)};}
-    alignedValues(minimum,maximum,step,origin){if(step<=0)return[];const values=[],startIndex=Math.ceil((minimum-origin)/step),endIndex=Math.floor((maximum-origin)/step+1e-9);for(let index=startIndex;index<=endIndex;index++){const value=origin+index*step;values.push(Math.abs(value)<step*1e-8?0:value);}return values;}
-    zoomAt(view,screenX,screenY,factorX,factorY){if(!this.state)return;const anchorFrame=view.frameAt(screenX),anchorValue=view.valueAt(screenY),frameRatio=(anchorFrame-this.state.first)/Math.max(1e-9,this.state.last-this.state.first),valueRatio=(anchorValue-this.state.minimum)/Math.max(1e-12,this.state.maximum-this.state.minimum),frameSpan=clamp((this.state.last-this.state.first)/factorX,.05,1e6),valueSpan=clamp((this.state.maximum-this.state.minimum)/factorY,1e-6,1e12);this.state.first=anchorFrame-frameSpan*frameRatio;this.state.last=this.state.first+frameSpan;this.state.minimum=anchorValue-valueSpan*valueRatio;this.state.maximum=this.state.minimum+valueSpan;}
+  function controlFor(key) {
+    const value =
+      key && key.interpolation === "bezier" && key.bezier
+        ? key.bezier
+        : builtInControl(key && key.interpolation);
+    return {
+      x1: clamp(Number(value.x1) || 0, 0.001, 0.999),
+      y1: clamp(Number(value.y1) || 0, -8, 9),
+      x2: clamp(Number(value.x2) || 0, 0.001, 0.999),
+      y2: clamp(Number(value.y2) || 0, -8, 9),
+    };
   }
-  const graphViewport=new GraphViewport();  let graphView=null,graphTargets=[],graphDrag=null,activeCurveFrame=null,graphOpening=false,graphValueClipboard=null;
-  function selectedCurveKeys(adapter){const allKeys=adapter&&adapter.keys()||[],selected=new Set(adapter?adapter.selectedFrames():[]),indices=allKeys.map((key,index)=>selected.has(key.frame)?index:-1).filter(index=>index>=0);if(indices.length<2||!indices.every((index,position)=>position===0||index===indices[position-1]+1))return[];return indices.slice(0,-1).map(index=>allKeys[index]);}
-  function copyGraphValues(){const adapter=activeAdapter(),curveKeys=selectedCurveKeys(adapter);if(!curveKeys.length)return;const source=curveKeys.find(key=>key.frame===activeCurveFrame)||curveKeys[0];graphValueClipboard={interpolation:source.interpolation||'linear',bezier:source.bezier?JSON.parse(JSON.stringify(source.bezier)):null};pasteValuesButton.disabled=false;}
-  function pasteGraphValues(){const adapter=activeAdapter(),curveKeys=selectedCurveKeys(adapter);if(!adapter||!graphValueClipboard||!curveKeys.length)return;const before=adapter.snapshot(),keys=adapter.keys().map(key=>JSON.parse(JSON.stringify(key))),frames=new Set(curveKeys.map(key=>key.frame));keys.forEach(key=>{if(!frames.has(key.frame))return;key.interpolation=graphValueClipboard.interpolation;key.bezier=graphValueClipboard.bezier?JSON.parse(JSON.stringify(graphValueClipboard.bezier)):null;});adapter.preview(keys);adapter.commit(before);interpolationSelect.value=graphValueClipboard.interpolation;graphViewport.reset();draw();}
-  function syncChannelOptions(adapter){if(!adapter||adapter.id!=='camera'||!window.CameraSystem)return;const property=CameraTimeline.selectedProperty,linked=CameraSystem.value.track.positionLinked!==false,signature=(linked?'linked':'separated')+(property?'|property':'|track'),propertyChoices=linked?[['x','Position'],['zoom','Zoom'],['rotation','Rotation']]:[['x','Position X'],['y','Position Y'],['zoom','Zoom'],['rotation','Rotation']],choices=[['all','All'],...propertyChoices];if(channelSelect.dataset.positionMode===signature)return;if(linked&&channel==='y')channel='x';if(property&&channel==='all')channel=property==='position'?'x':property;if(!choices.some(choice=>choice[0]===channel))channel=property?(property==='position'?'x':property):'all';channelSelect.replaceChildren(...choices.map(([value,label])=>{const option=document.createElement('option');option.value=value;option.textContent=label;return option;}));channelSelect.value=channel;channelSelect.dataset.positionMode=signature;graphViewport.reset();}
-  function drawHandle(context,anchor,handle,target){context.strokeStyle='rgba(240,181,46,.9)';context.lineWidth=1;context.beginPath();context.moveTo(anchor.x,anchor.y);context.lineTo(handle.x,handle.y);context.stroke();context.fillStyle='#f0b52e';context.strokeStyle='rgba(20,18,30,.9)';context.beginPath();context.arc(handle.x,handle.y,4,0,Math.PI*2);context.fill();context.stroke();graphTargets.push(Object.assign({kind:'handle',x:handle.x,y:handle.y},target));}
-  function draw(){
-    if(!open||!viewport||graphOpening)return;
-    const adapter=activeAdapter();syncChannelOptions(adapter);const preferred=adapter&&adapter.preferredChannel&&adapter.preferredChannel();if(preferred&&preferred!==channel){channel=preferred;channelSelect.value=channel;}const allKeys=adapter&&adapter.keys()||[],selected=adapter?adapter.selectedFrames():[],selectedIndices=allKeys.map((key,index)=>selected.includes(key.frame)?index:-1).filter(index=>index>=0),keys=selectedIndices.map(index=>allKeys[index]),selectionIsAdjacent=selectedIndices.every((index,position)=>position===0||index===selectedIndices[position-1]+1),rect=viewport.getBoundingClientRect(),dpr=Math.max(1,window.devicePixelRatio||1),width=Math.max(1,Math.round(rect.width)),height=Math.max(1,Math.round(rect.height));canvas.width=Math.round(width*dpr);canvas.height=Math.round(height*dpr);
-    const context=canvas.getContext('2d'),styles=getComputedStyle(document.documentElement),gridColor=styles.getPropertyValue('--border').trim()||'rgba(155,150,185,.16)';context.setTransform(dpr,0,0,dpr,0,0);context.clearRect(0,0,width,height);context.lineWidth=1;context.strokeStyle=gridColor;context.globalAlpha=.55;
-    context.globalAlpha=1;graphTargets=[];
-    if(!adapter||!adapter.channels[channel]||selected.length===0){graphViewport.reset();empty.textContent='No selected keyframes';empty.hidden=false;interpolationControls.hidden=true;graphView=null;return;}if(adapter.id==='camera'&&!CameraTimeline.selectedProperty&&channel==='all'&&!adapter.hasAllSelection()){graphViewport.reset();empty.textContent='Expand Camera and select a property to modify graph values';empty.hidden=false;interpolationControls.hidden=true;graphView=null;return;}if(keys.length<2){graphViewport.reset();empty.textContent='Select at least 2 keyframes';empty.hidden=false;interpolationControls.hidden=true;graphView=null;return;}if(!selectionIsAdjacent){graphViewport.reset();empty.textContent='Selected keyframes must be adjacent';empty.hidden=false;interpolationControls.hidden=true;graphView=null;return;}empty.hidden=true;
-    const rawDefinition=adapter.channels[channel],definition=orientedValueDefinition(keys,rawDefinition,adapter);interpolationControls.hidden=false;if(selected.length){const activeIndex=keys.findIndex(key=>key.frame===activeCurveFrame),activeKey=activeIndex>=0&&selected.some(frame=>frame===keys[activeIndex].frame||activeIndex+1<keys.length&&frame===keys[activeIndex+1].frame)?keys[activeIndex]:null;if(activeKey)interpolationSelect.value=activeKey.interpolation||'linear';else{const selectedKeys=keys.filter(key=>selected.includes(key.frame)),types=new Set(selectedKeys.map(key=>key.interpolation||'linear'));if(types.size===1)interpolationSelect.value=selectedKeys[0].interpolation||'linear';}}
-    const points=graphSamples(keys,definition,width),values=points.map(point=>point.value).concat(graphHandleValues(keys,definition));if(mode==='speed')values.push(0);const referenceIndex=Math.max(0,keys.findIndex(key=>key.frame===activeCurveFrame)),referenceFrame=keys[referenceIndex].frame,referenceValue=keyGraphValue(keys,definition,referenceIndex),coreFirstFrame=keys[0].frame,coreLastFrame=keys[keys.length-1].frame,coreVals=keys.map((key,idx)=>mode==='speed'?keyGraphValue(keys,definition,idx):definition.read(key)),coreValueMin=Math.min(...coreVals),coreValueMax=Math.max(...coreVals),viewportKey=mode+'|'+channel+'|'+keys.map(key=>key.frame).join(','),dataMinimum=Math.min(...values),dataMaximum=Math.max(...values),dataSignature=dataMinimum.toPrecision(8)+'|'+dataMaximum.toPrecision(8),resolvedView=graphViewport.resolve({key:viewportKey,dataSignature,dataMinimum,dataMaximum,coreValueMin,coreValueMax,autoFit:true,graphMode:mode,width,height,padding:20,referenceFrame,referenceValue,frames:keys.map(key=>key.frame),values});graphView=resolvedView;const balancedGrid=graphViewport.grid(graphView,mode+':'+channel,{firstFrame:coreFirstFrame,lastFrame:coreLastFrame,valueMin:coreValueMin,valueMax:coreValueMax}),{minimum,maximum,first,last,padding,paddingX,paddingY,xAt,yAt,frameAt,valueAt}=graphView;
-    const coreX1=Math.round(xAt(coreFirstFrame))+.5,coreX2=Math.round(xAt(coreLastFrame))+.5,coreY1=Math.round(yAt(coreValueMax))+.5,coreY2=Math.round(yAt(coreValueMin))+.5,strokeSeg=(x1,y1,x2,y2)=>{context.beginPath();context.moveTo(x1,y1);context.lineTo(x2,y2);context.stroke();};
-    const gridLeft=0,gridRight=width,gridTop=0,gridBottom=height,xStepPx=Math.abs(xAt(coreFirstFrame+balancedGrid.timeStep)-xAt(coreFirstFrame)),yStepPx=mode==='speed'?xStepPx:Math.abs(yAt(coreValueMin+balancedGrid.valueStep)-yAt(coreValueMin));
-    context.save();context.beginPath();context.rect(gridLeft,gridTop,gridRight-gridLeft,gridBottom-gridTop);context.clip();context.strokeStyle=gridColor;
-    if(Number.isFinite(yStepPx)&&yStepPx>.1){const firstY=coreY2-Math.ceil((coreY2-gridTop)/yStepPx)*yStepPx;for(let rawY=firstY;rawY<=gridBottom+yStepPx*.001;rawY+=yStepPx){const y=Math.round(rawY)+.5,inCore=coreX2>coreX1&&y>=coreY1-.001&&y<=coreY2+.001;context.lineWidth=inCore?1.6:1;context.globalAlpha=inCore?.85:.4;strokeSeg(gridLeft,y,gridRight,y);}}
-    if(Number.isFinite(xStepPx)&&xStepPx>.1){const firstX=coreX1-Math.ceil((coreX1-gridLeft)/xStepPx)*xStepPx;for(let rawX=firstX;rawX<=gridRight+xStepPx*.001;rawX+=xStepPx){const x=Math.round(rawX)+.5,inCore=coreY2>coreY1&&x>=coreX1-.001&&x<=coreX2+.001;context.lineWidth=inCore?1.6:1;context.globalAlpha=inCore?.85:.4;strokeSeg(x,gridTop,x,gridBottom);}}    context.globalAlpha=1;context.lineWidth=1;const referenceLevels=Array.from(new Set(keys.map((key,index)=>mode==='speed'?keyGraphValue(keys,definition,index):definition.read(key)))),referenceFrames=Array.from(new Set(keys.map(key=>key.frame)));context.strokeStyle='rgba(229,181,95,.32)';referenceFrames.forEach(frame=>{const x=Math.round(xAt(frame))+.5;if(x<paddingX||x>width-paddingX)return;context.beginPath();context.moveTo(x,coreY1);context.lineTo(x,coreY2);context.stroke();});context.strokeStyle='rgba(229,181,95,.46)';referenceLevels.forEach(value=>{const y=Math.round(yAt(value))+.5;if(y<paddingY||y>height-paddingY)return;context.beginPath();context.moveTo(coreX1,y);context.lineTo(coreX2,y);context.stroke();});context.restore();
-    if(mode==='speed'){const zeroY=Math.round(yAt(0))+.5;if(zeroY>=0&&zeroY<=height){context.save();context.strokeStyle='rgba(229,181,95,.72)';context.lineWidth=1.5;strokeSeg(gridLeft,zeroY,gridRight,zeroY);context.restore();}}
-    context.strokeStyle=channel==='all'?'#8579e6':colors[channel]||'#8579e6';context.globalAlpha=1;context.lineWidth=2;context.lineJoin='round';context.lineCap='round';context.beginPath();points.forEach((point,index)=>{const x=xAt(point.frame),y=yAt(point.value);if(index)context.lineTo(x,y);else context.moveTo(x,y);});context.stroke();
-    keys.forEach((key,index)=>{const selectedKey=selected.includes(key.frame),x=xAt(key.frame),y=yAt(keyGraphValue(keys,definition,index));context.fillStyle=selectedKey?'#f7f5ff':colors[channel]||'#8579e6';context.strokeStyle=selectedKey?'#8579e6':'rgba(8,8,14,.8)';context.lineWidth=1;context.beginPath();context.rect(Math.round(x)-4+.5,Math.round(y)-4+.5,7,7);context.fill();context.stroke();if(mode==='speed')graphTargets.push({kind:'key',index:allKeys.indexOf(key),curveIndex:index,x,y});});
-    for(let index=0;index<keys.length-1;index++){const a=keys[index],b=keys[index+1];if(!selected.includes(a.frame)&&!selected.includes(b.frame)||a.interpolation==='hold')continue;const control=controlFor(a),speedControl=mode==='speed'?speedControlFor(a):control,duration=b.frame-a.frame,delta=channelDelta(definition,a,b),base=Math.abs(delta)/Math.max(1,duration),startSpeed=base*control.y1/control.x1,endSpeed=base*(1-control.y2)/(1-control.x2),aPoint={x:xAt(a.frame),y:yAt(mode==='speed'?startSpeed:definition.read(a))},bPoint={x:xAt(b.frame),y:yAt(mode==='speed'?endSpeed:definition.read(b))},outPoint={x:xAt(a.frame+duration*(mode==='speed'?speedControl.x1:control.x1)),y:yAt(mode==='speed'?startSpeed:definition.read(a)+delta*control.y1)},inPoint={x:xAt(mode==='speed'?a.frame+duration*speedControl.x2:a.frame+duration*control.x2),y:yAt(mode==='speed'?endSpeed:definition.read(a)+delta*control.y2)};const aIndex=allKeys.indexOf(a),bIndex=allKeys.indexOf(b);drawHandle(context,aPoint,outPoint,{segment:index,aIndex,bIndex,side:'out'});drawHandle(context,bPoint,inPoint,{segment:index,aIndex,bIndex,side:'in'});}
-    const currentFrame=typeof curFrame==='number'?curFrame:0,playheadX=xAt(currentFrame);if(playheadX>=0&&playheadX<=width){const x=Math.round(playheadX);context.save();context.strokeStyle=styles.getPropertyValue('--red').trim()||'#e24b4a';context.fillStyle=context.strokeStyle;context.lineWidth=2;context.beginPath();context.moveTo(x,0);context.lineTo(x,height);context.stroke();context.beginPath();context.moveTo(x-5,0);context.lineTo(x+5,0);context.lineTo(x,7);context.closePath();context.fill();context.restore();}
+  function cubicTime(control, progress) {
+    let lo = 0,
+      hi = 1,
+      t = progress;
+    for (let i = 0; i < 12; i++) {
+      const x = cubic(t, control.x1, control.x2);
+      if (Math.abs(x - progress) < 1e-5) break;
+      if (x < progress) lo = t;
+      else hi = t;
+      t = (lo + hi) / 2;
+    }
+    return t;
   }
-  function graphPoint(event){const rect=canvas.getBoundingClientRect();return{x:event.clientX-rect.left,y:event.clientY-rect.top};}
-  function hitGraph(point){let best=null,bestDistance=10;for(const target of graphTargets){const distance=Math.hypot(point.x-target.x,point.y-target.y);if(distance<bestDistance){best=target;bestDistance=distance;}}return best;}
-  function beginGraphDrag(event){if(event.button!==0||!graphView)return;const adapter=activeAdapter(),target=hitGraph(graphPoint(event));if(!adapter||!target)return;if(target.kind==='handle')activeCurveFrame=adapter.keys()[target.aIndex].frame;else if(target.kind==='key')activeCurveFrame=adapter.keys()[target.index].frame;event.preventDefault();event.stopPropagation();graphDrag={pointerId:event.pointerId,target,before:adapter.snapshot(),keys:adapter.keys().map(key=>JSON.parse(JSON.stringify(key))),curveIndices:adapter.keys().map((key,index)=>adapter.selectedFrames().includes(key.frame)?index:-1).filter(index=>index>=0),adapter,view:Object.assign({},graphView)};canvas.setPointerCapture(event.pointerId);canvas.classList.add('graph-dragging');}
-  function setKeySpeed(keys,index,speed,definition,constrain){const low=constrain?0:-8,high=constrain?1:9;if(index<keys.length-1){const a=keys[index],b=keys[index+1],control=controlFor(a),base=Math.abs(channelDelta(definition,a,b))/Math.max(1,b.frame-a.frame);control.y1=base<1e-6?0:clamp(speed/base*control.x1,low,high);a.interpolation='bezier';a.bezier=control;}if(index>0){const a=keys[index-1],b=keys[index],control=controlFor(a),base=Math.abs(channelDelta(definition,a,b))/Math.max(1,b.frame-a.frame),influence=1-control.x2;control.y2=base<1e-6?1:1-clamp(speed/base*influence,low,high);a.interpolation='bezier';a.bezier=control;}}
-  function updateGraphDrag(event){if(!graphDrag||event.pointerId!==graphDrag.pointerId)return;event.preventDefault();const point=graphPoint(event),view=graphDrag.view,keys=graphDrag.keys,curveKeys=graphDrag.curveIndices.map(index=>keys[index]),definition=orientedValueDefinition(curveKeys,graphDrag.adapter.channels[channel],graphDrag.adapter),target=graphDrag.target,constrain=event.shiftKey||(graphDrag.adapter.allowsOvershoot&&!graphDrag.adapter.allowsOvershoot(channel));if(target.kind==='key'){if(mode==='speed'){setKeySpeed(curveKeys,target.curveIndex,view.valueAt(point.y),definition,constrain);}else{let value=view.valueAt(point.y);if(constrain){const bounds=adjacentValueRange(keys,target.index,definition);value=clamp(value,bounds.minimum,bounds.maximum);}definition.write(keys[target.index],value);}}else{const a=keys[target.aIndex],b=keys[target.bIndex],duration=Math.max(1,b.frame-a.frame),control=controlFor(a),pointerFrame=view.frameAt(point.x),normalizedX=mode==='speed'?(target.side==='out'?clamp((pointerFrame-a.frame)/(duration*.5),.001,.999):1-clamp((b.frame-pointerFrame)/(duration*.5),.001,.999)):clamp((pointerFrame-a.frame)/duration,.001,.999),delta=channelDelta(definition,a,b);if(target.side==='out'){control.x1=normalizedX;if(mode==='value')control.y1=Math.abs(delta)<1e-6?.5:clamp((view.valueAt(point.y)-definition.read(a))/delta,constrain?0:-8,constrain?1:9);else{const base=Math.abs(delta)/duration,speed=view.valueAt(point.y);control.y1=base<1e-6?0:clamp(speed/base*control.x1,constrain?0:-8,constrain?1:9);}}else{control.x2=normalizedX;if(mode==='value')control.y2=Math.abs(delta)<1e-6?.5:clamp((view.valueAt(point.y)-definition.read(a))/delta,constrain?0:-8,constrain?1:9);else{const base=Math.abs(delta)/duration,speed=view.valueAt(point.y),influence=1-control.x2;control.y2=base<1e-6?1:1-clamp(speed/base*influence,constrain?0:-8,constrain?1:9);}}a.interpolation='bezier';a.bezier=control;}graphDrag.adapter.preview(keys);draw();}
-  function finishGraphDrag(event,cancelled){if(!graphDrag||event.pointerId!==graphDrag.pointerId)return;event.preventDefault();const drag=graphDrag;graphDrag=null;canvas.classList.remove('graph-dragging');try{if(canvas.hasPointerCapture(event.pointerId))canvas.releasePointerCapture(event.pointerId);}catch(_){}if(cancelled)drag.adapter.restore(drag.before);else drag.adapter.commit(drag.before);draw();}
-  canvas.addEventListener('wheel',event=>{if(!graphView||graphDrag)return;event.preventDefault();const point=graphPoint(event),factor=Math.exp(-event.deltaY*.0015),factorX=event.altKey?1:factor,factorY=event.shiftKey?1:factor;graphViewport.zoomAt(graphView,point.x,point.y,factorX,factorY);draw();},{passive:false});
-  canvas.addEventListener('pointerdown',beginGraphDrag);canvas.addEventListener('pointermove',event=>{if(graphDrag)updateGraphDrag(event);else canvas.style.cursor=hitGraph(graphPoint(event))?'pointer':'default';});canvas.addEventListener('pointerup',event=>finishGraphDrag(event,false));canvas.addEventListener('pointercancel',event=>finishGraphDrag(event,true));canvas.addEventListener('lostpointercapture',event=>{if(graphDrag&&event.pointerId===graphDrag.pointerId)finishGraphDrag(event,true);});  let splitRatio=.72,splitPointerId=null;
-  function syncSplit(){if(!open)return;const width=timelineArea.getBoundingClientRect().width,divider=splitter.offsetWidth||6,min=Math.min(280,Math.max(140,(width-divider)*.25)),left=Math.max(min,Math.min(width-divider-min,(width-divider)*splitRatio));timelineArea.style.setProperty('--timeline-pane-width',left+'px');requestAnimationFrame(draw);}
-  function setOpen(value){const wasOpen=open;open=!!value;panel.hidden=!open;splitter.hidden=!open;timelineArea.classList.toggle('graph-editor-open',open);toggle.classList.toggle('active',open);toggle.setAttribute('aria-pressed',String(open));if(!open){graphOpening=false;return;}if(!wasOpen){graphOpening=true;graphViewport.reset();requestAnimationFrame(()=>{syncSplit();requestAnimationFrame(()=>{graphOpening=false;graphViewport.reset();draw();});});}else requestAnimationFrame(()=>{syncSplit();draw();});}
-  splitter.addEventListener('pointerdown',event=>{if(event.button!==0&&event.pointerType!=='pen')return;splitPointerId=event.pointerId;splitter.classList.add('dragging');splitter.setPointerCapture(event.pointerId);event.preventDefault();event.stopPropagation();});
-  splitter.addEventListener('pointermove',event=>{if(event.pointerId!==splitPointerId)return;const rect=timelineArea.getBoundingClientRect(),divider=splitter.offsetWidth||6;splitRatio=Math.max(0,Math.min(1,(event.clientX-rect.left)/(rect.width-divider)));syncSplit();event.preventDefault();});
-  function endSplit(event){if(event.pointerId!==splitPointerId)return;splitPointerId=null;splitter.classList.remove('dragging');if(splitter.hasPointerCapture(event.pointerId))splitter.releasePointerCapture(event.pointerId);}
-  splitter.addEventListener('pointerup',endSplit);splitter.addEventListener('pointercancel',endSplit);splitter.addEventListener('lostpointercapture',event=>{if(event.pointerId===splitPointerId){splitPointerId=null;splitter.classList.remove('dragging');}});
-  toggle.onclick=()=>setOpen(!open);document.querySelectorAll('.graph-mode-btn').forEach(button=>button.onclick=()=>{mode=button.dataset.graphMode;graphViewport.reset();document.querySelectorAll('.graph-mode-btn').forEach(item=>item.classList.toggle('active',item===button));draw();});channelSelect.onchange=()=>{channel=channelSelect.value;const adapter=activeAdapter();if(adapter&&adapter.id==='camera'&&window.CameraTimeline){graphViewport.reset();if(channel==='all'&&CameraTimeline.selectedProperty&&CameraTimeline.selectAllTrack){CameraTimeline.selectAllTrack();return;}if(channel!=='all'&&CameraTimeline.selectProperty){const linked=CameraSystem.value.track.positionLinked!==false,property=(channel==='x'&&linked)?'position':channel;CameraTimeline.selectProperty(property);return;}}graphViewport.reset();draw();};copyValuesButton.onclick=copyGraphValues;pasteValuesButton.onclick=pasteGraphValues;interpolationSelect.onchange=()=>{const adapter=activeAdapter(),frames=adapter&&adapter.selectedFrames();if(adapter&&frames.length){adapter.applyInterpolation(frames,interpolationSelect.value);draw();}};
-  window.addEventListener('timeline-rendered',draw);window.addEventListener('camera-changed',()=>{if(!graphDrag)graphViewport.reset();draw();});window.addEventListener('project-loaded',draw);window.addEventListener('resize',()=>{syncSplit();draw();});if(window.ResizeObserver)new ResizeObserver(draw).observe(viewport);adapters.set('camera',cameraAdapter());window.TimelineGraphEditor={GraphViewport,registerAdapter(id,adapter){adapters.set(id,adapter);draw();},refresh:draw,fit(){graphViewport.reset();draw();},get open(){return open;}};
+  function speedControlFor(key) {
+    const control = controlFor(key);
+    return Object.assign({}, control, {
+      x1: control.x1 * 0.5,
+      x2: 1 - (1 - control.x2) * 0.5,
+    });
+  }
+  function speedCurveControlFor(key) {
+    const control = controlFor(key);
+    return Object.assign({}, control, {
+      x1: Math.min(0.95, control.x1),
+      x2: Math.max(0.05, control.x2),
+    });
+  }
+  function cameraAllSelection() {
+    if (!window.CameraTimeline || !window.CameraSystem)
+      return { frames: [], properties: [], curves: [], keys: [] };
+    const frames = CameraTimeline.getSelectedFrames()
+        .slice()
+        .sort((a, b) => a - b),
+      trackKeys = CameraSystem.value.track.keys,
+      keyAt = (frame) => trackKeys.find((key) => key.frame === frame),
+      linked = CameraSystem.value.track.positionLinked !== false,
+      allCandidates = linked
+        ? [
+            ["position", ["x", "y"]],
+            ["zoom", ["zoom"]],
+            ["rotation", ["rotation"]],
+          ]
+        : [
+            ["x", ["x"]],
+            ["y", ["y"]],
+            ["zoom", ["zoom"]],
+            ["rotation", ["rotation"]],
+          ],
+      selectedProperties = CameraTimeline.selectedProperties || [],
+      candidates = selectedProperties.length
+        ? allCandidates.filter(([property]) =>
+            selectedProperties.includes(property),
+          )
+        : allCandidates,
+      curves = [];
+    candidates.forEach(([property, fields]) => {
+      const propertyFrames = frames.filter((frame) => {
+        const key = keyAt(frame);
+        return (
+          key &&
+          fields.every((field) =>
+            Object.prototype.hasOwnProperty.call(key, field),
+          )
+        );
+      });
+      if (propertyFrames.length < 2) return;
+      const sourceMap = new Map(
+          CameraSystem.propertyKeys(property).map((key) => [key.frame, key]),
+        ),
+        first = propertyFrames[0],
+        span = Math.max(1, propertyFrames[propertyFrames.length - 1] - first),
+        keys = propertyFrames.map((frame) => {
+          const copy = JSON.parse(
+            JSON.stringify(sourceMap.get(frame) || keyAt(frame)),
+          );
+          copy.graphValue = (frame - first) / span;
+          return copy;
+        });
+      curves.push({
+        property,
+        keys,
+        span: propertyFrames[propertyFrames.length - 1] - first,
+      });
+    });
+    curves.sort((a, b) => b.span - a.span);
+    return {
+      frames,
+      properties: curves.map((curve) => curve.property),
+      curves,
+      keys: curves.length ? curves[0].keys : [],
+    };
+  }
+  function applyCameraAllGraph(keys) {
+    const selection = cameraAllSelection(),
+      sourceSegments = keys.slice(0, -1);
+    selection.curves.forEach((curve) => {
+      const propertyKeys = CameraSystem.propertyKeys(curve.property),
+        targets = new Map(propertyKeys.map((key) => [key.frame, key])),
+        segmentCount = Math.max(1, curve.keys.length - 1);
+      curve.keys.forEach((curveKey, index) => {
+        const target = targets.get(curveKey.frame);
+        if (!target || index >= curve.keys.length - 1 || !sourceSegments.length)
+          return;
+        const source =
+          sourceSegments[
+            Math.min(
+              sourceSegments.length - 1,
+              Math.round(
+                (index * Math.max(0, sourceSegments.length - 1)) /
+                  Math.max(1, segmentCount - 1),
+              ),
+            )
+          ];
+        target.interpolation = source.interpolation || "linear";
+        target.bezier = source.bezier
+          ? JSON.parse(JSON.stringify(source.bezier))
+          : null;
+      });
+      CameraSystem.replacePropertyKeys(curve.property, propertyKeys);
+    });
+  }
+  function cameraAdapter() {
+    return {
+      id: "camera",
+      preferredChannel: () => {
+        const property = CameraTimeline.selectedProperty;
+        if (!property) return "all";
+        return property === "position"
+          ? channel === "x" || channel === "y"
+            ? channel
+            : "x"
+          : property;
+      },
+      isActive: () =>
+        !!(
+          window.CameraTimeline &&
+          CameraTimeline.selected &&
+          window.CameraSystem &&
+          CameraSystem.value.enabled
+        ),
+      keys: () => {
+        const selectedProperty = CameraTimeline.selectedProperty,
+          linked = CameraSystem.value.track.positionLinked !== false,
+          property =
+            selectedProperty ||
+            (channel === "all"
+              ? null
+              : (channel === "x" || channel === "y") && linked
+                ? "position"
+                : channel);
+        return property
+          ? CameraSystem.propertyKeys(property)
+          : cameraAllSelection().keys;
+      },
+      selectedFrames: () => CameraTimeline.getSelectedFrames(),
+      hasAllSelection: () => cameraAllSelection().properties.length > 0,
+      allowsOvershoot: (activeChannel) =>
+        activeChannel === "all"
+          ? !cameraAllSelection().properties.includes("position")
+          : (activeChannel !== "x" && activeChannel !== "y") ||
+            CameraSystem.value.track.positionLinked === false,
+      channels: {
+        all: { label: "All", read: (key) => key.graphValue, write: () => {} },
+        x: {
+          label: "Position X",
+          read: (key) => key.x,
+          write: (key, value) => (key.x = value),
+        },
+        y: {
+          label: "Position Y",
+          read: (key) => key.y,
+          write: (key, value) => (key.y = value),
+        },
+        zoom: {
+          label: "Zoom",
+          read: (key) => key.zoom * 100,
+          write: (key, value) => (key.zoom = clamp(value / 100, 0.1, 16)),
+        },
+        rotation: {
+          label: "Rotation",
+          read: (key) => key.rotation,
+          write: (key, value) =>
+            (key.rotation = ((((value + 180) % 360) + 360) % 360) - 180),
+          delta: (a, b) => ((b - a + 540) % 360) - 180,
+        },
+      },
+      applyInterpolation: (frames, type) => {
+        if (!CameraTimeline.selectedProperty && channel === "all") {
+          const before = CameraSystem.trackSnapshot(),
+            keys = cameraAllSelection().keys;
+          keys.forEach((key) => {
+            key.interpolation = type;
+            if (type === "bezier" && !key.bezier)
+              key.bezier = { x1: 0.333, y1: 0, x2: 0.667, y2: 1 };
+          });
+          applyCameraAllGraph(keys);
+          CameraSystem.commitTrack(before, "graph-interpolation");
+          CameraSystem.evaluateAt(typeof curFrame === "number" ? curFrame : 0);
+          return true;
+        }
+        const property =
+          CameraTimeline.selectedProperty ||
+          ((channel === "x" || channel === "y") &&
+          CameraSystem.value.track.positionLinked !== false
+            ? "position"
+            : channel);
+        return CameraSystem.setKeyInterpolation(frames, type, property);
+      },
+      snapshot: () => CameraSystem.trackSnapshot(),
+      preview: (keys) => {
+        const selectedProperty = CameraTimeline.selectedProperty,
+          property =
+            selectedProperty ||
+            ((channel === "x" || channel === "y") &&
+            CameraSystem.value.track.positionLinked !== false
+              ? "position"
+              : channel);
+        if (!selectedProperty && channel === "all") applyCameraAllGraph(keys);
+        else if (property) CameraSystem.replacePropertyKeys(property, keys);
+        else CameraSystem.replaceTrackKeys(keys);
+        CameraSystem.evaluateAt(typeof curFrame === "number" ? curFrame : 0);
+      },
+      commit: (before) => {
+        CameraSystem.commitTrack(before, "graph-edit");
+        CameraSystem.evaluateAt(typeof curFrame === "number" ? curFrame : 0);
+      },
+      restore: (before) => CameraSystem.restoreTrack(before),
+    };
+  }
+  function channelDelta(definition, a, b) {
+    const from = definition.read(a),
+      to = definition.read(b);
+    return definition.delta ? definition.delta(from, to) : to - from;
+  }
+  function orientedValueDefinition(keys, definition, adapter) {
+    if (
+      mode !== "value" ||
+      !adapter ||
+      adapter.id !== "camera" ||
+      channel === "all" ||
+      keys.length < 2 ||
+      definition.read(keys[keys.length - 1]) >= definition.read(keys[0])
+    )
+      return definition;
+    const start = definition.read(keys[0]),
+      end = definition.read(keys[keys.length - 1]),
+      sum = start + end;
+    return {
+      read: (key) => sum - definition.read(key),
+      write: (key, value) => definition.write(key, sum - value),
+      delta: (from, to) =>
+        -(definition.delta
+          ? definition.delta(sum - from, sum - to)
+          : sum - to - (sum - from)),
+    };
+  }
+  function segmentValue(a, b, definition, progress) {
+    if ((a.interpolation || "linear") === "hold")
+      return progress < 1 ? definition.read(a) : definition.read(b);
+    const control = controlFor(a),
+      t = cubicTime(control, progress);
+    return (
+      definition.read(a) +
+      channelDelta(definition, a, b) * cubic(t, control.y1, control.y2)
+    );
+  }
+  function segmentSpeed(a, b, definition, progress) {
+    if ((a.interpolation || "linear") === "hold") return 0;
+    const control = speedCurveControlFor(a),
+      t = cubicTime(control, progress),
+      dx = Math.max(1e-6, cubicDerivative(t, control.x1, control.x2)),
+      dy = cubicDerivative(t, control.y1, control.y2),
+      duration = Math.max(1, b.frame - a.frame);
+    return (Math.abs(channelDelta(definition, a, b)) / duration) * (dy / dx);
+  }
+  function graphSamples(keys, definition, width) {
+    const points = [];
+    if (!keys.length || !definition) return points;
+    if (keys.length === 1)
+      return [
+        {
+          frame: keys[0].frame,
+          value: mode === "speed" ? 0 : definition.read(keys[0]),
+        },
+      ];
+    const span = Math.max(1, keys[keys.length - 1].frame - keys[0].frame),
+      pixelsPerFrame = Math.max(1, (width - 28) / span);
+    for (let index = 0; index < keys.length - 1; index++) {
+      const a = keys[index],
+        b = keys[index + 1],
+        duration = Math.max(1, b.frame - a.frame),
+        steps = Math.max(
+          3,
+          Math.min(240, Math.ceil((duration * pixelsPerFrame) / 3)),
+        );
+      points.push({
+        frame: a.frame,
+        value:
+          mode === "speed"
+            ? segmentSpeed(a, b, definition, 0)
+            : definition.read(a),
+      });
+      if (mode === "value" && a.interpolation === "hold") {
+        points.push({ frame: b.frame, value: definition.read(a) });
+        points.push({ frame: b.frame, value: definition.read(b) });
+        continue;
+      }
+      for (let step = 1; step <= steps; step++) {
+        const progress = step / steps;
+        points.push({
+          frame: a.frame + duration * progress,
+          value:
+            mode === "speed"
+              ? segmentSpeed(a, b, definition, progress)
+              : segmentValue(a, b, definition, progress),
+        });
+      }
+    }
+    return points;
+  }
+  function keyGraphValue(keys, definition, index) {
+    if (mode === "value") return definition.read(keys[index]);
+    if (keys.length < 2) return 0;
+    if (index < keys.length - 1) {
+      const a = keys[index],
+        b = keys[index + 1],
+        control = controlFor(a),
+        base =
+          Math.abs(channelDelta(definition, a, b)) /
+          Math.max(1, b.frame - a.frame);
+      return (base * control.y1) / control.x1;
+    }
+    const a = keys[index - 1],
+      b = keys[index],
+      control = controlFor(a),
+      base =
+        Math.abs(channelDelta(definition, a, b)) /
+        Math.max(1, b.frame - a.frame);
+    return (base * (1 - control.y2)) / (1 - control.x2);
+  }
+  function niceGridStep(range) {
+    const raw = Math.max(1e-9, range / 6),
+      power = Math.pow(10, Math.floor(Math.log10(raw))),
+      scaled = raw / power,
+      nice =
+        scaled <= 1
+          ? 1
+          : scaled <= 2
+            ? 2
+            : scaled <= 2.5
+              ? 2.5
+              : scaled <= 5
+                ? 5
+                : 10;
+    return nice * power;
+  }
+  function graphHandleValues(keys, definition) {
+    const values = [];
+    for (let index = 0; index < keys.length - 1; index++) {
+      const a = keys[index],
+        b = keys[index + 1];
+      if (a.interpolation === "hold") continue;
+      const control = controlFor(a),
+        delta = channelDelta(definition, a, b);
+      if (mode === "value") {
+        values.push(
+          definition.read(a) + delta * control.y1,
+          definition.read(a) + delta * control.y2,
+        );
+      } else {
+        const base = Math.abs(delta) / Math.max(1, b.frame - a.frame);
+        values.push(
+          (base * control.y1) / control.x1,
+          (base * (1 - control.y2)) / (1 - control.x2),
+        );
+      }
+    }
+    return values.filter(Number.isFinite);
+  }
+  function adjacentValueRange(keys, index, definition) {
+    const values = [definition.read(keys[index])];
+    if (index > 0) values.push(definition.read(keys[index - 1]));
+    if (index + 1 < keys.length) values.push(definition.read(keys[index + 1]));
+    return { minimum: Math.min(...values), maximum: Math.max(...values) };
+  }
+  class GraphViewport {
+    constructor() {
+      this.state = null;
+      this.gridSteps = new Map();
+    }
+    reset() {
+      this.state = null;
+      this.gridSteps.clear();
+    }
+    makeView(options) {
+      const state = this.state,
+        padding = state.padding,
+        width = state.width,
+        height = state.height,
+        rawDrawableWidth = Math.max(1, width - padding * 2),
+        rawDrawableHeight = Math.max(1, height - padding * 2),
+        drawable = Math.max(1, Math.min(rawDrawableWidth, rawDrawableHeight)),
+        paddingX = (width - drawable) / 2,
+        paddingY = (height - drawable) / 2,
+        frameRange = Math.max(1e-9, state.last - state.first),
+        valueRange = Math.max(1e-12, state.maximum - state.minimum),
+        xAt = (frame) =>
+          paddingX + ((frame - state.first) / frameRange) * drawable,
+        yAt = (value) =>
+          height - paddingY - ((value - state.minimum) / valueRange) * drawable,
+        frameAt = (x) => state.first + ((x - paddingX) / drawable) * frameRange,
+        valueAt = (y) =>
+          state.minimum + ((height - paddingY - y) / drawable) * valueRange;
+      return {
+        first: state.first,
+        last: state.last,
+        minimum: state.minimum,
+        maximum: state.maximum,
+        width,
+        height,
+        padding,
+        paddingX,
+        paddingY,
+        drawable,
+        referenceFrame: options.referenceFrame,
+        referenceValue: options.referenceValue,
+        xAt,
+        yAt,
+        frameAt,
+        valueAt,
+      };
+    }
+    fit(options) {
+      const padding = options.padding || 20,
+        width = options.width,
+        height = options.height,
+        rawDrawableWidth = Math.max(1, width - padding * 2),
+        rawDrawableHeight = Math.max(1, height - padding * 2),
+        drawable = Math.max(1, Math.min(rawDrawableWidth, rawDrawableHeight)),
+        rawFirst = Math.min(...options.frames),
+        rawLast = Math.max(...options.frames),
+        coreFrameSpan = Math.max(1e-9, rawLast - rawFirst);
+      if (options.graphMode === "speed") {
+        const finiteValues = options.values.filter(Number.isFinite),
+          low = Math.min(0, ...finiteValues),
+          high = Math.max(0, ...finiteValues),
+          span = Math.max(1e-6, high - low),
+          timePad = 0.1,
+          valuePad = span * 0.12;
+        this.state = {
+          key: options.key,
+          dataSignature: options.dataSignature,
+          padding,
+          width,
+          height,
+          first: rawFirst - coreFrameSpan * timePad,
+          last: rawLast + coreFrameSpan * timePad,
+          minimum: low - valuePad,
+          maximum: high + valuePad,
+        };
+        return this.makeView(options);
+      }
+      const coreValueMin = options.coreValueMin,
+        coreValueMax = options.coreValueMax,
+        coreValueSpanRaw = coreValueMax - coreValueMin,
+        coreValueSpan =
+          coreValueSpanRaw > 1e-9
+            ? coreValueSpanRaw
+            : Math.max(1, Math.abs(coreValueMax) * 0.1, 1e-6),
+        pad = 0.12,
+        normYs = options.values.map(
+          (value) => (value - coreValueMin) / coreValueSpan,
+        ),
+        nYmin = Math.min(0, ...normYs.map((value) => value - pad)),
+        nYmax = Math.max(1, ...normYs.map((value) => value + pad)),
+        nXmin = -pad,
+        nXmax = 1 + pad,
+        xspan = nXmax - nXmin,
+        yspan = nYmax - nYmin,
+        span = Math.max(xspan, yspan),
+        xmid = (nXmin + nXmax) / 2,
+        ymid = (nYmin + nYmax) / 2,
+        fXmin = xmid - span / 2,
+        fXmax = xmid + span / 2,
+        fYmin = ymid - span / 2,
+        fYmax = ymid + span / 2;
+      this.state = {
+        key: options.key,
+        dataSignature: options.dataSignature,
+        padding,
+        width,
+        height,
+        first: rawFirst + fXmin * coreFrameSpan,
+        last: rawFirst + fXmax * coreFrameSpan,
+        minimum: coreValueMin + fYmin * coreValueSpan,
+        maximum: coreValueMin + fYmax * coreValueSpan,
+      };
+      return this.makeView(options);
+    }
+    resolve(options) {
+      if (!this.state || this.state.key !== options.key)
+        return this.fit(options);
+      if (options.autoFit && this.state.dataSignature !== options.dataSignature)
+        return this.fit(options);
+      const padding = options.padding || 20;
+      Object.assign(this.state, {
+        padding,
+        width: options.width,
+        height: options.height,
+      });
+      return this.makeView(options);
+    }
+    values(minimum, maximum, step) {
+      const values = [],
+        start = Math.ceil(minimum / step) * step;
+      for (let value = start; value <= maximum + step * 0.001; value += step)
+        values.push(Math.abs(value) < step * 1e-8 ? 0 : value);
+      return values;
+    }
+    grid(view, key, core) {
+      const drawableWidth = view.drawable,
+        drawableHeight = view.drawable,
+        pixelsPerFrame = drawableWidth / Math.max(1e-9, view.last - view.first),
+        pixelsPerValue =
+          drawableHeight / Math.max(1e-12, view.maximum - view.minimum),
+        coreFrameSpan = core ? core.lastFrame - core.firstFrame : 0,
+        coreValueSpan = core ? core.valueMax - core.valueMin : 0,
+        timeStep =
+          coreFrameSpan > 1e-6
+            ? coreFrameSpan / 5
+            : Math.max(1, niceGridStep(56 / pixelsPerFrame)),
+        valueStep =
+          coreValueSpan > 1e-9
+            ? coreValueSpan / 5
+            : niceGridStep(56 / pixelsPerValue),
+        frameOrigin = core && coreFrameSpan > 1e-6 ? core.firstFrame : 0,
+        valueOrigin = core && coreValueSpan > 1e-9 ? core.valueMin : 0;
+      return {
+        timeStep,
+        valueStep,
+        frames: this.alignedValues(
+          view.first,
+          view.last,
+          timeStep,
+          frameOrigin,
+        ),
+        values: this.alignedValues(
+          view.minimum,
+          view.maximum,
+          valueStep,
+          valueOrigin,
+        ),
+      };
+    }
+    alignedValues(minimum, maximum, step, origin) {
+      if (step <= 0) return [];
+      const values = [],
+        startIndex = Math.ceil((minimum - origin) / step),
+        endIndex = Math.floor((maximum - origin) / step + 1e-9);
+      for (let index = startIndex; index <= endIndex; index++) {
+        const value = origin + index * step;
+        values.push(Math.abs(value) < step * 1e-8 ? 0 : value);
+      }
+      return values;
+    }
+    zoomAt(view, screenX, screenY, factorX, factorY) {
+      if (!this.state) return;
+      const anchorFrame = view.frameAt(screenX),
+        anchorValue = view.valueAt(screenY),
+        frameRatio =
+          (anchorFrame - this.state.first) /
+          Math.max(1e-9, this.state.last - this.state.first),
+        valueRatio =
+          (anchorValue - this.state.minimum) /
+          Math.max(1e-12, this.state.maximum - this.state.minimum),
+        frameSpan = clamp(
+          (this.state.last - this.state.first) / factorX,
+          0.05,
+          1e6,
+        ),
+        valueSpan = clamp(
+          (this.state.maximum - this.state.minimum) / factorY,
+          1e-6,
+          1e12,
+        );
+      this.state.first = anchorFrame - frameSpan * frameRatio;
+      this.state.last = this.state.first + frameSpan;
+      this.state.minimum = anchorValue - valueSpan * valueRatio;
+      this.state.maximum = this.state.minimum + valueSpan;
+    }
+  }
+  const graphViewport = new GraphViewport();
+  let graphView = null,
+    graphTargets = [],
+    graphDrag = null,
+    activeCurveFrame = null,
+    graphOpening = false,
+    graphValueClipboard = null;
+  function selectedCurveKeys(adapter) {
+    const allKeys = (adapter && adapter.keys()) || [],
+      selected = new Set(adapter ? adapter.selectedFrames() : []),
+      indices = allKeys
+        .map((key, index) => (selected.has(key.frame) ? index : -1))
+        .filter((index) => index >= 0);
+    if (
+      indices.length < 2 ||
+      !indices.every(
+        (index, position) =>
+          position === 0 || index === indices[position - 1] + 1,
+      )
+    )
+      return [];
+    return indices.slice(0, -1).map((index) => allKeys[index]);
+  }
+  function copyGraphValues() {
+    const adapter = activeAdapter(),
+      curveKeys = selectedCurveKeys(adapter);
+    if (!curveKeys.length) return;
+    const source =
+      curveKeys.find((key) => key.frame === activeCurveFrame) || curveKeys[0];
+    graphValueClipboard = {
+      interpolation: source.interpolation || "linear",
+      bezier: source.bezier ? JSON.parse(JSON.stringify(source.bezier)) : null,
+    };
+    pasteValuesButton.disabled = false;
+  }
+  function pasteGraphValues() {
+    const adapter = activeAdapter(),
+      curveKeys = selectedCurveKeys(adapter);
+    if (!adapter || !graphValueClipboard || !curveKeys.length) return;
+    const before = adapter.snapshot(),
+      keys = adapter.keys().map((key) => JSON.parse(JSON.stringify(key))),
+      frames = new Set(curveKeys.map((key) => key.frame));
+    keys.forEach((key) => {
+      if (!frames.has(key.frame)) return;
+      key.interpolation = graphValueClipboard.interpolation;
+      key.bezier = graphValueClipboard.bezier
+        ? JSON.parse(JSON.stringify(graphValueClipboard.bezier))
+        : null;
+    });
+    adapter.preview(keys);
+    adapter.commit(before);
+    interpolationSelect.value = graphValueClipboard.interpolation;
+    graphViewport.reset();
+    draw();
+  }
+  function syncChannelOptions(adapter) {
+    if (!adapter || adapter.id !== "camera" || !window.CameraSystem) return;
+    const property = CameraTimeline.selectedProperty,
+      linked = CameraSystem.value.track.positionLinked !== false,
+      signature =
+        (linked ? "linked" : "separated") + (property ? "|property" : "|track"),
+      propertyChoices = linked
+        ? [
+            ["x", "Position"],
+            ["zoom", "Zoom"],
+            ["rotation", "Rotation"],
+          ]
+        : [
+            ["x", "Position X"],
+            ["y", "Position Y"],
+            ["zoom", "Zoom"],
+            ["rotation", "Rotation"],
+          ],
+      choices = [["all", "All"], ...propertyChoices];
+    if (channelSelect.dataset.positionMode === signature) return;
+    if (linked && channel === "y") channel = "x";
+    if (property && channel === "all")
+      channel = property === "position" ? "x" : property;
+    if (!choices.some((choice) => choice[0] === channel))
+      channel = property ? (property === "position" ? "x" : property) : "all";
+    channelSelect.replaceChildren(
+      ...choices.map(([value, label]) => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = label;
+        return option;
+      }),
+    );
+    channelSelect.value = channel;
+    channelSelect.dataset.positionMode = signature;
+    graphViewport.reset();
+  }
+  function drawHandle(context, anchor, handle, target) {
+    context.strokeStyle = "rgba(240,181,46,.9)";
+    context.lineWidth = 1;
+    context.beginPath();
+    context.moveTo(anchor.x, anchor.y);
+    context.lineTo(handle.x, handle.y);
+    context.stroke();
+    context.fillStyle = "#f0b52e";
+    context.strokeStyle = "rgba(20,18,30,.9)";
+    context.beginPath();
+    context.arc(handle.x, handle.y, 4, 0, Math.PI * 2);
+    context.fill();
+    context.stroke();
+    graphTargets.push(
+      Object.assign({ kind: "handle", x: handle.x, y: handle.y }, target),
+    );
+  }
+  function draw() {
+    if (!open || !viewport || graphOpening) return;
+    const adapter = activeAdapter();
+    syncChannelOptions(adapter);
+    const preferred =
+      adapter && adapter.preferredChannel && adapter.preferredChannel();
+    if (preferred && preferred !== channel) {
+      channel = preferred;
+      channelSelect.value = channel;
+    }
+    const allKeys = (adapter && adapter.keys()) || [],
+      selected = adapter ? adapter.selectedFrames() : [],
+      selectedIndices = allKeys
+        .map((key, index) => (selected.includes(key.frame) ? index : -1))
+        .filter((index) => index >= 0),
+      keys = selectedIndices.map((index) => allKeys[index]),
+      selectionIsAdjacent = selectedIndices.every(
+        (index, position) =>
+          position === 0 || index === selectedIndices[position - 1] + 1,
+      ),
+      rect = viewport.getBoundingClientRect(),
+      dpr = Math.max(1, window.devicePixelRatio || 1),
+      width = Math.max(1, Math.round(rect.width)),
+      height = Math.max(1, Math.round(rect.height));
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+    const context = canvas.getContext("2d"),
+      styles = getComputedStyle(document.documentElement),
+      gridColor =
+        styles.getPropertyValue("--border").trim() || "rgba(155,150,185,.16)";
+    context.setTransform(dpr, 0, 0, dpr, 0, 0);
+    context.clearRect(0, 0, width, height);
+    context.lineWidth = 1;
+    context.strokeStyle = gridColor;
+    context.globalAlpha = 0.55;
+    context.globalAlpha = 1;
+    graphTargets = [];
+    if (!adapter || !adapter.channels[channel] || selected.length === 0) {
+      graphViewport.reset();
+      empty.textContent = "No selected keyframes";
+      empty.hidden = false;
+      interpolationControls.hidden = true;
+      graphView = null;
+      return;
+    }
+    if (
+      adapter.id === "camera" &&
+      !CameraTimeline.selectedProperty &&
+      channel === "all" &&
+      !adapter.hasAllSelection()
+    ) {
+      graphViewport.reset();
+      empty.textContent =
+        "Expand Camera and select a property to modify graph values";
+      empty.hidden = false;
+      interpolationControls.hidden = true;
+      graphView = null;
+      return;
+    }
+    if (keys.length < 2) {
+      graphViewport.reset();
+      empty.textContent = "Select at least 2 keyframes";
+      empty.hidden = false;
+      interpolationControls.hidden = true;
+      graphView = null;
+      return;
+    }
+    if (!selectionIsAdjacent) {
+      graphViewport.reset();
+      empty.textContent = "Selected keyframes must be adjacent";
+      empty.hidden = false;
+      interpolationControls.hidden = true;
+      graphView = null;
+      return;
+    }
+    empty.hidden = true;
+    const rawDefinition = adapter.channels[channel],
+      definition = orientedValueDefinition(keys, rawDefinition, adapter);
+    interpolationControls.hidden = false;
+    if (selected.length) {
+      const activeIndex = keys.findIndex(
+          (key) => key.frame === activeCurveFrame,
+        ),
+        activeKey =
+          activeIndex >= 0 &&
+          selected.some(
+            (frame) =>
+              frame === keys[activeIndex].frame ||
+              (activeIndex + 1 < keys.length &&
+                frame === keys[activeIndex + 1].frame),
+          )
+            ? keys[activeIndex]
+            : null;
+      if (activeKey)
+        interpolationSelect.value = activeKey.interpolation || "linear";
+      else {
+        const selectedKeys = keys.filter((key) => selected.includes(key.frame)),
+          types = new Set(
+            selectedKeys.map((key) => key.interpolation || "linear"),
+          );
+        if (types.size === 1)
+          interpolationSelect.value = selectedKeys[0].interpolation || "linear";
+      }
+    }
+    const points = graphSamples(keys, definition, width),
+      values = points
+        .map((point) => point.value)
+        .concat(graphHandleValues(keys, definition));
+    if (mode === "speed") values.push(0);
+    const referenceIndex = Math.max(
+        0,
+        keys.findIndex((key) => key.frame === activeCurveFrame),
+      ),
+      referenceFrame = keys[referenceIndex].frame,
+      referenceValue = keyGraphValue(keys, definition, referenceIndex),
+      coreFirstFrame = keys[0].frame,
+      coreLastFrame = keys[keys.length - 1].frame,
+      coreVals = keys.map((key, idx) =>
+        mode === "speed"
+          ? keyGraphValue(keys, definition, idx)
+          : definition.read(key),
+      ),
+      coreValueMin = Math.min(...coreVals),
+      coreValueMax = Math.max(...coreVals),
+      viewportKey =
+        mode + "|" + channel + "|" + keys.map((key) => key.frame).join(","),
+      dataMinimum = Math.min(...values),
+      dataMaximum = Math.max(...values),
+      dataSignature =
+        dataMinimum.toPrecision(8) + "|" + dataMaximum.toPrecision(8),
+      resolvedView = graphViewport.resolve({
+        key: viewportKey,
+        dataSignature,
+        dataMinimum,
+        dataMaximum,
+        coreValueMin,
+        coreValueMax,
+        autoFit: true,
+        graphMode: mode,
+        width,
+        height,
+        padding: 20,
+        referenceFrame,
+        referenceValue,
+        frames: keys.map((key) => key.frame),
+        values,
+      });
+    graphView = resolvedView;
+    const balancedGrid = graphViewport.grid(graphView, mode + ":" + channel, {
+        firstFrame: coreFirstFrame,
+        lastFrame: coreLastFrame,
+        valueMin: coreValueMin,
+        valueMax: coreValueMax,
+      }),
+      {
+        minimum,
+        maximum,
+        first,
+        last,
+        padding,
+        paddingX,
+        paddingY,
+        xAt,
+        yAt,
+        frameAt,
+        valueAt,
+      } = graphView;
+    const coreX1 = Math.round(xAt(coreFirstFrame)) + 0.5,
+      coreX2 = Math.round(xAt(coreLastFrame)) + 0.5,
+      coreY1 = Math.round(yAt(coreValueMax)) + 0.5,
+      coreY2 = Math.round(yAt(coreValueMin)) + 0.5,
+      strokeSeg = (x1, y1, x2, y2) => {
+        context.beginPath();
+        context.moveTo(x1, y1);
+        context.lineTo(x2, y2);
+        context.stroke();
+      };
+    const gridLeft = 0,
+      gridRight = width,
+      gridTop = 0,
+      gridBottom = height,
+      xStepPx = Math.abs(
+        xAt(coreFirstFrame + balancedGrid.timeStep) - xAt(coreFirstFrame),
+      ),
+      yStepPx =
+        mode === "speed"
+          ? xStepPx
+          : Math.abs(
+              yAt(coreValueMin + balancedGrid.valueStep) - yAt(coreValueMin),
+            );
+    context.save();
+    context.beginPath();
+    context.rect(gridLeft, gridTop, gridRight - gridLeft, gridBottom - gridTop);
+    context.clip();
+    context.strokeStyle = gridColor;
+    if (Number.isFinite(yStepPx) && yStepPx > 0.1) {
+      const firstY = coreY2 - Math.ceil((coreY2 - gridTop) / yStepPx) * yStepPx;
+      for (
+        let rawY = firstY;
+        rawY <= gridBottom + yStepPx * 0.001;
+        rawY += yStepPx
+      ) {
+        const y = Math.round(rawY) + 0.5,
+          inCore =
+            coreX2 > coreX1 && y >= coreY1 - 0.001 && y <= coreY2 + 0.001;
+        context.lineWidth = inCore ? 1.6 : 1;
+        context.globalAlpha = inCore ? 0.85 : 0.4;
+        strokeSeg(gridLeft, y, gridRight, y);
+      }
+    }
+    if (Number.isFinite(xStepPx) && xStepPx > 0.1) {
+      const firstX =
+        coreX1 - Math.ceil((coreX1 - gridLeft) / xStepPx) * xStepPx;
+      for (
+        let rawX = firstX;
+        rawX <= gridRight + xStepPx * 0.001;
+        rawX += xStepPx
+      ) {
+        const x = Math.round(rawX) + 0.5,
+          inCore =
+            coreY2 > coreY1 && x >= coreX1 - 0.001 && x <= coreX2 + 0.001;
+        context.lineWidth = inCore ? 1.6 : 1;
+        context.globalAlpha = inCore ? 0.85 : 0.4;
+        strokeSeg(x, gridTop, x, gridBottom);
+      }
+    }
+    context.globalAlpha = 1;
+    context.lineWidth = 1;
+    const referenceLevels = Array.from(
+        new Set(
+          keys.map((key, index) =>
+            mode === "speed"
+              ? keyGraphValue(keys, definition, index)
+              : definition.read(key),
+          ),
+        ),
+      ),
+      referenceFrames = Array.from(new Set(keys.map((key) => key.frame)));
+    context.strokeStyle = "rgba(229,181,95,.32)";
+    referenceFrames.forEach((frame) => {
+      const x = Math.round(xAt(frame)) + 0.5;
+      if (x < paddingX || x > width - paddingX) return;
+      context.beginPath();
+      context.moveTo(x, coreY1);
+      context.lineTo(x, coreY2);
+      context.stroke();
+    });
+    context.strokeStyle = "rgba(229,181,95,.46)";
+    referenceLevels.forEach((value) => {
+      const y = Math.round(yAt(value)) + 0.5;
+      if (y < paddingY || y > height - paddingY) return;
+      context.beginPath();
+      context.moveTo(coreX1, y);
+      context.lineTo(coreX2, y);
+      context.stroke();
+    });
+    context.restore();
+    if (mode === "speed") {
+      const zeroY = Math.round(yAt(0)) + 0.5;
+      if (zeroY >= 0 && zeroY <= height) {
+        context.save();
+        context.strokeStyle = "rgba(229,181,95,.72)";
+        context.lineWidth = 1.5;
+        strokeSeg(gridLeft, zeroY, gridRight, zeroY);
+        context.restore();
+      }
+    }
+    context.strokeStyle =
+      channel === "all" ? "#8579e6" : colors[channel] || "#8579e6";
+    context.globalAlpha = 1;
+    context.lineWidth = 2;
+    context.lineJoin = "round";
+    context.lineCap = "round";
+    context.beginPath();
+    points.forEach((point, index) => {
+      const x = xAt(point.frame),
+        y = yAt(point.value);
+      if (index) context.lineTo(x, y);
+      else context.moveTo(x, y);
+    });
+    context.stroke();
+    keys.forEach((key, index) => {
+      const selectedKey = selected.includes(key.frame),
+        x = xAt(key.frame),
+        y = yAt(keyGraphValue(keys, definition, index));
+      context.fillStyle = selectedKey
+        ? "#f7f5ff"
+        : colors[channel] || "#8579e6";
+      context.strokeStyle = selectedKey ? "#8579e6" : "rgba(8,8,14,.8)";
+      context.lineWidth = 1;
+      context.beginPath();
+      context.rect(Math.round(x) - 4 + 0.5, Math.round(y) - 4 + 0.5, 7, 7);
+      context.fill();
+      context.stroke();
+      if (mode === "speed")
+        graphTargets.push({
+          kind: "key",
+          index: allKeys.indexOf(key),
+          curveIndex: index,
+          x,
+          y,
+        });
+    });
+    for (let index = 0; index < keys.length - 1; index++) {
+      const a = keys[index],
+        b = keys[index + 1];
+      if (
+        (!selected.includes(a.frame) && !selected.includes(b.frame)) ||
+        a.interpolation === "hold"
+      )
+        continue;
+      const control = controlFor(a),
+        speedControl = mode === "speed" ? speedControlFor(a) : control,
+        duration = b.frame - a.frame,
+        delta = channelDelta(definition, a, b),
+        base = Math.abs(delta) / Math.max(1, duration),
+        startSpeed = (base * control.y1) / control.x1,
+        endSpeed = (base * (1 - control.y2)) / (1 - control.x2),
+        aPoint = {
+          x: xAt(a.frame),
+          y: yAt(mode === "speed" ? startSpeed : definition.read(a)),
+        },
+        bPoint = {
+          x: xAt(b.frame),
+          y: yAt(mode === "speed" ? endSpeed : definition.read(b)),
+        },
+        outPoint = {
+          x: xAt(
+            a.frame +
+              duration * (mode === "speed" ? speedControl.x1 : control.x1),
+          ),
+          y: yAt(
+            mode === "speed"
+              ? startSpeed
+              : definition.read(a) + delta * control.y1,
+          ),
+        },
+        inPoint = {
+          x: xAt(
+            mode === "speed"
+              ? a.frame + duration * speedControl.x2
+              : a.frame + duration * control.x2,
+          ),
+          y: yAt(
+            mode === "speed"
+              ? endSpeed
+              : definition.read(a) + delta * control.y2,
+          ),
+        };
+      const aIndex = allKeys.indexOf(a),
+        bIndex = allKeys.indexOf(b);
+      drawHandle(context, aPoint, outPoint, {
+        segment: index,
+        aIndex,
+        bIndex,
+        side: "out",
+      });
+      drawHandle(context, bPoint, inPoint, {
+        segment: index,
+        aIndex,
+        bIndex,
+        side: "in",
+      });
+    }
+    const currentFrame = typeof curFrame === "number" ? curFrame : 0,
+      playheadX = xAt(currentFrame);
+    if (playheadX >= 0 && playheadX <= width) {
+      const x = Math.round(playheadX);
+      context.save();
+      context.strokeStyle =
+        styles.getPropertyValue("--red").trim() || "#e24b4a";
+      context.fillStyle = context.strokeStyle;
+      context.lineWidth = 2;
+      context.beginPath();
+      context.moveTo(x, 0);
+      context.lineTo(x, height);
+      context.stroke();
+      context.beginPath();
+      context.moveTo(x - 5, 0);
+      context.lineTo(x + 5, 0);
+      context.lineTo(x, 7);
+      context.closePath();
+      context.fill();
+      context.restore();
+    }
+  }
+  function graphPoint(event) {
+    const rect = canvas.getBoundingClientRect();
+    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  }
+  function hitGraph(point) {
+    let best = null,
+      bestDistance = 10;
+    for (const target of graphTargets) {
+      const distance = Math.hypot(point.x - target.x, point.y - target.y);
+      if (distance < bestDistance) {
+        best = target;
+        bestDistance = distance;
+      }
+    }
+    return best;
+  }
+  function beginGraphDrag(event) {
+    if (event.button !== 0 || !graphView) return;
+    const adapter = activeAdapter(),
+      target = hitGraph(graphPoint(event));
+    if (!adapter || !target) return;
+    if (target.kind === "handle")
+      activeCurveFrame = adapter.keys()[target.aIndex].frame;
+    else if (target.kind === "key")
+      activeCurveFrame = adapter.keys()[target.index].frame;
+    event.preventDefault();
+    event.stopPropagation();
+    graphDrag = {
+      pointerId: event.pointerId,
+      target,
+      before: adapter.snapshot(),
+      keys: adapter.keys().map((key) => JSON.parse(JSON.stringify(key))),
+      curveIndices: adapter
+        .keys()
+        .map((key, index) =>
+          adapter.selectedFrames().includes(key.frame) ? index : -1,
+        )
+        .filter((index) => index >= 0),
+      adapter,
+      view: Object.assign({}, graphView),
+    };
+    canvas.setPointerCapture(event.pointerId);
+    canvas.classList.add("graph-dragging");
+  }
+  function setKeySpeed(keys, index, speed, definition, constrain) {
+    const low = constrain ? 0 : -8,
+      high = constrain ? 1 : 9;
+    if (index < keys.length - 1) {
+      const a = keys[index],
+        b = keys[index + 1],
+        control = controlFor(a),
+        base =
+          Math.abs(channelDelta(definition, a, b)) /
+          Math.max(1, b.frame - a.frame);
+      control.y1 =
+        base < 1e-6 ? 0 : clamp((speed / base) * control.x1, low, high);
+      a.interpolation = "bezier";
+      a.bezier = control;
+    }
+    if (index > 0) {
+      const a = keys[index - 1],
+        b = keys[index],
+        control = controlFor(a),
+        base =
+          Math.abs(channelDelta(definition, a, b)) /
+          Math.max(1, b.frame - a.frame),
+        influence = 1 - control.x2;
+      control.y2 =
+        base < 1e-6 ? 1 : 1 - clamp((speed / base) * influence, low, high);
+      a.interpolation = "bezier";
+      a.bezier = control;
+    }
+  }
+  function updateGraphDrag(event) {
+    if (!graphDrag || event.pointerId !== graphDrag.pointerId) return;
+    event.preventDefault();
+    const point = graphPoint(event),
+      view = graphDrag.view,
+      keys = graphDrag.keys,
+      curveKeys = graphDrag.curveIndices.map((index) => keys[index]),
+      definition = orientedValueDefinition(
+        curveKeys,
+        graphDrag.adapter.channels[channel],
+        graphDrag.adapter,
+      ),
+      target = graphDrag.target,
+      constrain =
+        event.shiftKey ||
+        (graphDrag.adapter.allowsOvershoot &&
+          !graphDrag.adapter.allowsOvershoot(channel));
+    if (target.kind === "key") {
+      if (mode === "speed") {
+        setKeySpeed(
+          curveKeys,
+          target.curveIndex,
+          view.valueAt(point.y),
+          definition,
+          constrain,
+        );
+      } else {
+        let value = view.valueAt(point.y);
+        if (constrain) {
+          const bounds = adjacentValueRange(keys, target.index, definition);
+          value = clamp(value, bounds.minimum, bounds.maximum);
+        }
+        definition.write(keys[target.index], value);
+      }
+    } else {
+      const a = keys[target.aIndex],
+        b = keys[target.bIndex],
+        duration = Math.max(1, b.frame - a.frame),
+        control = controlFor(a),
+        pointerFrame = view.frameAt(point.x),
+        normalizedX =
+          mode === "speed"
+            ? target.side === "out"
+              ? clamp((pointerFrame - a.frame) / (duration * 0.5), 0.001, 0.999)
+              : 1 -
+                clamp((b.frame - pointerFrame) / (duration * 0.5), 0.001, 0.999)
+            : clamp((pointerFrame - a.frame) / duration, 0.001, 0.999),
+        delta = channelDelta(definition, a, b);
+      if (target.side === "out") {
+        control.x1 = normalizedX;
+        if (mode === "value")
+          control.y1 =
+            Math.abs(delta) < 1e-6
+              ? 0.5
+              : clamp(
+                  (view.valueAt(point.y) - definition.read(a)) / delta,
+                  constrain ? 0 : -8,
+                  constrain ? 1 : 9,
+                );
+        else {
+          const base = Math.abs(delta) / duration,
+            speed = view.valueAt(point.y);
+          control.y1 =
+            base < 1e-6
+              ? 0
+              : clamp(
+                  (speed / base) * control.x1,
+                  constrain ? 0 : -8,
+                  constrain ? 1 : 9,
+                );
+        }
+      } else {
+        control.x2 = normalizedX;
+        if (mode === "value")
+          control.y2 =
+            Math.abs(delta) < 1e-6
+              ? 0.5
+              : clamp(
+                  (view.valueAt(point.y) - definition.read(a)) / delta,
+                  constrain ? 0 : -8,
+                  constrain ? 1 : 9,
+                );
+        else {
+          const base = Math.abs(delta) / duration,
+            speed = view.valueAt(point.y),
+            influence = 1 - control.x2;
+          control.y2 =
+            base < 1e-6
+              ? 1
+              : 1 -
+                clamp(
+                  (speed / base) * influence,
+                  constrain ? 0 : -8,
+                  constrain ? 1 : 9,
+                );
+        }
+      }
+      a.interpolation = "bezier";
+      a.bezier = control;
+    }
+    graphDrag.adapter.preview(keys);
+    draw();
+  }
+  function finishGraphDrag(event, cancelled) {
+    if (!graphDrag || event.pointerId !== graphDrag.pointerId) return;
+    event.preventDefault();
+    const drag = graphDrag;
+    graphDrag = null;
+    canvas.classList.remove("graph-dragging");
+    try {
+      if (canvas.hasPointerCapture(event.pointerId))
+        canvas.releasePointerCapture(event.pointerId);
+    } catch (_) {}
+    if (cancelled) drag.adapter.restore(drag.before);
+    else drag.adapter.commit(drag.before);
+    draw();
+  }
+  canvas.addEventListener(
+    "wheel",
+    (event) => {
+      if (!graphView || graphDrag) return;
+      event.preventDefault();
+      const point = graphPoint(event),
+        factor = Math.exp(-event.deltaY * 0.0015),
+        factorX = event.altKey ? 1 : factor,
+        factorY = event.shiftKey ? 1 : factor;
+      graphViewport.zoomAt(graphView, point.x, point.y, factorX, factorY);
+      draw();
+    },
+    { passive: false },
+  );
+  canvas.addEventListener("pointerdown", beginGraphDrag);
+  canvas.addEventListener("pointermove", (event) => {
+    if (graphDrag) updateGraphDrag(event);
+    else
+      canvas.style.cursor = hitGraph(graphPoint(event)) ? "pointer" : "default";
+  });
+  canvas.addEventListener("pointerup", (event) =>
+    finishGraphDrag(event, false),
+  );
+  canvas.addEventListener("pointercancel", (event) =>
+    finishGraphDrag(event, true),
+  );
+  canvas.addEventListener("lostpointercapture", (event) => {
+    if (graphDrag && event.pointerId === graphDrag.pointerId)
+      finishGraphDrag(event, true);
+  });
+  let splitRatio = 0.72,
+    splitPointerId = null;
+  function syncSplit() {
+    if (!open) return;
+    const width = timelineArea.getBoundingClientRect().width,
+      divider = splitter.offsetWidth || 6,
+      min = Math.min(280, Math.max(140, (width - divider) * 0.25)),
+      left = Math.max(
+        min,
+        Math.min(width - divider - min, (width - divider) * splitRatio),
+      );
+    timelineArea.style.setProperty("--timeline-pane-width", left + "px");
+    requestAnimationFrame(draw);
+  }
+  function setOpen(value) {
+    const wasOpen = open;
+    open = !!value;
+    panel.hidden = !open;
+    splitter.hidden = !open;
+    timelineArea.classList.toggle("graph-editor-open", open);
+    toggle.classList.toggle("active", open);
+    toggle.setAttribute("aria-pressed", String(open));
+    if (!open) {
+      graphOpening = false;
+      return;
+    }
+    if (!wasOpen) {
+      graphOpening = true;
+      graphViewport.reset();
+      requestAnimationFrame(() => {
+        syncSplit();
+        requestAnimationFrame(() => {
+          graphOpening = false;
+          graphViewport.reset();
+          draw();
+        });
+      });
+    } else
+      requestAnimationFrame(() => {
+        syncSplit();
+        draw();
+      });
+  }
+  splitter.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 && event.pointerType !== "pen") return;
+    splitPointerId = event.pointerId;
+    splitter.classList.add("dragging");
+    splitter.setPointerCapture(event.pointerId);
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  splitter.addEventListener("pointermove", (event) => {
+    if (event.pointerId !== splitPointerId) return;
+    const rect = timelineArea.getBoundingClientRect(),
+      divider = splitter.offsetWidth || 6;
+    splitRatio = Math.max(
+      0,
+      Math.min(1, (event.clientX - rect.left) / (rect.width - divider)),
+    );
+    syncSplit();
+    event.preventDefault();
+  });
+  function endSplit(event) {
+    if (event.pointerId !== splitPointerId) return;
+    splitPointerId = null;
+    splitter.classList.remove("dragging");
+    if (splitter.hasPointerCapture(event.pointerId))
+      splitter.releasePointerCapture(event.pointerId);
+  }
+  splitter.addEventListener("pointerup", endSplit);
+  splitter.addEventListener("pointercancel", endSplit);
+  splitter.addEventListener("lostpointercapture", (event) => {
+    if (event.pointerId === splitPointerId) {
+      splitPointerId = null;
+      splitter.classList.remove("dragging");
+    }
+  });
+  toggle.onclick = () => setOpen(!open);
+  document.querySelectorAll(".graph-mode-btn").forEach(
+    (button) =>
+      (button.onclick = () => {
+        mode = button.dataset.graphMode;
+        graphViewport.reset();
+        document
+          .querySelectorAll(".graph-mode-btn")
+          .forEach((item) => item.classList.toggle("active", item === button));
+        draw();
+      }),
+  );
+  channelSelect.onchange = () => {
+    channel = channelSelect.value;
+    const adapter = activeAdapter();
+    if (adapter && adapter.id === "camera" && window.CameraTimeline) {
+      graphViewport.reset();
+      if (
+        channel === "all" &&
+        CameraTimeline.selectedProperty &&
+        CameraTimeline.selectAllTrack
+      ) {
+        CameraTimeline.selectAllTrack();
+        return;
+      }
+      if (channel !== "all" && CameraTimeline.selectProperty) {
+        const linked = CameraSystem.value.track.positionLinked !== false,
+          property = channel === "x" && linked ? "position" : channel;
+        CameraTimeline.selectProperty(property);
+        return;
+      }
+    }
+    graphViewport.reset();
+    draw();
+  };
+  copyValuesButton.onclick = copyGraphValues;
+  pasteValuesButton.onclick = pasteGraphValues;
+  interpolationSelect.onchange = () => {
+    const adapter = activeAdapter(),
+      frames = adapter && adapter.selectedFrames();
+    if (adapter && frames.length) {
+      adapter.applyInterpolation(frames, interpolationSelect.value);
+      draw();
+    }
+  };
+  window.addEventListener("timeline-rendered", draw);
+  window.addEventListener("camera-changed", () => {
+    if (!graphDrag) graphViewport.reset();
+    draw();
+  });
+  window.addEventListener("project-loaded", draw);
+  window.addEventListener("resize", () => {
+    syncSplit();
+    draw();
+  });
+  if (window.ResizeObserver) new ResizeObserver(draw).observe(viewport);
+  adapters.set("camera", cameraAdapter());
+  window.TimelineGraphEditor = {
+    GraphViewport,
+    registerAdapter(id, adapter) {
+      adapters.set(id, adapter);
+      draw();
+    },
+    refresh: draw,
+    fit() {
+      graphViewport.reset();
+      draw();
+    },
+    get open() {
+      return open;
+    },
+  };
 })();

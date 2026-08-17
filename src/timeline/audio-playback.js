@@ -1,23 +1,33 @@
 (() => {
-  'use strict';
+  "use strict";
 
-  const dbToGain = db => Number.isFinite(db) ? Math.pow(10, db / 20) : 0;
-  const fps = () => Math.max(1, typeof getFPS === 'function' ? getFPS() : 24);
+  const dbToGain = (db) => (Number.isFinite(db) ? Math.pow(10, db / 20) : 0);
+  const fps = () => Math.max(1, typeof getFPS === "function" ? getFPS() : 24);
 
   class AudioNodeRegistry {
-    constructor() { this.nodes = new Set(); }
+    constructor() {
+      this.nodes = new Set();
+    }
     add(record) {
       this.nodes.add(record);
-      record.source.addEventListener('ended', () => this.remove(record), { once: true });
+      record.source.addEventListener("ended", () => this.remove(record), {
+        once: true,
+      });
     }
     remove(record) {
       if (!this.nodes.delete(record)) return;
-      try { record.source.disconnect(); } catch (_) {}
-      try { record.gain.disconnect(); } catch (_) {}
+      try {
+        record.source.disconnect();
+      } catch (_) {}
+      try {
+        record.gain.disconnect();
+      } catch (_) {}
     }
     stopAll() {
       for (const record of [...this.nodes]) {
-        try { record.source.stop(); } catch (_) {}
+        try {
+          record.source.stop();
+        } catch (_) {}
         this.remove(record);
       }
     }
@@ -38,7 +48,10 @@
         level = Math.min(level, t * t * (3 - 2 * t));
       }
       if (fadeOut > 0 && localFrame > clip.duration - fadeOut) {
-        const t = Math.max(0, Math.min(1, (clip.duration - localFrame) / fadeOut));
+        const t = Math.max(
+          0,
+          Math.min(1, (clip.duration - localFrame) / fadeOut),
+        );
         level = Math.min(level, t * t * (3 - 2 * t));
       }
       return level;
@@ -48,11 +61,18 @@
       const localStart = Math.max(0, timelineStartFrame - clip.startFrame);
       const endLocal = clip.duration;
       node.gain.cancelScheduledValues(when);
-      node.gain.setValueAtTime(baseGain * this.fadeLevel(clip, localStart), when);
+      node.gain.setValueAtTime(
+        baseGain * this.fadeLevel(clip, localStart),
+        when,
+      );
       const points = [];
-      const stepCount = Math.max(8, Math.min(128, Math.ceil((endLocal - localStart) / 2)));
+      const stepCount = Math.max(
+        8,
+        Math.min(128, Math.ceil((endLocal - localStart) / 2)),
+      );
       for (let index = 0; index <= stepCount; index++) {
-        const local = localStart + (endLocal - localStart) * index / stepCount;
+        const local =
+          localStart + ((endLocal - localStart) * index) / stepCount;
         points.push(baseGain * this.fadeLevel(clip, local));
       }
       const duration = Math.max(0.001, (endLocal - localStart) / frameRate);
@@ -68,19 +88,23 @@
       if (audibleStart >= clipEnd) return null;
       const rate = 1 / Math.max(0.01, Number(clip.stretchFactor) || 1);
       const localTimelineFrames = audibleStart - clip.startFrame;
-      const sourceFrame = (Number(clip.sourceStart) || 0) +
-        (Number(clip.sourceOffset) || 0) + localTimelineFrames * rate;
+      const sourceFrame =
+        (Number(clip.sourceStart) || 0) +
+        (Number(clip.sourceOffset) || 0) +
+        localTimelineFrames * rate;
       const offset = Math.max(0, sourceFrame / frameRate);
-      const sourceEnd = ((Number(clip.sourceEnd) || clip.duration) +
-        (Number(clip.sourceOffset) || 0)) / frameRate;
+      const sourceEnd =
+        ((Number(clip.sourceEnd) || clip.duration) +
+          (Number(clip.sourceOffset) || 0)) /
+        frameRate;
       const sourceDuration = Math.min(
         Math.max(0, sourceEnd - offset),
-        Math.max(0, buffer.duration - offset)
+        Math.max(0, buffer.duration - offset),
       );
       if (sourceDuration <= 0) return null;
       const timelineDuration = Math.min(
         (clipEnd - audibleStart) / frameRate,
-        sourceDuration / rate
+        sourceDuration / rate,
       );
       if (timelineDuration <= 0) return null;
       const when = contextAnchor + (audibleStart - timelineFrame) / frameRate;
@@ -90,7 +114,13 @@
       source.playbackRate.setValueAtTime(rate, when);
       source.connect(gain);
       gain.connect(this.master);
-      this.automateGain(gain, clip, audibleStart, when, dbToGain(Number(clip.gain) || 0));
+      this.automateGain(
+        gain,
+        clip,
+        audibleStart,
+        when,
+        dbToGain(Number(clip.gain) || 0),
+      );
       const record = { source, gain, clipId: clip.id };
       this.registry.add(record);
       source.start(when, offset, sourceDuration);
@@ -123,11 +153,19 @@
       return this.startPreview(frame, options, context);
     }
     requestContinuous(frame) {
-      this.continuousPending = { frame, generation: ++this.continuousGeneration };
+      this.continuousPending = {
+        frame,
+        generation: ++this.continuousGeneration,
+      };
       this.scheduleContinuous();
     }
     scheduleContinuous() {
-      if (this.continuousInFlight || this.continuousTimer || !this.continuousPending) return;
+      if (
+        this.continuousInFlight ||
+        this.continuousTimer ||
+        !this.continuousPending
+      )
+        return;
       const delay = Math.max(0, 45 - (performance.now() - this.lastAt));
       if (delay > 0) {
         this.continuousTimer = setTimeout(() => {
@@ -146,18 +184,32 @@
       this.lastAt = performance.now();
       try {
         const context = await this.engine.ensureContext();
-        if (!context || request.generation !== this.continuousGeneration) return;
+        if (!context || request.generation !== this.continuousGeneration)
+          return;
         this.stopRecord();
-        await this.startPreview(request.frame, { centered: false }, context, request.generation);
+        await this.startPreview(
+          request.frame,
+          { centered: false },
+          context,
+          request.generation,
+        );
       } finally {
         this.continuousInFlight = false;
         this.scheduleContinuous();
       }
     }
     async startPreview(frame, options, context, continuousGeneration = null) {
-      if (continuousGeneration != null && continuousGeneration !== this.continuousGeneration) return;
-      const clip = this.engine.clips().find(item =>
-        frame >= item.startFrame && frame < item.startFrame + item.duration);
+      if (
+        continuousGeneration != null &&
+        continuousGeneration !== this.continuousGeneration
+      )
+        return;
+      const clip = this.engine
+        .clips()
+        .find(
+          (item) =>
+            frame >= item.startFrame && frame < item.startFrame + item.duration,
+        );
       if (!clip) return;
       const sourceRecord = window.AudioSources?.get(clip.sourceId);
       if (!sourceRecord?.audioBuffer) return;
@@ -165,7 +217,10 @@
       const timeMapping = window.AudioClipTimeMapping;
       const rate = timeMapping.playbackRate(clip);
       const bounds = timeMapping.sourceBounds(clip);
-      const offset = Math.max(0, timeMapping.timelineFrameToSourceTime(clip, frame, frameRate, true));
+      const offset = Math.max(
+        0,
+        timeMapping.timelineFrameToSourceTime(clip, frame, frameRate, true),
+      );
       if (offset >= sourceRecord.audioBuffer.duration) return;
       const source = context.createBufferSource();
       const gain = context.createGain();
@@ -173,13 +228,19 @@
       source.playbackRate.value = rate;
       const baseGain = dbToGain(Number(clip.gain) || 0) * 0.8;
       let previewOffset = offset;
-      const trimEnd = Math.min(sourceRecord.audioBuffer.duration, bounds.end / frameRate);
+      const trimEnd = Math.min(
+        sourceRecord.audioBuffer.duration,
+        bounds.end / frameRate,
+      );
       let sourceDuration = Math.min(0.075, trimEnd - offset);
       let outputDuration = sourceDuration / rate;
       if (options.centered) {
         const halfWindow = 0.065 * rate;
         const trimStart = Math.max(0, bounds.start / frameRate);
-        const centeredTrimEnd = Math.min(sourceRecord.audioBuffer.duration, bounds.end / frameRate);
+        const centeredTrimEnd = Math.min(
+          sourceRecord.audioBuffer.duration,
+          bounds.end / frameRate,
+        );
         previewOffset = Math.max(trimStart, offset - halfWindow);
         const previewEnd = Math.min(centeredTrimEnd, offset + halfWindow);
         sourceDuration = Math.max(0, previewEnd - previewOffset);
@@ -187,20 +248,30 @@
         if (sourceDuration <= 0) return;
       }
       if (sourceDuration <= 0) return;
-      if (continuousGeneration != null && continuousGeneration !== this.continuousGeneration) return;
+      if (
+        continuousGeneration != null &&
+        continuousGeneration !== this.continuousGeneration
+      )
+        return;
       const when = context.currentTime;
       if (options.centered) {
         const envelope = Math.min(0.005, outputDuration / 2);
         gain.gain.setValueAtTime(0, when);
         gain.gain.linearRampToValueAtTime(baseGain, when + envelope);
-        gain.gain.setValueAtTime(baseGain, Math.max(when + envelope, when + outputDuration - envelope));
+        gain.gain.setValueAtTime(
+          baseGain,
+          Math.max(when + envelope, when + outputDuration - envelope),
+        );
         gain.gain.linearRampToValueAtTime(0, when + outputDuration);
       } else {
         gain.gain.value = baseGain;
       }
       source.connect(gain);
       gain.connect(this.engine.master);
-      if (continuousGeneration != null && continuousGeneration !== this.continuousGeneration) {
+      if (
+        continuousGeneration != null &&
+        continuousGeneration !== this.continuousGeneration
+      ) {
         source.disconnect();
         gain.disconnect();
         return;
@@ -208,13 +279,19 @@
       source.start(0, previewOffset, sourceDuration);
       source.stop(when + (options.centered ? outputDuration : 0.08));
       this.record = { source, gain };
-      source.addEventListener('ended', () => this.stop(source), { once: true });
+      source.addEventListener("ended", () => this.stop(source), { once: true });
     }
     stopRecord(expected) {
       if (!this.record || (expected && this.record.source !== expected)) return;
-      try { this.record.source.stop(); } catch (_) {}
-      try { this.record.source.disconnect(); } catch (_) {}
-      try { this.record.gain.disconnect(); } catch (_) {}
+      try {
+        this.record.source.stop();
+      } catch (_) {}
+      try {
+        this.record.source.disconnect();
+      } catch (_) {}
+      try {
+        this.record.gain.disconnect();
+      } catch (_) {}
       this.record = null;
     }
     stop(expected) {
@@ -238,27 +315,38 @@
       this.generation = 0;
       this.scrub = new AudioScrubController(this);
     }
-    clips() { return window.AudioClipUI?.clips || []; }
+    clips() {
+      return window.AudioClipUI?.clips || [];
+    }
     async ensureContext() {
       try {
         const manager = window.AudioContextManager;
         this.context = manager?.get ? manager.get() : this.context;
         if (!this.context) {
           const Context = window.AudioContext || window.webkitAudioContext;
-          if (!Context) throw new Error('Web Audio playback is not supported by this browser.');
+          if (!Context)
+            throw new Error(
+              "Web Audio playback is not supported by this browser.",
+            );
           this.context = new Context();
         }
-        if (this.context.state === 'closed') throw new Error('The audio device is unavailable.');
-        if (this.context.state === 'suspended') await this.context.resume();
+        if (this.context.state === "closed")
+          throw new Error("The audio device is unavailable.");
+        if (this.context.state === "suspended") await this.context.resume();
         if (!this.master) {
           this.master = this.context.createGain();
           this.master.connect(this.context.destination);
-          this.scheduler = new AudioClipScheduler(this.context, this.master, this.registry);
+          this.scheduler = new AudioClipScheduler(
+            this.context,
+            this.master,
+            this.registry,
+          );
         }
         return this.context;
       } catch (error) {
-        console.error('Audio playback could not start.', error);
-        if (typeof showInfo === 'function') showInfo(error.message, 'Audio Playback');
+        console.error("Audio playback could not start.", error);
+        if (typeof showInfo === "function")
+          showInfo(error.message, "Audio Playback");
         return null;
       }
     }
@@ -269,14 +357,17 @@
       const context = await this.ensureContext();
       if (!context || !this.playing || generation !== this.generation) return;
       const anchor = context.currentTime + 0.02;
-      for (const clip of this.clips()) this.scheduler.schedule(clip, frame, anchor);
+      for (const clip of this.clips())
+        this.scheduler.schedule(clip, frame, anchor);
     }
     pause() {
       this.playing = false;
       this.generation++;
       this.stopNodes();
     }
-    stop() { this.pause(); }
+    stop() {
+      this.pause();
+    }
     stopNodes() {
       this.registry.stopAll();
       this.scrub.stop();
@@ -287,14 +378,15 @@
     frameChanged(frame, options = {}) {
       if (options.scrubbing && !this.playing) {
         this.scrub.preview(frame, {
-          centered: window.SharedPlayhead?.scrubMode === 'animation'
+          centered: window.SharedPlayhead?.scrubMode === "animation",
         });
-      }
-      else if (this.playing && options.seek !== false) this.seek(frame);
+      } else if (this.playing && options.seek !== false) this.seek(frame);
     }
-    endScrub() { this.scrub.stop(); }
+    endScrub() {
+      this.scrub.stop();
+    }
     clipsChanged() {
-      if (this.playing && typeof curFrame === 'number') this.play(curFrame);
+      if (this.playing && typeof curFrame === "number") this.play(curFrame);
     }
   }
 

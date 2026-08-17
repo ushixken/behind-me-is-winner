@@ -22,12 +22,13 @@
 // the *shape* being rasterized (a continuous tapered capsule instead of a
 // single circle).
 
-'use strict';
+"use strict";
 
 (function (root) {
-  const Math_ = (typeof module !== 'undefined' && module.exports)
-    ? require('./hard-round-capsule-math.js')
-    : root.HardRoundCapsuleMath;
+  const Math_ =
+    typeof module !== "undefined" && module.exports
+      ? require("./hard-round-capsule-math.js")
+      : root.HardRoundCapsuleMath;
 
   // Rasterize one render-ready segment onto `dc` (a CanvasRenderingContext2D).
   // Alpha is linearly interpolated between alpha0/alpha1 along the same `h`
@@ -37,18 +38,25 @@
   // @param {object} seg - see module doc above
   function drawHardRoundCapsuleCPU(dc, seg) {
     if (!dc || !seg) return;
-    const { x0, y0, x1, y1, r0, r1, alpha0, alpha1, rgb, composite, aaMode } = seg;
+    const { x0, y0, x1, y1, r0, r1, alpha0, alpha1, rgb, composite, aaMode } =
+      seg;
     const maxR = Math.max(r0, r1);
     if (!(maxR > 0)) return;
-    const cw = dc.canvas.width, ch = dc.canvas.height;
+    const cw = dc.canvas.width,
+      ch = dc.canvas.height;
     const b = Math_.capsuleBounds(x0, y0, x1, y1, r0, r1);
-    const sx = Math.max(0, b.sx), sy = Math.max(0, b.sy);
-    const ex = Math.min(cw, b.ex), ey = Math.min(ch, b.ey);
-    const rw = ex - sx, rh = ey - sy;
+    const sx = Math.max(0, b.sx),
+      sy = Math.max(0, b.sy);
+    const ex = Math.min(cw, b.ex),
+      ey = Math.min(ch, b.ey);
+    const rw = ex - sx,
+      rh = ey - sy;
     if (rw <= 0 || rh <= 0) return;
 
-    const isErase = composite === 'erase';
-    const cr = isErase ? 0 : rgb[0], cg = isErase ? 0 : rgb[1], cb = isErase ? 0 : rgb[2];
+    const isErase = composite === "erase";
+    const cr = isErase ? 0 : rgb[0],
+      cg = isErase ? 0 : rgb[1],
+      cb = isErase ? 0 : rgb[2];
 
     const imgData = dc.getImageData(sx, sy, rw, rh);
     const d = imgData.data;
@@ -64,14 +72,24 @@
         // widens/narrows the edge band; a duplicated formula here would
         // be free to drift out of sync with that one.
         const axis = Math_.capsuleAxisDistance(wx, wy, x0, y0, x1, y1);
-        const isAaOff = aaMode === 'off' || aaMode === 'none';
+        const isAaOff = aaMode === "off" || aaMode === "none";
         // Phase 9E.3: this renderer samples one point per native pixel (no
         // supersampling), so it has the same thin/fast-taper dropout risk
         // as PrototypeRenderer's block-center sampling -- use the same
         // conservative pixel-square test for Off/None.
         const cov01 = isAaOff
           ? Math_.pixelCoveredByCapsuleForStroke(
-              wx, wy, x0, y0, r0, x1, y1, r1, 1, !!seg.isStrokeStart, !!seg.isStrokeEnd
+              wx,
+              wy,
+              x0,
+              y0,
+              r0,
+              x1,
+              y1,
+              r1,
+              1,
+              !!seg.isStrokeStart,
+              !!seg.isStrokeEnd,
             )
           : Math_.capsuleCoverage(wx, wy, x0, y0, r0, x1, y1, r1, aaMode);
         if (cov01 <= 0) continue;
@@ -87,9 +105,12 @@
           const da = d[p + 3] / 255;
           const outA = a + da * (1 - a);
           if (outA <= 0) {
-            d[p] = 0; d[p + 1] = 0; d[p + 2] = 0; d[p + 3] = 0;
+            d[p] = 0;
+            d[p + 1] = 0;
+            d[p + 2] = 0;
+            d[p + 3] = 0;
           } else {
-            d[p]     = (cr * a + d[p]     * da * (1 - a)) / outA;
+            d[p] = (cr * a + d[p] * da * (1 - a)) / outA;
             d[p + 1] = (cg * a + d[p + 1] * da * (1 - a)) / outA;
             d[p + 2] = (cb * a + d[p + 2] * da * (1 - a)) / outA;
             d[p + 3] = outA * 255;
@@ -98,15 +119,22 @@
       }
     }
     dc.putImageData(imgData, sx, sy);
-    return { sx, sy, rw, rh, radiusX: maxR + Math_.AA_MARGIN, radiusY: maxR + Math_.AA_MARGIN };
+    return {
+      sx,
+      sy,
+      rw,
+      rh,
+      radiusX: maxR + Math_.AA_MARGIN,
+      radiusY: maxR + Math_.AA_MARGIN,
+    };
   }
 
   const HardRoundCapsuleRendererExports = { drawHardRoundCapsuleCPU };
 
-  if (typeof module !== 'undefined' && module.exports) {
+  if (typeof module !== "undefined" && module.exports) {
     module.exports = HardRoundCapsuleRendererExports;
   }
-  if (typeof window !== 'undefined') {
+  if (typeof window !== "undefined") {
     window.HardRoundCapsuleRenderer = HardRoundCapsuleRendererExports;
   }
-})(typeof window !== 'undefined' ? window : globalThis);
+})(typeof window !== "undefined" ? window : globalThis);

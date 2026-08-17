@@ -6,7 +6,7 @@
 //
 
 (() => {
-  'use strict';
+  "use strict";
 
   const CACHE_LIMIT = 8;
 
@@ -33,17 +33,18 @@
       if (!canvas) return null;
       const w = canvas.width || canvas.naturalWidth || 1;
       const h = canvas.height || canvas.naturalHeight || 1;
-      if (!canvas._tipAssetId && typeof _ensureTipAssetId === 'function') {
+      if (!canvas._tipAssetId && typeof _ensureTipAssetId === "function") {
         _ensureTipAssetId(canvas, null);
       }
-      const assetId = canvas._tipAssetId || canvas._assetId || `tip_asset_fallback_${w}x${h}`;
+      const assetId =
+        canvas._tipAssetId || canvas._assetId || `tip_asset_fallback_${w}x${h}`;
       const version = canvas._tipAssetVersion || 1;
       return {
         assetId,
         version,
         source: canvas,
         width: w,
-        height: h
+        height: h,
       };
     }
 
@@ -52,7 +53,10 @@
       if (this.sharedDevice) return this.sharedDevice;
 
       // 1. Re-use DisplayBackend's WebGPU device if available
-      if (typeof window.DisplayBackend !== 'undefined' && window.DisplayBackend.device) {
+      if (
+        typeof window.DisplayBackend !== "undefined" &&
+        window.DisplayBackend.device
+      ) {
         this.sharedDevice = window.DisplayBackend.device;
         this.attachDeviceLossHandler(this.sharedDevice);
         this.initSamplers(this.sharedDevice);
@@ -62,7 +66,10 @@
       if (!navigator.gpu) return null;
 
       try {
-        if (typeof window.DisplayBackend !== 'undefined' && typeof window.DisplayBackend.initialize === 'function') {
+        if (
+          typeof window.DisplayBackend !== "undefined" &&
+          typeof window.DisplayBackend.initialize === "function"
+        ) {
           await window.DisplayBackend.initialize();
           if (window.DisplayBackend.device) {
             this.sharedDevice = window.DisplayBackend.device;
@@ -76,7 +83,9 @@
       }
 
       try {
-        const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+        const adapter = await navigator.gpu.requestAdapter({
+          powerPreference: "high-performance",
+        });
         if (!adapter) return null;
         this.sharedDevice = await adapter.requestDevice();
         this.attachDeviceLossHandler(this.sharedDevice);
@@ -89,34 +98,36 @@
 
     attachDeviceLossHandler(device) {
       if (!device || !device.lost) return;
-      device.lost.then(info => {
-        this.deviceLost = true;
-        this.clear();
-        this.sharedDevice = null;
-        this.sharedLinearSampler = null;
-        this.sharedNearestSampler = null;
-        this.sharedRepeatSampler = null;
-      }).catch(() => {});
+      device.lost
+        .then((info) => {
+          this.deviceLost = true;
+          this.clear();
+          this.sharedDevice = null;
+          this.sharedLinearSampler = null;
+          this.sharedNearestSampler = null;
+          this.sharedRepeatSampler = null;
+        })
+        .catch(() => {});
     }
 
     initSamplers(device) {
       if (!device || this.sharedLinearSampler) return;
       try {
         this.sharedLinearSampler = device.createSampler({
-          magFilter: 'linear',
-          minFilter: 'linear',
-          mipmapFilter: 'linear'
+          magFilter: "linear",
+          minFilter: "linear",
+          mipmapFilter: "linear",
         });
         this.sharedNearestSampler = device.createSampler({
-          magFilter: 'nearest',
-          minFilter: 'nearest',
-          mipmapFilter: 'nearest'
+          magFilter: "nearest",
+          minFilter: "nearest",
+          mipmapFilter: "nearest",
         });
         this.sharedRepeatSampler = device.createSampler({
-          addressModeU: 'repeat',
-          addressModeV: 'repeat',
-          magFilter: 'linear',
-          minFilter: 'linear'
+          addressModeU: "repeat",
+          addressModeV: "repeat",
+          magFilter: "linear",
+          minFilter: "linear",
         });
       } catch (e) {
         // Sampler creation failed
@@ -130,7 +141,9 @@
       let oldestTime = Infinity;
 
       for (const [key, res] of this.cache.entries()) {
-        const isPinned = (currentAssetId && res.assetId === currentAssetId) || (currentVersion != null && res.tipVersion === currentVersion);
+        const isPinned =
+          (currentAssetId && res.assetId === currentAssetId) ||
+          (currentVersion != null && res.tipVersion === currentVersion);
         if (!isPinned && res.lastUsed < oldestTime) {
           oldestTime = res.lastUsed;
           oldestKey = key;
@@ -141,9 +154,14 @@
         const res = this.cache.get(oldestKey);
         if (res) {
           if (res.texture) {
-            try { res.texture.destroy(); } catch (e) {}
+            try {
+              res.texture.destroy();
+            } catch (e) {}
           }
-          this.totalCachedBytes = Math.max(0, this.totalCachedBytes - (res.resourceBytes || 0));
+          this.totalCachedBytes = Math.max(
+            0,
+            this.totalCachedBytes - (res.resourceBytes || 0),
+          );
         }
         this.cache.delete(oldestKey);
         this.evictionCount++;
@@ -153,11 +171,14 @@
     async getOrCreateResource(assetDescriptor) {
       if (!assetDescriptor || !assetDescriptor.source) return null;
       const canvas = assetDescriptor.source;
-      const w = assetDescriptor.width || canvas.width || canvas.naturalWidth || 1;
-      const h = assetDescriptor.height || canvas.height || canvas.naturalHeight || 1;
+      const w =
+        assetDescriptor.width || canvas.width || canvas.naturalWidth || 1;
+      const h =
+        assetDescriptor.height || canvas.height || canvas.naturalHeight || 1;
       if (w <= 0 || h <= 0) return null;
 
-      const version = assetDescriptor.version != null ? assetDescriptor.version : 0;
+      const version =
+        assetDescriptor.version != null ? assetDescriptor.version : 0;
       const assetId = assetDescriptor.assetId || `tip_v${version}_${w}x${h}`;
       const key = `${assetId}_v${version}_${w}x${h}`;
 
@@ -176,14 +197,17 @@
       try {
         const texture = device.createTexture({
           size: [w, h, 1],
-          format: 'rgba8unorm',
-          usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+          format: "rgba8unorm",
+          usage:
+            GPUTextureUsage.TEXTURE_BINDING |
+            GPUTextureUsage.COPY_DST |
+            GPUTextureUsage.RENDER_ATTACHMENT,
         });
 
         device.queue.copyExternalImageToTexture(
           { source: canvas },
           { texture: texture },
-          [w, h, 1]
+          [w, h, 1],
         );
 
         const view = texture.createView();
@@ -191,12 +215,18 @@
 
         let legacyAlphaOnlyMask = false;
         try {
-          const sourceCtx = canvas.getContext('2d', { willReadFrequently: true });
+          const sourceCtx = canvas.getContext("2d", {
+            willReadFrequently: true,
+          });
           const sourceData = sourceCtx.getImageData(0, 0, w, h).data;
           let maxLum = 0;
           for (let p = 0; p < sourceData.length; p += 4) {
             if (sourceData[p + 3] === 0) continue;
-            const lum = (sourceData[p] * 0.2126 + sourceData[p + 1] * 0.7152 + sourceData[p + 2] * 0.0722) / 255;
+            const lum =
+              (sourceData[p] * 0.2126 +
+                sourceData[p + 1] * 0.7152 +
+                sourceData[p + 2] * 0.0722) /
+              255;
             if (lum > maxLum) maxLum = lum;
           }
           legacyAlphaOnlyMask = maxLum < 0.01;
@@ -216,7 +246,7 @@
           tipVersion: version,
           resourceBytes,
           legacyAlphaOnlyMask,
-          lastUsed: performance.now()
+          lastUsed: performance.now(),
         };
 
         this.cache.set(key, resource);
@@ -238,7 +268,7 @@
         version,
         source: canvas,
         width: w,
-        height: h
+        height: h,
       });
     }
 
@@ -254,14 +284,23 @@
       const h = canvas.height || canvas.naturalHeight || 1;
       if (w <= 0 || h <= 0) return null;
 
-      const v = version != null ? version : (typeof window !== 'undefined' && window.brushTextureVersion ? window.brushTextureVersion : 0);
-      if (this.cachedPaperTexture && this.cachedPaperTextureVersion === v && this.cachedPaperTextureCanvas === canvas) {
+      const v =
+        version != null
+          ? version
+          : typeof window !== "undefined" && window.brushTextureVersion
+            ? window.brushTextureVersion
+            : 0;
+      if (
+        this.cachedPaperTexture &&
+        this.cachedPaperTextureVersion === v &&
+        this.cachedPaperTextureCanvas === canvas
+      ) {
         return {
           texture: this.cachedPaperTexture,
           view: this.cachedPaperTextureView,
           sampler: this.sharedRepeatSampler,
           width: w,
-          height: h
+          height: h,
         };
       }
 
@@ -270,7 +309,9 @@
       this.initSamplers(device);
 
       if (this.cachedPaperTexture) {
-        try { this.cachedPaperTexture.destroy(); } catch (e) {}
+        try {
+          this.cachedPaperTexture.destroy();
+        } catch (e) {}
         this.cachedPaperTexture = null;
         this.cachedPaperTextureView = null;
       }
@@ -278,14 +319,17 @@
       try {
         const texture = device.createTexture({
           size: [w, h, 1],
-          format: 'rgba8unorm',
-          usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+          format: "rgba8unorm",
+          usage:
+            GPUTextureUsage.TEXTURE_BINDING |
+            GPUTextureUsage.COPY_DST |
+            GPUTextureUsage.RENDER_ATTACHMENT,
         });
 
         device.queue.copyExternalImageToTexture(
           { source: canvas },
           { texture: texture },
-          [w, h, 1]
+          [w, h, 1],
         );
 
         this.cachedPaperTexture = texture;
@@ -298,7 +342,7 @@
           view: this.cachedPaperTextureView,
           sampler: this.sharedRepeatSampler,
           width: w,
-          height: h
+          height: h,
         };
       } catch (e) {
         return null;
@@ -311,9 +355,14 @@
         const matchVersion = version != null && res.tipVersion === version;
         if (matchAsset || matchVersion) {
           if (res.texture) {
-            try { res.texture.destroy(); } catch (e) {}
+            try {
+              res.texture.destroy();
+            } catch (e) {}
           }
-          this.totalCachedBytes = Math.max(0, this.totalCachedBytes - (res.resourceBytes || 0));
+          this.totalCachedBytes = Math.max(
+            0,
+            this.totalCachedBytes - (res.resourceBytes || 0),
+          );
           this.cache.delete(key);
         }
       }
@@ -326,13 +375,17 @@
     clear() {
       for (const res of this.cache.values()) {
         if (res.texture) {
-          try { res.texture.destroy(); } catch (e) {}
+          try {
+            res.texture.destroy();
+          } catch (e) {}
         }
       }
       this.cache.clear();
       this.totalCachedBytes = 0;
       if (this.cachedPaperTexture) {
-        try { this.cachedPaperTexture.destroy(); } catch (e) {}
+        try {
+          this.cachedPaperTexture.destroy();
+        } catch (e) {}
         this.cachedPaperTexture = null;
         this.cachedPaperTextureView = null;
         this.cachedPaperTextureCanvas = null;
@@ -343,25 +396,34 @@
 
   const manager = new CustomTipGpuResources();
 
-  if (typeof window !== 'undefined') {
+  if (typeof window !== "undefined") {
     window.CustomTipGpuResources = {
       resolveCurrentTipAsset: () => manager.resolveCurrentTipAsset(),
-      getOrCreateResource: (assetDescriptor) => manager.getOrCreateResource(assetDescriptor),
-      getOrCreateCurrentTipResource: () => manager.getOrCreateCurrentTipResource(),
-      getResourceForTip: (canvas, version) => manager.getResourceForTip(canvas, version),
-      getOrCreatePaperTexture: (canvas, version) => manager.getOrCreatePaperTexture(canvas, version),
-      invalidateAsset: (assetId, version) => manager.invalidateAsset(assetId, version),
+      getOrCreateResource: (assetDescriptor) =>
+        manager.getOrCreateResource(assetDescriptor),
+      getOrCreateCurrentTipResource: () =>
+        manager.getOrCreateCurrentTipResource(),
+      getResourceForTip: (canvas, version) =>
+        manager.getResourceForTip(canvas, version),
+      getOrCreatePaperTexture: (canvas, version) =>
+        manager.getOrCreatePaperTexture(canvas, version),
+      invalidateAsset: (assetId, version) =>
+        manager.invalidateAsset(assetId, version),
       invalidateTipVersion: (version) => manager.invalidateTipVersion(version),
       clear: () => manager.clear(),
-      instance: manager
+      instance: manager,
     };
 
-    window.CustomBrushAnalyzeGpuTipResources = function() {
+    window.CustomBrushAnalyzeGpuTipResources = function () {
       const asset = manager.resolveCurrentTipAsset();
       const currentCanvas = window.brushTipCanvas;
       const currentVersion = window.brushTipVersion || 0;
-      const currentKey = asset ? `${asset.assetId}_v${asset.version}_${asset.width}x${asset.height}` : null;
-      const hasCurrentResource = currentKey ? manager.cache.has(currentKey) : false;
+      const currentKey = asset
+        ? `${asset.assetId}_v${asset.version}_${asset.width}x${asset.height}`
+        : null;
+      const hasCurrentResource = currentKey
+        ? manager.cache.has(currentKey)
+        : false;
 
       return {
         webgpuAvailable: !!navigator.gpu,
@@ -372,12 +434,14 @@
         currentAssetId: asset ? asset.assetId : null,
         currentAssetVersion: asset ? asset.version : null,
         legacyBrushTipVersion: currentVersion,
-        currentTipDimensions: currentCanvas ? { width: currentCanvas.width, height: currentCanvas.height } : null,
+        currentTipDimensions: currentCanvas
+          ? { width: currentCanvas.width, height: currentCanvas.height }
+          : null,
         currentTipResourceReady: hasCurrentResource,
         uploadCount: manager.uploadCount,
         reuseCount: manager.reuseCount,
         evictionCount: manager.evictionCount,
-        deviceLost: manager.deviceLost
+        deviceLost: manager.deviceLost,
       };
     };
   }

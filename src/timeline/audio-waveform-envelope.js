@@ -1,5 +1,5 @@
 (() => {
-  'use strict';
+  "use strict";
 
   // Finest mip level is built directly from PCM at this many audio frames per bucket.
   // Coarser levels are derived by repeatedly folding adjacent buckets together,
@@ -15,7 +15,8 @@
 
     _buildBaseLevel(source) {
       const channels = source.pcm || [];
-      const length = Number(source.frameLength) || (channels[0] ? channels[0].length : 0);
+      const length =
+        Number(source.frameLength) || (channels[0] ? channels[0].length : 0);
       const bucketCount = Math.max(1, Math.ceil(length / BASE_BLOCK));
       const min = new Float32Array(bucketCount);
       const max = new Float32Array(bucketCount);
@@ -28,7 +29,7 @@
         for (let frame = from; frame < to; frame++) {
           let mixed = 0;
           for (let channel = 0; channel < channelCount; channel++) {
-            mixed += channels[channel] ? (channels[channel][frame] || 0) : 0;
+            mixed += channels[channel] ? channels[channel][frame] || 0 : 0;
           }
           mixed /= channelCount;
           if (mixed < lo) lo = mixed;
@@ -64,7 +65,11 @@
         current = this._buildNextLevel(current);
         levels.push(current);
       }
-      const entry = { length: base.length, levels, channels: source.pcm || null };
+      const entry = {
+        length: base.length,
+        levels,
+        channels: source.pcm || null,
+      };
       this.cache.set(source.id, entry);
       return entry;
     }
@@ -81,8 +86,8 @@
       let v0 = 0;
       let v1 = 0;
       for (let channel = 0; channel < channelCount; channel++) {
-        v0 += channels[channel] ? (channels[channel][i0] || 0) : 0;
-        v1 += channels[channel] ? (channels[channel][i1] || 0) : 0;
+        v0 += channels[channel] ? channels[channel][i0] || 0 : 0;
+        v1 += channels[channel] ? channels[channel][i1] || 0 : 0;
       }
       v0 /= channelCount;
       v1 /= channelCount;
@@ -108,7 +113,7 @@
       for (let frame = from; frame < to; frame++) {
         let mixed = 0;
         for (let channel = 0; channel < channelCount; channel++) {
-          mixed += channels[channel] ? (channels[channel][frame] || 0) : 0;
+          mixed += channels[channel] ? channels[channel][frame] || 0 : 0;
         }
         mixed /= channelCount;
         if (mixed < lo) lo = mixed;
@@ -155,8 +160,17 @@
         level = candidate;
       }
 
-      const bucketFrom = Math.max(0, Math.min(level.min.length - 1, Math.floor(from / level.blockSize)));
-      const bucketTo = Math.max(bucketFrom, Math.min(level.min.length - 1, Math.floor(Math.max(from, to - 1) / level.blockSize)));
+      const bucketFrom = Math.max(
+        0,
+        Math.min(level.min.length - 1, Math.floor(from / level.blockSize)),
+      );
+      const bucketTo = Math.max(
+        bucketFrom,
+        Math.min(
+          level.min.length - 1,
+          Math.floor(Math.max(from, to - 1) / level.blockSize),
+        ),
+      );
 
       let lo = 0;
       let hi = 0;

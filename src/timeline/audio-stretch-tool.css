@@ -27,7 +27,7 @@
   border-color: var(--accent);
   background: var(--accent-bg);
   color: var(--accent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb,var(--accent) 35%,transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 .audio-clip.audio-stretch-hover,
@@ -46,8 +46,13 @@
   pointer-events: none;
 }
 
-.audio-clip.audio-stretch-left::after { left: 0; }
-.audio-clip.audio-stretch-right::after { right: 0; }
+.audio-clip.audio-stretch-left::after {
+  left: 0;
+}
+
+.audio-clip.audio-stretch-right::after {
+  right: 0;
+}
 
 .audio-stretch-tooltip {
   position: fixed;
@@ -60,10 +65,12 @@
   color: var(--text);
   font: 10px/1.2 sans-serif;
   pointer-events: none;
-  box-shadow: 0 2px 8px rgba(0,0,0,.35);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .35);
 }
 
-.audio-stretch-tooltip.visible { display: block; }
+.audio-stretch-tooltip.visible {
+  display: block;
+}
 
 body.audio-stretch-drag-active,
 body.audio-stretch-drag-active * {
@@ -78,6 +85,7 @@ body.audio-stretch-drag-active * {
   margin: 0;
   overflow: visible;
 }
+
 #audio-stretch-tool svg path {
   fill: none;
   stroke: currentColor;

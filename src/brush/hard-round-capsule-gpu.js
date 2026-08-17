@@ -25,7 +25,7 @@
 // environment this phase was implemented in) -- see the Phase 8C report,
 // §"Known remaining limitations", for what full GPU wiring still needs.
 
-'use strict';
+"use strict";
 
 (function (root) {
   // Ported verbatim (semantics-preserving) from prototype's strokeShader.
@@ -126,10 +126,13 @@
   // prototype's segmentVerts (2 triangles, 6 verts, 9 floats/vert:
   // position.xy, p0.xy, p1.xy, r0, r1, alpha).
   function segmentVerts(x0, y0, x1, y1, r0, r1, alpha, aaOff) {
-    const dx = x1 - x0, dy = y1 - y0;
+    const dx = x1 - x0,
+      dy = y1 - y0;
     const len = Math.hypot(dx, dy) || 1;
-    const ux = dx / len, uy = dy / len;
-    const nx = -uy, ny = ux;
+    const ux = dx / len,
+      uy = dy / len;
+    const nx = -uy,
+      ny = ux;
     const maxR = Math.max(r0, r1);
     const ext = maxR + AA_MARGIN;
     const hw = maxR + AA_MARGIN;
@@ -142,8 +145,12 @@
     const off = aaOff ? 1 : 0;
     const v = (p) => [p.x, p.y, x0, y0, x1, y1, r0, r1, alpha, off];
     const out = [];
-    out.push.apply(out, v(c0)); out.push.apply(out, v(c1)); out.push.apply(out, v(c2));
-    out.push.apply(out, v(c0)); out.push.apply(out, v(c2)); out.push.apply(out, v(c3));
+    out.push.apply(out, v(c0));
+    out.push.apply(out, v(c1));
+    out.push.apply(out, v(c2));
+    out.push.apply(out, v(c0));
+    out.push.apply(out, v(c2));
+    out.push.apply(out, v(c3));
     return out;
   }
 
@@ -161,43 +168,55 @@
   function attach(device, targetFormat) {
     if (!device) return false;
     _device = device;
-    const shaderModule = device.createShaderModule({ code: STROKE_SHADER_WGSL });
+    const shaderModule = device.createShaderModule({
+      code: STROKE_SHADER_WGSL,
+    });
     _pipeline = device.createRenderPipeline({
-      layout: 'auto',
+      layout: "auto",
       vertex: {
-        module: shaderModule, entryPoint: 'vs',
-        buffers: [{
-          arrayStride: 40,
-          attributes: [
-            { format: 'float32x2', offset: 0, shaderLocation: 0 },
-            { format: 'float32x2', offset: 8, shaderLocation: 1 },
-            { format: 'float32x2', offset: 16, shaderLocation: 2 },
-            { format: 'float32', offset: 24, shaderLocation: 3 },
-            { format: 'float32', offset: 28, shaderLocation: 4 },
-            { format: 'float32', offset: 32, shaderLocation: 5 },
-            { format: 'float32', offset: 36, shaderLocation: 6 },
-          ],
-        }],
+        module: shaderModule,
+        entryPoint: "vs",
+        buffers: [
+          {
+            arrayStride: 40,
+            attributes: [
+              { format: "float32x2", offset: 0, shaderLocation: 0 },
+              { format: "float32x2", offset: 8, shaderLocation: 1 },
+              { format: "float32x2", offset: 16, shaderLocation: 2 },
+              { format: "float32", offset: 24, shaderLocation: 3 },
+              { format: "float32", offset: 28, shaderLocation: 4 },
+              { format: "float32", offset: 32, shaderLocation: 5 },
+              { format: "float32", offset: 36, shaderLocation: 6 },
+            ],
+          },
+        ],
       },
       fragment: {
-        module: shaderModule, entryPoint: 'fs',
-        targets: [{
-          format: targetFormat || 'r8unorm',
-          blend: {
-            color: { srcFactor: 'one', dstFactor: 'one', operation: 'max' },
-            alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'max' },
+        module: shaderModule,
+        entryPoint: "fs",
+        targets: [
+          {
+            format: targetFormat || "r8unorm",
+            blend: {
+              color: { srcFactor: "one", dstFactor: "one", operation: "max" },
+              alpha: { srcFactor: "one", dstFactor: "one", operation: "max" },
+            },
           },
-        }],
+        ],
       },
-      primitive: { topology: 'triangle-list' },
+      primitive: { topology: "triangle-list" },
     });
-    _uniformBuf = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    _uniformBuf = device.createBuffer({
+      size: 32,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
     _bindGroup = device.createBindGroup({
       layout: _pipeline.getBindGroupLayout(0),
       entries: [{ binding: 0, resource: { buffer: _uniformBuf } }],
     });
     _vertexBuf = device.createBuffer({
-      size: 4 * 1024 * 1024, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+      size: 4 * 1024 * 1024,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
     });
     return true;
   }
@@ -212,9 +231,17 @@
   // submitting once per segment (§6 requirement).
   function drawSegment(seg) {
     if (!seg) return;
-    const isAaOff = seg.aaMode === 'off' || seg.aaMode === 'none';
-    const verts = segmentVerts(seg.x0, seg.y0, seg.x1, seg.y1, seg.r0, seg.r1,
-      Math.max(seg.alpha0, seg.alpha1), isAaOff);
+    const isAaOff = seg.aaMode === "off" || seg.aaMode === "none";
+    const verts = segmentVerts(
+      seg.x0,
+      seg.y0,
+      seg.x1,
+      seg.y1,
+      seg.r0,
+      seg.r1,
+      Math.max(seg.alpha0, seg.alpha1),
+      isAaOff,
+    );
     _pendingVerts.push.apply(_pendingVerts, verts);
   }
 
@@ -231,14 +258,21 @@
       _vertexBuf.destroy();
       let sz = _vertexBuf.size;
       while (sz < bytesNeeded) sz *= 2;
-      _vertexBuf = _device.createBuffer({ size: sz, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+      _vertexBuf = _device.createBuffer({
+        size: sz,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+      });
     }
     _device.queue.writeBuffer(_vertexBuf, 0, data);
     const encoder = _device.createCommandEncoder();
     const pass = encoder.beginRenderPass({
-      colorAttachments: [{
-        view: renderPassTarget, loadOp: 'load', storeOp: 'store',
-      }],
+      colorAttachments: [
+        {
+          view: renderPassTarget,
+          loadOp: "load",
+          storeOp: "store",
+        },
+      ],
     });
     pass.setPipeline(_pipeline);
     pass.setBindGroup(0, _bindGroup);
@@ -250,13 +284,18 @@
   }
 
   const HardRoundCapsuleGPUExports = {
-    STROKE_SHADER_WGSL, segmentVerts, attach, isAvailable, drawSegment, flush,
+    STROKE_SHADER_WGSL,
+    segmentVerts,
+    attach,
+    isAvailable,
+    drawSegment,
+    flush,
   };
 
-  if (typeof module !== 'undefined' && module.exports) {
+  if (typeof module !== "undefined" && module.exports) {
     module.exports = HardRoundCapsuleGPUExports;
   }
-  if (typeof root !== 'undefined') {
+  if (typeof root !== "undefined") {
     root.HardRoundCapsuleGPU = HardRoundCapsuleGPUExports;
   }
-})(typeof window !== 'undefined' ? window : globalThis);
+})(typeof window !== "undefined" ? window : globalThis);

@@ -57,15 +57,16 @@
 // owned elsewhere, per the same boundary prototype-stroke-core.js already
 // documents).
 
-'use strict';
+"use strict";
 
 (function (root) {
-  const CapsuleMath = (typeof module !== 'undefined' && module.exports)
-    ? require('./hard-round-capsule-math.js')
-    : root.HardRoundCapsuleMath;
+  const CapsuleMath =
+    typeof module !== "undefined" && module.exports
+      ? require("./hard-round-capsule-math.js")
+      : root.HardRoundCapsuleMath;
 
   const DEFAULT_SS = 4; // backing-store supersample factor, ported verbatim
-                          // from prototype/prototype.html's `const SS = 4`.
+  // from prototype/prototype.html's `const SS = 4`.
 
   // ---------------------------------------------------------------------
   // CPU path
@@ -121,7 +122,9 @@
       this._nextStationLaneId = 1;
       this._coverageTileSize = 16;
       this._coverageTileCols = Math.ceil(this.bw / this._coverageTileSize);
-      this._coverageFullCounts = new Uint16Array(this._coverageTileCols * Math.ceil(this.bh / this._coverageTileSize));
+      this._coverageFullCounts = new Uint16Array(
+        this._coverageTileCols * Math.ceil(this.bh / this._coverageTileSize),
+      );
     }
 
     reallocate(width, height, ss) {
@@ -137,15 +140,21 @@
       this._dirty = null;
       this._strokeDirty = null;
       this._coverageTileCols = Math.ceil(this.bw / this._coverageTileSize);
-      this._coverageFullCounts = new Uint16Array(this._coverageTileCols * Math.ceil(this.bh / this._coverageTileSize));
+      this._coverageFullCounts = new Uint16Array(
+        this._coverageTileCols * Math.ceil(this.bh / this._coverageTileSize),
+      );
     }
 
     _ensureStorage() {
       if (this.coverage && this._resolvedAlpha) return false;
       this.coverage = new Float32Array(this.bw * this.bh);
       this._resolvedAlpha = new Uint8ClampedArray(this.w * this.h);
-      if (typeof window !== 'undefined' && window.BrushDebugPerf && window.BrushPerfNote) {
-        window.BrushPerfNote('hard-round-cpu-allocation', {
+      if (
+        typeof window !== "undefined" &&
+        window.BrushDebugPerf &&
+        window.BrushPerfNote
+      ) {
+        window.BrushPerfNote("hard-round-cpu-allocation", {
           bytes: this.coverage.byteLength + this._resolvedAlpha.byteLength,
         });
       }
@@ -153,8 +162,11 @@
     }
 
     reset() {
-      const allocated=this._ensureStorage();
-      if(!allocated){this.coverage.fill(0);this._resolvedAlpha.fill(0);}
+      const allocated = this._ensureStorage();
+      if (!allocated) {
+        this.coverage.fill(0);
+        this._resolvedAlpha.fill(0);
+      }
       this._dirty = null;
       this._strokeDirty = null;
       this._axisHintDx = 0;
@@ -168,18 +180,21 @@
 
     _markOutputPixelDirty(ox, oy) {
       const ss = this.ss;
-      const sx = ox * ss, sy = oy * ss, ex = sx + ss, ey = sy + ss;
-      this._unionDirtyBounds('_dirty',sx,sy,ex,ey);
-      this._unionDirtyBounds('_strokeDirty',sx,sy,ex,ey);
+      const sx = ox * ss,
+        sy = oy * ss,
+        ex = sx + ss,
+        ey = sy + ss;
+      this._unionDirtyBounds("_dirty", sx, sy, ex, ey);
+      this._unionDirtyBounds("_strokeDirty", sx, sy, ex, ey);
     }
 
     _markBackingDirty(sx, sy, ex, ey) {
       if (ex <= sx || ey <= sy) return;
-      this._unionDirtyBounds('_dirty',sx,sy,ex,ey);
-      this._unionDirtyBounds('_strokeDirty',sx,sy,ex,ey);
+      this._unionDirtyBounds("_dirty", sx, sy, ex, ey);
+      this._unionDirtyBounds("_strokeDirty", sx, sy, ex, ey);
     }
 
-    _unionDirtyBounds(field,sx,sy,ex,ey) {
+    _unionDirtyBounds(field, sx, sy, ex, ey) {
       if (!this[field]) this[field] = { sx, sy, ex, ey };
       else {
         if (sx < this[field].sx) this[field].sx = sx;
@@ -190,10 +205,14 @@
     }
 
     getStrokeDirtyRegion() {
-      const d=this._strokeDirty;if(!d)return null;const ss=this.ss;
-      const x=Math.max(0,Math.floor(d.sx/ss)),y=Math.max(0,Math.floor(d.sy/ss));
-      const ex=Math.min(this.w,Math.ceil(d.ex/ss)),ey=Math.min(this.h,Math.ceil(d.ey/ss));
-      return ex>x&&ey>y?{x,y,width:ex-x,height:ey-y}:null;
+      const d = this._strokeDirty;
+      if (!d) return null;
+      const ss = this.ss;
+      const x = Math.max(0, Math.floor(d.sx / ss)),
+        y = Math.max(0, Math.floor(d.sy / ss));
+      const ex = Math.min(this.w, Math.ceil(d.ex / ss)),
+        ey = Math.min(this.h, Math.ceil(d.ey / ss));
+      return ex > x && ey > y ? { x, y, width: ex - x, height: ey - y } : null;
     }
 
     _removeStationOwner(stationKey, winner) {
@@ -209,9 +228,13 @@
       const previous = this._stationWinners.get(stationKey);
       const eps = 1e-12;
       candidate.contenders = previous ? (previous.contenders || 1) + 1 : 1;
-      if (previous && (candidate.distance > previous.distance + eps ||
-        (Math.abs(candidate.distance - previous.distance) <= eps &&
-          (candidate.oy > previous.oy || (candidate.oy === previous.oy && candidate.ox >= previous.ox))))) {
+      if (
+        previous &&
+        (candidate.distance > previous.distance + eps ||
+          (Math.abs(candidate.distance - previous.distance) <= eps &&
+            (candidate.oy > previous.oy ||
+              (candidate.oy === previous.oy && candidate.ox >= previous.ox))))
+      ) {
         previous.contenders = candidate.contenders;
         return;
       }
@@ -219,27 +242,34 @@
       this._stationWinners.set(stationKey, candidate);
       const pixelKey = candidate.oy * this.w + candidate.ox;
       let owners = this._winnerPixels.get(pixelKey);
-      if (!owners) this._winnerPixels.set(pixelKey, owners = new Map());
+      if (!owners) this._winnerPixels.set(pixelKey, (owners = new Map()));
       owners.set(stationKey, candidate.alpha);
       this._markOutputPixelDirty(candidate.ox, candidate.oy);
     }
 
     _submitStationCandidate(axis, station, candidate) {
-      const bucketKey = axis + ':' + station;
+      const bucketKey = axis + ":" + station;
       let lanes = this._stationBuckets.get(bucketKey);
-      if (!lanes) this._stationBuckets.set(bucketKey, lanes = []);
+      if (!lanes) this._stationBuckets.set(bucketKey, (lanes = []));
       // Candidate pixels one row/column apart can represent the two
       // nearest raster choices for one subpixel centerline. Group by the
       // projected centerline itself, not travel direction or chosen pixel.
-      let lane = null, bestDelta = Infinity;
+      let lane = null,
+        bestDelta = Infinity;
       for (const item of lanes) {
-        const delta = Math.abs(item.centerlineMinor - candidate.centerlineMinor);
+        const delta = Math.abs(
+          item.centerlineMinor - candidate.centerlineMinor,
+        );
         if (delta <= this.ss * 0.5 + 1e-9 && delta < bestDelta) {
-          lane = item; bestDelta = delta;
+          lane = item;
+          bestDelta = delta;
         }
       }
       if (!lane) {
-        lane = { key: 'lane:' + this._nextStationLaneId++, centerlineMinor: candidate.centerlineMinor };
+        lane = {
+          key: "lane:" + this._nextStationLaneId++,
+          centerlineMinor: candidate.centerlineMinor,
+        };
         lanes.push(lane);
       }
       this._setStationWinner(lane.key, candidate);
@@ -256,8 +286,9 @@
       // TEMP DIAGNOSTIC (Phase 11A.23): log exactly what CpuBackend
       // receives, in call order, before any of this function's own math
       // runs. Read-only -- appends to window.HardRoundSegmentLog.cpu only.
-      if (typeof window !== 'undefined' && window.HardRoundSegmentLog) {
-        if (!seg.__hrDebugId) seg.__hrDebugId = ++window.HardRoundSegmentLog._nextId;
+      if (typeof window !== "undefined" && window.HardRoundSegmentLog) {
+        if (!seg.__hrDebugId)
+          seg.__hrDebugId = ++window.HardRoundSegmentLog._nextId;
         window.HardRoundSegmentLog.cpu.push({
           index: window.HardRoundSegmentLog.cpu.length,
           identity: seg.__hrDebugId,
@@ -282,12 +313,16 @@
         });
       }
       const ss = this.ss;
-      const x0 = seg.x0 * ss, y0 = seg.y0 * ss, x1 = seg.x1 * ss, y1 = seg.y1 * ss;
-      const r0 = seg.r0 * ss, r1 = seg.r1 * ss;
+      const x0 = seg.x0 * ss,
+        y0 = seg.y0 * ss,
+        x1 = seg.x1 * ss,
+        y1 = seg.y1 * ss;
+      const r0 = seg.r0 * ss,
+        r1 = seg.r1 * ss;
       const alpha0 = seg.alpha0 == null ? 1 : seg.alpha0;
       const alpha1 = seg.alpha1 == null ? 1 : seg.alpha1;
       const b = CapsuleMath.capsuleBounds(x0, y0, x1, y1, r0, r1);
-      const isAaOff = seg.aaMode === 'off' || seg.aaMode === 'none';
+      const isAaOff = seg.aaMode === "off" || seg.aaMode === "none";
       // Phase 9E.4: whether this segment carries the stroke's true open
       // start/end (set by the caller -- see hard-round-adapter.js /
       // brush-engine.js's _hardRoundStampSegments) so the tip test below
@@ -305,10 +340,12 @@
       {
         const rawLen = Math.sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
         if (rawLen > 1e-9) {
-          const ndx = (x1 - x0) / rawLen, ndy = (y1 - y0) / rawLen;
+          const ndx = (x1 - x0) / rawLen,
+            ndy = (y1 - y0) / rawLen;
           const w = 0.25; // smoothing weight -- see comment above
           if (this._axisHintDx === 0 && this._axisHintDy === 0) {
-            this._axisHintDx = ndx; this._axisHintDy = ndy;
+            this._axisHintDx = ndx;
+            this._axisHintDy = ndy;
           } else {
             this._axisHintDx = this._axisHintDx * (1 - w) + ndx * w;
             this._axisHintDy = this._axisHintDy * (1 - w) + ndy * w;
@@ -323,8 +360,10 @@
       // would silently reintroduce fractional/gray resolved pixels right
       // where 9E.2 was trying to eliminate them.
       const extraMargin = isAaOff ? Math.ceil(ss * Math.SQRT1_2) : 0;
-      const sx = Math.max(0, b.sx - extraMargin), sy = Math.max(0, b.sy - extraMargin);
-      const ex = Math.min(this.bw, b.ex + extraMargin), ey = Math.min(this.bh, b.ey + extraMargin);
+      const sx = Math.max(0, b.sx - extraMargin),
+        sy = Math.max(0, b.sy - extraMargin);
+      const ex = Math.min(this.bw, b.ex + extraMargin),
+        ey = Math.min(this.bh, b.ey + extraMargin);
       if (ex <= sx || ey <= sy) return;
 
       const cov = this.coverage;
@@ -365,57 +404,113 @@
       // cut off mid-way and left non-uniform).
       if (isAaOff) {
         const ss = this.ss;
-        const obx0 = Math.floor(sx / ss), oby0 = Math.floor(sy / ss);
-        const obx1 = Math.ceil(ex / ss), oby1 = Math.ceil(ey / ss);
+        const obx0 = Math.floor(sx / ss),
+          oby0 = Math.floor(sy / ss);
+        const obx1 = Math.ceil(ex / ss),
+          oby1 = Math.ceil(ey / ss);
         for (let oy = oby0; oy < oby1; oy++) {
-          const by0 = oy * ss, by1 = Math.min(this.bh, by0 + ss);
+          const by0 = oy * ss,
+            by1 = Math.min(this.bh, by0 + ss);
           if (by1 <= 0 || by0 >= this.bh) continue;
           const wy = by0 + ss * 0.5; // output pixel's center, in backing-store units
           for (let ox = obx0; ox < obx1; ox++) {
-            const bx0 = ox * ss, bx1 = Math.min(this.bw, bx0 + ss);
+            const bx0 = ox * ss,
+              bx1 = Math.min(this.bw, bx0 + ss);
             if (bx1 <= 0 || bx0 >= this.bw) continue;
             let blockSaturated = true;
-            for (let py = Math.max(0, by0); py < Math.min(this.bh, by1) && blockSaturated; py++) {
+            for (
+              let py = Math.max(0, by0);
+              py < Math.min(this.bh, by1) && blockSaturated;
+              py++
+            ) {
               const rowOff = py * bw;
-              for (let px = Math.max(0, bx0); px < Math.min(this.bw, bx1); px++) {
-                if (cov[rowOff + px] < maxStoredAlpha) { blockSaturated = false; break; }
+              for (
+                let px = Math.max(0, bx0);
+                px < Math.min(this.bw, bx1);
+                px++
+              ) {
+                if (cov[rowOff + px] < maxStoredAlpha) {
+                  blockSaturated = false;
+                  break;
+                }
               }
             }
             if (blockSaturated) continue;
             const wx = bx0 + ss * 0.5;
-            const axis = CapsuleMath.capsuleAxisDistance(wx, wy, x0, y0, x1, y1);
+            const axis = CapsuleMath.capsuleAxisDistance(
+              wx,
+              wy,
+              x0,
+              y0,
+              x1,
+              y1,
+            );
             const stationCandidate = CapsuleMath.floorRegimeStationCandidate(
-              wx, wy, x0, y0, r0, x1, y1, r1, ss, isFirstSegment, isLastSegment,
-              this._axisHintDx, this._axisHintDy
+              wx,
+              wy,
+              x0,
+              y0,
+              r0,
+              x1,
+              y1,
+              r1,
+              ss,
+              isFirstSegment,
+              isLastSegment,
+              this._axisHintDx,
+              this._axisHintDy,
             );
             if (stationCandidate) {
               if (stationCandidate.accepted) {
                 const segAlpha = alpha0 + (alpha1 - alpha0) * axis.h;
-                const station = stationCandidate.majorAxis === 'x' ? ox : oy;
-                this._submitStationCandidate(stationCandidate.majorAxis, station, {
-                  ox, oy, alpha: segAlpha, distance: stationCandidate.centerlineDistanceSq,
-                  centerlineMinor: stationCandidate.centerlineMinor,
-                });
+                const station = stationCandidate.majorAxis === "x" ? ox : oy;
+                this._submitStationCandidate(
+                  stationCandidate.majorAxis,
+                  station,
+                  {
+                    ox,
+                    oy,
+                    alpha: segAlpha,
+                    distance: stationCandidate.centerlineDistanceSq,
+                    centerlineMinor: stationCandidate.centerlineMinor,
+                  },
+                );
               }
               continue;
             }
             const cov01 = CapsuleMath.pixelCoveredByCapsuleForStroke(
-              wx, wy, x0, y0, r0, x1, y1, r1, ss, isFirstSegment, isLastSegment,
-              this._axisHintDx, this._axisHintDy
+              wx,
+              wy,
+              x0,
+              y0,
+              r0,
+              x1,
+              y1,
+              r1,
+              ss,
+              isFirstSegment,
+              isLastSegment,
+              this._axisHintDx,
+              this._axisHintDy,
             );
             if (cov01 <= 0) continue;
             const segAlpha = alpha0 + (alpha1 - alpha0) * axis.h;
             const c = cov01 * segAlpha;
             if (c <= 0) continue;
-            const fillY0 = Math.max(0, by0), fillY1 = Math.min(this.bh, by1);
-            const fillX0 = Math.max(0, bx0), fillX1 = Math.min(this.bw, bx1);
+            const fillY0 = Math.max(0, by0),
+              fillY1 = Math.min(this.bh, by1);
+            const fillX0 = Math.max(0, bx0),
+              fillX1 = Math.min(this.bw, bx1);
             let changed = false;
             for (let py = fillY0; py < fillY1; py++) {
               const rowOff = py * bw;
               for (let px = fillX0; px < fillX1; px++) {
                 const idx = rowOff + px;
                 const next = Math.fround(c);
-                if (next > cov[idx]) { cov[idx] = next; changed = true; }
+                if (next > cov[idx]) {
+                  cov[idx] = next;
+                  changed = true;
+                }
               }
             }
             if (changed) this._markOutputPixelDirty(ox, oy);
@@ -423,16 +518,32 @@
         }
         return;
       }
-      let changedSx = ex, changedSy = ey, changedEx = sx, changedEy = sy;
-      const tileSize = this._coverageTileSize, tileCols = this._coverageTileCols;
+      let changedSx = ex,
+        changedSy = ey,
+        changedEx = sx,
+        changedEy = sy;
+      const tileSize = this._coverageTileSize,
+        tileCols = this._coverageTileCols;
       const fullCounts = this._coverageFullCounts;
-      const maxAaBand = CapsuleMath.aaBand(r0, r1, x0, y0, x1, y1) * CapsuleMath.aaModeScale(seg.aaMode);
+      const maxAaBand =
+        CapsuleMath.aaBand(r0, r1, x0, y0, x1, y1) *
+        CapsuleMath.aaModeScale(seg.aaMode);
       const maxCoverageRadius = Math.max(r0, r1) + maxAaBand * 0.5;
       const guaranteedOpaqueCoreRadius = Math.min(r0, r1) - maxAaBand * 0.5;
-      for (let tileY = Math.floor(sy / tileSize); tileY <= Math.floor((ey - 1) / tileSize); tileY++) {
-        const py0 = Math.max(sy, tileY * tileSize), py1 = Math.min(ey, (tileY + 1) * tileSize);
-        for (let tileX = Math.floor(sx / tileSize); tileX <= Math.floor((ex - 1) / tileSize); tileX++) {
-          const px0 = Math.max(sx, tileX * tileSize), px1 = Math.min(ex, (tileX + 1) * tileSize);
+      for (
+        let tileY = Math.floor(sy / tileSize);
+        tileY <= Math.floor((ey - 1) / tileSize);
+        tileY++
+      ) {
+        const py0 = Math.max(sy, tileY * tileSize),
+          py1 = Math.min(ey, (tileY + 1) * tileSize);
+        for (
+          let tileX = Math.floor(sx / tileSize);
+          tileX <= Math.floor((ex - 1) / tileSize);
+          tileX++
+        ) {
+          const px0 = Math.max(sx, tileX * tileSize),
+            px1 = Math.min(ex, (tileX + 1) * tileSize);
           const tileW = Math.min(tileSize, this.bw - tileX * tileSize);
           const tileH = Math.min(tileSize, this.bh - tileY * tileSize);
           const tileIndex = tileY * tileCols + tileX;
@@ -444,15 +555,27 @@
           const tileCenterX = tileX * tileSize + tileW * 0.5;
           const tileCenterY = tileY * tileSize + tileH * 0.5;
           const tileHalfDiag = Math.hypot(tileW, tileH) * 0.5;
-          const tileAxisDistance = CapsuleMath.capsuleAxisDistance(tileCenterX, tileCenterY, x0, y0, x1, y1).dist;
+          const tileAxisDistance = CapsuleMath.capsuleAxisDistance(
+            tileCenterX,
+            tileCenterY,
+            x0,
+            y0,
+            x1,
+            y1,
+          ).dist;
           if (tileAxisDistance > maxCoverageRadius + tileHalfDiag) continue;
           // For an opaque constant-alpha segment, a tile wholly inside the
           // guaranteed coverage=1 core has one exact result for every
           // sample. Bulk-fill its rows instead of repeating identical SDF,
           // sqrt, interpolation, and max-blend work per backing pixel.
-          if (maxStoredAlpha >= 1 && alpha0 === 1 && alpha1 === 1 &&
-              tileAxisDistance + tileHalfDiag <= guaranteedOpaqueCoreRadius) {
-            for (let py = py0; py < py1; py++) cov.fill(1, py * bw + px0, py * bw + px1);
+          if (
+            maxStoredAlpha >= 1 &&
+            alpha0 === 1 &&
+            alpha1 === 1 &&
+            tileAxisDistance + tileHalfDiag <= guaranteedOpaqueCoreRadius
+          ) {
+            for (let py = py0; py < py1; py++)
+              cov.fill(1, py * bw + px0, py * bw + px1);
             fullCounts[tileIndex] = tileW * tileH;
             if (px0 < changedSx) changedSx = px0;
             if (py0 < changedSy) changedSy = py0;
@@ -471,17 +594,33 @@
               // constant. capsuleCoverage() already computes the axis
               // projection internally, so only compute a separate one when
               // alpha actually needs h interpolation.
-              const axis = alpha0 === alpha1 ? null : CapsuleMath.capsuleAxisDistance(wx, wy, x0, y0, x1, y1);
-          // Phase 9E.1: seg.aaMode (Off/Weak/Medium/Strong) now actually
-          // reaches the rasterizer -- see hard-round-capsule-math.js's
-          // aaModeScale for the width progression this drives.
-              const cov01 = CapsuleMath.capsuleCoverage(wx, wy, x0, y0, r0, x1, y1, r1, seg.aaMode, this.ss);
+              const axis =
+                alpha0 === alpha1
+                  ? null
+                  : CapsuleMath.capsuleAxisDistance(wx, wy, x0, y0, x1, y1);
+              // Phase 9E.1: seg.aaMode (Off/Weak/Medium/Strong) now actually
+              // reaches the rasterizer -- see hard-round-capsule-math.js's
+              // aaModeScale for the width progression this drives.
+              const cov01 = CapsuleMath.capsuleCoverage(
+                wx,
+                wy,
+                x0,
+                y0,
+                r0,
+                x1,
+                y1,
+                r1,
+                seg.aaMode,
+                this.ss,
+              );
               if (cov01 <= 0) continue;
-          // Alpha (Flow/Opacity) is interpolated along the same `h` param
-          // as radius, then folded into the accumulated value -- matches
-          // the GPU fragment shader's `in.alpha * cov * subpixelArea`
-          // (see hard-round-capsule-gpu.js's STROKE_SHADER_WGSL `fs`).
-              const segAlpha = axis ? alpha0 + (alpha1 - alpha0) * axis.h : alpha0;
+              // Alpha (Flow/Opacity) is interpolated along the same `h` param
+              // as radius, then folded into the accumulated value -- matches
+              // the GPU fragment shader's `in.alpha * cov * subpixelArea`
+              // (see hard-round-capsule-gpu.js's STROKE_SHADER_WGSL `fs`).
+              const segAlpha = axis
+                ? alpha0 + (alpha1 - alpha0) * axis.h
+                : alpha0;
               const next = Math.fround(cov01 * segAlpha);
               if (next <= 0) continue;
               if (next > cov[idx]) {
@@ -533,7 +672,15 @@
       const oy1 = Math.min(this.h, Math.ceil(d.ey / ss));
       this._dirty = null;
       if (ox1 <= ox0 || oy1 <= oy0) return false;
-      this._resolveRegion(outCtx, rgb, composite, ox0, oy0, ox1 - ox0, oy1 - oy0);
+      this._resolveRegion(
+        outCtx,
+        rgb,
+        composite,
+        ox0,
+        oy0,
+        ox1 - ox0,
+        oy1 - oy0,
+      );
       return { x: ox0, y: oy0, width: ox1 - ox0, height: oy1 - oy0 };
     }
 
@@ -544,15 +691,20 @@
     // the two never risk producing different pixel values for the same
     // coverage data.
     _resolveRegion(outCtx, rgb, composite, ox, oy, ow, oh) {
-      const timingEnabled = typeof window !== 'undefined' && !!window.HardRoundDebugSmartPointerupTiming;
+      const timingEnabled =
+        typeof window !== "undefined" &&
+        !!window.HardRoundDebugSmartPointerupTiming;
       const timingStart = timingEnabled ? performance.now() : 0;
-      const ss = this.ss, bw = this.bw;
+      const ss = this.ss,
+        bw = this.bw;
       const cov = this.coverage;
       const img = outCtx.createImageData(ow, oh);
       const imageDataMs = timingEnabled ? performance.now() - timingStart : 0;
       const d = img.data;
-      const isErase = composite === 'erase';
-      const cr = isErase ? 0 : rgb[0], cg = isErase ? 0 : rgb[1], cb = isErase ? 0 : rgb[2];
+      const isErase = composite === "erase";
+      const cr = isErase ? 0 : rgb[0],
+        cg = isErase ? 0 : rgb[1],
+        cb = isErase ? 0 : rgb[2];
       const norm = 1 / (ss * ss);
       let p = 0;
       for (let y = 0; y < oh; y++) {
@@ -566,27 +718,75 @@
           }
           let winnerAlpha = 0;
           const owners = this._winnerPixels.get((oy + y) * this.w + (ox + x));
-          if (owners) for (const alpha of owners.values()) if (alpha > winnerAlpha) winnerAlpha = alpha;
+          if (owners)
+            for (const alpha of owners.values())
+              if (alpha > winnerAlpha) winnerAlpha = alpha;
           const a = Math.max(0, Math.min(1, Math.max(sum * norm, winnerAlpha)));
-          this._resolvedAlpha[(oy+y)*this.w+ox+x]=Math.round(a*255);
-          d[p] = cr; d[p + 1] = cg; d[p + 2] = cb; d[p + 3] = Math.round(a * 255);
+          this._resolvedAlpha[(oy + y) * this.w + ox + x] = Math.round(a * 255);
+          d[p] = cr;
+          d[p + 1] = cg;
+          d[p + 2] = cb;
+          d[p + 3] = Math.round(a * 255);
         }
       }
-      const loopMs = timingEnabled ? performance.now() - timingStart - imageDataMs : 0;
+      const loopMs = timingEnabled
+        ? performance.now() - timingStart - imageDataMs
+        : 0;
       const putStarted = timingEnabled ? performance.now() : 0;
       outCtx.putImageData(img, ox, oy);
       if (timingEnabled) {
-        const entry={width:ow,height:oh,pixels:ow*oh,backingSamples:ow*oh*ss*ss,imageDataMs,resolveLoopMs:loopMs,putImageDataMs:performance.now()-putStarted,totalMs:performance.now()-timingStart};
-        const log=window.HardRoundCpuResolveTimingLog||(window.HardRoundCpuResolveTimingLog=[]);log.push(entry);if(log.length>20)log.shift();
+        const entry = {
+          width: ow,
+          height: oh,
+          pixels: ow * oh,
+          backingSamples: ow * oh * ss * ss,
+          imageDataMs,
+          resolveLoopMs: loopMs,
+          putImageDataMs: performance.now() - putStarted,
+          totalMs: performance.now() - timingStart,
+        };
+        const log =
+          window.HardRoundCpuResolveTimingLog ||
+          (window.HardRoundCpuResolveTimingLog = []);
+        log.push(entry);
+        if (log.length > 20) log.shift();
       }
     }
 
-    copyResolvedMaskRegion(rect,rgb,composite) {
-      if(!rect)return null;const x=Math.max(0,Math.floor(rect.x)),y=Math.max(0,Math.floor(rect.y));
-      const width=Math.max(0,Math.min(this.w-x,Math.ceil(rect.width==null?rect.w:rect.width))),height=Math.max(0,Math.min(this.h-y,Math.ceil(rect.height==null?rect.h:rect.height)));
-      if(!width||!height)return null;const data=new Uint8ClampedArray(width*height*4),erase=composite==='erase';
-      const cr=erase?0:rgb[0],cg=erase?0:rgb[1],cb=erase?0:rgb[2];let p=0;
-      for(let row=0;row<height;row++){let source=(y+row)*this.w+x;for(let col=0;col<width;col++,source++,p+=4){data[p]=cr;data[p+1]=cg;data[p+2]=cb;data[p+3]=this._resolvedAlpha[source];}}
+    copyResolvedMaskRegion(rect, rgb, composite) {
+      if (!rect) return null;
+      const x = Math.max(0, Math.floor(rect.x)),
+        y = Math.max(0, Math.floor(rect.y));
+      const width = Math.max(
+          0,
+          Math.min(
+            this.w - x,
+            Math.ceil(rect.width == null ? rect.w : rect.width),
+          ),
+        ),
+        height = Math.max(
+          0,
+          Math.min(
+            this.h - y,
+            Math.ceil(rect.height == null ? rect.h : rect.height),
+          ),
+        );
+      if (!width || !height) return null;
+      const data = new Uint8ClampedArray(width * height * 4),
+        erase = composite === "erase";
+      const cr = erase ? 0 : rgb[0],
+        cg = erase ? 0 : rgb[1],
+        cb = erase ? 0 : rgb[2];
+      let p = 0;
+      for (let row = 0; row < height; row++) {
+        let source = (y + row) * this.w + x;
+        for (let col = 0; col < width; col++, source++, p += 4) {
+          data[p] = cr;
+          data[p + 1] = cg;
+          data[p + 2] = cb;
+          data[p + 3] = this._resolvedAlpha[source];
+        }
+      }
       return data;
     }
   }
@@ -606,54 +806,114 @@
   let _hardRoundGpuPresenterPromise = null;
   let _hardRoundSharedPresentSequence = 0;
   let _hardRoundPreviewFlightSubmitSequence = 0;
-  function previewFlightCurrent(meta,renderer) {
-    if(!meta||meta.strokeId==null)return true;
-    if(typeof window==='undefined')return true;
-    if(typeof window.HardRoundIsLivePreviewCurrent==='function')return !!window.HardRoundIsLivePreviewCurrent(meta.strokeId,meta.previewGeneration,renderer);
-    return window.HardRoundOverlayOwnerStrokeId===meta.strokeId;
+  function previewFlightCurrent(meta, renderer) {
+    if (!meta || meta.strokeId == null) return true;
+    if (typeof window === "undefined") return true;
+    if (typeof window.HardRoundIsLivePreviewCurrent === "function")
+      return !!window.HardRoundIsLivePreviewCurrent(
+        meta.strokeId,
+        meta.previewGeneration,
+        renderer,
+      );
+    return window.HardRoundOverlayOwnerStrokeId === meta.strokeId;
   }
   function previewFlightTrace(entry) {
-    if(typeof window==='undefined'||!window.HardRoundDebugPreviewFlightOwnership)return;
-    const log=window.HardRoundPreviewFlightOwnershipLog||(window.HardRoundPreviewFlightOwnershipLog=[]);
-    log.push(entry);if(log.length>100)log.splice(0,log.length-100);
-  }
-  function presentationLifecycleTrace(event,detail) {
-    if(typeof window==='undefined'||!window.HardRoundDebugPresentationLifecycle||typeof window.HardRoundPresentationLifecycleNote!=='function')return;
-    window.HardRoundPresentationLifecycleNote(event,detail||{});
-  }
-  function sharedPresentTrace(event,detail) {
-    if (typeof window === 'undefined' || !window.HardRoundDebugSharedPresentation) return;
-    const log = window.HardRoundSharedPresentationLog || (window.HardRoundSharedPresentationLog = []);
-    log.push(Object.assign({
-      event,
-      time: performance.now(),
-      sharedPresentSequence: ++_hardRoundSharedPresentSequence,
-      overlayOwner: window.HardRoundOverlayOwnerStrokeId == null ? null : window.HardRoundOverlayOwnerStrokeId,
-      overlayVisibilityOwnerStrokeId: window.HardRoundOverlayVisibilityOwnerStrokeId == null ? null : window.HardRoundOverlayVisibilityOwnerStrokeId,
-      presentedStrokeIdBeforeSubmit: window.HardRoundOverlayPresentedStrokeId == null ? null : window.HardRoundOverlayPresentedStrokeId,
-    }, detail || {}));
+    if (
+      typeof window === "undefined" ||
+      !window.HardRoundDebugPreviewFlightOwnership
+    )
+      return;
+    const log =
+      window.HardRoundPreviewFlightOwnershipLog ||
+      (window.HardRoundPreviewFlightOwnershipLog = []);
+    log.push(entry);
     if (log.length > 100) log.splice(0, log.length - 100);
   }
-  if (typeof window !== 'undefined') {
-    if (typeof window.HardRoundDebugSharedPresentation === 'undefined') window.HardRoundDebugSharedPresentation = false;
-    window.HardRoundAnalyzeSharedPresentation = function() {
+  function presentationLifecycleTrace(event, detail) {
+    if (
+      typeof window === "undefined" ||
+      !window.HardRoundDebugPresentationLifecycle ||
+      typeof window.HardRoundPresentationLifecycleNote !== "function"
+    )
+      return;
+    window.HardRoundPresentationLifecycleNote(event, detail || {});
+  }
+  function sharedPresentTrace(event, detail) {
+    if (
+      typeof window === "undefined" ||
+      !window.HardRoundDebugSharedPresentation
+    )
+      return;
+    const log =
+      window.HardRoundSharedPresentationLog ||
+      (window.HardRoundSharedPresentationLog = []);
+    log.push(
+      Object.assign(
+        {
+          event,
+          time: performance.now(),
+          sharedPresentSequence: ++_hardRoundSharedPresentSequence,
+          overlayOwner:
+            window.HardRoundOverlayOwnerStrokeId == null
+              ? null
+              : window.HardRoundOverlayOwnerStrokeId,
+          overlayVisibilityOwnerStrokeId:
+            window.HardRoundOverlayVisibilityOwnerStrokeId == null
+              ? null
+              : window.HardRoundOverlayVisibilityOwnerStrokeId,
+          presentedStrokeIdBeforeSubmit:
+            window.HardRoundOverlayPresentedStrokeId == null
+              ? null
+              : window.HardRoundOverlayPresentedStrokeId,
+        },
+        detail || {},
+      ),
+    );
+    if (log.length > 100) log.splice(0, log.length - 100);
+  }
+  if (typeof window !== "undefined") {
+    if (typeof window.HardRoundDebugSharedPresentation === "undefined")
+      window.HardRoundDebugSharedPresentation = false;
+    window.HardRoundAnalyzeSharedPresentation = function () {
       const log = (window.HardRoundSharedPresentationLog || []).slice();
-      const submissions = log.filter(entry => entry.event === 'sharedPresentSubmit');
-      const blankDuringBridge = submissions.filter(entry => entry.sharedPresentWasBlank && entry.sharedPresentDuringBridge);
+      const submissions = log.filter(
+        (entry) => entry.event === "sharedPresentSubmit",
+      );
+      const blankDuringBridge = submissions.filter(
+        (entry) =>
+          entry.sharedPresentWasBlank && entry.sharedPresentDuringBridge,
+      );
       return {
         submissionCount: submissions.length,
-        blankSubmissionCount: submissions.filter(entry => entry.sharedPresentWasBlank).length,
+        blankSubmissionCount: submissions.filter(
+          (entry) => entry.sharedPresentWasBlank,
+        ).length,
         blankDuringBridgeCount: blankDuringBridge.length,
         firstBlankDuringBridge: blankDuringBridge[0] || null,
-        contextConfigureCount: log.filter(entry => entry.event === 'contextConfigure').length,
-        skippedBlankWarmupCount: log.filter(entry => entry.event === 'sharedBlankPresentSuppressed').length,
+        contextConfigureCount: log.filter(
+          (entry) => entry.event === "contextConfigure",
+        ).length,
+        skippedBlankWarmupCount: log.filter(
+          (entry) => entry.event === "sharedBlankPresentSuppressed",
+        ).length,
         log,
       };
     };
-    if(typeof window.HardRoundDebugPreviewFlightOwnership==='undefined')window.HardRoundDebugPreviewFlightOwnership=false;
-    window.HardRoundAnalyzePreviewFlightOwnership=function(){
-      const log=(window.HardRoundPreviewFlightOwnershipLog||[]).slice();
-      return {count:log.length,staleBeforeSubmitCount:log.filter(entry=>entry.staleBeforeSubmit).length,staleAfterWorkDoneCount:log.filter(entry=>entry.staleAfterWorkDone).length,staleSubmissions:log.filter(entry=>entry.staleAfterWorkDone&&!entry.staleBeforeSubmit),log};
+    if (typeof window.HardRoundDebugPreviewFlightOwnership === "undefined")
+      window.HardRoundDebugPreviewFlightOwnership = false;
+    window.HardRoundAnalyzePreviewFlightOwnership = function () {
+      const log = (window.HardRoundPreviewFlightOwnershipLog || []).slice();
+      return {
+        count: log.length,
+        staleBeforeSubmitCount: log.filter((entry) => entry.staleBeforeSubmit)
+          .length,
+        staleAfterWorkDoneCount: log.filter((entry) => entry.staleAfterWorkDone)
+          .length,
+        staleSubmissions: log.filter(
+          (entry) => entry.staleAfterWorkDone && !entry.staleBeforeSubmit,
+        ),
+        log,
+      };
     };
   }
   class HardRoundGpuPresenter {
@@ -671,66 +931,123 @@
     static acquire(width, height) {
       if (!_hardRoundGpuPresenterPromise) {
         const presenter = new HardRoundGpuPresenter();
-        _hardRoundGpuPresenterPromise = presenter.init(width, height).then(ok => ok ? presenter : null);
+        _hardRoundGpuPresenterPromise = presenter
+          .init(width, height)
+          .then((ok) => (ok ? presenter : null));
       }
-      return _hardRoundGpuPresenterPromise.then(presenter => {
+      return _hardRoundGpuPresenterPromise.then((presenter) => {
         if (presenter) presenter.ensureSize(width, height);
         return presenter;
       });
     }
 
     async init(width, height) {
-      if (typeof navigator === 'undefined' || !navigator.gpu) return false;
-      if (typeof window !== 'undefined' && window.DisplayBackend) {
-        if (!window.DisplayBackend.device && typeof window.DisplayBackend.initialize === 'function') {
-          try { await window.DisplayBackend.initialize(); } catch (_) {}
+      if (typeof navigator === "undefined" || !navigator.gpu) return false;
+      if (typeof window !== "undefined" && window.DisplayBackend) {
+        if (
+          !window.DisplayBackend.device &&
+          typeof window.DisplayBackend.initialize === "function"
+        ) {
+          try {
+            await window.DisplayBackend.initialize();
+          } catch (_) {}
         }
         if (window.DisplayBackend.device) {
           this.device = window.DisplayBackend.device;
         }
       }
       if (!this.device) {
-        const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+        const adapter = await navigator.gpu.requestAdapter({
+          powerPreference: "high-performance",
+        });
         if (!adapter) return false;
         this.device = await adapter.requestDevice();
       }
-      this.canvas = document.getElementById('hard-round-gpu-overlay') || document.createElement('canvas');
-      presentationLifecycleTrace('presentation-context-replacement',{canvasFoundInDom:!!document.getElementById('hard-round-gpu-overlay'),canvasConnected:this.canvas.isConnected,deviceReplaced:true,contextReplaced:true});
+      this.canvas =
+        document.getElementById("hard-round-gpu-overlay") ||
+        document.createElement("canvas");
+      presentationLifecycleTrace("presentation-context-replacement", {
+        canvasFoundInDom: !!document.getElementById("hard-round-gpu-overlay"),
+        canvasConnected: this.canvas.isConnected,
+        deviceReplaced: true,
+        contextReplaced: true,
+      });
       this.canvas.width = width;
       this.canvas.height = height;
-      this.context = this.canvas.getContext('webgpu');
+      this.context = this.canvas.getContext("webgpu");
       if (!this.context) return false;
       this.format = navigator.gpu.getPreferredCanvasFormat();
-      this.context.configure({ device: this.device, format: this.format, alphaMode: 'premultiplied' });
-      presentationLifecycleTrace('context-configure',{width,height,format:this.format,alphaMode:'premultiplied',configureSequence:this.configureCount+1});
-      if(typeof window!=='undefined'&&window.BrushDebugPerf&&window.BrushPerfNote)window.BrushPerfNote('hard-round-overlay-configured');
+      this.context.configure({
+        device: this.device,
+        format: this.format,
+        alphaMode: "premultiplied",
+      });
+      presentationLifecycleTrace("context-configure", {
+        width,
+        height,
+        format: this.format,
+        alphaMode: "premultiplied",
+        configureSequence: this.configureCount + 1,
+      });
+      if (
+        typeof window !== "undefined" &&
+        window.BrushDebugPerf &&
+        window.BrushPerfNote
+      )
+        window.BrushPerfNote("hard-round-overlay-configured");
       this.configureCount++;
-      sharedPresentTrace('contextConfigure',{contextConfigureCount:this.configureCount,contextConfigureStrokeId:typeof window!=='undefined'&&window.HardRoundOverlayOwnerStrokeId!=null?window.HardRoundOverlayOwnerStrokeId:null});
+      sharedPresentTrace("contextConfigure", {
+        contextConfigureCount: this.configureCount,
+        contextConfigureStrokeId:
+          typeof window !== "undefined" &&
+          window.HardRoundOverlayOwnerStrokeId != null
+            ? window.HardRoundOverlayOwnerStrokeId
+            : null,
+      });
       this.ready = true;
-      this.device.lost.then(() => {
-        this.ready = false;
-        this.lost = true;
-        if (_hardRoundGpuPresenterPromise) _hardRoundGpuPresenterPromise = null;
-      }).catch(() => {});
+      this.device.lost
+        .then(() => {
+          this.ready = false;
+          this.lost = true;
+          if (_hardRoundGpuPresenterPromise)
+            _hardRoundGpuPresenterPromise = null;
+        })
+        .catch(() => {});
       return true;
     }
 
     ensureSize(width, height) {
       if (!this.canvas) return;
-      const beforeWidth=this.canvas.width,beforeHeight=this.canvas.height;
+      const beforeWidth = this.canvas.width,
+        beforeHeight = this.canvas.height;
       if (beforeWidth !== width) this.canvas.width = width;
       if (beforeHeight !== height) this.canvas.height = height;
-      if(beforeWidth!==this.canvas.width||beforeHeight!==this.canvas.height)presentationLifecycleTrace('presentation-canvas-resize',{beforeWidth,beforeHeight,afterWidth:this.canvas.width,afterHeight:this.canvas.height});
+      if (
+        beforeWidth !== this.canvas.width ||
+        beforeHeight !== this.canvas.height
+      )
+        presentationLifecycleTrace("presentation-canvas-resize", {
+          beforeWidth,
+          beforeHeight,
+          afterWidth: this.canvas.width,
+          afterHeight: this.canvas.height,
+        });
     }
 
     pipelineFor(ss) {
       if (this._pipelines.has(ss)) return this._pipelines.get(ss);
-      const shader = this.device.createShaderModule({ code: PRESENT_SHADER_WGSL(ss) });
+      const shader = this.device.createShaderModule({
+        code: PRESENT_SHADER_WGSL(ss),
+      });
       const pipeline = this.device.createRenderPipeline({
-        layout: 'auto',
-        vertex: { module: shader, entryPoint: 'vs' },
-        fragment: { module: shader, entryPoint: 'fs', targets: [{ format: this.format }] },
-        primitive: { topology: 'triangle-list' },
+        layout: "auto",
+        vertex: { module: shader, entryPoint: "vs" },
+        fragment: {
+          module: shader,
+          entryPoint: "fs",
+          targets: [{ format: this.format }],
+        },
+        primitive: { topology: "triangle-list" },
       });
       this._pipelines.set(ss, pipeline);
       return pipeline;
@@ -767,8 +1084,11 @@
     // path; the CPU path is the source of truth this phase.
     async init() {
       if (this.ready) return true;
-      if (typeof navigator === 'undefined' || !navigator.gpu) return false;
-      const brushPerfInitStart=(typeof window!=='undefined'&&window.BrushDebugPerf)?performance.now():0;
+      if (typeof navigator === "undefined" || !navigator.gpu) return false;
+      const brushPerfInitStart =
+        typeof window !== "undefined" && window.BrushDebugPerf
+          ? performance.now()
+          : 0;
       try {
         const presenter = await HardRoundGpuPresenter.acquire(this.w, this.h);
         if (!presenter || !presenter.ready) return false;
@@ -787,9 +1107,12 @@
         // brush-engine.js's window.HardRoundDebugPresentationBoundary flag
         // is on and its logger happens to be loaded first; wrapped in
         // try/catch so a missing global can never break real init().
-        if (typeof window !== 'undefined' && window.HardRoundDebugPresentationBoundary) {
+        if (
+          typeof window !== "undefined" &&
+          window.HardRoundDebugPresentationBoundary
+        ) {
           try {
-            console.log('[11B.9 OUTPUT-CONTEXT-CONFIGURE]', {
+            console.log("[11B.9 OUTPUT-CONTEXT-CONFIGURE]", {
               timestamp: performance.now(),
               outputFormat,
               canvasWidth: this.outputCanvas.width,
@@ -804,59 +1127,92 @@
         // change again for the lifetime of a renderer instance. Read by
         // present()'s diagnostic to catch an external reconfigure (e.g. a
         // canvas resize elsewhere in the app) coinciding with a stall.
-        this._contextConfigGeneration = (this._contextConfigGeneration || 0) + 1;
+        this._contextConfigGeneration =
+          (this._contextConfigGeneration || 0) + 1;
 
-        const shaderModule = device.createShaderModule({ code: STROKE_SHADER_WGSL });
+        const shaderModule = device.createShaderModule({
+          code: STROKE_SHADER_WGSL,
+        });
         this.strokePipeline = device.createRenderPipeline({
-          layout: 'auto',
+          layout: "auto",
           vertex: {
-            module: shaderModule, entryPoint: 'vs',
-            buffers: [{
-              arrayStride: 48,
-              attributes: [
-                { format: 'float32x2', offset: 0, shaderLocation: 0 },
-                { format: 'float32x2', offset: 8, shaderLocation: 1 },
-                { format: 'float32x2', offset: 16, shaderLocation: 2 },
-                { format: 'float32', offset: 24, shaderLocation: 3 },
-                { format: 'float32', offset: 28, shaderLocation: 4 },
-                { format: 'float32', offset: 32, shaderLocation: 5 },
-                { format: 'float32', offset: 36, shaderLocation: 6 },
-                { format: 'float32', offset: 40, shaderLocation: 7 },
-                { format: 'float32', offset: 44, shaderLocation: 8 },
-              ],
-            }],
+            module: shaderModule,
+            entryPoint: "vs",
+            buffers: [
+              {
+                arrayStride: 48,
+                attributes: [
+                  { format: "float32x2", offset: 0, shaderLocation: 0 },
+                  { format: "float32x2", offset: 8, shaderLocation: 1 },
+                  { format: "float32x2", offset: 16, shaderLocation: 2 },
+                  { format: "float32", offset: 24, shaderLocation: 3 },
+                  { format: "float32", offset: 28, shaderLocation: 4 },
+                  { format: "float32", offset: 32, shaderLocation: 5 },
+                  { format: "float32", offset: 36, shaderLocation: 6 },
+                  { format: "float32", offset: 40, shaderLocation: 7 },
+                  { format: "float32", offset: 44, shaderLocation: 8 },
+                ],
+              },
+            ],
           },
           fragment: {
-            module: shaderModule, entryPoint: 'fs',
-            targets: [{
-              format: 'r8unorm',
-              blend: {
-                color: { srcFactor: 'one', dstFactor: 'one', operation: 'max' },
-                alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'max' },
+            module: shaderModule,
+            entryPoint: "fs",
+            targets: [
+              {
+                format: "r8unorm",
+                blend: {
+                  color: {
+                    srcFactor: "one",
+                    dstFactor: "one",
+                    operation: "max",
+                  },
+                  alpha: {
+                    srcFactor: "one",
+                    dstFactor: "one",
+                    operation: "max",
+                  },
+                },
               },
-            }],
+            ],
           },
-          primitive: { topology: 'triangle-list' },
+          primitive: { topology: "triangle-list" },
         });
-        this.strokeUniformBuf = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        this.strokeUniformBuf = device.createBuffer({
+          size: 32,
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        });
         this.strokeBindGroup = device.createBindGroup({
           layout: this.strokePipeline.getBindGroupLayout(0),
-          entries: [{ binding: 0, resource: { buffer: this.strokeUniformBuf } }],
+          entries: [
+            { binding: 0, resource: { buffer: this.strokeUniformBuf } },
+          ],
         });
         this.strokeMaskTex = device.createTexture({
-          size: [this.bw, this.bh], format: 'r8unorm',
-          usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
+          size: [this.bw, this.bh],
+          format: "r8unorm",
+          usage:
+            GPUTextureUsage.RENDER_ATTACHMENT |
+            GPUTextureUsage.TEXTURE_BINDING |
+            GPUTextureUsage.COPY_SRC,
         });
         this.vertexBuf = device.createBuffer({
-          size: 4 * 1024 * 1024, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+          size: 4 * 1024 * 1024,
+          usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
         });
 
-        const blitShader = device.createShaderModule({ code: RESOLVE_SHADER_WGSL(this.ss) });
+        const blitShader = device.createShaderModule({
+          code: RESOLVE_SHADER_WGSL(this.ss),
+        });
         this.blitPipeline = device.createRenderPipeline({
-          layout: 'auto',
-          vertex: { module: blitShader, entryPoint: 'vs' },
-          fragment: { module: blitShader, entryPoint: 'fs', targets: [{ format: 'rgba8unorm' }] },
-          primitive: { topology: 'triangle-list' },
+          layout: "auto",
+          vertex: { module: blitShader, entryPoint: "vs" },
+          fragment: {
+            module: blitShader,
+            entryPoint: "fs",
+            targets: [{ format: "rgba8unorm" }],
+          },
+          primitive: { topology: "triangle-list" },
         });
         this.blitBindGroup = device.createBindGroup({
           layout: this.blitPipeline.getBindGroupLayout(0),
@@ -864,7 +1220,10 @@
         });
 
         this.presentPipeline = presenter.pipelineFor(this.ss);
-        this.presentUniformBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        this.presentUniformBuf = device.createBuffer({
+          size: 16,
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        });
         this.presentBindGroup = device.createBindGroup({
           layout: this.presentPipeline.getBindGroupLayout(0),
           entries: [
@@ -874,12 +1233,29 @@
         });
 
         this.ready = true;
-        if(typeof window!=='undefined'&&window.BrushDebugPerf&&window.BrushPerfNote)window.BrushPerfNote('hard-round-gpu-resources',{pipeline:true,buffers:3,textures:1});
-        if(brushPerfInitStart&&window.BrushPerfNote)window.BrushPerfNote('gpu-init',{ms:performance.now()-brushPerfInitStart,first:true});
+        if (
+          typeof window !== "undefined" &&
+          window.BrushDebugPerf &&
+          window.BrushPerfNote
+        )
+          window.BrushPerfNote("hard-round-gpu-resources", {
+            pipeline: true,
+            buffers: 3,
+            textures: 1,
+          });
+        if (brushPerfInitStart && window.BrushPerfNote)
+          window.BrushPerfNote("gpu-init", {
+            ms: performance.now() - brushPerfInitStart,
+            first: true,
+          });
         return true;
       } catch (err) {
         this.ready = false;
-        if (brushPerfInitStart && window.BrushPerfNote) window.BrushPerfNote('gpu-init', { ms: performance.now() - brushPerfInitStart, first: true });
+        if (brushPerfInitStart && window.BrushPerfNote)
+          window.BrushPerfNote("gpu-init", {
+            ms: performance.now() - brushPerfInitStart,
+            first: true,
+          });
         return false;
       }
     }
@@ -890,7 +1266,13 @@
 
     reallocate(width, height, ss) {
       const targetSS = ss || this.ss || DEFAULT_SS;
-      if (this.w === width && this.h === height && this.ss === targetSS && this.strokeMaskTex) return;
+      if (
+        this.w === width &&
+        this.h === height &&
+        this.ss === targetSS &&
+        this.strokeMaskTex
+      )
+        return;
       this.w = width;
       this.h = height;
       this.ss = targetSS;
@@ -902,15 +1284,25 @@
       }
       if (this.ready && this.device) {
         this.strokeMaskTex = this.device.createTexture({
-          size: [this.bw, this.bh], format: 'r8unorm',
-          usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
+          size: [this.bw, this.bh],
+          format: "r8unorm",
+          usage:
+            GPUTextureUsage.RENDER_ATTACHMENT |
+            GPUTextureUsage.TEXTURE_BINDING |
+            GPUTextureUsage.COPY_SRC,
         });
-        const blitShader = this.device.createShaderModule({ code: RESOLVE_SHADER_WGSL(this.ss) });
+        const blitShader = this.device.createShaderModule({
+          code: RESOLVE_SHADER_WGSL(this.ss),
+        });
         this.blitPipeline = this.device.createRenderPipeline({
-          layout: 'auto',
-          vertex: { module: blitShader, entryPoint: 'vs' },
-          fragment: { module: blitShader, entryPoint: 'fs', targets: [{ format: 'rgba8unorm' }] },
-          primitive: { topology: 'triangle-list' },
+          layout: "auto",
+          vertex: { module: blitShader, entryPoint: "vs" },
+          fragment: {
+            module: blitShader,
+            entryPoint: "fs",
+            targets: [{ format: "rgba8unorm" }],
+          },
+          primitive: { topology: "triangle-list" },
         });
         this.blitBindGroup = this.device.createBindGroup({
           layout: this.blitPipeline.getBindGroupLayout(0),
@@ -960,7 +1352,14 @@
       this._maskResetGeneration = (this._maskResetGeneration || 0) + 1;
       const enc = this.device.createCommandEncoder();
       const pass = enc.beginRenderPass({
-        colorAttachments: [{ view: this.strokeMaskTex.createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } }],
+        colorAttachments: [
+          {
+            view: this.strokeMaskTex.createView(),
+            loadOp: "clear",
+            storeOp: "store",
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          },
+        ],
       });
       pass.end();
       this.device.queue.submit([enc.finish()]);
@@ -972,8 +1371,9 @@
       // math runs. Read-only -- appends to window.HardRoundSegmentLog.gpu
       // only; does not touch pendingVerts, the vertex buffer, or the
       // shader pipeline.
-      if (typeof window !== 'undefined' && window.HardRoundSegmentLog) {
-        if (!seg.__hrDebugId) seg.__hrDebugId = ++window.HardRoundSegmentLog._nextId;
+      if (typeof window !== "undefined" && window.HardRoundSegmentLog) {
+        if (!seg.__hrDebugId)
+          seg.__hrDebugId = ++window.HardRoundSegmentLog._nextId;
         window.HardRoundSegmentLog.gpu.push({
           index: window.HardRoundSegmentLog.gpu.length,
           identity: seg.__hrDebugId,
@@ -997,30 +1397,59 @@
       // Scaled by (ss / 4) so the physical document-space AA band remains
       // invariant across SS=1/2/3/4.
       const aaScale = CapsuleMath.aaModeScale(seg.aaMode) * (ss / 4.0);
-      const isAaOff = seg.aaMode === 'off' || seg.aaMode === 'none';
+      const isAaOff = seg.aaMode === "off" || seg.aaMode === "none";
       const verts = segmentVerts(
-        seg.x0 * ss, seg.y0 * ss, seg.x1 * ss, seg.y1 * ss,
-        seg.r0 * ss, seg.r1 * ss, seg.alpha0, seg.alpha1, aaScale, isAaOff ? 1 : 0
+        seg.x0 * ss,
+        seg.y0 * ss,
+        seg.x1 * ss,
+        seg.y1 * ss,
+        seg.r0 * ss,
+        seg.r1 * ss,
+        seg.alpha0,
+        seg.alpha1,
+        aaScale,
+        isAaOff ? 1 : 0,
       );
       this.pendingVerts.push.apply(this.pendingVerts, verts);
     }
 
     flush() {
-      if (!this.ready || !this.pendingVerts.length) { this.pendingVerts = []; return; }
+      if (!this.ready || !this.pendingVerts.length) {
+        this.pendingVerts = [];
+        return;
+      }
       const data = new Float32Array(this.pendingVerts);
       const bytesNeeded = data.byteLength;
       if (bytesNeeded > this.vertexBuf.size) {
         this.vertexBuf.destroy();
         let sz = this.vertexBuf.size;
         while (sz < bytesNeeded) sz *= 2;
-        this.vertexBuf = this.device.createBuffer({ size: sz, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+        this.vertexBuf = this.device.createBuffer({
+          size: sz,
+          usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+        });
       }
       this.device.queue.writeBuffer(this.vertexBuf, 0, data);
-      const uniforms = new Float32Array([this.bw, this.bh, this.ss, 0, 0, 0, 0, 0]);
+      const uniforms = new Float32Array([
+        this.bw,
+        this.bh,
+        this.ss,
+        0,
+        0,
+        0,
+        0,
+        0,
+      ]);
       this.device.queue.writeBuffer(this.strokeUniformBuf, 0, uniforms);
       const enc = this.device.createCommandEncoder();
       const pass = enc.beginRenderPass({
-        colorAttachments: [{ view: this.strokeMaskTex.createView(), loadOp: 'load', storeOp: 'store' }],
+        colorAttachments: [
+          {
+            view: this.strokeMaskTex.createView(),
+            loadOp: "load",
+            storeOp: "store",
+          },
+        ],
       });
       pass.setPipeline(this.strokePipeline);
       pass.setBindGroup(0, this.strokeBindGroup);
@@ -1028,7 +1457,16 @@
       pass.draw(data.length / 12);
       pass.end();
       this.device.queue.submit([enc.finish()]);
-      if(typeof window!=='undefined'&&window.BrushDebugPerf&&window.BrushPerfNote)window.BrushPerfNote('gpu-work',{instances:data.length/72,batches:1,drawCalls:1});
+      if (
+        typeof window !== "undefined" &&
+        window.BrushDebugPerf &&
+        window.BrushPerfNote
+      )
+        window.BrushPerfNote("gpu-work", {
+          instances: data.length / 72,
+          batches: 1,
+          drawCalls: 1,
+        });
       this.pendingVerts = [];
     }
 
@@ -1037,33 +1475,82 @@
     // performs no texture-to-buffer copy, mapAsync stall, ImageData
     // allocation, JavaScript pixel loop, or Canvas2D upload.
     async present(rgb, composite, opacity, meta) {
-      if (!this.ready || !this.presenter || !this.presenter.ready || !this.outputContext) {
-        return { presented: false, reason: 'presenter-unavailable', canvas: this.outputCanvas };
+      if (
+        !this.ready ||
+        !this.presenter ||
+        !this.presenter.ready ||
+        !this.outputContext
+      ) {
+        return {
+          presented: false,
+          reason: "presenter-unavailable",
+          canvas: this.outputCanvas,
+        };
       }
-      const liveFlight=meta&&meta.strokeId!=null;
-      const flightEntry=liveFlight&&typeof window!=='undefined'&&window.HardRoundDebugPreviewFlightOwnership?{
-        strokeId:meta.strokeId,previewGeneration:meta.previewGeneration,overlayOwnerAtFlightStart:window.HardRoundOverlayOwnerStrokeId,
-        overlayOwnerBeforeSubmit:null,overlayOwnerAfterWorkDone:null,presentedStrokeIdBeforeSubmit:null,presentedStrokeIdAfterWorkDone:null,
-        submitSequence:null,acceptedBeforeSubmit:false,acceptedAfterWorkDone:false,staleBeforeSubmit:false,staleAfterWorkDone:false
-      }:null;
-      if (liveFlight && !previewFlightCurrent(meta,meta.renderer)) {
-        if(flightEntry){flightEntry.staleBeforeSubmit=true;previewFlightTrace(flightEntry);}
-        return { presented: false, reason: 'not-overlay-owner', canvas: this.outputCanvas };
+      const liveFlight = meta && meta.strokeId != null;
+      const flightEntry =
+        liveFlight &&
+        typeof window !== "undefined" &&
+        window.HardRoundDebugPreviewFlightOwnership
+          ? {
+              strokeId: meta.strokeId,
+              previewGeneration: meta.previewGeneration,
+              overlayOwnerAtFlightStart: window.HardRoundOverlayOwnerStrokeId,
+              overlayOwnerBeforeSubmit: null,
+              overlayOwnerAfterWorkDone: null,
+              presentedStrokeIdBeforeSubmit: null,
+              presentedStrokeIdAfterWorkDone: null,
+              submitSequence: null,
+              acceptedBeforeSubmit: false,
+              acceptedAfterWorkDone: false,
+              staleBeforeSubmit: false,
+              staleAfterWorkDone: false,
+            }
+          : null;
+      if (liveFlight && !previewFlightCurrent(meta, meta.renderer)) {
+        if (flightEntry) {
+          flightEntry.staleBeforeSubmit = true;
+          previewFlightTrace(flightEntry);
+        }
+        return {
+          presented: false,
+          reason: "not-overlay-owner",
+          canvas: this.outputCanvas,
+        };
       }
-      const isErase = composite === 'erase';
+      const isErase = composite === "erase";
       const cr = isErase ? 0 : rgb[0] / 255;
       const cg = isErase ? 0 : rgb[1] / 255;
       const cb = isErase ? 0 : rgb[2] / 255;
-      const strokeOpacity = Math.max(0, Math.min(1, opacity == null ? 1 : opacity));
-      const producingStrokeId=meta&&meta.strokeId!=null?meta.strokeId:null;
-      const presentPurpose=meta&&meta.warmup?'prewarm':(producingStrokeId!=null?'live-preview':'finalization');
-      const containsGeometry=!!(meta&&Number(meta.segmentCount)>0);
-      if (typeof window !== 'undefined' && window.HardRoundInputLatencyNote && meta && meta.strokeId != null) {
-        window.HardRoundInputLatencyNote(meta.strokeId, 'firstPresentCallTime');
-        window.HardRoundInputLatencyNote(meta.strokeId, 'firstGpuEncodeStart');
+      const strokeOpacity = Math.max(
+        0,
+        Math.min(1, opacity == null ? 1 : opacity),
+      );
+      const producingStrokeId =
+        meta && meta.strokeId != null ? meta.strokeId : null;
+      const presentPurpose =
+        meta && meta.warmup
+          ? "prewarm"
+          : producingStrokeId != null
+            ? "live-preview"
+            : "finalization";
+      const containsGeometry = !!(meta && Number(meta.segmentCount) > 0);
+      if (
+        typeof window !== "undefined" &&
+        window.HardRoundInputLatencyNote &&
+        meta &&
+        meta.strokeId != null
+      ) {
+        window.HardRoundInputLatencyNote(meta.strokeId, "firstPresentCallTime");
+        window.HardRoundInputLatencyNote(meta.strokeId, "firstGpuEncodeStart");
       }
-      if (typeof window !== 'undefined' && window.HardRoundFirstPresentNote && meta && meta.strokeId != null) {
-        window.HardRoundFirstPresentNote(meta.strokeId, 'firstGpuEncodeStart');
+      if (
+        typeof window !== "undefined" &&
+        window.HardRoundFirstPresentNote &&
+        meta &&
+        meta.strokeId != null
+      ) {
+        window.HardRoundFirstPresentNote(meta.strokeId, "firstGpuEncodeStart");
       }
       // --- DIAGNOSTIC (Phase 11A.39): opt-in (window.HardRoundGpuPresentDiag),
       // read-only instrumentation at the REAL present() call site. The
@@ -1076,7 +1563,8 @@
       // below. Does NOT change rendering behavior, ordering, throttling,
       // pressure, stabilization, AA, shaders, commit, pointerup, or segment
       // generation.
-      const _diagOn = typeof window !== 'undefined' && !!window.HardRoundGpuPresentDiag;
+      const _diagOn =
+        typeof window !== "undefined" && !!window.HardRoundGpuPresentDiag;
       let _diagEntry = null;
       if (_diagOn) {
         if (!window.HardRoundGpuPresentLog) window.HardRoundGpuPresentLog = [];
@@ -1084,8 +1572,9 @@
         GpuBackend._inFlightCount = GpuBackend._inFlightCount || 0;
         _diagEntry = {
           presentationId: GpuBackend._presentIdCounter,
-          strokeId: (meta && meta.strokeId != null) ? meta.strokeId : null,
-          segmentCount: (meta && meta.segmentCount != null) ? meta.segmentCount : null,
+          strokeId: meta && meta.strokeId != null ? meta.strokeId : null,
+          segmentCount:
+            meta && meta.segmentCount != null ? meta.segmentCount : null,
           canvasWidth: this.w,
           canvasHeight: this.h,
           enterPresentTime: performance.now(),
@@ -1109,8 +1598,12 @@
           afterGetCurrentTextureTime: null,
           getCurrentTextureMs: null,
           beforeRenderPassTime: null,
-          outputCanvasWidthBefore: this.outputCanvas ? this.outputCanvas.width : null,
-          outputCanvasHeightBefore: this.outputCanvas ? this.outputCanvas.height : null,
+          outputCanvasWidthBefore: this.outputCanvas
+            ? this.outputCanvas.width
+            : null,
+          outputCanvasHeightBefore: this.outputCanvas
+            ? this.outputCanvas.height
+            : null,
           outputCanvasWidthAfter: null,
           outputCanvasHeightAfter: null,
           // Bumped only inside reset() (see below) -- if this present's
@@ -1134,56 +1627,131 @@
         GpuBackend._inFlightCount++;
       }
       // --- end diagnostic setup ---
-      this.device.queue.writeBuffer(this.presentUniformBuf, 0, new Float32Array([cr, cg, cb, strokeOpacity]));
+      this.device.queue.writeBuffer(
+        this.presentUniformBuf,
+        0,
+        new Float32Array([cr, cg, cb, strokeOpacity]),
+      );
       const enc = this.device.createCommandEncoder();
-      const currentBeforeSubmit=previewFlightCurrent(meta,meta&&meta.renderer);
-      if(flightEntry){
-        flightEntry.overlayOwnerBeforeSubmit=window.HardRoundOverlayOwnerStrokeId;
-        flightEntry.presentedStrokeIdBeforeSubmit=window.HardRoundOverlayPresentedStrokeId==null?null:window.HardRoundOverlayPresentedStrokeId;
-        flightEntry.acceptedBeforeSubmit=currentBeforeSubmit;flightEntry.staleBeforeSubmit=!currentBeforeSubmit;
+      const currentBeforeSubmit = previewFlightCurrent(
+        meta,
+        meta && meta.renderer,
+      );
+      if (flightEntry) {
+        flightEntry.overlayOwnerBeforeSubmit =
+          window.HardRoundOverlayOwnerStrokeId;
+        flightEntry.presentedStrokeIdBeforeSubmit =
+          window.HardRoundOverlayPresentedStrokeId == null
+            ? null
+            : window.HardRoundOverlayPresentedStrokeId;
+        flightEntry.acceptedBeforeSubmit = currentBeforeSubmit;
+        flightEntry.staleBeforeSubmit = !currentBeforeSubmit;
       }
-      if(!currentBeforeSubmit){
-        if(_diagEntry)GpuBackend._inFlightCount=Math.max(0,GpuBackend._inFlightCount-1);
-        if(flightEntry)previewFlightTrace(flightEntry);
-        return {presented:false,reason:'stale-before-submit',canvas:this.outputCanvas};
+      if (!currentBeforeSubmit) {
+        if (_diagEntry)
+          GpuBackend._inFlightCount = Math.max(
+            0,
+            GpuBackend._inFlightCount - 1,
+          );
+        if (flightEntry) previewFlightTrace(flightEntry);
+        return {
+          presented: false,
+          reason: "stale-before-submit",
+          canvas: this.outputCanvas,
+        };
       }
-      if (_diagEntry) _diagEntry.beforeGetCurrentTextureTime = performance.now();
-      presentationLifecycleTrace('presentation-texture-acquire-start',{strokeId:producingStrokeId,previewGeneration:meta&&meta.previewGeneration,submitPurpose:presentPurpose});
-      const currentTextureView = this.outputContext.getCurrentTexture().createView();
-      presentationLifecycleTrace('presentation-texture-acquired',{strokeId:producingStrokeId,previewGeneration:meta&&meta.previewGeneration,submitPurpose:presentPurpose});
+      if (_diagEntry)
+        _diagEntry.beforeGetCurrentTextureTime = performance.now();
+      presentationLifecycleTrace("presentation-texture-acquire-start", {
+        strokeId: producingStrokeId,
+        previewGeneration: meta && meta.previewGeneration,
+        submitPurpose: presentPurpose,
+      });
+      const currentTextureView = this.outputContext
+        .getCurrentTexture()
+        .createView();
+      presentationLifecycleTrace("presentation-texture-acquired", {
+        strokeId: producingStrokeId,
+        previewGeneration: meta && meta.previewGeneration,
+        submitPurpose: presentPurpose,
+      });
       if (_diagEntry) {
         _diagEntry.afterGetCurrentTextureTime = performance.now();
-        _diagEntry.getCurrentTextureMs = _diagEntry.afterGetCurrentTextureTime - _diagEntry.beforeGetCurrentTextureTime;
+        _diagEntry.getCurrentTextureMs =
+          _diagEntry.afterGetCurrentTextureTime -
+          _diagEntry.beforeGetCurrentTextureTime;
         _diagEntry.beforeRenderPassTime = _diagEntry.afterGetCurrentTextureTime;
       }
       const pass = enc.beginRenderPass({
-colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } }],
+        colorAttachments: [
+          {
+            view: currentTextureView,
+            loadOp: "clear",
+            storeOp: "store",
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          },
+        ],
       });
       pass.setPipeline(this.presentPipeline);
       pass.setBindGroup(0, this.presentBindGroup);
       pass.draw(3);
       pass.end();
       if (_diagEntry) _diagEntry.beforeSubmitTime = performance.now();
-      const submitSequence=++_hardRoundPreviewFlightSubmitSequence;
+      const submitSequence = ++_hardRoundPreviewFlightSubmitSequence;
       this.device.queue.submit([enc.finish()]);
-      const lifecycleSubmitSequence=submitSequence;
-      if(flightEntry)flightEntry.submitSequence=lifecycleSubmitSequence;
-      presentationLifecycleTrace('presentation-queue-submit',{strokeId:producingStrokeId,previewGeneration:meta&&meta.previewGeneration,submitPurpose:presentPurpose,submitSequence:lifecycleSubmitSequence,segmentCount:meta&&meta.segmentCount,opacity:strokeOpacity,containsGeometry});
-      if (typeof window !== 'undefined' && window.HardRoundInputLatencyNote && meta && meta.strokeId != null) {
-        window.HardRoundInputLatencyNote(meta.strokeId, 'firstGpuSubmitTime');
-      }
-      const presentedBefore=typeof window!=='undefined'&&window.HardRoundOverlayPresentedStrokeId!=null?window.HardRoundOverlayPresentedStrokeId:null;
-      const owner=typeof window!=='undefined'&&window.HardRoundOverlayOwnerStrokeId!=null?window.HardRoundOverlayOwnerStrokeId:null;
-      sharedPresentTrace('sharedPresentSubmit',{
-        sharedPresentStrokeId:producingStrokeId,sharedPresentOpacity:strokeOpacity,
-        sharedPresentClearAlpha:0,sharedPresentLoadOp:'clear',sharedPresentWasBlank:strokeOpacity<=0||!containsGeometry,
-        sharedPresentDuringBridge:presentedBefore!=null&&owner!=null&&presentedBefore!==owner,
-        containsActualStrokeGeometry:containsGeometry,purpose:presentPurpose,
+      const lifecycleSubmitSequence = submitSequence;
+      if (flightEntry) flightEntry.submitSequence = lifecycleSubmitSequence;
+      presentationLifecycleTrace("presentation-queue-submit", {
+        strokeId: producingStrokeId,
+        previewGeneration: meta && meta.previewGeneration,
+        submitPurpose: presentPurpose,
+        submitSequence: lifecycleSubmitSequence,
+        segmentCount: meta && meta.segmentCount,
+        opacity: strokeOpacity,
+        containsGeometry,
       });
-      if (typeof window !== 'undefined' && window.HardRoundFirstPresentNote && meta && meta.strokeId != null) {
-        window.HardRoundFirstPresentNote(meta.strokeId, 'firstGpuSubmitTime');
-        window.HardRoundFirstPresentNote(meta.strokeId, 'firstPresentCallTime');
-        if(window.HardRoundFirstPresentCount)window.HardRoundFirstPresentCount(meta.strokeId,'gpuPresentSubmitCountThisStroke');
+      if (
+        typeof window !== "undefined" &&
+        window.HardRoundInputLatencyNote &&
+        meta &&
+        meta.strokeId != null
+      ) {
+        window.HardRoundInputLatencyNote(meta.strokeId, "firstGpuSubmitTime");
+      }
+      const presentedBefore =
+        typeof window !== "undefined" &&
+        window.HardRoundOverlayPresentedStrokeId != null
+          ? window.HardRoundOverlayPresentedStrokeId
+          : null;
+      const owner =
+        typeof window !== "undefined" &&
+        window.HardRoundOverlayOwnerStrokeId != null
+          ? window.HardRoundOverlayOwnerStrokeId
+          : null;
+      sharedPresentTrace("sharedPresentSubmit", {
+        sharedPresentStrokeId: producingStrokeId,
+        sharedPresentOpacity: strokeOpacity,
+        sharedPresentClearAlpha: 0,
+        sharedPresentLoadOp: "clear",
+        sharedPresentWasBlank: strokeOpacity <= 0 || !containsGeometry,
+        sharedPresentDuringBridge:
+          presentedBefore != null && owner != null && presentedBefore !== owner,
+        containsActualStrokeGeometry: containsGeometry,
+        purpose: presentPurpose,
+      });
+      if (
+        typeof window !== "undefined" &&
+        window.HardRoundFirstPresentNote &&
+        meta &&
+        meta.strokeId != null
+      ) {
+        window.HardRoundFirstPresentNote(meta.strokeId, "firstGpuSubmitTime");
+        window.HardRoundFirstPresentNote(meta.strokeId, "firstPresentCallTime");
+        if (window.HardRoundFirstPresentCount)
+          window.HardRoundFirstPresentCount(
+            meta.strokeId,
+            "gpuPresentSubmitCountThisStroke",
+          );
       }
       if (_diagEntry) _diagEntry.afterSubmitTime = performance.now();
       // Phase 11B.10 TEMP DIAGNOSTIC (opt-in, default off): record that
@@ -1197,11 +1765,21 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
       // window.HardRoundGpuPresentDiag flag above so this diagnostic works
       // on its own. Purely additive bookkeeping; does not change what gets
       // submitted or when.
-      if (typeof window !== 'undefined' && window.HardRoundDebugLivePreviewCrossover && meta && meta.livePreviewId != null) {
-        window.HardRoundLivePreviewSubmitInfo = window.HardRoundLivePreviewSubmitInfo || {};
+      if (
+        typeof window !== "undefined" &&
+        window.HardRoundDebugLivePreviewCrossover &&
+        meta &&
+        meta.livePreviewId != null
+      ) {
+        window.HardRoundLivePreviewSubmitInfo =
+          window.HardRoundLivePreviewSubmitInfo || {};
         window.HardRoundLivePreviewSubmitInfo[meta.livePreviewId] = {
-          submitTime: _diagEntry ? _diagEntry.afterSubmitTime : performance.now(),
-          generationAtSubmit: window.HardRoundGetPreviewGeneration ? window.HardRoundGetPreviewGeneration() : null,
+          submitTime: _diagEntry
+            ? _diagEntry.afterSubmitTime
+            : performance.now(),
+          generationAtSubmit: window.HardRoundGetPreviewGeneration
+            ? window.HardRoundGetPreviewGeneration()
+            : null,
         };
       }
       // Phase 11B.4 TEMP DIAGNOSTIC CAUSAL FLAG (default false): when true,
@@ -1219,7 +1797,10 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
       // (getCurrentTexture()/clear/etc. above, already timestamped above
       // regardless of this flag).
       const _isLivePreviewCall = !!(meta && meta.strokeId != null);
-      const _skipWait = typeof window !== 'undefined' && !!window.HardRoundDebugSkipLivePresentWorkDoneWait && _isLivePreviewCall;
+      const _skipWait =
+        typeof window !== "undefined" &&
+        !!window.HardRoundDebugSkipLivePresentWorkDoneWait &&
+        _isLivePreviewCall;
       if (_diagEntry) _diagEntry.skippedWorkDoneWait = _skipWait;
       if (!_skipWait) {
         // The caller immediately drawImage()s this WebGPU canvas into the
@@ -1228,31 +1809,63 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
         // (freshly cleared) canvas frame and make the live stroke invisible.
         await this.device.queue.onSubmittedWorkDone();
       }
-      if (typeof window !== 'undefined' && window.HardRoundInputLatencyNote && meta && meta.strokeId != null) {
-        window.HardRoundInputLatencyNote(meta.strokeId, 'firstGpuWorkDoneTime');
+      if (
+        typeof window !== "undefined" &&
+        window.HardRoundInputLatencyNote &&
+        meta &&
+        meta.strokeId != null
+      ) {
+        window.HardRoundInputLatencyNote(meta.strokeId, "firstGpuWorkDoneTime");
       }
-      const currentAfterWorkDone=previewFlightCurrent(meta,meta&&meta.renderer);
-      presentationLifecycleTrace('presentation-work-done',{strokeId:producingStrokeId,previewGeneration:meta&&meta.previewGeneration,submitPurpose:presentPurpose,submitSequence:lifecycleSubmitSequence,currentAfterWorkDone});
-      if(flightEntry){
-        flightEntry.overlayOwnerAfterWorkDone=window.HardRoundOverlayOwnerStrokeId;
-        flightEntry.presentedStrokeIdAfterWorkDone=window.HardRoundOverlayPresentedStrokeId==null?null:window.HardRoundOverlayPresentedStrokeId;
-        flightEntry.acceptedAfterWorkDone=currentAfterWorkDone;flightEntry.staleAfterWorkDone=!currentAfterWorkDone;previewFlightTrace(flightEntry);
+      const currentAfterWorkDone = previewFlightCurrent(
+        meta,
+        meta && meta.renderer,
+      );
+      presentationLifecycleTrace("presentation-work-done", {
+        strokeId: producingStrokeId,
+        previewGeneration: meta && meta.previewGeneration,
+        submitPurpose: presentPurpose,
+        submitSequence: lifecycleSubmitSequence,
+        currentAfterWorkDone,
+      });
+      if (flightEntry) {
+        flightEntry.overlayOwnerAfterWorkDone =
+          window.HardRoundOverlayOwnerStrokeId;
+        flightEntry.presentedStrokeIdAfterWorkDone =
+          window.HardRoundOverlayPresentedStrokeId == null
+            ? null
+            : window.HardRoundOverlayPresentedStrokeId;
+        flightEntry.acceptedAfterWorkDone = currentAfterWorkDone;
+        flightEntry.staleAfterWorkDone = !currentAfterWorkDone;
+        previewFlightTrace(flightEntry);
       }
       // --- DIAGNOSTIC (Phase 11A.39 / 11B.4): resolve-time bookkeeping ---
       if (_diagEntry) {
         _diagEntry.workDoneTime = performance.now();
-        _diagEntry.submitToWorkDoneMs = _diagEntry.workDoneTime - _diagEntry.afterSubmitTime;
-        _diagEntry.outputCanvasWidthAfter = this.outputCanvas ? this.outputCanvas.width : null;
-        _diagEntry.outputCanvasHeightAfter = this.outputCanvas ? this.outputCanvas.height : null;
+        _diagEntry.submitToWorkDoneMs =
+          _diagEntry.workDoneTime - _diagEntry.afterSubmitTime;
+        _diagEntry.outputCanvasWidthAfter = this.outputCanvas
+          ? this.outputCanvas.width
+          : null;
+        _diagEntry.outputCanvasHeightAfter = this.outputCanvas
+          ? this.outputCanvas.height
+          : null;
         _diagEntry.maskResetGenerationAfter = this._maskResetGeneration || 0;
-        _diagEntry.contextConfigGenerationAfter = this._contextConfigGeneration || 0;
+        _diagEntry.contextConfigGenerationAfter =
+          this._contextConfigGeneration || 0;
         GpuBackend._inFlightCount = Math.max(0, GpuBackend._inFlightCount - 1);
         window.HardRoundGpuPresentLog.push(_diagEntry);
         // Bounded window: keep memory flat during long diagnostic sessions.
-        if (window.HardRoundGpuPresentLog.length > 500) window.HardRoundGpuPresentLog.shift();
+        if (window.HardRoundGpuPresentLog.length > 500)
+          window.HardRoundGpuPresentLog.shift();
       }
       // --- end diagnostic resolve-time bookkeeping ---
-      if(!currentAfterWorkDone)return {presented:false,reason:'stale-after-work-done',canvas:this.outputCanvas};
+      if (!currentAfterWorkDone)
+        return {
+          presented: false,
+          reason: "stale-after-work-done",
+          canvas: this.outputCanvas,
+        };
       return { presented: true, reason: null, canvas: this.outputCanvas };
     }
 
@@ -1266,7 +1879,13 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
         this.reset();
         const enc = this.device.createCommandEncoder();
         const pass = enc.beginRenderPass({
-          colorAttachments: [{ view: this.strokeMaskTex.createView(), loadOp: 'load', storeOp: 'store' }],
+          colorAttachments: [
+            {
+              view: this.strokeMaskTex.createView(),
+              loadOp: "load",
+              storeOp: "store",
+            },
+          ],
         });
         pass.setPipeline(this.strokePipeline);
         pass.setBindGroup(0, this.strokeBindGroup);
@@ -1278,14 +1897,24 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
         // may warm private pipelines/textures while another stroke's last
         // valid frame bridges to a newer owner, but it must not replace the
         // shared swapchain image with the zero-opacity warm-up frame.
-        const sharedSurfaceOccupied=typeof window!=='undefined'&&(
-          window.HardRoundOverlayOwnerStrokeId!=null||window.HardRoundOverlayPresentedStrokeId!=null
-        );
-        if(sharedSurfaceOccupied){
-          sharedPresentTrace('sharedBlankPresentSuppressed',{purpose:'prewarm',sharedPresentOpacity:0,sharedPresentWasBlank:true,sharedPresentDuringBridge:window.HardRoundOverlayOwnerStrokeId!=null&&window.HardRoundOverlayPresentedStrokeId!=null&&window.HardRoundOverlayOwnerStrokeId!==window.HardRoundOverlayPresentedStrokeId});
+        const sharedSurfaceOccupied =
+          typeof window !== "undefined" &&
+          (window.HardRoundOverlayOwnerStrokeId != null ||
+            window.HardRoundOverlayPresentedStrokeId != null);
+        if (sharedSurfaceOccupied) {
+          sharedPresentTrace("sharedBlankPresentSuppressed", {
+            purpose: "prewarm",
+            sharedPresentOpacity: 0,
+            sharedPresentWasBlank: true,
+            sharedPresentDuringBridge:
+              window.HardRoundOverlayOwnerStrokeId != null &&
+              window.HardRoundOverlayPresentedStrokeId != null &&
+              window.HardRoundOverlayOwnerStrokeId !==
+                window.HardRoundOverlayPresentedStrokeId,
+          });
           return true;
         }
-        await this.present([0, 0, 0], 'paint', 0, { warmup: true });
+        await this.present([0, 0, 0], "paint", 0, { warmup: true });
         return true;
       })().catch(() => false);
       return this._warmPresentationPromise;
@@ -1307,11 +1936,16 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
       const liveByStroke = {};
       const finishEntries = [];
       for (const e of log) {
-        if (e.strokeId === null || e.strokeId === undefined) { finishEntries.push(e); continue; }
+        if (e.strokeId === null || e.strokeId === undefined) {
+          finishEntries.push(e);
+          continue;
+        }
         (liveByStroke[e.strokeId] || (liveByStroke[e.strokeId] = [])).push(e);
       }
       function summarize(entries) {
-        const durations = entries.map(e => e.submitToWorkDoneMs).filter(v => typeof v === 'number');
+        const durations = entries
+          .map((e) => e.submitToWorkDoneMs)
+          .filter((v) => typeof v === "number");
         const sum = durations.reduce((a, b) => a + b, 0);
         // Phase 11B.4 additions: getCurrentTexture() cost distribution (does
         // acquiring the swapchain texture itself stall?), how many entries
@@ -1319,32 +1953,56 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
         // window.HardRoundDebugSkipLivePresentWorkDoneWait can be read
         // straight out of this summary), and whether strokeMaskTex or the
         // output context were ever observed to change mid-present.
-        const gctDurations = entries.map(e => e.getCurrentTextureMs).filter(v => typeof v === 'number');
+        const gctDurations = entries
+          .map((e) => e.getCurrentTextureMs)
+          .filter((v) => typeof v === "number");
         const gctSum = gctDurations.reduce((a, b) => a + b, 0);
-        const skippedCount = entries.filter(e => e.skippedWorkDoneWait).length;
-        const maskResetDuringPresent = entries.filter(e =>
-          typeof e.maskResetGenerationBefore === 'number' && typeof e.maskResetGenerationAfter === 'number' &&
-          e.maskResetGenerationAfter !== e.maskResetGenerationBefore).length;
-        const contextReconfiguredDuringPresent = entries.filter(e =>
-          typeof e.contextConfigGenerationBefore === 'number' && typeof e.contextConfigGenerationAfter === 'number' &&
-          e.contextConfigGenerationAfter !== e.contextConfigGenerationBefore).length;
+        const skippedCount = entries.filter(
+          (e) => e.skippedWorkDoneWait,
+        ).length;
+        const maskResetDuringPresent = entries.filter(
+          (e) =>
+            typeof e.maskResetGenerationBefore === "number" &&
+            typeof e.maskResetGenerationAfter === "number" &&
+            e.maskResetGenerationAfter !== e.maskResetGenerationBefore,
+        ).length;
+        const contextReconfiguredDuringPresent = entries.filter(
+          (e) =>
+            typeof e.contextConfigGenerationBefore === "number" &&
+            typeof e.contextConfigGenerationAfter === "number" &&
+            e.contextConfigGenerationAfter !== e.contextConfigGenerationBefore,
+        ).length;
         return {
           presentationCount: entries.length,
-          maxInFlight: entries.reduce((m, e) => Math.max(m, (e.otherPresentsInFlightAtEnter || 0) + 1), 0),
-          maxSubmitToWorkDoneMs: durations.length ? Math.max(...durations) : null,
-          averageSubmitToWorkDoneMs: durations.length ? sum / durations.length : null,
-          countOver16ms: durations.filter(v => v > 16).length,
-          countOver33ms: durations.filter(v => v > 33).length,
-          countOver100ms: durations.filter(v => v > 100).length,
-          maxGetCurrentTextureMs: gctDurations.length ? Math.max(...gctDurations) : null,
-          averageGetCurrentTextureMs: gctDurations.length ? gctSum / gctDurations.length : null,
+          maxInFlight: entries.reduce(
+            (m, e) => Math.max(m, (e.otherPresentsInFlightAtEnter || 0) + 1),
+            0,
+          ),
+          maxSubmitToWorkDoneMs: durations.length
+            ? Math.max(...durations)
+            : null,
+          averageSubmitToWorkDoneMs: durations.length
+            ? sum / durations.length
+            : null,
+          countOver16ms: durations.filter((v) => v > 16).length,
+          countOver33ms: durations.filter((v) => v > 33).length,
+          countOver100ms: durations.filter((v) => v > 100).length,
+          maxGetCurrentTextureMs: gctDurations.length
+            ? Math.max(...gctDurations)
+            : null,
+          averageGetCurrentTextureMs: gctDurations.length
+            ? gctSum / gctDurations.length
+            : null,
           skippedWorkDoneWaitCount: skippedCount,
           maskResetDuringPresentCount: maskResetDuringPresent,
-          contextReconfiguredDuringPresentCount: contextReconfiguredDuringPresent,
+          contextReconfiguredDuringPresentCount:
+            contextReconfiguredDuringPresent,
         };
       }
       const strokes = {};
-      Object.keys(liveByStroke).forEach(strokeId => { strokes[strokeId] = summarize(liveByStroke[strokeId]); });
+      Object.keys(liveByStroke).forEach((strokeId) => {
+        strokes[strokeId] = summarize(liveByStroke[strokeId]);
+      });
       return {
         strokes,
         finishFrames: summarize(finishEntries),
@@ -1361,12 +2019,23 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
       if (!this.ready) return false;
       const device = this.device;
       const resolveTex = device.createTexture({
-        size: [this.w, this.h], format: 'rgba8unorm',
-        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
+        size: [this.w, this.h],
+        format: "rgba8unorm",
+        usage:
+          GPUTextureUsage.RENDER_ATTACHMENT |
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_SRC,
       });
       const enc = device.createCommandEncoder();
       const pass = enc.beginRenderPass({
-        colorAttachments: [{ view: resolveTex.createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } }],
+        colorAttachments: [
+          {
+            view: resolveTex.createView(),
+            loadOp: "clear",
+            storeOp: "store",
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          },
+        ],
       });
       pass.setPipeline(this.blitPipeline);
       pass.setBindGroup(0, this.blitBindGroup);
@@ -1381,7 +2050,7 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
       enc.copyTextureToBuffer(
         { texture: resolveTex },
         { buffer: readBuf, bytesPerRow },
-        [this.w, this.h]
+        [this.w, this.h],
       );
       device.queue.submit([enc.finish()]);
 
@@ -1389,14 +2058,19 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
       const mapped = new Uint8Array(readBuf.getMappedRange());
       const img = outCtx.createImageData(this.w, this.h);
       const d = img.data;
-      const isErase = composite === 'erase';
-      const cr = isErase ? 0 : rgb[0], cg = isErase ? 0 : rgb[1], cb = isErase ? 0 : rgb[2];
+      const isErase = composite === "erase";
+      const cr = isErase ? 0 : rgb[0],
+        cg = isErase ? 0 : rgb[1],
+        cb = isErase ? 0 : rgb[2];
       for (let y = 0; y < this.h; y++) {
         for (let x = 0; x < this.w; x++) {
           const srcOff = y * bytesPerRow + x * 4;
           const dstOff = (y * this.w + x) * 4;
           const coverage = mapped[srcOff] / 255; // resolve shader writes coverage into .r (and g/b/a identically)
-          d[dstOff] = cr; d[dstOff + 1] = cg; d[dstOff + 2] = cb; d[dstOff + 3] = Math.round(coverage * 255);
+          d[dstOff] = cr;
+          d[dstOff + 1] = cg;
+          d[dstOff + 2] = cb;
+          d[dstOff + 3] = Math.round(coverage * 255);
         }
       }
       outCtx.putImageData(img, 0, 0);
@@ -1420,12 +2094,19 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
     async diagPresentIntoBuffer(rgb, composite, opacity) {
       if (!this.ready) return null;
       const device = this.device;
-      const isErase = composite === 'erase';
+      const isErase = composite === "erase";
       const cr = isErase ? 0 : rgb[0] / 255;
       const cg = isErase ? 0 : rgb[1] / 255;
       const cb = isErase ? 0 : rgb[2] / 255;
-      const strokeOpacity = Math.max(0, Math.min(1, opacity == null ? 1 : opacity));
-      device.queue.writeBuffer(this.presentUniformBuf, 0, new Float32Array([cr, cg, cb, strokeOpacity]));
+      const strokeOpacity = Math.max(
+        0,
+        Math.min(1, opacity == null ? 1 : opacity),
+      );
+      device.queue.writeBuffer(
+        this.presentUniformBuf,
+        0,
+        new Float32Array([cr, cg, cb, strokeOpacity]),
+      );
       // Phase 11A.25.1 fix: presentPipeline's fragment target was created
       // with `format: this.outputFormat` (navigator.gpu.getPreferredCanvasFormat(),
       // e.g. 'bgra8unorm' on most desktop browsers) -- NOT 'rgba8unorm'.
@@ -1437,22 +2118,40 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
       // seen in the first run -- a bug in this diagnostic method, not a
       // real present-vs-resolve difference. The scratch texture below now
       // matches presentPipeline's actual target format.
-      const scratchFormat = this.outputFormat || 'rgba8unorm';
+      const scratchFormat = this.outputFormat || "rgba8unorm";
       const scratchTex = device.createTexture({
-        size: [this.w, this.h], format: scratchFormat,
-        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
+        size: [this.w, this.h],
+        format: scratchFormat,
+        usage:
+          GPUTextureUsage.RENDER_ATTACHMENT |
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_SRC,
       });
       const enc = device.createCommandEncoder();
       const pass = enc.beginRenderPass({
-        colorAttachments: [{ view: scratchTex.createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } }],
+        colorAttachments: [
+          {
+            view: scratchTex.createView(),
+            loadOp: "clear",
+            storeOp: "store",
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          },
+        ],
       });
       pass.setPipeline(this.presentPipeline);
       pass.setBindGroup(0, this.presentBindGroup);
       pass.draw(3);
       pass.end();
       const bytesPerRow = Math.ceil((this.w * 4) / 256) * 256;
-      const readBuf = device.createBuffer({ size: bytesPerRow * this.h, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
-      enc.copyTextureToBuffer({ texture: scratchTex }, { buffer: readBuf, bytesPerRow }, [this.w, this.h]);
+      const readBuf = device.createBuffer({
+        size: bytesPerRow * this.h,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+      });
+      enc.copyTextureToBuffer(
+        { texture: scratchTex },
+        { buffer: readBuf, bytesPerRow },
+        [this.w, this.h],
+      );
       device.queue.submit([enc.finish()]);
       await readBuf.mapAsync(GPUMapMode.READ);
       const mapped = new Uint8Array(readBuf.getMappedRange());
@@ -1464,7 +2163,7 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
       // case so the returned buffer is always RGBA, matching
       // diagResolveIntoBuffer()'s output and this module's comparison
       // utilities.
-      const isBgra = scratchFormat === 'bgra8unorm';
+      const isBgra = scratchFormat === "bgra8unorm";
       for (let y = 0; y < this.h; y++) {
         const srcRow = y * bytesPerRow;
         const dstRow = y * this.w * 4;
@@ -1472,10 +2171,11 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
           out.set(mapped.subarray(srcRow, srcRow + this.w * 4), dstRow);
         } else {
           for (let x = 0; x < this.w; x++) {
-            const s = srcRow + x * 4, d = dstRow + x * 4;
-            out[d] = mapped[s + 2];     // R <- B
+            const s = srcRow + x * 4,
+              d = dstRow + x * 4;
+            out[d] = mapped[s + 2]; // R <- B
             out[d + 1] = mapped[s + 1]; // G
-            out[d + 2] = mapped[s];     // B <- R
+            out[d + 2] = mapped[s]; // B <- R
             out[d + 3] = mapped[s + 3]; // A
           }
         }
@@ -1483,7 +2183,14 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
       readBuf.unmap();
       readBuf.destroy();
       scratchTex.destroy();
-      return { data: out, w: this.w, h: this.h, premultiplied: true, source: 'PRESENT_SHADER_WGSL', renderedFormat: scratchFormat };
+      return {
+        data: out,
+        w: this.w,
+        h: this.h,
+        premultiplied: true,
+        source: "PRESENT_SHADER_WGSL",
+        renderedFormat: scratchFormat,
+      };
     }
 
     // TEMP DIAGNOSTIC (Phase 11A.25): renders the CURRENT strokeMaskTex
@@ -1499,38 +2206,67 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
       if (!this.ready) return null;
       const device = this.device;
       const scratchTex = device.createTexture({
-        size: [this.w, this.h], format: 'rgba8unorm',
-        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
+        size: [this.w, this.h],
+        format: "rgba8unorm",
+        usage:
+          GPUTextureUsage.RENDER_ATTACHMENT |
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_SRC,
       });
       const enc = device.createCommandEncoder();
       const pass = enc.beginRenderPass({
-        colorAttachments: [{ view: scratchTex.createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } }],
+        colorAttachments: [
+          {
+            view: scratchTex.createView(),
+            loadOp: "clear",
+            storeOp: "store",
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          },
+        ],
       });
       pass.setPipeline(this.blitPipeline);
       pass.setBindGroup(0, this.blitBindGroup);
       pass.draw(3);
       pass.end();
       const bytesPerRow = Math.ceil((this.w * 4) / 256) * 256;
-      const readBuf = device.createBuffer({ size: bytesPerRow * this.h, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
-      enc.copyTextureToBuffer({ texture: scratchTex }, { buffer: readBuf, bytesPerRow }, [this.w, this.h]);
+      const readBuf = device.createBuffer({
+        size: bytesPerRow * this.h,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+      });
+      enc.copyTextureToBuffer(
+        { texture: scratchTex },
+        { buffer: readBuf, bytesPerRow },
+        [this.w, this.h],
+      );
       device.queue.submit([enc.finish()]);
       await readBuf.mapAsync(GPUMapMode.READ);
       const mapped = new Uint8Array(readBuf.getMappedRange());
-      const isErase = composite === 'erase';
-      const cr = isErase ? 0 : rgb[0], cg = isErase ? 0 : rgb[1], cb = isErase ? 0 : rgb[2];
+      const isErase = composite === "erase";
+      const cr = isErase ? 0 : rgb[0],
+        cg = isErase ? 0 : rgb[1],
+        cb = isErase ? 0 : rgb[2];
       const out = new Uint8ClampedArray(this.w * this.h * 4);
       for (let y = 0; y < this.h; y++) {
         for (let x = 0; x < this.w; x++) {
           const srcOff = y * bytesPerRow + x * 4;
           const dstOff = (y * this.w + x) * 4;
           const coverage = mapped[srcOff] / 255; // resolve shader writes coverage into .r (and g/b/a identically)
-          out[dstOff] = cr; out[dstOff + 1] = cg; out[dstOff + 2] = cb; out[dstOff + 3] = Math.round(coverage * 255);
+          out[dstOff] = cr;
+          out[dstOff + 1] = cg;
+          out[dstOff + 2] = cb;
+          out[dstOff + 3] = Math.round(coverage * 255);
         }
       }
       readBuf.unmap();
       readBuf.destroy();
       scratchTex.destroy();
-      return { data: out, w: this.w, h: this.h, premultiplied: false, source: 'RESOLVE_SHADER_WGSL' };
+      return {
+        data: out,
+        w: this.w,
+        h: this.h,
+        premultiplied: false,
+        source: "RESOLVE_SHADER_WGSL",
+      };
     }
   }
 
@@ -1691,11 +2427,25 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
   }
 
   const AA_MARGIN = 2.0;
-  function segmentVerts(x0, y0, x1, y1, r0, r1, alpha0, alpha1, aaScale, aaOff) {
-    const dx = x1 - x0, dy = y1 - y0;
+  function segmentVerts(
+    x0,
+    y0,
+    x1,
+    y1,
+    r0,
+    r1,
+    alpha0,
+    alpha1,
+    aaScale,
+    aaOff,
+  ) {
+    const dx = x1 - x0,
+      dy = y1 - y0;
     const len = Math.hypot(dx, dy) || 1;
-    const ux = dx / len, uy = dy / len;
-    const nx = -uy, ny = ux;
+    const ux = dx / len,
+      uy = dy / len;
+    const nx = -uy,
+      ny = ux;
     const maxR = Math.max(r0, r1);
     const ext = maxR + AA_MARGIN;
     const hw = maxR + AA_MARGIN;
@@ -1707,10 +2457,27 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
     const c3 = { x: p0.x - nx * hw, y: p0.y - ny * hw };
     const as = aaScale == null ? 1 : aaScale;
     const off = aaOff ? 1 : 0;
-    const v = (p) => [p.x, p.y, x0, y0, x1, y1, r0, r1, alpha0, alpha1, as, off];
+    const v = (p) => [
+      p.x,
+      p.y,
+      x0,
+      y0,
+      x1,
+      y1,
+      r0,
+      r1,
+      alpha0,
+      alpha1,
+      as,
+      off,
+    ];
     const out = [];
-    out.push.apply(out, v(c0)); out.push.apply(out, v(c1)); out.push.apply(out, v(c2));
-    out.push.apply(out, v(c0)); out.push.apply(out, v(c2)); out.push.apply(out, v(c3));
+    out.push.apply(out, v(c0));
+    out.push.apply(out, v(c1));
+    out.push.apply(out, v(c2));
+    out.push.apply(out, v(c0));
+    out.push.apply(out, v(c2));
+    out.push.apply(out, v(c3));
     return out;
   }
 
@@ -1724,17 +2491,33 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
       if (!source) continue;
       const seg = source;
       const previous = out[out.length - 1];
-      const aaOff = seg.aaMode === 'off' || seg.aaMode === 'none';
-      if (previous && !aaOff && previous.aaMode === seg.aaMode &&
-          previous.composite === seg.composite && previous.hardness === seg.hardness &&
-          previous.r0 === previous.r1 && seg.r0 === seg.r1 && previous.r1 === seg.r0 &&
-          previous.alpha0 === previous.alpha1 && seg.alpha0 === seg.alpha1 && previous.alpha1 === seg.alpha0 &&
-          previous.x1 === seg.x0 && previous.y1 === seg.y0) {
-        const ax = previous.x1 - previous.x0, ay = previous.y1 - previous.y0;
-        const bx = seg.x1 - seg.x0, by = seg.y1 - seg.y0;
+      const aaOff = seg.aaMode === "off" || seg.aaMode === "none";
+      if (
+        previous &&
+        !aaOff &&
+        previous.aaMode === seg.aaMode &&
+        previous.composite === seg.composite &&
+        previous.hardness === seg.hardness &&
+        previous.r0 === previous.r1 &&
+        seg.r0 === seg.r1 &&
+        previous.r1 === seg.r0 &&
+        previous.alpha0 === previous.alpha1 &&
+        seg.alpha0 === seg.alpha1 &&
+        previous.alpha1 === seg.alpha0 &&
+        previous.x1 === seg.x0 &&
+        previous.y1 === seg.y0
+      ) {
+        const ax = previous.x1 - previous.x0,
+          ay = previous.y1 - previous.y0;
+        const bx = seg.x1 - seg.x0,
+          by = seg.y1 - seg.y0;
         const scale = Math.max(1, Math.hypot(ax, ay) * Math.hypot(bx, by));
-        if (Math.abs(ax * by - ay * bx) <= 1e-10 * scale && ax * bx + ay * by >= 0) {
-          previous.x1 = seg.x1; previous.y1 = seg.y1;
+        if (
+          Math.abs(ax * by - ay * bx) <= 1e-10 * scale &&
+          ax * bx + ay * by >= 0
+        ) {
+          previous.x1 = seg.x1;
+          previous.y1 = seg.y1;
           previous.isStrokeEnd = !!seg.isStrokeEnd;
           continue;
         }
@@ -1770,7 +2553,7 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
 
       this._active = false;
       this._usingGpu = false;
-      this._composite = 'paint';
+      this._composite = "paint";
       this._rgb = [0, 0, 0];
       this._segmentCount = 0;
       this.presentationOpacity = 1;
@@ -1785,13 +2568,16 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
       this._livePreviewDirty = false;
 
       // Output canvas: logical resolution, reused across strokes.
-      this._outCanvas = (typeof document !== 'undefined')
-        ? document.createElement('canvas')
-        : (typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(this.width, this.height) : null);
+      this._outCanvas =
+        typeof document !== "undefined"
+          ? document.createElement("canvas")
+          : typeof OffscreenCanvas !== "undefined"
+            ? new OffscreenCanvas(this.width, this.height)
+            : null;
       if (this._outCanvas) {
         this._outCanvas.width = this.width;
         this._outCanvas.height = this.height;
-        this._outCtx = this._outCanvas.getContext('2d');
+        this._outCtx = this._outCanvas.getContext("2d");
       } else {
         this._outCtx = null;
       }
@@ -1799,7 +2585,12 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
 
     ensureSize(width, height, ss) {
       const targetSS = ss || this.ss || DEFAULT_SS;
-      if (this.width === width && this.height === height && this.ss === targetSS) return;
+      if (
+        this.width === width &&
+        this.height === height &&
+        this.ss === targetSS
+      )
+        return;
       this.width = width;
       this.height = height;
       this.ss = targetSS;
@@ -1808,7 +2599,7 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
       if (this._outCanvas) {
         this._outCanvas.width = width;
         this._outCanvas.height = height;
-        this._outCtx = this._outCanvas.getContext('2d');
+        this._outCtx = this._outCanvas.getContext("2d");
       }
     }
 
@@ -1833,15 +2624,22 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
     // per-frame cost.
     beginStroke(opts) {
       if (this._hardRoundFinishingOwner != null) {
-        throw new Error('PrototypeRenderer.beginStroke(): renderer is owned by finishing stroke '+this._hardRoundFinishingOwner);
+        throw new Error(
+          "PrototypeRenderer.beginStroke(): renderer is owned by finishing stroke " +
+            this._hardRoundFinishingOwner,
+        );
       }
       if (opts && (opts.ss || opts.width || opts.height)) {
-        this.ensureSize(opts.width || this.width, opts.height || this.height, opts.ss || this.ss);
+        this.ensureSize(
+          opts.width || this.width,
+          opts.height || this.height,
+          opts.ss || this.ss,
+        );
       }
       if (this._active) this.cancelStroke();
       this._active = true;
       this._segmentCount = 0;
-      this._composite = 'paint';
+      this._composite = "paint";
       this._rgb = [0, 0, 0];
       this._livePresentInFlight = false;
       this._livePreviewDirty = false;
@@ -1849,9 +2647,16 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
       // log for this stroke. `_nextId` is NOT reset -- identity tags stay
       // unique across the whole session so a duplicate-submission check
       // can't collide with a previous stroke's ids.
-      if (typeof window !== 'undefined') {
-        const prevNextId = window.HardRoundSegmentLog ? window.HardRoundSegmentLog._nextId : 0;
-        window.HardRoundSegmentLog = { cpu: [], gpu: [], dispatchCalls: [], _nextId: prevNextId };
+      if (typeof window !== "undefined") {
+        const prevNextId = window.HardRoundSegmentLog
+          ? window.HardRoundSegmentLog._nextId
+          : 0;
+        window.HardRoundSegmentLog = {
+          cpu: [],
+          gpu: [],
+          dispatchCalls: [],
+          _nextId: prevNextId,
+        };
       }
       if (this._outCtx) this._outCtx.clearRect(0, 0, this.width, this.height);
 
@@ -1888,22 +2693,30 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
       // a single drawSegments() call, so batch boundaries matter for a
       // faithful replay). Read-only w.r.t. `segments`/`dispatchSegments`
       // and does not affect which backend this live call uses.
-      if (typeof window !== 'undefined' && window.HardRoundCaptureArmed && window.HardRoundCapturedStream) {
-        window.HardRoundCapturedStream.batches.push(segments.map(s => (s ? Object.assign({}, s) : s)));
+      if (
+        typeof window !== "undefined" &&
+        window.HardRoundCaptureArmed &&
+        window.HardRoundCapturedStream
+      ) {
+        window.HardRoundCapturedStream.batches.push(
+          segments.map((s) => (s ? Object.assign({}, s) : s)),
+        );
       }
       // TEMP DIAGNOSTIC (Phase 11A.23): record exactly what drawSegments()
       // received (pre-dispatch) and which branch it took, before any
       // backend-specific transformation (merge, unit conversion, etc.)
       // happens. Read-only bookkeeping -- does not alter `segments`,
       // `dispatchSegments`, or which backend gets called.
-      if (typeof window !== 'undefined' && window.HardRoundSegmentLog) {
+      if (typeof window !== "undefined" && window.HardRoundSegmentLog) {
         window.HardRoundSegmentLog.dispatchCalls.push({
           usingGpu: this._usingGpu,
           inputCount: segments.length,
           willMerge: !this._usingGpu,
         });
       }
-      const dispatchSegments = this._usingGpu ? segments : mergeEquivalentConstantCapsules(segments);
+      const dispatchSegments = this._usingGpu
+        ? segments
+        : mergeEquivalentConstantCapsules(segments);
       // TEMP DIAGNOSTIC (Phase 11A.23): CPU is handed the OUTPUT of
       // mergeEquivalentConstantCapsules(segments) (collinear/constant-radius
       // runs merged into one capsule); GPU is handed `segments` completely
@@ -1916,8 +2729,10 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
       // documented as a CPU-side perf optimization that should be a no-op
       // on final coverage -- this diagnostic exists to make that claim
       // checkable rather than assumed.
-      if (typeof window !== 'undefined' && window.HardRoundSegmentLog) {
-        window.HardRoundSegmentLog.dispatchCalls[window.HardRoundSegmentLog.dispatchCalls.length - 1].mergedCount = dispatchSegments.length;
+      if (typeof window !== "undefined" && window.HardRoundSegmentLog) {
+        window.HardRoundSegmentLog.dispatchCalls[
+          window.HardRoundSegmentLog.dispatchCalls.length - 1
+        ].mergedCount = dispatchSegments.length;
       }
       for (let i = 0; i < dispatchSegments.length; i++) {
         const seg = dispatchSegments[i];
@@ -1927,7 +2742,10 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
         if (this._usingGpu) this.gpu.drawSegment(seg);
         else this.cpu.drawSegment(seg);
       }
-      this._segmentCount += segments.reduce((count, seg) => count + (seg ? 1 : 0), 0);
+      this._segmentCount += segments.reduce(
+        (count, seg) => count + (seg ? 1 : 0),
+        0,
+      );
       if (this._usingGpu) this.gpu.flush();
     }
 
@@ -1940,21 +2758,29 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
       if (this._usingGpu) {
         if (readback) {
           await this.gpu.resolveInto(this._outCtx, this._rgb, this._composite);
-          return { presented: false, reason: 'readback' };
+          return { presented: false, reason: "readback" };
         }
         // meta (optional; e.g. {strokeId, segmentCount}) is passed through
         // untouched to GpuBackend.present() purely for the Phase 11A.39
         // opt-in present() diagnostic below -- it has no effect on what
         // gets drawn or when.
-        else return this.gpu.present(this._rgb, this._composite, this.presentationOpacity, meta);
+        else
+          return this.gpu.present(
+            this._rgb,
+            this._composite,
+            this.presentationOpacity,
+            meta,
+          );
       } else {
         this.cpu.resolveInto(this._outCtx, this._rgb, this._composite);
-        return { presented: false, reason: 'cpu' };
+        return { presented: false, reason: "cpu" };
       }
     }
 
     _resultCanvas() {
-      return this._usingGpu && this.gpu.outputCanvas ? this.gpu.outputCanvas : this._outCanvas;
+      return this._usingGpu && this.gpu.outputCanvas
+        ? this.gpu.outputCanvas
+        : this._outCanvas;
     }
 
     getStrokeDirtyRegion() {
@@ -1970,14 +2796,35 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
     //
     // @returns {Promise<{canvas: HTMLCanvasElement|OffscreenCanvas, composite: string, segmentCount: number}>}
     async endStroke(options) {
-      if (!this._active) return { canvas: this._resultCanvas(), composite: this._composite, segmentCount: 0 };
+      if (!this._active)
+        return {
+          canvas: this._resultCanvas(),
+          composite: this._composite,
+          segmentCount: 0,
+        };
       const readback = !!(options && options.readback);
       this._active = false;
       let dirtyRegion = null;
-      if (!this._usingGpu && !readback) dirtyRegion = this.cpu.resolveDirtyInto(this._outCtx, this._rgb, this._composite) || null;
+      if (!this._usingGpu && !readback)
+        dirtyRegion =
+          this.cpu.resolveDirtyInto(this._outCtx, this._rgb, this._composite) ||
+          null;
       else await this._resolveToOutput(readback);
-      const maskData=!this._usingGpu&&options&&options.includeCpuMaskData?this.cpu.copyResolvedMaskRegion(options.dirtyRect||this.cpu.getStrokeDirtyRegion(),this._rgb,this._composite):null;
-      return { canvas: readback ? this._outCanvas : this._resultCanvas(), composite: this._composite, segmentCount: this._segmentCount, dirtyRegion, maskData };
+      const maskData =
+        !this._usingGpu && options && options.includeCpuMaskData
+          ? this.cpu.copyResolvedMaskRegion(
+              options.dirtyRect || this.cpu.getStrokeDirtyRegion(),
+              this._rgb,
+              this._composite,
+            )
+          : null;
+      return {
+        canvas: readback ? this._outCanvas : this._resultCanvas(),
+        composite: this._composite,
+        segmentCount: this._segmentCount,
+        dirtyRegion,
+        maskData,
+      };
     }
 
     // Phase 9C.1: resolves the CURRENT in-progress accumulation to the
@@ -2015,7 +2862,12 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
     //
     // @returns {Promise<{canvas: HTMLCanvasElement|OffscreenCanvas, composite: string, segmentCount: number}>}
     async peekStroke(meta) {
-      if (!this._active) return { canvas: this._resultCanvas(), composite: this._composite, segmentCount: this._segmentCount };
+      if (!this._active)
+        return {
+          canvas: this._resultCanvas(),
+          composite: this._composite,
+          segmentCount: this._segmentCount,
+        };
       if (this._usingGpu) {
         // Phase 11B.5 TEMP DIAGNOSTIC (opt-in, default off): when
         // window.HardRoundDebugCanvasLivePresentation is true, a LIVE
@@ -2033,12 +2885,22 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
         // CPU backend's result already is. GPU accumulation/rasterization,
         // strokeMaskTex, segment generation, and the finished-frame path
         // (meta with no strokeId) are completely unaffected.
-        const _canvasLivePresentationOn = typeof window !== 'undefined' && !!window.HardRoundDebugCanvasLivePresentation;
+        const _canvasLivePresentationOn =
+          typeof window !== "undefined" &&
+          !!window.HardRoundDebugCanvasLivePresentation;
         const _isLivePreviewMeta = !!(meta && meta.strokeId != null);
         if (_canvasLivePresentationOn && _isLivePreviewMeta) {
-          const _diagMeta = Object.assign({ segmentCount: this._segmentCount }, meta || {});
+          const _diagMeta = Object.assign(
+            { segmentCount: this._segmentCount },
+            meta || {},
+          );
           await this._resolveToOutput(true, _diagMeta);
-          return { canvas: this._outCanvas, composite: this._composite, segmentCount: this._segmentCount, canvasLivePresentation: true };
+          return {
+            canvas: this._outCanvas,
+            composite: this._composite,
+            segmentCount: this._segmentCount,
+            canvasLivePresentation: true,
+          };
         }
         // Phase 11B.3 TEMP DIAGNOSTIC (opt-in, default off): when
         // window.HardRoundDebugSerializeGpuPreview is true, route the live
@@ -2049,20 +2911,44 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
         // Raster, segment generation, pressure, stabilization, AA, shaders,
         // and commit are all untouched (peekStroke() is never called by any
         // of those).
-        if (typeof window !== 'undefined' && window.HardRoundDebugSerializeGpuPreview) {
+        if (
+          typeof window !== "undefined" &&
+          window.HardRoundDebugSerializeGpuPreview
+        ) {
           return this._peekStrokeGpuSerialized(meta);
         }
         // Phase 11A.39: fill in segmentCount for the present() diagnostic
         // from the renderer's own counter when the caller didn't supply one,
         // so window.HardRoundGpuPresentLog entries aren't left null.
-        const _diagMeta = Object.assign({ segmentCount: this._segmentCount }, meta || {});
+        const _diagMeta = Object.assign(
+          { segmentCount: this._segmentCount },
+          meta || {},
+        );
         const presentation = await this._resolveToOutput(false, _diagMeta);
-        return { canvas: this._resultCanvas(), composite: this._composite, segmentCount: this._segmentCount, presentation };
+        return {
+          canvas: this._resultCanvas(),
+          composite: this._composite,
+          segmentCount: this._segmentCount,
+          presentation,
+        };
       } else {
-        const dirtyRegion = this.cpu.resolveDirtyInto(this._outCtx, this._rgb, this._composite);
-        return { canvas: this._outCanvas, composite: this._composite, segmentCount: this._segmentCount, dirtyRegion: dirtyRegion || null };
+        const dirtyRegion = this.cpu.resolveDirtyInto(
+          this._outCtx,
+          this._rgb,
+          this._composite,
+        );
+        return {
+          canvas: this._outCanvas,
+          composite: this._composite,
+          segmentCount: this._segmentCount,
+          dirtyRegion: dirtyRegion || null,
+        };
       }
-      return { canvas: this._resultCanvas(), composite: this._composite, segmentCount: this._segmentCount };
+      return {
+        canvas: this._resultCanvas(),
+        composite: this._composite,
+        segmentCount: this._segmentCount,
+      };
     }
 
     // Phase 11B.3 TEMP DIAGNOSTIC: the actual "one live present in flight,
@@ -2086,7 +2972,12 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
     async _peekStrokeGpuSerialized(meta) {
       this._livePreviewDirty = true;
       if (this._livePresentInFlight) {
-        return { canvas: this._resultCanvas(), composite: this._composite, segmentCount: this._segmentCount, coalesced: true };
+        return {
+          canvas: this._resultCanvas(),
+          composite: this._composite,
+          segmentCount: this._segmentCount,
+          coalesced: true,
+        };
       }
       this._livePresentInFlight = true;
       try {
@@ -2095,13 +2986,20 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
         while (this._livePreviewDirty) {
           this._livePreviewDirty = false;
           if (!this._active) break; // stroke ended/cancelled while we were looping
-          const _diagMeta = Object.assign({ segmentCount: this._segmentCount }, meta || {});
+          const _diagMeta = Object.assign(
+            { segmentCount: this._segmentCount },
+            meta || {},
+          );
           await this._resolveToOutput(false, _diagMeta);
         }
       } finally {
         this._livePresentInFlight = false;
       }
-      return { canvas: this._resultCanvas(), composite: this._composite, segmentCount: this._segmentCount };
+      return {
+        canvas: this._resultCanvas(),
+        composite: this._composite,
+        segmentCount: this._segmentCount,
+      };
     }
 
     // Abandons the in-progress stroke's accumulation without resolving.
@@ -2121,19 +3019,25 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
       this._livePreviewDirty = false;
     }
 
-    isGpuActive() { return this._usingGpu; }
+    isGpuActive() {
+      return this._usingGpu;
+    }
   }
 
   // TEMP DIAGNOSTIC (Phase 11A.24): exposed read-only so the A/B/C
   // diagnostic harness below can build a "GPU + merge" variant without
   // duplicating the merge algorithm. Not called anywhere in the
   // production dispatch path except drawSegments() itself, unchanged.
-  const PrototypeRendererExports = { PrototypeRenderer, DEFAULT_SS, mergeEquivalentConstantCapsules };
+  const PrototypeRendererExports = {
+    PrototypeRenderer,
+    DEFAULT_SS,
+    mergeEquivalentConstantCapsules,
+  };
 
-  if (typeof module !== 'undefined' && module.exports) {
+  if (typeof module !== "undefined" && module.exports) {
     module.exports = PrototypeRendererExports;
   }
-  if (typeof window !== 'undefined') {
+  if (typeof window !== "undefined") {
     window.PrototypeRenderer = PrototypeRenderer;
     // Phase 11B.3 TEMP DIAGNOSTIC: default OFF. Set to true to run the
     // one-in-flight live-GPU-preview-present coalescing experiment (see
@@ -2142,24 +3046,27 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
     // discoverable/greppable as a real, documented flag with an explicit
     // default, matching how the other window.HardRound* diagnostic flags in
     // this file are introduced.
-    if (typeof window.HardRoundDebugSerializeGpuPreview === 'undefined') {
+    if (typeof window.HardRoundDebugSerializeGpuPreview === "undefined") {
       window.HardRoundDebugSerializeGpuPreview = false;
     }
     // Phase 11B.4 TEMP DIAGNOSTIC CAUSAL FLAG: default OFF. See
     // GpuBackend.present() above for exactly what it does/doesn't skip.
-    if (typeof window.HardRoundDebugSkipLivePresentWorkDoneWait === 'undefined') {
+    if (
+      typeof window.HardRoundDebugSkipLivePresentWorkDoneWait === "undefined"
+    ) {
       window.HardRoundDebugSkipLivePresentWorkDoneWait = false;
     }
     // Phase 11B.5 TEMP DIAGNOSTIC CAUSAL FLAG: default OFF. See
     // PrototypeRenderer.peekStroke() above for exactly what it redirects
     // (live-preview-tagged GPU peeks only) when true.
-    if (typeof window.HardRoundDebugCanvasLivePresentation === 'undefined') {
+    if (typeof window.HardRoundDebugCanvasLivePresentation === "undefined") {
       window.HardRoundDebugCanvasLivePresentation = false;
     }
     window.PrototypeRendererModule = PrototypeRendererExports;
     // Phase 11B.2: console entry point for the present()-backlog diagnostic
     // summary defined on GpuBackend above. Read-only.
-    window.HardRoundAnalyzePresentBacklog = () => GpuBackend.analyzePresentBacklog();
+    window.HardRoundAnalyzePresentBacklog = () =>
+      GpuBackend.analyzePresentBacklog();
     // TEMP DIAGNOSTIC (Phase 11A.23): compares window.HardRoundSegmentLog.cpu
     // and .gpu after a stroke. Since PrototypeRenderer.drawSegments()
     // dispatches to exactly one backend per stroke (this._usingGpu), a
@@ -2170,8 +3077,13 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
     // drawSegment() directly with the same input list. Read-only: does not
     // draw, clear, or reset anything.
     window.HardRoundCompareSegmentLogs = function () {
-      const log = window.HardRoundSegmentLog || { cpu: [], gpu: [], dispatchCalls: [] };
-      const cpu = log.cpu, gpu = log.gpu;
+      const log = window.HardRoundSegmentLog || {
+        cpu: [],
+        gpu: [],
+        dispatchCalls: [],
+      };
+      const cpu = log.cpu,
+        gpu = log.gpu;
       const report = {
         cpuCount: cpu.length,
         gpuCount: gpu.length,
@@ -2182,26 +3094,54 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
         duplicateIdentitiesOnCpu: [],
       };
       const seenGpu = new Map();
-      gpu.forEach(entry => {
+      gpu.forEach((entry) => {
         seenGpu.set(entry.identity, (seenGpu.get(entry.identity) || 0) + 1);
       });
-      seenGpu.forEach((count, id) => { if (count > 1) report.duplicateIdentitiesOnGpu.push({ identity: id, count }); });
+      seenGpu.forEach((count, id) => {
+        if (count > 1)
+          report.duplicateIdentitiesOnGpu.push({ identity: id, count });
+      });
       const seenCpu = new Map();
-      cpu.forEach(entry => {
+      cpu.forEach((entry) => {
         seenCpu.set(entry.identity, (seenCpu.get(entry.identity) || 0) + 1);
       });
-      seenCpu.forEach((count, id) => { if (count > 1) report.duplicateIdentitiesOnCpu.push({ identity: id, count }); });
+      seenCpu.forEach((count, id) => {
+        if (count > 1)
+          report.duplicateIdentitiesOnCpu.push({ identity: id, count });
+      });
       const n = Math.max(cpu.length, gpu.length);
       for (let i = 0; i < n; i++) {
-        const a = cpu[i], b = gpu[i];
+        const a = cpu[i],
+          b = gpu[i];
         if (!a || !b) {
-          report.firstDifference = { index: i, reason: !a ? 'missing-on-cpu' : 'missing-on-gpu', cpu: a || null, gpu: b || null };
+          report.firstDifference = {
+            index: i,
+            reason: !a ? "missing-on-cpu" : "missing-on-gpu",
+            cpu: a || null,
+            gpu: b || null,
+          };
           break;
         }
-        const fieldsToCompare = ['start', 'end', 'radius', 'alpha', 'composite', 'hardness', 'aaMode'];
-        const mismatched = fieldsToCompare.filter(f => JSON.stringify(a[f]) !== JSON.stringify(b[f]));
+        const fieldsToCompare = [
+          "start",
+          "end",
+          "radius",
+          "alpha",
+          "composite",
+          "hardness",
+          "aaMode",
+        ];
+        const mismatched = fieldsToCompare.filter(
+          (f) => JSON.stringify(a[f]) !== JSON.stringify(b[f]),
+        );
         if (mismatched.length) {
-          report.firstDifference = { index: i, reason: 'value-mismatch', fields: mismatched, cpu: a, gpu: b };
+          report.firstDifference = {
+            index: i,
+            reason: "value-mismatch",
+            fields: mismatched,
+            cpu: a,
+            gpu: b,
+          };
           break;
         }
       }
@@ -2236,7 +3176,9 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
     };
 
     function _hrDeepCloneBatches(batches) {
-      return batches.map(batch => batch.map(seg => (seg ? Object.assign({}, seg) : seg)));
+      return batches.map((batch) =>
+        batch.map((seg) => (seg ? Object.assign({}, seg) : seg)),
+      );
     }
 
     // Hashes/measures a canvas the same way _hrCaptureCanvas() does in
@@ -2244,30 +3186,55 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
     // dependency on brush-engine.js), plus a full pixel-by-pixel diff
     // against a second canvas of the same size.
     function _hrDiagCaptureCanvas(canvas) {
-      const w = canvas.width, h = canvas.height;
-      const cctx = canvas.getContext('2d');
+      const w = canvas.width,
+        h = canvas.height;
+      const cctx = canvas.getContext("2d");
       const data = cctx.getImageData(0, 0, w, h).data;
-      let minX = w, minY = h, maxX = -1, maxY = -1, nonTransparent = 0, maxAlpha = 0, hash = 0;
+      let minX = w,
+        minY = h,
+        maxX = -1,
+        maxY = -1,
+        nonTransparent = 0,
+        maxAlpha = 0,
+        hash = 0;
       for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) {
-          const idx = (y * w + x) * 4, a = data[idx + 3];
+          const idx = (y * w + x) * 4,
+            a = data[idx + 3];
           if (a > 0) {
             nonTransparent++;
             if (a > maxAlpha) maxAlpha = a;
-            if (x < minX) minX = x; if (x > maxX) maxX = x;
-            if (y < minY) minY = y; if (y > maxY) maxY = y;
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
           }
-          hash = (hash * 31 + data[idx] + data[idx + 1] * 3 + data[idx + 2] * 7 + a * 13) | 0;
+          hash =
+            (hash * 31 +
+              data[idx] +
+              data[idx + 1] * 3 +
+              data[idx + 2] * 7 +
+              a * 13) |
+            0;
         }
       }
-      return { w, h, data, bounds: maxX >= minX ? { minX, minY, maxX, maxY } : null, nonTransparent, maxAlpha, hash };
+      return {
+        w,
+        h,
+        data,
+        bounds: maxX >= minX ? { minX, minY, maxX, maxY } : null,
+        nonTransparent,
+        maxAlpha,
+        hash,
+      };
     }
 
     function _hrDiagCompareCaptures(a, b) {
       if (a.w !== b.w || a.h !== b.h) {
         return { sizeMismatch: true, aSize: [a.w, a.h], bSize: [b.w, b.h] };
       }
-      let differingPixelCount = 0, maxChannelDiff = 0;
+      let differingPixelCount = 0,
+        maxChannelDiff = 0;
       const n = a.w * a.h * 4;
       for (let i = 0; i < n; i += 4) {
         let pixelDiffers = false;
@@ -2280,11 +3247,14 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
       }
       return {
         hashEqual: a.hash === b.hash,
-        boundsA: a.bounds, boundsB: b.bounds,
+        boundsA: a.bounds,
+        boundsB: b.bounds,
         boundsEqual: JSON.stringify(a.bounds) === JSON.stringify(b.bounds),
-        nonTransparentA: a.nonTransparent, nonTransparentB: b.nonTransparent,
+        nonTransparentA: a.nonTransparent,
+        nonTransparentB: b.nonTransparent,
         nonTransparentDelta: b.nonTransparent - a.nonTransparent,
-        maxAlphaA: a.maxAlpha, maxAlphaB: b.maxAlpha,
+        maxAlphaA: a.maxAlpha,
+        maxAlphaB: b.maxAlpha,
         maxAlphaDelta: b.maxAlpha - a.maxAlpha,
         differingPixelCount,
         maxChannelDiff,
@@ -2317,20 +3287,43 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
     // getImageData() from.
     function _hrDiagCaptureBuffer(buf) {
       const { data, w, h } = buf;
-      let minX = w, minY = h, maxX = -1, maxY = -1, nonTransparent = 0, maxAlpha = 0, hash = 0;
+      let minX = w,
+        minY = h,
+        maxX = -1,
+        maxY = -1,
+        nonTransparent = 0,
+        maxAlpha = 0,
+        hash = 0;
       for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) {
-          const idx = (y * w + x) * 4, a = data[idx + 3];
+          const idx = (y * w + x) * 4,
+            a = data[idx + 3];
           if (a > 0) {
             nonTransparent++;
             if (a > maxAlpha) maxAlpha = a;
-            if (x < minX) minX = x; if (x > maxX) maxX = x;
-            if (y < minY) minY = y; if (y > maxY) maxY = y;
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
           }
-          hash = (hash * 31 + data[idx] + data[idx + 1] * 3 + data[idx + 2] * 7 + a * 13) | 0;
+          hash =
+            (hash * 31 +
+              data[idx] +
+              data[idx + 1] * 3 +
+              data[idx + 2] * 7 +
+              a * 13) |
+            0;
         }
       }
-      return { w, h, data, bounds: maxX >= minX ? { minX, minY, maxX, maxY } : null, nonTransparent, maxAlpha, hash };
+      return {
+        w,
+        h,
+        data,
+        bounds: maxX >= minX ? { minX, minY, maxX, maxY } : null,
+        nonTransparent,
+        maxAlpha,
+        hash,
+      };
     }
 
     // Un-premultiplies a PRESENT_SHADER_WGSL buffer (rgb was written as
@@ -2346,10 +3339,16 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
       const out = new Uint8ClampedArray(w * h * 4);
       for (let i = 0; i < data.length; i += 4) {
         const a = data[i + 3];
-        if (a === 0) { out[i] = 0; out[i + 1] = 0; out[i + 2] = 0; out[i + 3] = 0; continue; }
-        out[i] = Math.round(data[i] * 255 / a);
-        out[i + 1] = Math.round(data[i + 1] * 255 / a);
-        out[i + 2] = Math.round(data[i + 2] * 255 / a);
+        if (a === 0) {
+          out[i] = 0;
+          out[i + 1] = 0;
+          out[i + 2] = 0;
+          out[i + 3] = 0;
+          continue;
+        }
+        out[i] = Math.round((data[i] * 255) / a);
+        out[i + 1] = Math.round((data[i + 1] * 255) / a);
+        out[i + 2] = Math.round((data[i + 2] * 255) / a);
         out[i + 3] = a;
       }
       return { data: out, w, h };
@@ -2363,23 +3362,37 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
     // present()/resolveInto()/endStroke() or touch the swapchain.
     window.HardRoundRunPresentVsResolveDiagnostic = async function (renderer) {
       if (!renderer || !renderer.gpu || !renderer.gpu.ready) {
-        return { error: 'GPU renderer unavailable -- cannot run PRESENT vs RESOLVE diagnostic here.' };
+        return {
+          error:
+            "GPU renderer unavailable -- cannot run PRESENT vs RESOLVE diagnostic here.",
+        };
       }
       const gpu = renderer.gpu;
       const rgb = renderer._rgb;
       const composite = renderer._composite;
-      const opacity = renderer.presentationOpacity == null ? 1 : renderer.presentationOpacity;
+      const opacity =
+        renderer.presentationOpacity == null ? 1 : renderer.presentationOpacity;
 
       let livePresentRaw, finalResolveRaw;
       try {
         // Back-to-back, no drawSegments()/reset() between them.
-        livePresentRaw = await gpu.diagPresentIntoBuffer(rgb, composite, opacity);
+        livePresentRaw = await gpu.diagPresentIntoBuffer(
+          rgb,
+          composite,
+          opacity,
+        );
         finalResolveRaw = await gpu.diagResolveIntoBuffer(rgb, composite);
       } catch (err) {
-        return { error: 'Diagnostic GPU pass failed: ' + (err && err.message ? err.message : String(err)) };
+        return {
+          error:
+            "Diagnostic GPU pass failed: " +
+            (err && err.message ? err.message : String(err)),
+        };
       }
       if (!livePresentRaw || !finalResolveRaw) {
-        return { error: 'One or both diagnostic passes returned null (GPU not ready).' };
+        return {
+          error: "One or both diagnostic passes returned null (GPU not ready).",
+        };
       }
 
       // Normalize PRESENT (premultiplied, color*opacity baked in) to the
@@ -2423,16 +3436,34 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
       const o = opts || {};
       const captured = window.HardRoundCapturedStream;
       if (!captured || !captured.batches.length) {
-        return { error: 'No captured segment stream. Call window.HardRoundArmSegmentCapture() before drawing the stroke, draw it, then window.HardRoundDisarmSegmentCapture(), then run this.' };
+        return {
+          error:
+            "No captured segment stream. Call window.HardRoundArmSegmentCapture() before drawing the stroke, draw it, then window.HardRoundDisarmSegmentCapture(), then run this.",
+        };
       }
-      const width = o.width || (window._hardRoundRenderer && window._hardRoundRenderer.width);
-      const height = o.height || (window._hardRoundRenderer && window._hardRoundRenderer.height);
+      const width =
+        o.width ||
+        (window._hardRoundRenderer && window._hardRoundRenderer.width);
+      const height =
+        o.height ||
+        (window._hardRoundRenderer && window._hardRoundRenderer.height);
       if (!width || !height) {
-        return { error: 'width/height not provided and no production renderer found to infer them from.' };
+        return {
+          error:
+            "width/height not provided and no production renderer found to infer them from.",
+        };
       }
       const ss = o.ss || DEFAULT_SS;
 
-      const result = { segmentCounts: {}, A: null, B: null, C: null, AvB: null, AvC: null, BvC: null };
+      const result = {
+        segmentCounts: {},
+        A: null,
+        B: null,
+        C: null,
+        AvB: null,
+        AvC: null,
+        BvC: null,
+      };
       // Phase 11A.24.1 fix: capA/capB/capC were previously declared with
       // `const` inside their own if/else block (e.g. `const capB = ...`
       // inside the B else-branch). That scopes them to that block only --
@@ -2442,56 +3473,103 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
       // function-level `let`s (initialized null, assigned once each
       // variant actually produces a capture) lets every later comparison
       // see whichever ones succeeded, regardless of which block set them.
-      let capA = null, capB = null, capC = null;
+      let capA = null,
+        capB = null,
+        capC = null;
 
       // --- A: CPU, production dispatch ---
       try {
-        const rA = new PrototypeRenderer({ width, height, ss, preferGpu: false });
+        const rA = new PrototypeRenderer({
+          width,
+          height,
+          ss,
+          preferGpu: false,
+        });
         rA.beginStroke();
         const batchesA = _hrDeepCloneBatches(captured.batches);
         let submittedA = 0;
-        batchesA.forEach(batch => { submittedA += batch.length; rA.drawSegments(batch); });
+        batchesA.forEach((batch) => {
+          submittedA += batch.length;
+          rA.drawSegments(batch);
+        });
         const outA = await rA.endStroke({ readback: true });
         capA = _hrDiagCaptureCanvas(outA.canvas);
-        result.A = { backend: 'cpu-production', usingGpu: false, ...capA, data: undefined };
+        result.A = {
+          backend: "cpu-production",
+          usingGpu: false,
+          ...capA,
+          data: undefined,
+        };
         result.segmentCounts.cpuSubmittedRaw = submittedA;
         result.segmentCounts.cpuFinalSegmentCount = outA.segmentCount;
       } catch (err) {
-        result.A = { error: 'CPU variant failed: ' + (err && err.message ? err.message : String(err)) };
+        result.A = {
+          error:
+            "CPU variant failed: " +
+            (err && err.message ? err.message : String(err)),
+        };
       }
       // --- B: GPU, production dispatch (unmerged) ---
       try {
-        const rB = new PrototypeRenderer({ width, height, ss, preferGpu: true });
+        const rB = new PrototypeRenderer({
+          width,
+          height,
+          ss,
+          preferGpu: true,
+        });
         if (rB._gpuInitPromise) await rB._gpuInitPromise;
         rB.beginStroke();
         if (!rB._usingGpu) {
-          result.B = { error: 'GPU unavailable in this environment -- cannot run the GPU-production variant here.' };
+          result.B = {
+            error:
+              "GPU unavailable in this environment -- cannot run the GPU-production variant here.",
+          };
         } else {
           const batchesB = _hrDeepCloneBatches(captured.batches);
           let submittedB = 0;
-          batchesB.forEach(batch => { submittedB += batch.length; rB.drawSegments(batch); });
+          batchesB.forEach((batch) => {
+            submittedB += batch.length;
+            rB.drawSegments(batch);
+          });
           const outB = await rB.endStroke({ readback: true });
           capB = _hrDiagCaptureCanvas(outB.canvas);
-          result.B = { backend: 'gpu-production-unmerged', usingGpu: true, ...capB, data: undefined };
+          result.B = {
+            backend: "gpu-production-unmerged",
+            usingGpu: true,
+            ...capB,
+            data: undefined,
+          };
           result.segmentCounts.gpuUnmergedSubmittedRaw = submittedB;
           result.segmentCounts.gpuUnmergedFinalSegmentCount = outB.segmentCount;
         }
       } catch (err) {
-        result.B = { error: 'GPU-production variant failed: ' + (err && err.message ? err.message : String(err)) };
+        result.B = {
+          error:
+            "GPU-production variant failed: " +
+            (err && err.message ? err.message : String(err)),
+        };
       }
       if (capA && capB) result.AvB = _hrDiagCompareCaptures(capA, capB);
 
       // --- C: GPU, diagnostic dispatch (merged before gpu.drawSegment()) ---
       try {
-        const rC = new PrototypeRenderer({ width, height, ss, preferGpu: true });
+        const rC = new PrototypeRenderer({
+          width,
+          height,
+          ss,
+          preferGpu: true,
+        });
         if (rC._gpuInitPromise) await rC._gpuInitPromise;
         rC.beginStroke();
         if (!rC._usingGpu) {
-          result.C = { error: 'GPU unavailable in this environment -- cannot run the GPU-merged-diagnostic variant here.' };
+          result.C = {
+            error:
+              "GPU unavailable in this environment -- cannot run the GPU-merged-diagnostic variant here.",
+          };
         } else {
           const batchesC = _hrDeepCloneBatches(captured.batches);
           let submittedC = 0;
-          batchesC.forEach(batch => {
+          batchesC.forEach((batch) => {
             if (!batch.length) return;
             const merged = mergeEquivalentConstantCapsules(batch);
             submittedC += merged.length;
@@ -2506,12 +3584,21 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
           });
           const outC = await rC.endStroke({ readback: true });
           capC = _hrDiagCaptureCanvas(outC.canvas);
-          result.C = { backend: 'gpu-diagnostic-merged', usingGpu: true, ...capC, data: undefined };
+          result.C = {
+            backend: "gpu-diagnostic-merged",
+            usingGpu: true,
+            ...capC,
+            data: undefined,
+          };
           result.segmentCounts.gpuMergedSubmitted = submittedC;
           result.segmentCounts.gpuMergedFinalSegmentCount = outC.segmentCount;
         }
       } catch (err) {
-        result.C = { error: 'GPU-merged-diagnostic variant failed: ' + (err && err.message ? err.message : String(err)) };
+        result.C = {
+          error:
+            "GPU-merged-diagnostic variant failed: " +
+            (err && err.message ? err.message : String(err)),
+        };
       }
       if (capA && capC) result.AvC = _hrDiagCompareCaptures(capA, capC);
       if (capB && capC) result.BvC = _hrDiagCompareCaptures(capB, capC);
@@ -2520,37 +3607,65 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
 
       // --- B: GPU, production dispatch (unmerged) ---
       try {
-        const rB = new PrototypeRenderer({ width, height, ss, preferGpu: true });
+        const rB = new PrototypeRenderer({
+          width,
+          height,
+          ss,
+          preferGpu: true,
+        });
         if (rB._gpuInitPromise) await rB._gpuInitPromise;
         rB.beginStroke();
         if (!rB._usingGpu) {
-          result.B = { error: 'GPU unavailable in this environment -- cannot run the GPU-production variant here.' };
+          result.B = {
+            error:
+              "GPU unavailable in this environment -- cannot run the GPU-production variant here.",
+          };
         } else {
           const batchesB = _hrDeepCloneBatches(captured.batches);
           let submittedB = 0;
-          batchesB.forEach(batch => { submittedB += batch.length; rB.drawSegments(batch); });
+          batchesB.forEach((batch) => {
+            submittedB += batch.length;
+            rB.drawSegments(batch);
+          });
           const outB = await rB.endStroke({ readback: true });
           capB = _hrDiagCaptureCanvas(outB.canvas);
-          result.B = { backend: 'gpu-production-unmerged', usingGpu: true, ...capB, data: undefined };
+          result.B = {
+            backend: "gpu-production-unmerged",
+            usingGpu: true,
+            ...capB,
+            data: undefined,
+          };
           result.segmentCounts.gpuUnmergedSubmittedRaw = submittedB;
           result.segmentCounts.gpuUnmergedFinalSegmentCount = outB.segmentCount;
         }
       } catch (err) {
-        result.B = { error: 'GPU-production variant failed: ' + (err && err.message ? err.message : String(err)) };
+        result.B = {
+          error:
+            "GPU-production variant failed: " +
+            (err && err.message ? err.message : String(err)),
+        };
       }
       if (capA && capB) result.AvB = _hrDiagCompareCaptures(capA, capB);
 
       // --- C: GPU, diagnostic dispatch (merged before gpu.drawSegment()) ---
       try {
-        const rC = new PrototypeRenderer({ width, height, ss, preferGpu: true });
+        const rC = new PrototypeRenderer({
+          width,
+          height,
+          ss,
+          preferGpu: true,
+        });
         if (rC._gpuInitPromise) await rC._gpuInitPromise;
         rC.beginStroke();
         if (!rC._usingGpu) {
-          result.C = { error: 'GPU unavailable in this environment -- cannot run the GPU-merged-diagnostic variant here.' };
+          result.C = {
+            error:
+              "GPU unavailable in this environment -- cannot run the GPU-merged-diagnostic variant here.",
+          };
         } else {
           const batchesC = _hrDeepCloneBatches(captured.batches);
           let submittedC = 0;
-          batchesC.forEach(batch => {
+          batchesC.forEach((batch) => {
             if (!batch.length) return;
             const merged = mergeEquivalentConstantCapsules(batch);
             submittedC += merged.length;
@@ -2565,12 +3680,21 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
           });
           const outC = await rC.endStroke({ readback: true });
           capC = _hrDiagCaptureCanvas(outC.canvas);
-          result.C = { backend: 'gpu-diagnostic-merged', usingGpu: true, ...capC, data: undefined };
+          result.C = {
+            backend: "gpu-diagnostic-merged",
+            usingGpu: true,
+            ...capC,
+            data: undefined,
+          };
           result.segmentCounts.gpuMergedSubmitted = submittedC;
           result.segmentCounts.gpuMergedFinalSegmentCount = outC.segmentCount;
         }
       } catch (err) {
-        result.C = { error: 'GPU-merged-diagnostic variant failed: ' + (err && err.message ? err.message : String(err)) };
+        result.C = {
+          error:
+            "GPU-merged-diagnostic variant failed: " +
+            (err && err.message ? err.message : String(err)),
+        };
       }
       if (capA && capC) result.AvC = _hrDiagCompareCaptures(capA, capC);
       if (capB && capC) result.BvC = _hrDiagCompareCaptures(capB, capC);
@@ -2578,4 +3702,4 @@ colorAttachments: [{ view: currentTextureView, loadOp: 'clear', storeOp: 'store'
       return result;
     };
   }
-})(typeof window !== 'undefined' ? window : globalThis);
+})(typeof window !== "undefined" ? window : globalThis);

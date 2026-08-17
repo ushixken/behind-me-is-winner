@@ -1,116 +1,1198 @@
-(function(){
-  'use strict';
-  const MIN_ZOOM=0.1,MAX_ZOOM=16,HANDLE_SIZE=8;
-  const INTERPOLATIONS=new Set(['linear','hold','ease','ease-in','ease-out','bezier']);
-  let camera=null,overlay=null,active=false,gesture=null,separateKeyEnabled=false;
-  const finite=(value,fallback)=>value!==null&&value!==''&&Number.isFinite(Number(value))?Number(value):fallback;
-  const angle=value=>{let n=finite(value,0)%360;if(n>180)n-=360;if(n<=-180)n+=360;return n;};
-  const clamp01=value=>Math.max(0,Math.min(1,finite(value,0)));
-  const curveValue=value=>Math.max(-8,Math.min(9,finite(value,0)));
-  function normalizeBezier(value){if(!value||typeof value!=='object')return null;return{x1:clamp01(value.x1),y1:curveValue(value.y1),x2:clamp01(value.x2),y2:curveValue(value.y2)};}
-  function normalizeCurve(value){if(!value||typeof value!=='object')return null;return{interpolation:INTERPOLATIONS.has(value.interpolation)?value.interpolation:'linear',bezier:normalizeBezier(value.bezier)};}
-  function normalizeCurves(value){const curves={};if(!value||typeof value!=='object')return curves;['position','x','y','zoom','rotation'].forEach(property=>{const curve=normalizeCurve(value[property]);if(curve)curves[property]=curve;});return curves;}
-  function defaultCamera(enabled){return{enabled:enabled===true,positionX:0,positionY:0,zoom:1,rotation:0,track:{keys:[],positionLinked:true},settingsTab:'basic',output:{preset:'custom',width:CW,height:CH},view:{shade:28,frameOpacity:100},guides:{showFrame:true,showCenter:true,showThirds:false,showSafeArea:false,outer:5,inner:10}};}
-  function normalize(value){
-    const fallback=defaultCamera(false),source=value&&typeof value==='object'?value:{},output=source.output&&typeof source.output==='object'?source.output:{},view=source.view&&typeof source.view==='object'?source.view:{},guides=source.guides&&typeof source.guides==='object'?source.guides:{},sourceTrack=source.track&&typeof source.track==='object'?source.track:{},rawKeys=Array.isArray(sourceTrack.keys)?sourceTrack.keys:[],keyMap=new Map();
-    rawKeys.forEach(item=>{if(!item||typeof item!=='object')return;const frame=Math.max(0,Math.round(finite(item.frame,0))),key={frame,interpolation:INTERPOLATIONS.has(item.interpolation)?item.interpolation:'linear',bezier:normalizeBezier(item.bezier)},curves=normalizeCurves(item.curves);if(Object.keys(curves).length)key.curves=curves;if(Object.prototype.hasOwnProperty.call(item,'x'))key.x=finite(item.x,0);if(Object.prototype.hasOwnProperty.call(item,'y'))key.y=finite(item.y,0);if(Object.prototype.hasOwnProperty.call(item,'zoom'))key.zoom=Math.max(MIN_ZOOM,Math.min(MAX_ZOOM,finite(item.zoom,1)>0?finite(item.zoom,1):1));if(Object.prototype.hasOwnProperty.call(item,'rotation'))key.rotation=angle(item.rotation);if('x'in key||'y'in key||'zoom'in key||'rotation'in key)keyMap.set(frame,key);});
-    const track={keys:Array.from(keyMap.values()).sort((a,b)=>a.frame-b.frame),positionLinked:sourceTrack.positionLinked!==false},preset=['custom','hd720','hd1080','2k','4k','square','vertical'].includes(output.preset)?output.preset:'custom',width=Math.round(Math.max(1,Math.min(16384,finite(output.width,fallback.output.width)))),height=Math.round(Math.max(1,Math.min(16384,finite(output.height,fallback.output.height))));
-    return{enabled:source.enabled===true,positionX:finite(source.positionX,fallback.positionX),positionY:finite(source.positionY,fallback.positionY),zoom:Math.max(MIN_ZOOM,Math.min(MAX_ZOOM,finite(source.zoom,fallback.zoom)>0?finite(source.zoom,fallback.zoom):1)),rotation:angle(source.rotation),track,settingsTab:source.settingsTab==='advanced'?'advanced':'basic',output:{preset,width,height},view:{shade:Math.max(0,Math.min(100,finite(view.shade,fallback.view.shade))),frameOpacity:Math.max(0,Math.min(100,finite(view.frameOpacity,fallback.view.frameOpacity)))},guides:{showFrame:guides.showFrame!==false,showCenter:guides.showCenter!==false,showThirds:!!guides.showThirds,showSafeArea:!!guides.showSafeArea,outer:Math.max(0,Math.min(50,finite(guides.outer,fallback.guides.outer))),inner:Math.max(0,Math.min(50,finite(guides.inner,fallback.guides.inner)))}};
+(function () {
+  "use strict";
+  const MIN_ZOOM = 0.1,
+    MAX_ZOOM = 16,
+    HANDLE_SIZE = 8;
+  const INTERPOLATIONS = new Set([
+    "linear",
+    "hold",
+    "ease",
+    "ease-in",
+    "ease-out",
+    "bezier",
+  ]);
+  let camera = null,
+    overlay = null,
+    active = false,
+    gesture = null,
+    separateKeyEnabled = false;
+  const finite = (value, fallback) =>
+    value !== null && value !== "" && Number.isFinite(Number(value))
+      ? Number(value)
+      : fallback;
+  const angle = (value) => {
+    let n = finite(value, 0) % 360;
+    if (n > 180) n -= 360;
+    if (n <= -180) n += 360;
+    return n;
+  };
+  const clamp01 = (value) => Math.max(0, Math.min(1, finite(value, 0)));
+  const curveValue = (value) => Math.max(-8, Math.min(9, finite(value, 0)));
+  function normalizeBezier(value) {
+    if (!value || typeof value !== "object") return null;
+    return {
+      x1: clamp01(value.x1),
+      y1: curveValue(value.y1),
+      x2: clamp01(value.x2),
+      y2: curveValue(value.y2),
+    };
   }
-  function snapshot(){return JSON.parse(JSON.stringify(camera));}
-  function transformSnapshot(value){value=value||camera;return{x:value.positionX,y:value.positionY,zoom:value.zoom,rotation:value.rotation};}
-  function sameTransform(a,b){const left=transformSnapshot(a),right=transformSnapshot(b);return left.x===right.x&&left.y===right.y&&left.zoom===right.zoom&&left.rotation===right.rotation;}
-  function upsertAutoKey(frame,before){frame=Math.max(0,Math.min(typeof TOTAL==='number'?TOTAL-1:Number.MAX_SAFE_INTEGER,Math.round(finite(frame,0))));const value=transformSnapshot(),previous=transformSnapshot(before||camera),index=camera.track.keys.findIndex(item=>item.frame===frame),key=index>=0?Object.assign({},camera.track.keys[index]):{frame,interpolation:'ease',bezier:null},positionChanged=value.x!==previous.x||value.y!==previous.y;if(!separateKeyEnabled){key.x=value.x;key.y=value.y;key.zoom=value.zoom;key.rotation=value.rotation;}else{if(positionChanged){if(camera.track.positionLinked!==false){key.x=value.x;key.y=value.y;}else{if(value.x!==previous.x)key.x=value.x;if(value.y!==previous.y)key.y=value.y;}}if(value.zoom!==previous.zoom)key.zoom=value.zoom;if(value.rotation!==previous.rotation)key.rotation=value.rotation;}if(index>=0)camera.track.keys[index]=key;else camera.track.keys.push(key);camera.track.keys.sort((a,b)=>a.frame-b.frame);return key;}
-  function cubicCoordinate(t,a,b){const mt=1-t;return 3*mt*mt*t*a+3*mt*t*t*b+t*t*t;}
-  function cubicBezierProgress(control,time){control=normalizeBezier(control)||{x1:.333,y1:0,x2:.667,y2:1};let lo=0,hi=1,t=time;for(let i=0;i<12;i++){const x=cubicCoordinate(t,control.x1,control.x2);if(Math.abs(x-time)<1e-5)break;if(x<time)lo=t;else hi=t;t=(lo+hi)/2;}return cubicCoordinate(t,control.y1,control.y2);}
-  function interpolationProgress(type,t,bezier){if(type==='hold')return 0;if(type==='ease')return t*t*(3-2*t);if(type==='ease-in')return t*t;if(type==='ease-out')return 1-(1-t)*(1-t);if(type==='bezier')return cubicBezierProgress(bezier,t);return t;}
-  function commitCameraEdit(before){if(!before||same(before,camera)){notify(false);return false;}if(!sameTransform(before,camera))upsertAutoKey(typeof curFrame==='number'?curFrame:0,before);undoStack.push({type:'camera-state',before:normalize(before),after:snapshot()});if(undoStack.length>40)undoStack.shift();redoStack.length=0;notify(false);if(typeof renderTimeline==='function')renderTimeline();return true;}
-  function keyHasProperty(key,property){if(property==='position')return Object.prototype.hasOwnProperty.call(key,'x')&&Object.prototype.hasOwnProperty.call(key,'y');return Object.prototype.hasOwnProperty.call(key,property);}
-  function propertyFields(property){return property==='position'?['x','y']:[property];}
-  function curveProperty(field){return camera.track.positionLinked!==false&&(field==='x'||field==='y')?'position':field;}
-  function curveForKey(key,field){const property=curveProperty(field),curves=key.curves||{},curve=curves[property]||((property==='x'||property==='y')?curves.position:null);return curve||{interpolation:key.interpolation||'linear',bezier:key.bezier||null};}
-  function propertyKeys(property){return camera.track.keys.filter(key=>property==='all'||keyHasProperty(key,property)).map(key=>{const copy=JSON.parse(JSON.stringify(key));if(property!=='all'){const curve=curveForKey(key,property==='position'?'x':property);copy.interpolation=curve.interpolation;copy.bezier=curve.bezier?JSON.parse(JSON.stringify(curve.bezier)):null;}return copy;});}
-  function interpolateField(field,frame,fallback,keys){const eligible=(keys||camera.track.keys).filter(key=>Object.prototype.hasOwnProperty.call(key,field));if(!eligible.length)return fallback;const exact=eligible.find(key=>key.frame===frame);if(exact)return exact[field];if(frame<=eligible[0].frame)return eligible[0][field];if(frame>=eligible[eligible.length-1].frame)return eligible[eligible.length-1][field];let right=1;while(right<eligible.length&&eligible[right].frame<frame)right++;const a=eligible[right-1],b=eligible[right],curve=curveForKey(a,field),t=interpolationProgress(curve.interpolation,(frame-a.frame)/(b.frame-a.frame),curve.bezier);if(field==='rotation'){const delta=((b.rotation-a.rotation+540)%360)-180;return angle(a.rotation+delta*t);}return a[field]+(b[field]-a[field])*t;}
-  function evaluateTrack(frame){
-    if(!camera.enabled)return snapshot();frame=Math.max(0,Math.round(finite(frame,0)));
-    camera.positionX=interpolateField('x',frame,camera.positionX);camera.positionY=interpolateField('y',frame,camera.positionY);camera.zoom=interpolateField('zoom',frame,camera.zoom);camera.rotation=angle(interpolateField('rotation',frame,camera.rotation));notify(true);return snapshot();
+  function normalizeCurve(value) {
+    if (!value || typeof value !== "object") return null;
+    return {
+      interpolation: INTERPOLATIONS.has(value.interpolation)
+        ? value.interpolation
+        : "linear",
+      bezier: normalizeBezier(value.bezier),
+    };
   }
-  function evaluateSnapshotAt(frame){const current=camera,working=normalize(snapshot());camera=working;frame=Math.max(0,Math.round(finite(frame,0)));working.positionX=interpolateField('x',frame,working.positionX);working.positionY=interpolateField('y',frame,working.positionY);working.zoom=interpolateField('zoom',frame,working.zoom);working.rotation=angle(interpolateField('rotation',frame,working.rotation));const result=snapshot();camera=current;return result;}
-  function trackSnapshot(){return JSON.parse(JSON.stringify(camera.track));}
-  function restoreTrack(value,frame){camera.track=normalize(Object.assign({},camera,{track:value})).track;if(camera.track.keys.length)evaluateTrack(frame==null?(typeof curFrame==='number'?curFrame:0):frame);else notify(false);return trackSnapshot();}
-  function commitTrack(before,type){const after=trackSnapshot();if(before&&JSON.stringify(before)!==JSON.stringify(after)){undoStack.push({type:'camera-track',operation:type||'edit',before:JSON.parse(JSON.stringify(before)),after});if(undoStack.length>40)undoStack.shift();redoStack.length=0;if(typeof window.markProjectDirty==='function')window.markProjectDirty('camera-track');}notify(false);if(typeof renderTimeline==='function')renderTimeline();return after;}
-  function addOrUpdateKey(frame){frame=Math.max(0,Math.min(typeof TOTAL==='number'?TOTAL-1:Number.MAX_SAFE_INTEGER,Math.round(finite(frame,0))));const before=trackSnapshot(),value=transformSnapshot(),index=camera.track.keys.findIndex(item=>item.frame===frame),interpolation=index>=0?camera.track.keys[index].interpolation:'ease',bezier=index>=0?camera.track.keys[index].bezier:null,key=Object.assign({},index>=0?camera.track.keys[index]:null,{frame,x:value.x,y:value.y,zoom:value.zoom,rotation:value.rotation,interpolation,bezier});if(index>=0)camera.track.keys[index]=key;else camera.track.keys.push(key);camera.track.keys.sort((a,b)=>a.frame-b.frame);commitTrack(before,index>=0?'update':'add');return key;}
-  function addOrUpdatePropertyKey(property,frame){if(!['position','x','y','zoom','rotation'].includes(property))return null;frame=Math.max(0,Math.min(typeof TOTAL==='number'?TOTAL-1:Number.MAX_SAFE_INTEGER,Math.round(finite(frame,0))));const before=trackSnapshot(),value=transformSnapshot(),index=camera.track.keys.findIndex(item=>item.frame===frame),key=index>=0?Object.assign({},camera.track.keys[index]):{frame,interpolation:'ease',bezier:null};if(property==='position'){key.x=value.x;key.y=value.y;}else key[property]=value[property];if(index>=0)camera.track.keys[index]=key;else camera.track.keys.push(key);camera.track.keys.sort((a,b)=>a.frame-b.frame);commitTrack(before,'add-property');return JSON.parse(JSON.stringify(key));}
-  function deletePropertyKeys(property,frames){const selected=new Set((frames||[]).map(Number)),fields=propertyFields(property),before=trackSnapshot();camera.track.keys=camera.track.keys.map(key=>{if(!selected.has(key.frame))return key;const next=Object.assign({},key),curves=Object.assign({},next.curves||{});fields.forEach(field=>delete next[field]);delete curves[property];if(Object.keys(curves).length)next.curves=curves;else delete next.curves;return next;}).filter(key=>'x'in key||'y'in key||'zoom'in key||'rotation'in key);commitTrack(before,'delete-property');evaluateTrack(typeof curFrame==='number'?curFrame:0);return trackSnapshot();}
-  function replacePropertyKeys(property,keys){const fields=propertyFields(property),incoming=new Map((keys||[]).map(key=>[key.frame,key]));camera.track.keys=camera.track.keys.map(key=>{const source=incoming.get(key.frame);if(!source)return key;const next=Object.assign({},key),curves=Object.assign({},next.curves||{});curves[property]={interpolation:source.interpolation||'linear',bezier:source.bezier?JSON.parse(JSON.stringify(source.bezier)):null};next.curves=curves;fields.forEach(field=>{if(Object.prototype.hasOwnProperty.call(source,field))next[field]=source[field];});return next;});notify(true);return trackSnapshot();}
-  function setPositionLinked(linked){linked=!!linked;if(camera.track.positionLinked===linked)return false;const before=trackSnapshot();if(linked){const source=before.keys,frames=Array.from(new Set(source.filter(key=>'x'in key||'y'in key).map(key=>key.frame))).sort((a,b)=>a-b);frames.forEach(frame=>{let key=camera.track.keys.find(item=>item.frame===frame);if(!key){key={frame,interpolation:'ease',bezier:null};camera.track.keys.push(key);}key.x=interpolateField('x',frame,camera.positionX,source);key.y=interpolateField('y',frame,camera.positionY,source);});camera.track.keys.sort((a,b)=>a.frame-b.frame);}camera.track.positionLinked=linked;commitTrack(before,'position-link');evaluateTrack(typeof curFrame==='number'?curFrame:0);return true;}
-  function setKeyInterpolation(frames,type,property){if(!INTERPOLATIONS.has(type))return false;const selected=new Set((frames||[]).map(Number)),before=trackSnapshot();let changed=false;camera.track.keys.forEach(key=>{if(!selected.has(key.frame))return;if(property){const curves=Object.assign({},key.curves||{}),current=curveForKey(key,property==='position'?'x':property);if(current.interpolation===type)return;curves[property]={interpolation:type,bezier:type==='bezier'?(current.bezier||{x1:.333,y1:0,x2:.667,y2:1}):current.bezier};key.curves=curves;changed=true;}else if(key.interpolation!==type){key.interpolation=type;if(type==='bezier'&&!key.bezier)key.bezier={x1:.333,y1:0,x2:.667,y2:1};changed=true;}});if(changed){commitTrack(before,'interpolation');evaluateTrack(typeof curFrame==='number'?curFrame:0);}return changed;}
-  function deleteKeys(frames){const selected=new Set((frames||[]).map(Number)),before=trackSnapshot();camera.track.keys=camera.track.keys.filter(key=>!selected.has(key.frame));commitTrack(before,'delete');if(camera.track.keys.length)evaluateTrack(typeof curFrame==='number'?curFrame:0);return trackSnapshot();}
-  function replaceTrackKeys(keys,operation,before){camera.track=normalize(Object.assign({},camera,{track:{keys,positionLinked:camera.track.positionLinked}})).track;if(before)commitTrack(before,operation);else notify(true);return trackSnapshot();}
-  function same(a,b){return JSON.stringify(a)===JSON.stringify(b);}
-  function cameraCenter(value){value=value||camera;return{x:CW/2+value.positionX,y:CH/2+value.positionY};}
-  function getCameraMatrix(value){value=value||camera;const center=cameraCenter(value),matrix=new DOMMatrix();matrix.translateSelf(CW/2,CH/2);matrix.rotateSelf(-value.rotation);matrix.scaleSelf(value.zoom,value.zoom);matrix.translateSelf(-center.x,-center.y);return matrix;}
-  function getCameraOutputMatrix(value,width,height){value=value||camera;const center=cameraCenter(value),matrix=new DOMMatrix();matrix.translateSelf(width/2,height/2);matrix.rotateSelf(-value.rotation);matrix.scaleSelf(value.zoom,value.zoom);matrix.translateSelf(-center.x,-center.y);return matrix;}
-  function worldToCamera(point,value){const p=new DOMPoint(point.x,point.y).matrixTransform(getCameraMatrix(value));return{x:p.x,y:p.y};}
-  function cameraToWorld(point,value){const p=new DOMPoint(point.x,point.y).matrixTransform(getCameraMatrix(value).inverse());return{x:p.x,y:p.y};}
-  function getCameraWorldBounds(value){value=value||camera;const center=cameraCenter(value),halfW=value.output.width/(2*value.zoom),halfH=value.output.height/(2*value.zoom),r=value.rotation*Math.PI/180,cos=Math.cos(r),sin=Math.sin(r);return[[-halfW,-halfH],[halfW,-halfH],[halfW,halfH],[-halfW,halfH]].map(([x,y])=>({x:center.x+x*cos-y*sin,y:center.y+x*sin+y*cos}));}
-  function screenGeometry(value){const world=getCameraWorldBounds(value),points=world.map(EditorOverlayRenderer.worldToScreen),center=EditorOverlayRenderer.worldToScreen(cameraCenter(value));return{world,points,center};}
-  function drawDimmedOutside(ctx,points,width,height,opacity){if(opacity<=0)return;ctx.save();ctx.fillStyle='rgba(5,5,10,'+opacity+')';ctx.beginPath();ctx.rect(0,0,width,height);ctx.moveTo(points[0].x,points[0].y);for(let i=3;i>=0;i--)ctx.lineTo(points[i].x,points[i].y);ctx.closePath();ctx.fill('evenodd');ctx.restore();}
-  function path(ctx,points){ctx.beginPath();ctx.moveTo(points[0].x,points[0].y);for(let i=1;i<points.length;i++)ctx.lineTo(points[i].x,points[i].y);ctx.closePath();}
-  function guideLine(ctx,a,b){ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();}
-  function hasVisibleGuide(value){const guides=value&&value.guides;return !!(guides&&(guides.showFrame||guides.showCenter||guides.showThirds||guides.showSafeArea));}
-  function drawOverlay(ctx,geometry){
-    if(!camera.enabled||!hasVisibleGuide(camera))return;
-    const display=screenGeometry(camera),points=display.points,frameOpacity=camera.view.frameOpacity/100;
-    if(camera.guides.showFrame)drawDimmedOutside(ctx,points,geometry.width,geometry.height,camera.view.shade/100);
-    const mix=(a,b,t)=>({x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t});
-    ctx.save();ctx.lineWidth=1;ctx.strokeStyle='rgba(132,122,255,.98)';ctx.globalAlpha=frameOpacity;ctx.setLineDash([6,4]);if(camera.guides.showFrame){path(ctx,points);ctx.stroke();}ctx.setLineDash([]);ctx.globalAlpha=frameOpacity*.75;
-    if(camera.guides.showThirds){for(const t of [1/3,2/3]){guideLine(ctx,mix(points[0],points[1],t),mix(points[3],points[2],t));guideLine(ctx,mix(points[0],points[3],t),mix(points[1],points[2],t));}}
-    if(camera.guides.showSafeArea){for(const margin of [camera.guides.outer,camera.guides.inner]){const t=margin/50,safe=[mix(points[0],display.center,t),mix(points[1],display.center,t),mix(points[2],display.center,t),mix(points[3],display.center,t)];path(ctx,safe);ctx.stroke();}}
-    if(camera.guides.showCenter){const edgeX={x:points[1].x-points[0].x,y:points[1].y-points[0].y},edgeY={x:points[3].x-points[0].x,y:points[3].y-points[0].y};const lengthX=Math.max(1,Math.hypot(edgeX.x,edgeX.y)),lengthY=Math.max(1,Math.hypot(edgeY.x,edgeY.y));const axisX={x:edgeX.x/lengthX,y:edgeX.y/lengthX},axisY={x:edgeY.x/lengthY,y:edgeY.y/lengthY},radius=7;ctx.strokeStyle='#f0b52e';guideLine(ctx,{x:display.center.x-axisX.x*radius,y:display.center.y-axisX.y*radius},{x:display.center.x+axisX.x*radius,y:display.center.y+axisX.y*radius});guideLine(ctx,{x:display.center.x-axisY.x*radius,y:display.center.y-axisY.y*radius},{x:display.center.x+axisY.x*radius,y:display.center.y+axisY.y*radius});}
-    ctx.globalAlpha=1;if(active&&camera.guides.showFrame){ctx.strokeStyle='rgba(132,122,255,.98)';for(const point of points){ctx.fillStyle='#f8f7ff';ctx.fillRect(point.x-HANDLE_SIZE/2,point.y-HANDLE_SIZE/2,HANDLE_SIZE,HANDLE_SIZE);ctx.strokeRect(point.x-HANDLE_SIZE/2,point.y-HANDLE_SIZE/2,HANDLE_SIZE,HANDLE_SIZE);}}ctx.restore();
+  function normalizeCurves(value) {
+    const curves = {};
+    if (!value || typeof value !== "object") return curves;
+    ["position", "x", "y", "zoom", "rotation"].forEach((property) => {
+      const curve = normalizeCurve(value[property]);
+      if (curve) curves[property] = curve;
+    });
+    return curves;
   }
-  function pointerScreen(event){const rect=canvasArea.getBoundingClientRect();return{x:event.clientX-rect.left,y:event.clientY-rect.top};}
-  function hitTest(event){const point=getPos(event),display=screenGeometry(camera),center=cameraCenter(camera),hit=typeof _tfHitTestGeneric==='function'?_tfHitTestGeneric(point,display.world,camera.rotation,1/camera.zoom,center,camera.output.width,camera.output.height,null):null;if(!hit)return null;return{kind:hit.mode==='scale'?'zoom':hit.mode,point:pointerScreen(event),display,transformHit:hit};}
-  function notify(live){if(overlay){overlay.canvas.style.pointerEvents=active&&camera.enabled?'auto':'none';overlay.setVisible(camera.enabled&&(active||hasVisibleGuide(camera)));overlay.invalidate();}window.dispatchEvent(new CustomEvent('camera-changed',{detail:{camera:snapshot(),live:!!live}}));}
-  function begin(event){if(!active||!camera.enabled||event.isPrimary===false||((event.pointerType==='mouse'||event.pointerType==='pen')&&event.button!==0))return;const hit=hitTest(event);if(!hit)return;event.preventDefault();event.stopPropagation();const initial=snapshot();gesture={pointerId:event.pointerId,kind:hit.kind,initial,startScreen:hit.point,startCenter:hit.display.center,startDistance:Math.max(1,Math.hypot(hit.point.x-hit.display.center.x,hit.point.y-hit.display.center.y)),startAngle:Math.atan2(hit.point.y-hit.display.center.y,hit.point.x-hit.display.center.x)};overlay.canvas.setPointerCapture(event.pointerId);document.body.classList.add('camera-interacting');}
-  function update(event){if(!active){return;}if(!gesture){const hit=hitTest(event);overlay.canvas.style.cursor=hit&&typeof _tfHitCursor==='function'?_tfHitCursor(hit.transformHit):'default';return;}if(event.pointerId!==gesture.pointerId)return;event.preventDefault();const point=pointerScreen(event);if(gesture.kind==='move'){const rect=canvasArea.getBoundingClientRect(),startWorld=getPos({clientX:rect.left+gesture.startScreen.x,clientY:rect.top+gesture.startScreen.y}),world=getPos(event);camera.positionX=gesture.initial.positionX+world.x-startWorld.x;camera.positionY=gesture.initial.positionY+world.y-startWorld.y;}else if(gesture.kind==='zoom'){const distance=Math.max(1,Math.hypot(point.x-gesture.startCenter.x,point.y-gesture.startCenter.y));camera.zoom=Math.max(MIN_ZOOM,Math.min(MAX_ZOOM,gesture.initial.zoom*gesture.startDistance/distance));}else{let delta=Math.atan2(point.y-gesture.startCenter.y,point.x-gesture.startCenter.x)-gesture.startAngle;while(delta>Math.PI)delta-=Math.PI*2;while(delta<-Math.PI)delta+=Math.PI*2;const rawRotation=angle(gesture.initial.rotation+delta*180/Math.PI);camera.rotation=event.shiftKey?angle(Math.round(rawRotation/15)*15):rawRotation;}notify(true);}
-  function finish(event,cancelled){if(!gesture||event.pointerId!==gesture.pointerId)return;event.preventDefault();const initial=gesture.initial;gesture=null;document.body.classList.remove('camera-interacting');try{if(overlay.canvas.hasPointerCapture(event.pointerId))overlay.canvas.releasePointerCapture(event.pointerId);}catch(_){}if(cancelled){camera=initial;notify(false);return;}commitCameraEdit(initial);}
-  function enter(){active=true;notify(false);}
-  function exit(){if(gesture){camera=gesture.initial;gesture=null;document.body.classList.remove('camera-interacting');}active=false;notify(false);}
-  function renderScene(source,target){const context=target.getContext('2d'),matrix=camera.enabled?getCameraMatrix(camera):new DOMMatrix();context.save();context.setTransform(1,0,0,1,0,0);context.clearRect(0,0,target.width,target.height);context.setTransform(matrix.a,matrix.b,matrix.c,matrix.d,matrix.e,matrix.f);context.drawImage(source,0,0);context.restore();return target;}
-  function renderCameraOutput(options){
-    options=options||{};
-    const value=normalize(options.camera||camera),source=options.source,target=options.target;
-    if(!value.enabled||!source||!target)return null;
-    const width=Math.max(1,Math.round(value.output.width));
-    const height=Math.max(1,Math.round(value.output.height));
-    if(target.width!==width)target.width=width;
-    if(target.height!==height)target.height=height;
-    const context=target.getContext('2d'),matrix=getCameraOutputMatrix(value,width,height);
+  function defaultCamera(enabled) {
+    return {
+      enabled: enabled === true,
+      positionX: 0,
+      positionY: 0,
+      zoom: 1,
+      rotation: 0,
+      track: { keys: [], positionLinked: true },
+      settingsTab: "basic",
+      output: { preset: "custom", width: CW, height: CH },
+      view: { shade: 28, frameOpacity: 100 },
+      guides: {
+        showFrame: true,
+        showCenter: true,
+        showThirds: false,
+        showSafeArea: false,
+        outer: 5,
+        inner: 10,
+      },
+    };
+  }
+  function normalize(value) {
+    const fallback = defaultCamera(false),
+      source = value && typeof value === "object" ? value : {},
+      output =
+        source.output && typeof source.output === "object" ? source.output : {},
+      view = source.view && typeof source.view === "object" ? source.view : {},
+      guides =
+        source.guides && typeof source.guides === "object" ? source.guides : {},
+      sourceTrack =
+        source.track && typeof source.track === "object" ? source.track : {},
+      rawKeys = Array.isArray(sourceTrack.keys) ? sourceTrack.keys : [],
+      keyMap = new Map();
+    rawKeys.forEach((item) => {
+      if (!item || typeof item !== "object") return;
+      const frame = Math.max(0, Math.round(finite(item.frame, 0))),
+        key = {
+          frame,
+          interpolation: INTERPOLATIONS.has(item.interpolation)
+            ? item.interpolation
+            : "linear",
+          bezier: normalizeBezier(item.bezier),
+        },
+        curves = normalizeCurves(item.curves);
+      if (Object.keys(curves).length) key.curves = curves;
+      if (Object.prototype.hasOwnProperty.call(item, "x"))
+        key.x = finite(item.x, 0);
+      if (Object.prototype.hasOwnProperty.call(item, "y"))
+        key.y = finite(item.y, 0);
+      if (Object.prototype.hasOwnProperty.call(item, "zoom"))
+        key.zoom = Math.max(
+          MIN_ZOOM,
+          Math.min(
+            MAX_ZOOM,
+            finite(item.zoom, 1) > 0 ? finite(item.zoom, 1) : 1,
+          ),
+        );
+      if (Object.prototype.hasOwnProperty.call(item, "rotation"))
+        key.rotation = angle(item.rotation);
+      if ("x" in key || "y" in key || "zoom" in key || "rotation" in key)
+        keyMap.set(frame, key);
+    });
+    const track = {
+        keys: Array.from(keyMap.values()).sort((a, b) => a.frame - b.frame),
+        positionLinked: sourceTrack.positionLinked !== false,
+      },
+      preset = [
+        "custom",
+        "hd720",
+        "hd1080",
+        "2k",
+        "4k",
+        "square",
+        "vertical",
+      ].includes(output.preset)
+        ? output.preset
+        : "custom",
+      width = Math.round(
+        Math.max(
+          1,
+          Math.min(16384, finite(output.width, fallback.output.width)),
+        ),
+      ),
+      height = Math.round(
+        Math.max(
+          1,
+          Math.min(16384, finite(output.height, fallback.output.height)),
+        ),
+      );
+    return {
+      enabled: source.enabled === true,
+      positionX: finite(source.positionX, fallback.positionX),
+      positionY: finite(source.positionY, fallback.positionY),
+      zoom: Math.max(
+        MIN_ZOOM,
+        Math.min(
+          MAX_ZOOM,
+          finite(source.zoom, fallback.zoom) > 0
+            ? finite(source.zoom, fallback.zoom)
+            : 1,
+        ),
+      ),
+      rotation: angle(source.rotation),
+      track,
+      settingsTab: source.settingsTab === "advanced" ? "advanced" : "basic",
+      output: { preset, width, height },
+      view: {
+        shade: Math.max(
+          0,
+          Math.min(100, finite(view.shade, fallback.view.shade)),
+        ),
+        frameOpacity: Math.max(
+          0,
+          Math.min(100, finite(view.frameOpacity, fallback.view.frameOpacity)),
+        ),
+      },
+      guides: {
+        showFrame: guides.showFrame !== false,
+        showCenter: guides.showCenter !== false,
+        showThirds: !!guides.showThirds,
+        showSafeArea: !!guides.showSafeArea,
+        outer: Math.max(
+          0,
+          Math.min(50, finite(guides.outer, fallback.guides.outer)),
+        ),
+        inner: Math.max(
+          0,
+          Math.min(50, finite(guides.inner, fallback.guides.inner)),
+        ),
+      },
+    };
+  }
+  function snapshot() {
+    return JSON.parse(JSON.stringify(camera));
+  }
+  function transformSnapshot(value) {
+    value = value || camera;
+    return {
+      x: value.positionX,
+      y: value.positionY,
+      zoom: value.zoom,
+      rotation: value.rotation,
+    };
+  }
+  function sameTransform(a, b) {
+    const left = transformSnapshot(a),
+      right = transformSnapshot(b);
+    return (
+      left.x === right.x &&
+      left.y === right.y &&
+      left.zoom === right.zoom &&
+      left.rotation === right.rotation
+    );
+  }
+  function upsertAutoKey(frame, before) {
+    frame = Math.max(
+      0,
+      Math.min(
+        typeof TOTAL === "number" ? TOTAL - 1 : Number.MAX_SAFE_INTEGER,
+        Math.round(finite(frame, 0)),
+      ),
+    );
+    const value = transformSnapshot(),
+      previous = transformSnapshot(before || camera),
+      index = camera.track.keys.findIndex((item) => item.frame === frame),
+      key =
+        index >= 0
+          ? Object.assign({}, camera.track.keys[index])
+          : { frame, interpolation: "ease", bezier: null },
+      positionChanged = value.x !== previous.x || value.y !== previous.y;
+    if (!separateKeyEnabled) {
+      key.x = value.x;
+      key.y = value.y;
+      key.zoom = value.zoom;
+      key.rotation = value.rotation;
+    } else {
+      if (positionChanged) {
+        if (camera.track.positionLinked !== false) {
+          key.x = value.x;
+          key.y = value.y;
+        } else {
+          if (value.x !== previous.x) key.x = value.x;
+          if (value.y !== previous.y) key.y = value.y;
+        }
+      }
+      if (value.zoom !== previous.zoom) key.zoom = value.zoom;
+      if (value.rotation !== previous.rotation) key.rotation = value.rotation;
+    }
+    if (index >= 0) camera.track.keys[index] = key;
+    else camera.track.keys.push(key);
+    camera.track.keys.sort((a, b) => a.frame - b.frame);
+    return key;
+  }
+  function cubicCoordinate(t, a, b) {
+    const mt = 1 - t;
+    return 3 * mt * mt * t * a + 3 * mt * t * t * b + t * t * t;
+  }
+  function cubicBezierProgress(control, time) {
+    control = normalizeBezier(control) || {
+      x1: 0.333,
+      y1: 0,
+      x2: 0.667,
+      y2: 1,
+    };
+    let lo = 0,
+      hi = 1,
+      t = time;
+    for (let i = 0; i < 12; i++) {
+      const x = cubicCoordinate(t, control.x1, control.x2);
+      if (Math.abs(x - time) < 1e-5) break;
+      if (x < time) lo = t;
+      else hi = t;
+      t = (lo + hi) / 2;
+    }
+    return cubicCoordinate(t, control.y1, control.y2);
+  }
+  function interpolationProgress(type, t, bezier) {
+    if (type === "hold") return 0;
+    if (type === "ease") return t * t * (3 - 2 * t);
+    if (type === "ease-in") return t * t;
+    if (type === "ease-out") return 1 - (1 - t) * (1 - t);
+    if (type === "bezier") return cubicBezierProgress(bezier, t);
+    return t;
+  }
+  function commitCameraEdit(before) {
+    if (!before || same(before, camera)) {
+      notify(false);
+      return false;
+    }
+    if (!sameTransform(before, camera))
+      upsertAutoKey(typeof curFrame === "number" ? curFrame : 0, before);
+    undoStack.push({
+      type: "camera-state",
+      before: normalize(before),
+      after: snapshot(),
+    });
+    if (undoStack.length > 40) undoStack.shift();
+    redoStack.length = 0;
+    notify(false);
+    if (typeof renderTimeline === "function") renderTimeline();
+    return true;
+  }
+  function keyHasProperty(key, property) {
+    if (property === "position")
+      return (
+        Object.prototype.hasOwnProperty.call(key, "x") &&
+        Object.prototype.hasOwnProperty.call(key, "y")
+      );
+    return Object.prototype.hasOwnProperty.call(key, property);
+  }
+  function propertyFields(property) {
+    return property === "position" ? ["x", "y"] : [property];
+  }
+  function curveProperty(field) {
+    return camera.track.positionLinked !== false &&
+      (field === "x" || field === "y")
+      ? "position"
+      : field;
+  }
+  function curveForKey(key, field) {
+    const property = curveProperty(field),
+      curves = key.curves || {},
+      curve =
+        curves[property] ||
+        (property === "x" || property === "y" ? curves.position : null);
+    return (
+      curve || {
+        interpolation: key.interpolation || "linear",
+        bezier: key.bezier || null,
+      }
+    );
+  }
+  function propertyKeys(property) {
+    return camera.track.keys
+      .filter((key) => property === "all" || keyHasProperty(key, property))
+      .map((key) => {
+        const copy = JSON.parse(JSON.stringify(key));
+        if (property !== "all") {
+          const curve = curveForKey(
+            key,
+            property === "position" ? "x" : property,
+          );
+          copy.interpolation = curve.interpolation;
+          copy.bezier = curve.bezier
+            ? JSON.parse(JSON.stringify(curve.bezier))
+            : null;
+        }
+        return copy;
+      });
+  }
+  function interpolateField(field, frame, fallback, keys) {
+    const eligible = (keys || camera.track.keys).filter((key) =>
+      Object.prototype.hasOwnProperty.call(key, field),
+    );
+    if (!eligible.length) return fallback;
+    const exact = eligible.find((key) => key.frame === frame);
+    if (exact) return exact[field];
+    if (frame <= eligible[0].frame) return eligible[0][field];
+    if (frame >= eligible[eligible.length - 1].frame)
+      return eligible[eligible.length - 1][field];
+    let right = 1;
+    while (right < eligible.length && eligible[right].frame < frame) right++;
+    const a = eligible[right - 1],
+      b = eligible[right],
+      curve = curveForKey(a, field),
+      t = interpolationProgress(
+        curve.interpolation,
+        (frame - a.frame) / (b.frame - a.frame),
+        curve.bezier,
+      );
+    if (field === "rotation") {
+      const delta = ((b.rotation - a.rotation + 540) % 360) - 180;
+      return angle(a.rotation + delta * t);
+    }
+    return a[field] + (b[field] - a[field]) * t;
+  }
+  function evaluateTrack(frame) {
+    if (!camera.enabled) return snapshot();
+    frame = Math.max(0, Math.round(finite(frame, 0)));
+    camera.positionX = interpolateField("x", frame, camera.positionX);
+    camera.positionY = interpolateField("y", frame, camera.positionY);
+    camera.zoom = interpolateField("zoom", frame, camera.zoom);
+    camera.rotation = angle(
+      interpolateField("rotation", frame, camera.rotation),
+    );
+    notify(true);
+    return snapshot();
+  }
+  function evaluateSnapshotAt(frame) {
+    const current = camera,
+      working = normalize(snapshot());
+    camera = working;
+    frame = Math.max(0, Math.round(finite(frame, 0)));
+    working.positionX = interpolateField("x", frame, working.positionX);
+    working.positionY = interpolateField("y", frame, working.positionY);
+    working.zoom = interpolateField("zoom", frame, working.zoom);
+    working.rotation = angle(
+      interpolateField("rotation", frame, working.rotation),
+    );
+    const result = snapshot();
+    camera = current;
+    return result;
+  }
+  function trackSnapshot() {
+    return JSON.parse(JSON.stringify(camera.track));
+  }
+  function restoreTrack(value, frame) {
+    camera.track = normalize(Object.assign({}, camera, { track: value })).track;
+    if (camera.track.keys.length)
+      evaluateTrack(
+        frame == null ? (typeof curFrame === "number" ? curFrame : 0) : frame,
+      );
+    else notify(false);
+    return trackSnapshot();
+  }
+  function commitTrack(before, type) {
+    const after = trackSnapshot();
+    if (before && JSON.stringify(before) !== JSON.stringify(after)) {
+      undoStack.push({
+        type: "camera-track",
+        operation: type || "edit",
+        before: JSON.parse(JSON.stringify(before)),
+        after,
+      });
+      if (undoStack.length > 40) undoStack.shift();
+      redoStack.length = 0;
+      if (typeof window.markProjectDirty === "function")
+        window.markProjectDirty("camera-track");
+    }
+    notify(false);
+    if (typeof renderTimeline === "function") renderTimeline();
+    return after;
+  }
+  function addOrUpdateKey(frame) {
+    frame = Math.max(
+      0,
+      Math.min(
+        typeof TOTAL === "number" ? TOTAL - 1 : Number.MAX_SAFE_INTEGER,
+        Math.round(finite(frame, 0)),
+      ),
+    );
+    const before = trackSnapshot(),
+      value = transformSnapshot(),
+      index = camera.track.keys.findIndex((item) => item.frame === frame),
+      interpolation =
+        index >= 0 ? camera.track.keys[index].interpolation : "ease",
+      bezier = index >= 0 ? camera.track.keys[index].bezier : null,
+      key = Object.assign({}, index >= 0 ? camera.track.keys[index] : null, {
+        frame,
+        x: value.x,
+        y: value.y,
+        zoom: value.zoom,
+        rotation: value.rotation,
+        interpolation,
+        bezier,
+      });
+    if (index >= 0) camera.track.keys[index] = key;
+    else camera.track.keys.push(key);
+    camera.track.keys.sort((a, b) => a.frame - b.frame);
+    commitTrack(before, index >= 0 ? "update" : "add");
+    return key;
+  }
+  function addOrUpdatePropertyKey(property, frame) {
+    if (!["position", "x", "y", "zoom", "rotation"].includes(property))
+      return null;
+    frame = Math.max(
+      0,
+      Math.min(
+        typeof TOTAL === "number" ? TOTAL - 1 : Number.MAX_SAFE_INTEGER,
+        Math.round(finite(frame, 0)),
+      ),
+    );
+    const before = trackSnapshot(),
+      value = transformSnapshot(),
+      index = camera.track.keys.findIndex((item) => item.frame === frame),
+      key =
+        index >= 0
+          ? Object.assign({}, camera.track.keys[index])
+          : { frame, interpolation: "ease", bezier: null };
+    if (property === "position") {
+      key.x = value.x;
+      key.y = value.y;
+    } else key[property] = value[property];
+    if (index >= 0) camera.track.keys[index] = key;
+    else camera.track.keys.push(key);
+    camera.track.keys.sort((a, b) => a.frame - b.frame);
+    commitTrack(before, "add-property");
+    return JSON.parse(JSON.stringify(key));
+  }
+  function deletePropertyKeys(property, frames) {
+    const selected = new Set((frames || []).map(Number)),
+      fields = propertyFields(property),
+      before = trackSnapshot();
+    camera.track.keys = camera.track.keys
+      .map((key) => {
+        if (!selected.has(key.frame)) return key;
+        const next = Object.assign({}, key),
+          curves = Object.assign({}, next.curves || {});
+        fields.forEach((field) => delete next[field]);
+        delete curves[property];
+        if (Object.keys(curves).length) next.curves = curves;
+        else delete next.curves;
+        return next;
+      })
+      .filter(
+        (key) => "x" in key || "y" in key || "zoom" in key || "rotation" in key,
+      );
+    commitTrack(before, "delete-property");
+    evaluateTrack(typeof curFrame === "number" ? curFrame : 0);
+    return trackSnapshot();
+  }
+  function replacePropertyKeys(property, keys) {
+    const fields = propertyFields(property),
+      incoming = new Map((keys || []).map((key) => [key.frame, key]));
+    camera.track.keys = camera.track.keys.map((key) => {
+      const source = incoming.get(key.frame);
+      if (!source) return key;
+      const next = Object.assign({}, key),
+        curves = Object.assign({}, next.curves || {});
+      curves[property] = {
+        interpolation: source.interpolation || "linear",
+        bezier: source.bezier
+          ? JSON.parse(JSON.stringify(source.bezier))
+          : null,
+      };
+      next.curves = curves;
+      fields.forEach((field) => {
+        if (Object.prototype.hasOwnProperty.call(source, field))
+          next[field] = source[field];
+      });
+      return next;
+    });
+    notify(true);
+    return trackSnapshot();
+  }
+  function setPositionLinked(linked) {
+    linked = !!linked;
+    if (camera.track.positionLinked === linked) return false;
+    const before = trackSnapshot();
+    if (linked) {
+      const source = before.keys,
+        frames = Array.from(
+          new Set(
+            source
+              .filter((key) => "x" in key || "y" in key)
+              .map((key) => key.frame),
+          ),
+        ).sort((a, b) => a - b);
+      frames.forEach((frame) => {
+        let key = camera.track.keys.find((item) => item.frame === frame);
+        if (!key) {
+          key = { frame, interpolation: "ease", bezier: null };
+          camera.track.keys.push(key);
+        }
+        key.x = interpolateField("x", frame, camera.positionX, source);
+        key.y = interpolateField("y", frame, camera.positionY, source);
+      });
+      camera.track.keys.sort((a, b) => a.frame - b.frame);
+    }
+    camera.track.positionLinked = linked;
+    commitTrack(before, "position-link");
+    evaluateTrack(typeof curFrame === "number" ? curFrame : 0);
+    return true;
+  }
+  function setKeyInterpolation(frames, type, property) {
+    if (!INTERPOLATIONS.has(type)) return false;
+    const selected = new Set((frames || []).map(Number)),
+      before = trackSnapshot();
+    let changed = false;
+    camera.track.keys.forEach((key) => {
+      if (!selected.has(key.frame)) return;
+      if (property) {
+        const curves = Object.assign({}, key.curves || {}),
+          current = curveForKey(key, property === "position" ? "x" : property);
+        if (current.interpolation === type) return;
+        curves[property] = {
+          interpolation: type,
+          bezier:
+            type === "bezier"
+              ? current.bezier || { x1: 0.333, y1: 0, x2: 0.667, y2: 1 }
+              : current.bezier,
+        };
+        key.curves = curves;
+        changed = true;
+      } else if (key.interpolation !== type) {
+        key.interpolation = type;
+        if (type === "bezier" && !key.bezier)
+          key.bezier = { x1: 0.333, y1: 0, x2: 0.667, y2: 1 };
+        changed = true;
+      }
+    });
+    if (changed) {
+      commitTrack(before, "interpolation");
+      evaluateTrack(typeof curFrame === "number" ? curFrame : 0);
+    }
+    return changed;
+  }
+  function deleteKeys(frames) {
+    const selected = new Set((frames || []).map(Number)),
+      before = trackSnapshot();
+    camera.track.keys = camera.track.keys.filter(
+      (key) => !selected.has(key.frame),
+    );
+    commitTrack(before, "delete");
+    if (camera.track.keys.length)
+      evaluateTrack(typeof curFrame === "number" ? curFrame : 0);
+    return trackSnapshot();
+  }
+  function replaceTrackKeys(keys, operation, before) {
+    camera.track = normalize(
+      Object.assign({}, camera, {
+        track: { keys, positionLinked: camera.track.positionLinked },
+      }),
+    ).track;
+    if (before) commitTrack(before, operation);
+    else notify(true);
+    return trackSnapshot();
+  }
+  function same(a, b) {
+    return JSON.stringify(a) === JSON.stringify(b);
+  }
+  function cameraCenter(value) {
+    value = value || camera;
+    return { x: CW / 2 + value.positionX, y: CH / 2 + value.positionY };
+  }
+  function getCameraMatrix(value) {
+    value = value || camera;
+    const center = cameraCenter(value),
+      matrix = new DOMMatrix();
+    matrix.translateSelf(CW / 2, CH / 2);
+    matrix.rotateSelf(-value.rotation);
+    matrix.scaleSelf(value.zoom, value.zoom);
+    matrix.translateSelf(-center.x, -center.y);
+    return matrix;
+  }
+  function getCameraOutputMatrix(value, width, height) {
+    value = value || camera;
+    const center = cameraCenter(value),
+      matrix = new DOMMatrix();
+    matrix.translateSelf(width / 2, height / 2);
+    matrix.rotateSelf(-value.rotation);
+    matrix.scaleSelf(value.zoom, value.zoom);
+    matrix.translateSelf(-center.x, -center.y);
+    return matrix;
+  }
+  function worldToCamera(point, value) {
+    const p = new DOMPoint(point.x, point.y).matrixTransform(
+      getCameraMatrix(value),
+    );
+    return { x: p.x, y: p.y };
+  }
+  function cameraToWorld(point, value) {
+    const p = new DOMPoint(point.x, point.y).matrixTransform(
+      getCameraMatrix(value).inverse(),
+    );
+    return { x: p.x, y: p.y };
+  }
+  function getCameraWorldBounds(value) {
+    value = value || camera;
+    const center = cameraCenter(value),
+      halfW = value.output.width / (2 * value.zoom),
+      halfH = value.output.height / (2 * value.zoom),
+      r = (value.rotation * Math.PI) / 180,
+      cos = Math.cos(r),
+      sin = Math.sin(r);
+    return [
+      [-halfW, -halfH],
+      [halfW, -halfH],
+      [halfW, halfH],
+      [-halfW, halfH],
+    ].map(([x, y]) => ({
+      x: center.x + x * cos - y * sin,
+      y: center.y + x * sin + y * cos,
+    }));
+  }
+  function screenGeometry(value) {
+    const world = getCameraWorldBounds(value),
+      points = world.map(EditorOverlayRenderer.worldToScreen),
+      center = EditorOverlayRenderer.worldToScreen(cameraCenter(value));
+    return { world, points, center };
+  }
+  function drawDimmedOutside(ctx, points, width, height, opacity) {
+    if (opacity <= 0) return;
+    ctx.save();
+    ctx.fillStyle = "rgba(5,5,10," + opacity + ")";
+    ctx.beginPath();
+    ctx.rect(0, 0, width, height);
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 3; i >= 0; i--) ctx.lineTo(points[i].x, points[i].y);
+    ctx.closePath();
+    ctx.fill("evenodd");
+    ctx.restore();
+  }
+  function path(ctx, points) {
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++)
+      ctx.lineTo(points[i].x, points[i].y);
+    ctx.closePath();
+  }
+  function guideLine(ctx, a, b) {
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
+  function hasVisibleGuide(value) {
+    const guides = value && value.guides;
+    return !!(
+      guides &&
+      (guides.showFrame ||
+        guides.showCenter ||
+        guides.showThirds ||
+        guides.showSafeArea)
+    );
+  }
+  function drawOverlay(ctx, geometry) {
+    if (!camera.enabled || !hasVisibleGuide(camera)) return;
+    const display = screenGeometry(camera),
+      points = display.points,
+      frameOpacity = camera.view.frameOpacity / 100;
+    if (camera.guides.showFrame)
+      drawDimmedOutside(
+        ctx,
+        points,
+        geometry.width,
+        geometry.height,
+        camera.view.shade / 100,
+      );
+    const mix = (a, b, t) => ({
+      x: a.x + (b.x - a.x) * t,
+      y: a.y + (b.y - a.y) * t,
+    });
+    ctx.save();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "rgba(132,122,255,.98)";
+    ctx.globalAlpha = frameOpacity;
+    ctx.setLineDash([6, 4]);
+    if (camera.guides.showFrame) {
+      path(ctx, points);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    ctx.globalAlpha = frameOpacity * 0.75;
+    if (camera.guides.showThirds) {
+      for (const t of [1 / 3, 2 / 3]) {
+        guideLine(
+          ctx,
+          mix(points[0], points[1], t),
+          mix(points[3], points[2], t),
+        );
+        guideLine(
+          ctx,
+          mix(points[0], points[3], t),
+          mix(points[1], points[2], t),
+        );
+      }
+    }
+    if (camera.guides.showSafeArea) {
+      for (const margin of [camera.guides.outer, camera.guides.inner]) {
+        const t = margin / 50,
+          safe = [
+            mix(points[0], display.center, t),
+            mix(points[1], display.center, t),
+            mix(points[2], display.center, t),
+            mix(points[3], display.center, t),
+          ];
+        path(ctx, safe);
+        ctx.stroke();
+      }
+    }
+    if (camera.guides.showCenter) {
+      const edgeX = {
+          x: points[1].x - points[0].x,
+          y: points[1].y - points[0].y,
+        },
+        edgeY = { x: points[3].x - points[0].x, y: points[3].y - points[0].y };
+      const lengthX = Math.max(1, Math.hypot(edgeX.x, edgeX.y)),
+        lengthY = Math.max(1, Math.hypot(edgeY.x, edgeY.y));
+      const axisX = { x: edgeX.x / lengthX, y: edgeX.y / lengthX },
+        axisY = { x: edgeY.x / lengthY, y: edgeY.y / lengthY },
+        radius = 7;
+      ctx.strokeStyle = "#f0b52e";
+      guideLine(
+        ctx,
+        {
+          x: display.center.x - axisX.x * radius,
+          y: display.center.y - axisX.y * radius,
+        },
+        {
+          x: display.center.x + axisX.x * radius,
+          y: display.center.y + axisX.y * radius,
+        },
+      );
+      guideLine(
+        ctx,
+        {
+          x: display.center.x - axisY.x * radius,
+          y: display.center.y - axisY.y * radius,
+        },
+        {
+          x: display.center.x + axisY.x * radius,
+          y: display.center.y + axisY.y * radius,
+        },
+      );
+    }
+    ctx.globalAlpha = 1;
+    if (active && camera.guides.showFrame) {
+      ctx.strokeStyle = "rgba(132,122,255,.98)";
+      for (const point of points) {
+        ctx.fillStyle = "#f8f7ff";
+        ctx.fillRect(
+          point.x - HANDLE_SIZE / 2,
+          point.y - HANDLE_SIZE / 2,
+          HANDLE_SIZE,
+          HANDLE_SIZE,
+        );
+        ctx.strokeRect(
+          point.x - HANDLE_SIZE / 2,
+          point.y - HANDLE_SIZE / 2,
+          HANDLE_SIZE,
+          HANDLE_SIZE,
+        );
+      }
+    }
+    ctx.restore();
+  }
+  function pointerScreen(event) {
+    const rect = canvasArea.getBoundingClientRect();
+    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  }
+  function hitTest(event) {
+    const point = getPos(event),
+      display = screenGeometry(camera),
+      center = cameraCenter(camera),
+      hit =
+        typeof _tfHitTestGeneric === "function"
+          ? _tfHitTestGeneric(
+              point,
+              display.world,
+              camera.rotation,
+              1 / camera.zoom,
+              center,
+              camera.output.width,
+              camera.output.height,
+              null,
+            )
+          : null;
+    if (!hit) return null;
+    return {
+      kind: hit.mode === "scale" ? "zoom" : hit.mode,
+      point: pointerScreen(event),
+      display,
+      transformHit: hit,
+    };
+  }
+  function notify(live) {
+    if (overlay) {
+      overlay.canvas.style.pointerEvents =
+        active && camera.enabled ? "auto" : "none";
+      overlay.setVisible(camera.enabled && (active || hasVisibleGuide(camera)));
+      overlay.invalidate();
+    }
+    window.dispatchEvent(
+      new CustomEvent("camera-changed", {
+        detail: { camera: snapshot(), live: !!live },
+      }),
+    );
+  }
+  function begin(event) {
+    if (
+      !active ||
+      !camera.enabled ||
+      event.isPrimary === false ||
+      ((event.pointerType === "mouse" || event.pointerType === "pen") &&
+        event.button !== 0)
+    )
+      return;
+    const hit = hitTest(event);
+    if (!hit) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const initial = snapshot();
+    gesture = {
+      pointerId: event.pointerId,
+      kind: hit.kind,
+      initial,
+      startScreen: hit.point,
+      startCenter: hit.display.center,
+      startDistance: Math.max(
+        1,
+        Math.hypot(
+          hit.point.x - hit.display.center.x,
+          hit.point.y - hit.display.center.y,
+        ),
+      ),
+      startAngle: Math.atan2(
+        hit.point.y - hit.display.center.y,
+        hit.point.x - hit.display.center.x,
+      ),
+    };
+    overlay.canvas.setPointerCapture(event.pointerId);
+    document.body.classList.add("camera-interacting");
+  }
+  function update(event) {
+    if (!active) {
+      return;
+    }
+    if (!gesture) {
+      const hit = hitTest(event);
+      overlay.canvas.style.cursor =
+        hit && typeof _tfHitCursor === "function"
+          ? _tfHitCursor(hit.transformHit)
+          : "default";
+      return;
+    }
+    if (event.pointerId !== gesture.pointerId) return;
+    event.preventDefault();
+    const point = pointerScreen(event);
+    if (gesture.kind === "move") {
+      const rect = canvasArea.getBoundingClientRect(),
+        startWorld = getPos({
+          clientX: rect.left + gesture.startScreen.x,
+          clientY: rect.top + gesture.startScreen.y,
+        }),
+        world = getPos(event);
+      camera.positionX = gesture.initial.positionX + world.x - startWorld.x;
+      camera.positionY = gesture.initial.positionY + world.y - startWorld.y;
+    } else if (gesture.kind === "zoom") {
+      const distance = Math.max(
+        1,
+        Math.hypot(
+          point.x - gesture.startCenter.x,
+          point.y - gesture.startCenter.y,
+        ),
+      );
+      camera.zoom = Math.max(
+        MIN_ZOOM,
+        Math.min(
+          MAX_ZOOM,
+          (gesture.initial.zoom * gesture.startDistance) / distance,
+        ),
+      );
+    } else {
+      let delta =
+        Math.atan2(
+          point.y - gesture.startCenter.y,
+          point.x - gesture.startCenter.x,
+        ) - gesture.startAngle;
+      while (delta > Math.PI) delta -= Math.PI * 2;
+      while (delta < -Math.PI) delta += Math.PI * 2;
+      const rawRotation = angle(
+        gesture.initial.rotation + (delta * 180) / Math.PI,
+      );
+      camera.rotation = event.shiftKey
+        ? angle(Math.round(rawRotation / 15) * 15)
+        : rawRotation;
+    }
+    notify(true);
+  }
+  function finish(event, cancelled) {
+    if (!gesture || event.pointerId !== gesture.pointerId) return;
+    event.preventDefault();
+    const initial = gesture.initial;
+    gesture = null;
+    document.body.classList.remove("camera-interacting");
+    try {
+      if (overlay.canvas.hasPointerCapture(event.pointerId))
+        overlay.canvas.releasePointerCapture(event.pointerId);
+    } catch (_) {}
+    if (cancelled) {
+      camera = initial;
+      notify(false);
+      return;
+    }
+    commitCameraEdit(initial);
+  }
+  function enter() {
+    active = true;
+    notify(false);
+  }
+  function exit() {
+    if (gesture) {
+      camera = gesture.initial;
+      gesture = null;
+      document.body.classList.remove("camera-interacting");
+    }
+    active = false;
+    notify(false);
+  }
+  function renderScene(source, target) {
+    const context = target.getContext("2d"),
+      matrix = camera.enabled ? getCameraMatrix(camera) : new DOMMatrix();
     context.save();
-    context.setTransform(1,0,0,1,0,0);
-    context.clearRect(0,0,width,height);
-    context.imageSmoothingEnabled=true;
-    context.imageSmoothingQuality='high';
-    if(options.background&&options.background!=='transparent'){context.fillStyle=options.background;context.fillRect(0,0,width,height);}
-    context.setTransform(matrix.a,matrix.b,matrix.c,matrix.d,matrix.e,matrix.f);
-    context.drawImage(source,0,0);
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.clearRect(0, 0, target.width, target.height);
+    context.setTransform(
+      matrix.a,
+      matrix.b,
+      matrix.c,
+      matrix.d,
+      matrix.e,
+      matrix.f,
+    );
+    context.drawImage(source, 0, 0);
     context.restore();
     return target;
   }
-  function cloneGuides(guides){return Object.assign({},guides);}
-  function updateCamera(patch,live){const next=Object.assign({},camera,patch||{});for(const key of ['output','view','guides'])if(patch&&patch[key])next[key]=Object.assign({},camera[key],patch[key]);camera=normalize(next);notify(live);return snapshot();}
-  function commit(before){commitCameraEdit(before);}
-  function perform(patch){const before=snapshot();updateCamera(patch,true);commit(before);}
-  function restore(value){camera=normalize(value);notify(false);return true;}
-  function load(value){camera=normalize(value);if(camera.track.keys.length)evaluateTrack(typeof curFrame==='number'?curFrame:0);else notify(false);return true;}
-  function reset(withHistory){const before=snapshot();if(withHistory){camera=Object.assign(defaultCamera(camera.enabled),{track:trackSnapshot(),settingsTab:camera.settingsTab,output:Object.assign({},camera.output),view:Object.assign({},camera.view),guides:cloneGuides(camera.guides)});commit(before);}else{camera=defaultCamera();notify(false);}}
-  const OUTPUT_PRESETS={hd720:[1280,720],hd1080:[1920,1080],'2k':[2048,1080],'4k':[3840,2160],square:[1080,1080],vertical:[1080,1920]};
-  function commitActivation(before){undoStack.push({type:'camera-state',before:normalize(before),after:snapshot()});if(undoStack.length>40)undoStack.shift();redoStack.length=0;notify(false);if(typeof renderTimeline==='function')renderTimeline();}
-  function activate(){if(camera.enabled)return false;const before=snapshot();camera.enabled=true;commitActivation(before);return true;}
-  function remove(){if(!camera.enabled)return false;const before=snapshot();camera=defaultCamera(false);commitActivation(before);return true;}
-  function init(){camera=defaultCamera(false);overlay=EditorOverlayRenderer.create('camera-overlay',{zIndex:7,pointerEvents:'auto',draw:drawOverlay});overlay.canvas.addEventListener('pointerdown',begin);overlay.canvas.addEventListener('pointermove',update);overlay.canvas.addEventListener('pointerup',event=>finish(event,false));overlay.canvas.addEventListener('pointercancel',event=>finish(event,true));overlay.canvas.addEventListener('lostpointercapture',event=>{if(gesture&&event.pointerId===gesture.pointerId)finish(event,true);});window.addEventListener('canvas-view-transform-changed',()=>overlay.invalidate());}
-  window.CameraSystem={init,enter,exit,activate,remove,reset,restore,load,serialize:snapshot,snapshot,getCameraMatrix,getCameraOutputMatrix,worldToCamera,cameraToWorld,getCameraWorldBounds,renderScene,renderCameraOutput,update:updateCamera,commit,perform,evaluateAt:evaluateTrack,evaluateSnapshotAt,trackSnapshot,restoreTrack,commitTrack,replaceTrackKeys,addOrUpdateKey,addOrUpdatePropertyKey,deleteKeys,deletePropertyKeys,propertyKeys,replacePropertyKeys,setPositionLinked,setKeyInterpolation,setSeparateKey(value){separateKeyEnabled=!!value;return separateKeyEnabled;},get separateKey(){return separateKeyEnabled;},resetWithHistory(){reset(true);},get outputPresets(){return JSON.parse(JSON.stringify(OUTPUT_PRESETS));},get value(){return snapshot();},get active(){return active;}};
-  document.addEventListener('DOMContentLoaded',init);
+  function renderCameraOutput(options) {
+    options = options || {};
+    const value = normalize(options.camera || camera),
+      source = options.source,
+      target = options.target;
+    if (!value.enabled || !source || !target) return null;
+    const width = Math.max(1, Math.round(value.output.width));
+    const height = Math.max(1, Math.round(value.output.height));
+    if (target.width !== width) target.width = width;
+    if (target.height !== height) target.height = height;
+    const context = target.getContext("2d"),
+      matrix = getCameraOutputMatrix(value, width, height);
+    context.save();
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.clearRect(0, 0, width, height);
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    if (options.background && options.background !== "transparent") {
+      context.fillStyle = options.background;
+      context.fillRect(0, 0, width, height);
+    }
+    context.setTransform(
+      matrix.a,
+      matrix.b,
+      matrix.c,
+      matrix.d,
+      matrix.e,
+      matrix.f,
+    );
+    context.drawImage(source, 0, 0);
+    context.restore();
+    return target;
+  }
+  function cloneGuides(guides) {
+    return Object.assign({}, guides);
+  }
+  function updateCamera(patch, live) {
+    const next = Object.assign({}, camera, patch || {});
+    for (const key of ["output", "view", "guides"])
+      if (patch && patch[key])
+        next[key] = Object.assign({}, camera[key], patch[key]);
+    camera = normalize(next);
+    notify(live);
+    return snapshot();
+  }
+  function commit(before) {
+    commitCameraEdit(before);
+  }
+  function perform(patch) {
+    const before = snapshot();
+    updateCamera(patch, true);
+    commit(before);
+  }
+  function restore(value) {
+    camera = normalize(value);
+    notify(false);
+    return true;
+  }
+  function load(value) {
+    camera = normalize(value);
+    if (camera.track.keys.length)
+      evaluateTrack(typeof curFrame === "number" ? curFrame : 0);
+    else notify(false);
+    return true;
+  }
+  function reset(withHistory) {
+    const before = snapshot();
+    if (withHistory) {
+      camera = Object.assign(defaultCamera(camera.enabled), {
+        track: trackSnapshot(),
+        settingsTab: camera.settingsTab,
+        output: Object.assign({}, camera.output),
+        view: Object.assign({}, camera.view),
+        guides: cloneGuides(camera.guides),
+      });
+      commit(before);
+    } else {
+      camera = defaultCamera();
+      notify(false);
+    }
+  }
+  const OUTPUT_PRESETS = {
+    hd720: [1280, 720],
+    hd1080: [1920, 1080],
+    "2k": [2048, 1080],
+    "4k": [3840, 2160],
+    square: [1080, 1080],
+    vertical: [1080, 1920],
+  };
+  function commitActivation(before) {
+    undoStack.push({
+      type: "camera-state",
+      before: normalize(before),
+      after: snapshot(),
+    });
+    if (undoStack.length > 40) undoStack.shift();
+    redoStack.length = 0;
+    notify(false);
+    if (typeof renderTimeline === "function") renderTimeline();
+  }
+  function activate() {
+    if (camera.enabled) return false;
+    const before = snapshot();
+    camera.enabled = true;
+    commitActivation(before);
+    return true;
+  }
+  function remove() {
+    if (!camera.enabled) return false;
+    const before = snapshot();
+    camera = defaultCamera(false);
+    commitActivation(before);
+    return true;
+  }
+  function init() {
+    camera = defaultCamera(false);
+    overlay = EditorOverlayRenderer.create("camera-overlay", {
+      zIndex: 7,
+      pointerEvents: "auto",
+      draw: drawOverlay,
+    });
+    overlay.canvas.addEventListener("pointerdown", begin);
+    overlay.canvas.addEventListener("pointermove", update);
+    overlay.canvas.addEventListener("pointerup", (event) =>
+      finish(event, false),
+    );
+    overlay.canvas.addEventListener("pointercancel", (event) =>
+      finish(event, true),
+    );
+    overlay.canvas.addEventListener("lostpointercapture", (event) => {
+      if (gesture && event.pointerId === gesture.pointerId) finish(event, true);
+    });
+    window.addEventListener("canvas-view-transform-changed", () =>
+      overlay.invalidate(),
+    );
+  }
+  window.CameraSystem = {
+    init,
+    enter,
+    exit,
+    activate,
+    remove,
+    reset,
+    restore,
+    load,
+    serialize: snapshot,
+    snapshot,
+    getCameraMatrix,
+    getCameraOutputMatrix,
+    worldToCamera,
+    cameraToWorld,
+    getCameraWorldBounds,
+    renderScene,
+    renderCameraOutput,
+    update: updateCamera,
+    commit,
+    perform,
+    evaluateAt: evaluateTrack,
+    evaluateSnapshotAt,
+    trackSnapshot,
+    restoreTrack,
+    commitTrack,
+    replaceTrackKeys,
+    addOrUpdateKey,
+    addOrUpdatePropertyKey,
+    deleteKeys,
+    deletePropertyKeys,
+    propertyKeys,
+    replacePropertyKeys,
+    setPositionLinked,
+    setKeyInterpolation,
+    setSeparateKey(value) {
+      separateKeyEnabled = !!value;
+      return separateKeyEnabled;
+    },
+    get separateKey() {
+      return separateKeyEnabled;
+    },
+    resetWithHistory() {
+      reset(true);
+    },
+    get outputPresets() {
+      return JSON.parse(JSON.stringify(OUTPUT_PRESETS));
+    },
+    get value() {
+      return snapshot();
+    },
+    get active() {
+      return active;
+    },
+  };
+  document.addEventListener("DOMContentLoaded", init);
 })();

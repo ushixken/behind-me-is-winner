@@ -10,7 +10,7 @@
 //    animation settles the canvas precisely at the 45° target.
 // 4. Any new gesture immediately cancels the spring animation and takes control from the current display angle.
 
-'use strict';
+"use strict";
 
 (function (root) {
   const SNAP_STEP_DEG = 45;
@@ -62,14 +62,24 @@
     const startVal = 0;
     const endEnvelope = Math.exp(-decay);
     const endVal = 1 - endEnvelope * Math.cos(omega);
-    const norm = (rawVal - (1 - (1 - clampedT) * (1 - startVal))) / (endVal !== 0 ? endVal : 1) + (1 - clampedT) * 0;
+    const norm =
+      (rawVal - (1 - (1 - clampedT) * (1 - startVal))) /
+        (endVal !== 0 ? endVal : 1) +
+      (1 - clampedT) * 0;
     return 1 - envelope * Math.cos(omega * clampedT) + (1 - clampedT) * 0;
   }
 
   /**
    * Compact damped spring step function for delta-time simulation.
    */
-  function springStep(current, target, velocity, stiffness, damping, dtSeconds) {
+  function springStep(
+    current,
+    target,
+    velocity,
+    stiffness,
+    damping,
+    dtSeconds,
+  ) {
     const displacement = current - target;
     const springForce = -stiffness * displacement;
     const dampingForce = -damping * velocity;
@@ -102,32 +112,42 @@
   function resolveFlickRotation(params, options) {
     const p = params || {};
     const rawAngleDeg = p.rawAngleDeg;
-    const now = typeof p.timestampMs === 'number' && Number.isFinite(p.timestampMs)
-      ? p.timestampMs
-      : (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now());
+    const now =
+      typeof p.timestampMs === "number" && Number.isFinite(p.timestampMs)
+        ? p.timestampMs
+        : typeof performance !== "undefined" && performance.now
+          ? performance.now()
+          : Date.now();
 
     const prevAngle = p.prevRawAngleDeg;
     const prevTime = p.prevTimestampMs;
     let activeTarget = p.activeSnapTarget;
-    let armedUntil = typeof p.snapArmedUntilMs === 'number' && Number.isFinite(p.snapArmedUntilMs)
-      ? p.snapArmedUntilMs
-      : 0;
+    let armedUntil =
+      typeof p.snapArmedUntilMs === "number" &&
+      Number.isFinite(p.snapArmedUntilMs)
+        ? p.snapArmedUntilMs
+        : 0;
 
-    const velThreshold = (options && typeof options.flickVelocityThreshold === 'number')
-      ? options.flickVelocityThreshold
-      : FLICK_VELOCITY_THRESHOLD_DEG_PER_MS;
-    const armDuration = (options && typeof options.flickArmDurationMs === 'number')
-      ? options.flickArmDurationMs
-      : FLICK_ARM_DURATION_MS;
-    const projectionMs = (options && typeof options.flickProjectionMs === 'number')
-      ? options.flickProjectionMs
-      : FLICK_PROJECTION_MS;
-    const captureThresh = (options && typeof options.captureThreshold === 'number')
-      ? options.captureThreshold
-      : SNAP_CAPTURE_THRESHOLD_DEG;
-    const step = (options && typeof options.snapStep === 'number')
-      ? options.snapStep
-      : SNAP_STEP_DEG;
+    const velThreshold =
+      options && typeof options.flickVelocityThreshold === "number"
+        ? options.flickVelocityThreshold
+        : FLICK_VELOCITY_THRESHOLD_DEG_PER_MS;
+    const armDuration =
+      options && typeof options.flickArmDurationMs === "number"
+        ? options.flickArmDurationMs
+        : FLICK_ARM_DURATION_MS;
+    const projectionMs =
+      options && typeof options.flickProjectionMs === "number"
+        ? options.flickProjectionMs
+        : FLICK_PROJECTION_MS;
+    const captureThresh =
+      options && typeof options.captureThreshold === "number"
+        ? options.captureThreshold
+        : SNAP_CAPTURE_THRESHOLD_DEG;
+    const step =
+      options && typeof options.snapStep === "number"
+        ? options.snapStep
+        : SNAP_STEP_DEG;
 
     if (!Number.isFinite(rawAngleDeg)) {
       return {
@@ -136,15 +156,19 @@
         snapArmedUntilMs: null,
         isSnapped: false,
         velocityDegPerMs: 0,
-        projectedAngleDeg: 0
+        projectedAngleDeg: 0,
       };
     }
 
     // Calculate signed angular velocity from raw continuous angle
     let signedVelocity = 0;
     let speed = 0;
-    if (typeof prevAngle === 'number' && Number.isFinite(prevAngle) &&
-        typeof prevTime === 'number' && Number.isFinite(prevTime)) {
+    if (
+      typeof prevAngle === "number" &&
+      Number.isFinite(prevAngle) &&
+      typeof prevTime === "number" &&
+      Number.isFinite(prevTime)
+    ) {
       const dt = now - prevTime;
       if (dt > 0.001 && dt < 1000) {
         signedVelocity = (rawAngleDeg - prevAngle) / dt;
@@ -158,7 +182,8 @@
     }
 
     const isArmed = armedUntil > now;
-    const projectedAngle = rawAngleDeg + (isFlicking ? signedVelocity * projectionMs : 0);
+    const projectedAngle =
+      rawAngleDeg + (isFlicking ? signedVelocity * projectionMs : 0);
 
     // Target Selection:
     // If armed by a fast flick, determine if the gesture targeted, crossed, or projected onto a 45° multiple.
@@ -177,7 +202,7 @@
 
       // 3. Did we cross a target between prevAngle and rawAngle (overshoot)?
       let crossedTarget = null;
-      if (typeof prevAngle === 'number' && Number.isFinite(prevAngle)) {
+      if (typeof prevAngle === "number" && Number.isFinite(prevAngle)) {
         const candidateCross = Math.round(prevAngle / step) * step;
         const diffCrossToRaw = Math.abs(rawAngleDeg - candidateCross);
         const diffCrossToPrev = Math.abs(prevAngle - candidateCross);
@@ -190,7 +215,10 @@
         candidateTarget = crossedTarget;
       } else if (diffToRawNearest <= captureThresh) {
         candidateTarget = rawNearest;
-      } else if (diffToProjNearest <= captureThresh && diffProjToRaw <= captureThresh) {
+      } else if (
+        diffToProjNearest <= captureThresh &&
+        diffProjToRaw <= captureThresh
+      ) {
         candidateTarget = projNearest;
       }
     }
@@ -210,7 +238,7 @@
       snapArmedUntilMs: isArmed ? armedUntil : null,
       isSnapped: activeTarget !== null,
       velocityDegPerMs: speed,
-      projectedAngleDeg: projectedAngle
+      projectedAngleDeg: projectedAngle,
     };
   }
 
@@ -228,10 +256,10 @@
     resolveFlickRotation,
   };
 
-  if (typeof module !== 'undefined' && module.exports) {
+  if (typeof module !== "undefined" && module.exports) {
     module.exports = RotationSnapExports;
   }
-  if (typeof window !== 'undefined') {
+  if (typeof window !== "undefined") {
     window.RotationSnap = RotationSnapExports;
   }
-})(typeof globalThis !== 'undefined' ? globalThis : this);
+})(typeof globalThis !== "undefined" ? globalThis : this);

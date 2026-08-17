@@ -7,7 +7,7 @@
 //
 
 (() => {
-  'use strict';
+  "use strict";
 
   const INSTANCE_FLOAT_COUNT = 14; // pos(2), radius(1), rotation(1), roundness(1), opacity(1), color(3), composite(1), flipX(1), flipY(1), inner(1), pad0(1)
   const MAX_INSTANCES_PER_BATCH = 2048;
@@ -334,10 +334,11 @@
   `;
 
   function shouldRunCustomTipGpuDiagnostic() {
-    return typeof window !== 'undefined' && (
-      !!window.CustomBrushDebugGpuTipRenderer ||
-      !!window.CustomBrushDebugGpuTipPreview ||
-      !!window.CustomBrushDebugGpuPresenter
+    return (
+      typeof window !== "undefined" &&
+      (!!window.CustomBrushDebugGpuTipRenderer ||
+        !!window.CustomBrushDebugGpuTipPreview ||
+        !!window.CustomBrushDebugGpuPresenter)
     );
   }
 
@@ -369,7 +370,9 @@
       this.erasePipeline = null;
       this.uniformBuffer = null;
       this.instanceBuffer = null;
-      this.instanceData = new Float32Array(MAX_INSTANCES_PER_BATCH * INSTANCE_FLOAT_COUNT);
+      this.instanceData = new Float32Array(
+        MAX_INSTANCES_PER_BATCH * INSTANCE_FLOAT_COUNT,
+      );
       this.instanceCount = 0;
 
       this.ss = 1;
@@ -444,59 +447,68 @@
 
     async initPipeline() {
       if (this.paintPipeline) return true;
-      const brushPerfInitStart=(typeof window!=='undefined'&&window.BrushDebugPerf)?performance.now():0;
+      const brushPerfInitStart =
+        typeof window !== "undefined" && window.BrushDebugPerf
+          ? performance.now()
+          : 0;
 
-      if (typeof window.CustomTipGpuResources === 'undefined') {
-        this.fallbackReason = 'CustomTipGpuResources module unavailable';
+      if (typeof window.CustomTipGpuResources === "undefined") {
+        this.fallbackReason = "CustomTipGpuResources module unavailable";
         return false;
       }
 
       this.device = await window.CustomTipGpuResources.instance.getDevice();
       if (!this.device) {
-        this.fallbackReason = 'No shared WebGPU device available';
+        this.fallbackReason = "No shared WebGPU device available";
         return false;
       }
 
       try {
-        const shaderModule = this.device.createShaderModule({ code: SHADER_WGSL });
+        const shaderModule = this.device.createShaderModule({
+          code: SHADER_WGSL,
+        });
 
         this.uniformBuffer = this.device.createBuffer({
           size: 32,
-          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         });
 
         this.instanceBuffer = this.device.createBuffer({
           size: MAX_INSTANCES_PER_BATCH * INSTANCE_FLOAT_COUNT * 4,
-          usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+          usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
         });
 
         const vertexBufferLayout = {
           arrayStride: INSTANCE_FLOAT_COUNT * 4,
-          stepMode: 'instance',
+          stepMode: "instance",
           attributes: [
-            { shaderLocation: 0, offset: 0, format: 'float32x2' },  // pos
-            { shaderLocation: 1, offset: 8, format: 'float32' },    // radius
-            { shaderLocation: 2, offset: 12, format: 'float32' },   // rotation
-            { shaderLocation: 3, offset: 16, format: 'float32' },   // roundness
-            { shaderLocation: 4, offset: 20, format: 'float32' },   // opacity
-            { shaderLocation: 5, offset: 24, format: 'float32x3' },  // color
-            { shaderLocation: 6, offset: 36, format: 'float32' },   // composite
-            { shaderLocation: 7, offset: 40, format: 'float32' },   // flipX
-            { shaderLocation: 8, offset: 44, format: 'float32' },   // flipY
-            { shaderLocation: 9, offset: 48, format: 'float32' },   // inner
-          ]
+            { shaderLocation: 0, offset: 0, format: "float32x2" }, // pos
+            { shaderLocation: 1, offset: 8, format: "float32" }, // radius
+            { shaderLocation: 2, offset: 12, format: "float32" }, // rotation
+            { shaderLocation: 3, offset: 16, format: "float32" }, // roundness
+            { shaderLocation: 4, offset: 20, format: "float32" }, // opacity
+            { shaderLocation: 5, offset: 24, format: "float32x3" }, // color
+            { shaderLocation: 6, offset: 36, format: "float32" }, // composite
+            { shaderLocation: 7, offset: 40, format: "float32" }, // flipX
+            { shaderLocation: 8, offset: 44, format: "float32" }, // flipY
+            { shaderLocation: 9, offset: 48, format: "float32" }, // inner
+          ],
         };
 
         const bindGroupLayout = this.device.createBindGroupLayout({
           entries: [
-            { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+            {
+              binding: 0,
+              visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+              buffer: { type: "uniform" },
+            },
             { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
             { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: {} },
-          ]
+          ],
         });
 
         const pipelineLayout = this.device.createPipelineLayout({
-          bindGroupLayouts: [bindGroupLayout]
+          bindGroupLayouts: [bindGroupLayout],
         });
 
         // Paint pipeline: premultiplied source-over alpha blending
@@ -504,21 +516,31 @@
           layout: pipelineLayout,
           vertex: {
             module: shaderModule,
-            entryPoint: 'vs',
-            buffers: [vertexBufferLayout]
+            entryPoint: "vs",
+            buffers: [vertexBufferLayout],
           },
           fragment: {
             module: shaderModule,
-            entryPoint: 'fs',
-            targets: [{
-              format: 'rgba8unorm',
-              blend: {
-                color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
-                alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' }
-              }
-            }]
+            entryPoint: "fs",
+            targets: [
+              {
+                format: "rgba8unorm",
+                blend: {
+                  color: {
+                    srcFactor: "one",
+                    dstFactor: "one-minus-src-alpha",
+                    operation: "add",
+                  },
+                  alpha: {
+                    srcFactor: "one",
+                    dstFactor: "one-minus-src-alpha",
+                    operation: "add",
+                  },
+                },
+              },
+            ],
           },
-          primitive: { topology: 'triangle-list' }
+          primitive: { topology: "triangle-list" },
         });
 
         // Erase pipeline: destination-out alpha blending
@@ -526,182 +548,223 @@
           layout: pipelineLayout,
           vertex: {
             module: shaderModule,
-            entryPoint: 'vs',
-            buffers: [vertexBufferLayout]
+            entryPoint: "vs",
+            buffers: [vertexBufferLayout],
           },
           fragment: {
             module: shaderModule,
-            entryPoint: 'fs',
-            targets: [{
-              format: 'rgba8unorm',
-              blend: {
-                color: { srcFactor: 'zero', dstFactor: 'one-minus-src-alpha', operation: 'add' },
-                alpha: { srcFactor: 'zero', dstFactor: 'one-minus-src-alpha', operation: 'add' }
-              }
-            }]
+            entryPoint: "fs",
+            targets: [
+              {
+                format: "rgba8unorm",
+                blend: {
+                  color: {
+                    srcFactor: "zero",
+                    dstFactor: "one-minus-src-alpha",
+                    operation: "add",
+                  },
+                  alpha: {
+                    srcFactor: "zero",
+                    dstFactor: "one-minus-src-alpha",
+                    operation: "add",
+                  },
+                },
+              },
+            ],
           },
-          primitive: { topology: 'triangle-list' }
+          primitive: { topology: "triangle-list" },
         });
 
         this.bindGroupLayout = bindGroupLayout;
-        if(brushPerfInitStart&&window.BrushPerfNote)window.BrushPerfNote('gpu-init',{ms:performance.now()-brushPerfInitStart,first:true});
+        if (brushPerfInitStart && window.BrushPerfNote)
+          window.BrushPerfNote("gpu-init", {
+            ms: performance.now() - brushPerfInitStart,
+            first: true,
+          });
         return true;
       } catch (e) {
-        this.fallbackReason = 'Failed to create WebGPU pipelines: ' + (e.message || String(e));
-        if(brushPerfInitStart&&window.BrushPerfNote)window.BrushPerfNote('gpu-init',{ms:performance.now()-brushPerfInitStart,first:true});
+        this.fallbackReason =
+          "Failed to create WebGPU pipelines: " + (e.message || String(e));
+        if (brushPerfInitStart && window.BrushPerfNote)
+          window.BrushPerfNote("gpu-init", {
+            ms: performance.now() - brushPerfInitStart,
+            first: true,
+          });
         return false;
       }
     }
 
     initResolvePipeline() {
-      if (this.resolvePipeline && this.resolveDevice === this.device) return true;
+      if (this.resolvePipeline && this.resolveDevice === this.device)
+        return true;
       if (!this.device) return false;
       try {
-        const shaderModule = this.device.createShaderModule({ code: RESOLVE_SHADER_WGSL });
+        const shaderModule = this.device.createShaderModule({
+          code: RESOLVE_SHADER_WGSL,
+        });
         this.resolveBindGroupLayout = this.device.createBindGroupLayout({
           entries: [
             { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: {} },
-          ]
+          ],
         });
 
         const pipelineLayout = this.device.createPipelineLayout({
-          bindGroupLayouts: [this.resolveBindGroupLayout]
+          bindGroupLayouts: [this.resolveBindGroupLayout],
         });
 
         this.resolve1xPipeline = this.device.createRenderPipeline({
           layout: pipelineLayout,
-          vertex: { module: shaderModule, entryPoint: 'vs' },
+          vertex: { module: shaderModule, entryPoint: "vs" },
           fragment: {
             module: shaderModule,
-            entryPoint: 'fs1x',
-            targets: [{ format: 'rgba8unorm' }]
+            entryPoint: "fs1x",
+            targets: [{ format: "rgba8unorm" }],
           },
-          primitive: { topology: 'triangle-list' }
+          primitive: { topology: "triangle-list" },
         });
 
         this.resolve2xPipeline = this.device.createRenderPipeline({
           layout: pipelineLayout,
-          vertex: { module: shaderModule, entryPoint: 'vs' },
+          vertex: { module: shaderModule, entryPoint: "vs" },
           fragment: {
             module: shaderModule,
-            entryPoint: 'fs2x',
-            targets: [{ format: 'rgba8unorm' }]
+            entryPoint: "fs2x",
+            targets: [{ format: "rgba8unorm" }],
           },
-          primitive: { topology: 'triangle-list' }
+          primitive: { topology: "triangle-list" },
         });
 
         this.resolve3xPipeline = this.device.createRenderPipeline({
           layout: pipelineLayout,
-          vertex: { module: shaderModule, entryPoint: 'vs' },
+          vertex: { module: shaderModule, entryPoint: "vs" },
           fragment: {
             module: shaderModule,
-            entryPoint: 'fs3x',
-            targets: [{ format: 'rgba8unorm' }]
+            entryPoint: "fs3x",
+            targets: [{ format: "rgba8unorm" }],
           },
-          primitive: { topology: 'triangle-list' }
+          primitive: { topology: "triangle-list" },
         });
 
         this.resolve4xPipeline = this.device.createRenderPipeline({
           layout: pipelineLayout,
-          vertex: { module: shaderModule, entryPoint: 'vs' },
+          vertex: { module: shaderModule, entryPoint: "vs" },
           fragment: {
             module: shaderModule,
-            entryPoint: 'fs4x',
-            targets: [{ format: 'rgba8unorm' }]
+            entryPoint: "fs4x",
+            targets: [{ format: "rgba8unorm" }],
           },
-          primitive: { topology: 'triangle-list' }
+          primitive: { topology: "triangle-list" },
         });
 
         this.resolvePipeline = this.resolve2xPipeline;
         this.resolveDevice = this.device;
         return true;
       } catch (e) {
-        console.warn('[CustomTipGpuRenderer] Failed to init resolve pipeline:', e);
+        console.warn(
+          "[CustomTipGpuRenderer] Failed to init resolve pipeline:",
+          e,
+        );
         return false;
       }
     }
 
     initPresenter() {
-      if (this.presentPipeline && this.presentDevice === this.device) return true;
+      if (this.presentPipeline && this.presentDevice === this.device)
+        return true;
       if (!this.device) return false;
       try {
-        const overlayCanvas = document.getElementById('custom-tip-gpu-overlay');
+        const overlayCanvas = document.getElementById("custom-tip-gpu-overlay");
         if (!overlayCanvas) return false;
 
-        this.presentContext = overlayCanvas.getContext('webgpu');
+        this.presentContext = overlayCanvas.getContext("webgpu");
         if (!this.presentContext) return false;
 
         this.presentFormat = navigator.gpu.getPreferredCanvasFormat();
         this.presentContext.configure({
           device: this.device,
           format: this.presentFormat,
-          alphaMode: 'premultiplied'
+          alphaMode: "premultiplied",
         });
 
-        const shaderModule = this.device.createShaderModule({ code: PRESENT_SHADER_WGSL });
+        const shaderModule = this.device.createShaderModule({
+          code: PRESENT_SHADER_WGSL,
+        });
         this.presentBindGroupLayout = this.device.createBindGroupLayout({
           entries: [
             { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
             { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: {} },
-            { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
-          ]
+            {
+              binding: 2,
+              visibility: GPUShaderStage.FRAGMENT,
+              buffer: { type: "uniform" },
+            },
+          ],
         });
 
         const pipelineLayout = this.device.createPipelineLayout({
-          bindGroupLayouts: [this.presentBindGroupLayout]
+          bindGroupLayouts: [this.presentBindGroupLayout],
         });
 
         this.presentPipeline = this.device.createRenderPipeline({
           layout: pipelineLayout,
-          vertex: { module: shaderModule, entryPoint: 'vs' },
+          vertex: { module: shaderModule, entryPoint: "vs" },
           fragment: {
             module: shaderModule,
-            entryPoint: 'fs',
-            targets: [{ format: this.presentFormat }]
+            entryPoint: "fs",
+            targets: [{ format: this.presentFormat }],
           },
-          primitive: { topology: 'triangle-list' }
+          primitive: { topology: "triangle-list" },
         });
 
         this.presentSampler = this.device.createSampler({
-          magFilter: 'linear',
-          minFilter: 'linear'
+          magFilter: "linear",
+          minFilter: "linear",
         });
 
         // Minimal uniform buffer holding just the stroke-level presentation
         // opacity. WebGPU uniform buffers must be a multiple of 16 bytes.
         this.presentUniformBuffer = this.device.createBuffer({
           size: 16,
-          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         });
 
         this.presentDevice = this.device;
 
         return true;
       } catch (e) {
-        console.warn('[CustomTipGpuRenderer] Failed to init presenter:', e);
+        console.warn("[CustomTipGpuRenderer] Failed to init presenter:", e);
         return false;
       }
     }
 
     presentLiveOverlay() {
-      if (!this.active || !this.device || !this.shadowTextureView) return { presented: false, reason: 'uninitialized' };
-      if (!this.initPresenter()) return { presented: false, reason: 'presenter-init-failed' };
+      if (!this.active || !this.device || !this.shadowTextureView)
+        return { presented: false, reason: "uninitialized" };
+      if (!this.initPresenter())
+        return { presented: false, reason: "presenter-init-failed" };
 
-      const overlayCanvas = document.getElementById('custom-tip-gpu-overlay');
-      if (!overlayCanvas) return { presented: false, reason: 'no-overlay-canvas' };
+      const overlayCanvas = document.getElementById("custom-tip-gpu-overlay");
+      if (!overlayCanvas)
+        return { presented: false, reason: "no-overlay-canvas" };
 
-      if (window.CustomTipOverlayOwnerStrokeId != null && window.CustomTipOverlayOwnerStrokeId !== this.currentStrokeId) {
-        return { presented: false, reason: 'not-overlay-owner' };
+      if (
+        window.CustomTipOverlayOwnerStrokeId != null &&
+        window.CustomTipOverlayOwnerStrokeId !== this.currentStrokeId
+      ) {
+        return { presented: false, reason: "not-overlay-owner" };
       }
 
       window.CustomTipOverlayOwnerStrokeId = this.currentStrokeId;
       window.CustomTipOverlayVisibilityOwnerStrokeId = this.currentStrokeId;
 
-      if (overlayCanvas.width !== this.targetWidth || overlayCanvas.height !== this.targetHeight) {
+      if (
+        overlayCanvas.width !== this.targetWidth ||
+        overlayCanvas.height !== this.targetHeight
+      ) {
         overlayCanvas.width = this.targetWidth;
         overlayCanvas.height = this.targetHeight;
       }
-      overlayCanvas.style.display = 'block';
+      overlayCanvas.style.display = "block";
       overlayCanvas.hidden = false;
 
       // 1. Resolve SS shadow texture to 1x resolved texture
@@ -709,17 +772,27 @@
 
       // 2. Optional 1x paper texture stencil
       let sourceView = this.resolvedShadowTextureView;
-      if (this.shouldApplyTextureStencil() && typeof window.CustomTipGpuResources !== 'undefined') {
+      if (
+        this.shouldApplyTextureStencil() &&
+        typeof window.CustomTipGpuResources !== "undefined"
+      ) {
         const mgr = window.CustomTipGpuResources.instance;
-        if (mgr && mgr.cachedPaperTexture && mgr.cachedPaperTextureCanvas === window.brushTextureCanvas) {
+        if (
+          mgr &&
+          mgr.cachedPaperTexture &&
+          mgr.cachedPaperTextureCanvas === window.brushTextureCanvas
+        ) {
           const paperResource = {
             texture: mgr.cachedPaperTexture,
             view: mgr.cachedPaperTextureView,
             sampler: mgr.sharedRepeatSampler,
             width: window.brushTextureCanvas.width,
-            height: window.brushTextureCanvas.height
+            height: window.brushTextureCanvas.height,
           };
-          if (this.renderTextureStencilPass(paperResource) && this.texturedShadowTextureView) {
+          if (
+            this.renderTextureStencilPass(paperResource) &&
+            this.texturedShadowTextureView
+          ) {
             sourceView = this.texturedShadowTextureView;
           }
         }
@@ -727,29 +800,38 @@
 
       try {
         const rawOpacity = this.presentationOpacity;
-        const opacity = (typeof rawOpacity === 'number' && isFinite(rawOpacity))
-          ? Math.max(0, Math.min(1, rawOpacity))
-          : 1;
-        this.device.queue.writeBuffer(this.presentUniformBuffer, 0, new Float32Array([opacity, 0, 0, 0]));
+        const opacity =
+          typeof rawOpacity === "number" && isFinite(rawOpacity)
+            ? Math.max(0, Math.min(1, rawOpacity))
+            : 1;
+        this.device.queue.writeBuffer(
+          this.presentUniformBuffer,
+          0,
+          new Float32Array([opacity, 0, 0, 0]),
+        );
 
-        const currentView = this.presentContext.getCurrentTexture().createView();
+        const currentView = this.presentContext
+          .getCurrentTexture()
+          .createView();
         const bindGroup = this.device.createBindGroup({
           layout: this.presentBindGroupLayout,
           entries: [
             { binding: 0, resource: this.presentSampler },
             { binding: 1, resource: sourceView },
-            { binding: 2, resource: { buffer: this.presentUniformBuffer } }
-          ]
+            { binding: 2, resource: { buffer: this.presentUniformBuffer } },
+          ],
         });
 
         const encoder = this.device.createCommandEncoder();
         const pass = encoder.beginRenderPass({
-          colorAttachments: [{
-            view: currentView,
-            loadOp: 'clear',
-            storeOp: 'store',
-            clearValue: { r: 0, g: 0, b: 0, a: 0 }
-          }]
+          colorAttachments: [
+            {
+              view: currentView,
+              loadOp: "clear",
+              storeOp: "store",
+              clearValue: { r: 0, g: 0, b: 0, a: 0 },
+            },
+          ],
         });
 
         pass.setPipeline(this.presentPipeline);
@@ -768,7 +850,7 @@
     }
 
     presentLiveImmediately() {
-      if (!this.active) return { presented: false, reason: 'inactive' };
+      if (!this.active) return { presented: false, reason: "inactive" };
       if (this.presentRaf) {
         cancelAnimationFrame(this.presentRaf);
         this.presentRaf = 0;
@@ -783,9 +865,9 @@
       if (currentOwner != null && currentOwner !== targetId) {
         return;
       }
-      const overlayCanvas = document.getElementById('custom-tip-gpu-overlay');
+      const overlayCanvas = document.getElementById("custom-tip-gpu-overlay");
       if (overlayCanvas) {
-        overlayCanvas.style.display = 'none';
+        overlayCanvas.style.display = "none";
         overlayCanvas.hidden = true;
         if (window.CustomTipOverlayOwnerStrokeId === targetId) {
           window.CustomTipOverlayOwnerStrokeId = null;
@@ -798,21 +880,31 @@
     }
 
     ensureTextures(w, h, ss = 2) {
-      const needRealloc = !this.shadowTexture || this.targetWidth !== w || this.targetHeight !== h || this.ss !== ss;
+      const needRealloc =
+        !this.shadowTexture ||
+        this.targetWidth !== w ||
+        this.targetHeight !== h ||
+        this.ss !== ss;
       if (!needRealloc) return;
 
       if (this.shadowTexture) {
-        try { this.shadowTexture.destroy(); } catch (e) {}
+        try {
+          this.shadowTexture.destroy();
+        } catch (e) {}
         this.shadowTexture = null;
         this.shadowTextureView = null;
       }
       if (this.resolvedShadowTexture) {
-        try { this.resolvedShadowTexture.destroy(); } catch (e) {}
+        try {
+          this.resolvedShadowTexture.destroy();
+        } catch (e) {}
         this.resolvedShadowTexture = null;
         this.resolvedShadowTextureView = null;
       }
       if (this.texturedShadowTexture) {
-        try { this.texturedShadowTexture.destroy(); } catch (e) {}
+        try {
+          this.texturedShadowTexture.destroy();
+        } catch (e) {}
         this.texturedShadowTexture = null;
         this.texturedShadowTextureView = null;
       }
@@ -828,24 +920,33 @@
       // 1. Supersampled shadow texture
       this.shadowTexture = this.device.createTexture({
         size: [this.ssWidth, this.ssHeight, 1],
-        format: 'rgba8unorm',
-        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC
+        format: "rgba8unorm",
+        usage:
+          GPUTextureUsage.RENDER_ATTACHMENT |
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_SRC,
       });
       this.shadowTextureView = this.shadowTexture.createView();
 
       // 2. 1x Resolved shadow texture
       this.resolvedShadowTexture = this.device.createTexture({
         size: [this.targetWidth, this.targetHeight, 1],
-        format: 'rgba8unorm',
-        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC
+        format: "rgba8unorm",
+        usage:
+          GPUTextureUsage.RENDER_ATTACHMENT |
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_SRC,
       });
       this.resolvedShadowTextureView = this.resolvedShadowTexture.createView();
 
       // 3. 1x Textured shadow texture (for paper texture stencil)
       this.texturedShadowTexture = this.device.createTexture({
         size: [this.targetWidth, this.targetHeight, 1],
-        format: 'rgba8unorm',
-        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC
+        format: "rgba8unorm",
+        usage:
+          GPUTextureUsage.RENDER_ATTACHMENT |
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_SRC,
       });
       this.texturedShadowTextureView = this.texturedShadowTexture.createView();
     }
@@ -859,24 +960,29 @@
     }
 
     renderResolvePass() {
-      if (!this.device || !this.shadowTextureView || !this.resolvedShadowTextureView) return false;
+      if (
+        !this.device ||
+        !this.shadowTextureView ||
+        !this.resolvedShadowTextureView
+      )
+        return false;
       if (!this.initResolvePipeline()) return false;
 
       const bindGroup = this.device.createBindGroup({
         layout: this.resolveBindGroupLayout,
-        entries: [
-          { binding: 0, resource: this.shadowTextureView }
-        ]
+        entries: [{ binding: 0, resource: this.shadowTextureView }],
       });
 
       const encoder = this.device.createCommandEncoder();
       const pass = encoder.beginRenderPass({
-        colorAttachments: [{
-          view: this.resolvedShadowTextureView,
-          clearValue: { r: 0, g: 0, b: 0, a: 0 },
-          loadOp: 'clear',
-          storeOp: 'store'
-        }]
+        colorAttachments: [
+          {
+            view: this.resolvedShadowTextureView,
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+            loadOp: "clear",
+            storeOp: "store",
+          },
+        ],
       });
 
       let pipeline = this.resolve1xPipeline;
@@ -898,42 +1004,49 @@
     }
 
     initTextureStencilPipeline() {
-      if (this.textureStencilPipeline || !this.device) return !!this.textureStencilPipeline;
+      if (this.textureStencilPipeline || !this.device)
+        return !!this.textureStencilPipeline;
       try {
-        const shaderModule = this.device.createShaderModule({ code: TEXTURE_STENCIL_SHADER_WGSL });
+        const shaderModule = this.device.createShaderModule({
+          code: TEXTURE_STENCIL_SHADER_WGSL,
+        });
         this.textureStencilUniformBuffer = this.device.createBuffer({
           size: 32,
-          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         });
 
         this.textureStencilBindGroupLayout = this.device.createBindGroupLayout({
           entries: [
-            { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+            {
+              binding: 0,
+              visibility: GPUShaderStage.FRAGMENT,
+              buffer: { type: "uniform" },
+            },
             { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
             { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: {} },
             { binding: 3, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
             { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: {} },
-          ]
+          ],
         });
 
         const pipelineLayout = this.device.createPipelineLayout({
-          bindGroupLayouts: [this.textureStencilBindGroupLayout]
+          bindGroupLayouts: [this.textureStencilBindGroupLayout],
         });
 
         this.textureStencilPipeline = this.device.createRenderPipeline({
           layout: pipelineLayout,
-          vertex: { module: shaderModule, entryPoint: 'vs' },
+          vertex: { module: shaderModule, entryPoint: "vs" },
           fragment: {
             module: shaderModule,
-            entryPoint: 'fs',
-            targets: [{ format: 'rgba8unorm' }]
+            entryPoint: "fs",
+            targets: [{ format: "rgba8unorm" }],
           },
-          primitive: { topology: 'triangle-list' }
+          primitive: { topology: "triangle-list" },
         });
 
         this.textureStencilSampler = this.device.createSampler({
-          magFilter: 'linear',
-          minFilter: 'linear'
+          magFilter: "linear",
+          minFilter: "linear",
         });
 
         return true;
@@ -943,49 +1056,93 @@
     }
 
     shouldApplyTextureStencil() {
-      if (typeof window === 'undefined') return false;
-      if (!window.brushTextureEnabled || !window.brushTextureCanvas) return false;
-      const strength = typeof window.brushTextureStrength !== 'undefined' ? window.brushTextureStrength : (typeof window.brushTextureDepth !== 'undefined' ? window.brushTextureDepth : 1.0);
+      if (typeof window === "undefined") return false;
+      if (!window.brushTextureEnabled || !window.brushTextureCanvas)
+        return false;
+      const strength =
+        typeof window.brushTextureStrength !== "undefined"
+          ? window.brushTextureStrength
+          : typeof window.brushTextureDepth !== "undefined"
+            ? window.brushTextureDepth
+            : 1.0;
       if (strength <= 0) return false;
       if (this.currentBatchErase) return false; // Erase strokes completely bypass texture, matching Canvas2D
       return true;
     }
 
     renderTextureStencilPass(paperResource) {
-      if (!this.device || !this.resolvedShadowTextureView || !paperResource || !paperResource.view) return false;
+      if (
+        !this.device ||
+        !this.resolvedShadowTextureView ||
+        !paperResource ||
+        !paperResource.view
+      )
+        return false;
       if (!this.initTextureStencilPipeline()) return false;
       if (!this.texturedShadowTextureView) return false;
 
-      const scale = typeof window.brushTextureScale === 'number' ? window.brushTextureScale : 1.0;
+      const scale =
+        typeof window.brushTextureScale === "number"
+          ? window.brushTextureScale
+          : 1.0;
       const sw = Math.max(1, Math.round(paperResource.width * scale));
       const sh = Math.max(1, Math.round(paperResource.height * scale));
       const inv = window.brushTextureInvert ? 1.0 : 0.0;
-      const brightness = typeof window.brushTextureBrightness === 'number' ? window.brushTextureBrightness : 0.0;
-      const contrast = typeof window.brushTextureContrast === 'number' ? window.brushTextureContrast : 0.0;
-      const strength = typeof window.brushTextureStrength !== 'undefined' ? window.brushTextureStrength : (typeof window.brushTextureDepth !== 'undefined' ? window.brushTextureDepth : 1.0);
+      const brightness =
+        typeof window.brushTextureBrightness === "number"
+          ? window.brushTextureBrightness
+          : 0.0;
+      const contrast =
+        typeof window.brushTextureContrast === "number"
+          ? window.brushTextureContrast
+          : 0.0;
+      const strength =
+        typeof window.brushTextureStrength !== "undefined"
+          ? window.brushTextureStrength
+          : typeof window.brushTextureDepth !== "undefined"
+            ? window.brushTextureDepth
+            : 1.0;
 
-      const uniforms = new Float32Array([this.targetWidth, this.targetHeight, sw, sh, inv, brightness, contrast, strength]);
-      this.device.queue.writeBuffer(this.textureStencilUniformBuffer, 0, uniforms);
+      const uniforms = new Float32Array([
+        this.targetWidth,
+        this.targetHeight,
+        sw,
+        sh,
+        inv,
+        brightness,
+        contrast,
+        strength,
+      ]);
+      this.device.queue.writeBuffer(
+        this.textureStencilUniformBuffer,
+        0,
+        uniforms,
+      );
 
       const bindGroup = this.device.createBindGroup({
         layout: this.textureStencilBindGroupLayout,
         entries: [
-          { binding: 0, resource: { buffer: this.textureStencilUniformBuffer } },
+          {
+            binding: 0,
+            resource: { buffer: this.textureStencilUniformBuffer },
+          },
           { binding: 1, resource: this.textureStencilSampler },
           { binding: 2, resource: this.resolvedShadowTextureView },
           { binding: 3, resource: paperResource.sampler },
           { binding: 4, resource: paperResource.view },
-        ]
+        ],
       });
 
       const encoder = this.device.createCommandEncoder();
       const pass = encoder.beginRenderPass({
-        colorAttachments: [{
-          view: this.texturedShadowTextureView,
-          clearValue: { r: 0, g: 0, b: 0, a: 0 },
-          loadOp: 'clear',
-          storeOp: 'store'
-        }]
+        colorAttachments: [
+          {
+            view: this.texturedShadowTextureView,
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+            loadOp: "clear",
+            storeOp: "store",
+          },
+        ],
       });
       pass.setPipeline(this.textureStencilPipeline);
       pass.setBindGroup(0, bindGroup);
@@ -1001,12 +1158,14 @@
       this.targetClearCount++;
       const encoder = this.device.createCommandEncoder();
       const pass = encoder.beginRenderPass({
-        colorAttachments: [{
-          view: this.shadowTextureView,
-          clearValue: { r: 0, g: 0, b: 0, a: 0 },
-          loadOp: 'clear',
-          storeOp: 'store'
-        }]
+        colorAttachments: [
+          {
+            view: this.shadowTextureView,
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+            loadOp: "clear",
+            storeOp: "store",
+          },
+        ],
       });
       pass.end();
       this.device.queue.submit([encoder.finish()]);
@@ -1030,27 +1189,37 @@
     }
 
     async beginStroke(settings = {}) {
-      const targetCanvas = (typeof _strokeCanvas !== 'undefined' && _strokeCanvas) ? _strokeCanvas : (typeof activeC !== 'undefined' && activeC ? activeC : null);
+      const targetCanvas =
+        typeof _strokeCanvas !== "undefined" && _strokeCanvas
+          ? _strokeCanvas
+          : typeof activeC !== "undefined" && activeC
+            ? activeC
+            : null;
       const w = settings.width || (targetCanvas ? targetCanvas.width : 1000);
       const h = settings.height || (targetCanvas ? targetCanvas.height : 1000);
 
-      const aaMode = typeof _currentAAMode === 'function' ? _currentAAMode() : 'medium';
+      const aaMode =
+        typeof _currentAAMode === "function" ? _currentAAMode() : "medium";
       let ss = 3;
-      if (aaMode === 'none' || aaMode === 'off') {
+      if (aaMode === "none" || aaMode === "off") {
         ss = 1;
-      } else if (aaMode === 'weak') {
+      } else if (aaMode === "weak") {
         ss = 2;
-      } else if (aaMode === 'medium') {
+      } else if (aaMode === "medium") {
         ss = 3;
-      } else if (aaMode === 'strong') {
+      } else if (aaMode === "strong") {
         ss = 4;
       }
 
       this.active = true;
-      this.currentStrokeId = settings.strokeId || (typeof _activeStrokeSession !== 'undefined' ? _activeStrokeSession : 1);
+      this.currentStrokeId =
+        settings.strokeId ||
+        (typeof _activeStrokeSession !== "undefined"
+          ? _activeStrokeSession
+          : 1);
       window.CustomTipOverlayOwnerStrokeId = this.currentStrokeId;
       window.CustomTipOverlayVisibilityOwnerStrokeId = this.currentStrokeId;
-      if (typeof window !== 'undefined') {
+      if (typeof window !== "undefined") {
         window.CustomTipGpuActiveSS = ss;
       }
       this.resolvedDabCount = 0;
@@ -1068,9 +1237,11 @@
       this.nonTransparentPixelCount = 0;
       this.dirtyBounds = null;
       this.sessionSafe = true;
-      this.presentationOpacity = (typeof settings.presentationOpacity === 'number' && isFinite(settings.presentationOpacity))
-        ? Math.max(0, Math.min(1, settings.presentationOpacity))
-        : 1;
+      this.presentationOpacity =
+        typeof settings.presentationOpacity === "number" &&
+        isFinite(settings.presentationOpacity)
+          ? Math.max(0, Math.min(1, settings.presentationOpacity))
+          : 1;
 
       this.resourcePromise = (async () => {
         const ok = await this.initPipeline();
@@ -1079,8 +1250,9 @@
         this.ensureTextures(w, h, ss);
         this.clearShadowTarget();
 
-        if (typeof window.CustomTipGpuResources !== 'undefined') {
-          this.currentResource = await window.CustomTipGpuResources.getOrCreateCurrentTipResource();
+        if (typeof window.CustomTipGpuResources !== "undefined") {
+          this.currentResource =
+            await window.CustomTipGpuResources.getOrCreateCurrentTipResource();
         }
 
         if (this.pendingDabsQueue && this.pendingDabsQueue.length > 0) {
@@ -1133,32 +1305,47 @@
 
       const r = d.r || d.radius || 1;
       let effectiveR = r;
-      let effectiveAlpha = d.alpha != null ? d.alpha : (d.opacity != null ? d.opacity : 1);
+      let effectiveAlpha =
+        d.alpha != null ? d.alpha : d.opacity != null ? d.opacity : 1;
       // Tiny-dab parity: Canvas2D uses 4x4 subpixel supersampling for r <= 1.
       // GPU hardware rasterization drops sub-pixel quads entirely. Clamp the
       // quad to a minimum 1px radius and scale alpha by (r/1)^2 to match the
       // area-proportional coverage that Canvas2D's supersampling computes.
       if (r < 1.0) {
-        effectiveAlpha *= (r * r);
+        effectiveAlpha *= r * r;
         effectiveR = 1.0;
       }
       const rgb = d.rgb || [0, 0, 0];
-      const isErase = d.composite === 'erase';
+      const isErase = d.composite === "erase";
       const composite = isErase ? 1.0 : 0.0;
 
-      const reflected = (typeof flipX !== 'undefined' ? !!flipX : false) !== (typeof flipY !== 'undefined' ? !!flipY : false);
-      const rotation = reflected ? -(d.rotation || 0) : (d.rotation || 0);
-      const roundness = d.roundness != null ? d.roundness : (typeof window !== 'undefined' && window.brushTipRoundness == null ? 1 : window.brushTipRoundness);
+      const reflected =
+        (typeof flipX !== "undefined" ? !!flipX : false) !==
+        (typeof flipY !== "undefined" ? !!flipY : false);
+      const rotation = reflected ? -(d.rotation || 0) : d.rotation || 0;
+      const roundness =
+        d.roundness != null
+          ? d.roundness
+          : typeof window !== "undefined" && window.brushTipRoundness == null
+            ? 1
+            : window.brushTipRoundness;
 
       const fX = window.brushTipFlipX ? -1.0 : 1.0;
       const fY = window.brushTipFlipY ? -1.0 : 1.0;
 
-      const softAlpha = typeof window !== 'undefined' && !!window.brushTipSoftAlpha;
-      const tipMode = typeof window !== 'undefined' && window.brushTipMode ? window.brushTipMode : 'multiply';
-      const applyFalloff = softAlpha && tipMode !== 'replace';
+      const softAlpha =
+        typeof window !== "undefined" && !!window.brushTipSoftAlpha;
+      const tipMode =
+        typeof window !== "undefined" && window.brushTipMode
+          ? window.brushTipMode
+          : "multiply";
+      const applyFalloff = softAlpha && tipMode !== "replace";
       let inner = -1.0;
       if (applyFalloff) {
-        const hardness = Math.max(0, Math.min(1, typeof brushHardness !== 'undefined' ? brushHardness : 1));
+        const hardness = Math.max(
+          0,
+          Math.min(1, typeof brushHardness !== "undefined" ? brushHardness : 1),
+        );
         inner = Math.max(0, Math.min(0.999, hardness));
       }
 
@@ -1211,7 +1398,13 @@
     }
 
     flushBatch() {
-      if (!this.active || !this.device || this.instanceCount === 0 || !this.currentResource) return;
+      if (
+        !this.active ||
+        !this.device ||
+        this.instanceCount === 0 ||
+        !this.currentResource
+      )
+        return;
 
       const res = this.currentResource;
       const tipNativeW = res.width || 1;
@@ -1221,17 +1414,36 @@
       const tipAspectY = tipNativeH / reference;
 
       // 1. Upload Uniforms for SS target dimensions
-      const legacyMask = (res && res.legacyAlphaOnlyMask) ? 1.0 : 0.0;
-      const uniforms = new Float32Array([this.ssWidth, this.ssHeight, tipAspectX, tipAspectY, legacyMask, 0, 0, 0]);
+      const legacyMask = res && res.legacyAlphaOnlyMask ? 1.0 : 0.0;
+      const uniforms = new Float32Array([
+        this.ssWidth,
+        this.ssHeight,
+        tipAspectX,
+        tipAspectY,
+        legacyMask,
+        0,
+        0,
+        0,
+      ]);
       this.device.queue.writeBuffer(this.uniformBuffer, 0, uniforms);
 
       // 2. Upload Instance Buffer
       const byteLength = this.instanceCount * INSTANCE_FLOAT_COUNT * 4;
-      this.device.queue.writeBuffer(this.instanceBuffer, 0, this.instanceData.buffer, 0, byteLength);
+      this.device.queue.writeBuffer(
+        this.instanceBuffer,
+        0,
+        this.instanceData.buffer,
+        0,
+        byteLength,
+      );
 
       // 3. Create Bind Group for current resource
-      const isNearest = (typeof _currentAAMode === 'function' && _currentAAMode() === 'none');
-      const sampler = (isNearest && res.samplerNearest) ? res.samplerNearest : (res.samplerLinear || res.samplerNearest);
+      const isNearest =
+        typeof _currentAAMode === "function" && _currentAAMode() === "none";
+      const sampler =
+        isNearest && res.samplerNearest
+          ? res.samplerNearest
+          : res.samplerLinear || res.samplerNearest;
       if (!sampler || !res.view) return;
 
       const bindGroup = this.device.createBindGroup({
@@ -1239,21 +1451,25 @@
         entries: [
           { binding: 0, resource: { buffer: this.uniformBuffer } },
           { binding: 1, resource: sampler },
-          { binding: 2, resource: res.view }
-        ]
+          { binding: 2, resource: res.view },
+        ],
       });
 
       // 4. Record and submit GPU instanced draw call
       const encoder = this.device.createCommandEncoder();
       const pass = encoder.beginRenderPass({
-        colorAttachments: [{
-          view: this.shadowTextureView,
-          loadOp: 'load',
-          storeOp: 'store'
-        }]
+        colorAttachments: [
+          {
+            view: this.shadowTextureView,
+            loadOp: "load",
+            storeOp: "store",
+          },
+        ],
       });
 
-      const pipeline = this.currentBatchErase ? this.erasePipeline : this.paintPipeline;
+      const pipeline = this.currentBatchErase
+        ? this.erasePipeline
+        : this.paintPipeline;
       if (pipeline) {
         pass.setPipeline(pipeline);
         pass.setBindGroup(0, bindGroup);
@@ -1266,19 +1482,31 @@
 
       this.batchCount++;
       this.drawCallCount++;
-      if(typeof window!=='undefined'&&window.BrushDebugPerf&&window.BrushPerfNote)window.BrushPerfNote('gpu-work',{instances:this.instanceCount,batches:1,drawCalls:1});
+      if (
+        typeof window !== "undefined" &&
+        window.BrushDebugPerf &&
+        window.BrushPerfNote
+      )
+        window.BrushPerfNote("gpu-work", {
+          instances: this.instanceCount,
+          batches: 1,
+          drawCalls: 1,
+        });
       this.instanceCount = 0;
     }
 
     async resolveInto(outCtx, options = {}) {
       if (!this.device || !this.shadowTexture) {
-        return { success: false, reason: 'no-device-or-texture' };
+        return { success: false, reason: "no-device-or-texture" };
       }
 
       this.flushBatch();
       this.renderResolvePass();
 
-      let minX = 0, minY = 0, maxX = this.targetWidth - 1, maxY = this.targetHeight - 1;
+      let minX = 0,
+        minY = 0,
+        maxX = this.targetWidth - 1,
+        maxY = this.targetHeight - 1;
       let fullCanvas = true;
 
       if (options.bounds) {
@@ -1292,7 +1520,11 @@
         minY = this.dirtyBounds.minY;
         maxX = this.dirtyBounds.maxX;
         maxY = this.dirtyBounds.maxY;
-        fullCanvas = (minX === 0 && minY === 0 && maxX === this.targetWidth - 1 && maxY === this.targetHeight - 1);
+        fullCanvas =
+          minX === 0 &&
+          minY === 0 &&
+          maxX === this.targetWidth - 1 &&
+          maxY === this.targetHeight - 1;
       }
 
       const rectW = Math.max(1, maxX - minX + 1);
@@ -1302,8 +1534,15 @@
       const bufferSize = bytesPerRow * rectH;
 
       let sourceTexture = this.resolvedShadowTexture;
-      if (this.shouldApplyTextureStencil() && typeof window.CustomTipGpuResources !== 'undefined') {
-        const paperResource = await window.CustomTipGpuResources.getOrCreatePaperTexture(window.brushTextureCanvas, window.brushTextureVersion);
+      if (
+        this.shouldApplyTextureStencil() &&
+        typeof window.CustomTipGpuResources !== "undefined"
+      ) {
+        const paperResource =
+          await window.CustomTipGpuResources.getOrCreatePaperTexture(
+            window.brushTextureCanvas,
+            window.brushTextureVersion,
+          );
         if (paperResource && this.renderTextureStencilPass(paperResource)) {
           sourceTexture = this.texturedShadowTexture;
         }
@@ -1312,14 +1551,14 @@
       try {
         const readBuffer = this.device.createBuffer({
           size: bufferSize,
-          usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+          usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
         });
 
         const encoder = this.device.createCommandEncoder();
         encoder.copyTextureToBuffer(
           { texture: sourceTexture, origin: [minX, minY, 0] },
           { buffer: readBuffer, bytesPerRow, rowsPerImage: rectH },
-          [rectW, rectH, 1]
+          [rectW, rectH, 1],
         );
 
         this.device.queue.submit([encoder.finish()]);
@@ -1328,7 +1567,10 @@
         const mapped = new Uint8Array(readBuffer.getMappedRange());
 
         const targetCanvas = outCtx.canvas || outCtx;
-        if (targetCanvas.width !== this.targetWidth || targetCanvas.height !== this.targetHeight) {
+        if (
+          targetCanvas.width !== this.targetWidth ||
+          targetCanvas.height !== this.targetHeight
+        ) {
           targetCanvas.width = this.targetWidth;
           targetCanvas.height = this.targetHeight;
         }
@@ -1364,7 +1606,7 @@
           success: true,
           rect: this.lastResolveRect,
           fullCanvasReadbackUsed: fullCanvas,
-          readbackBytes: bufferSize
+          readbackBytes: bufferSize,
         };
       } catch (e) {
         this.lastResolveSucceeded = false;
@@ -1380,7 +1622,10 @@
       this.flushBatch();
       this.renderResolvePass();
 
-      let minX = 0, minY = 0, maxX = this.targetWidth - 1, maxY = this.targetHeight - 1;
+      let minX = 0,
+        minY = 0,
+        maxX = this.targetWidth - 1,
+        maxY = this.targetHeight - 1;
       if (options.bounds) {
         minX = Math.max(0, Math.floor(options.bounds.minX));
         minY = Math.max(0, Math.floor(options.bounds.minY));
@@ -1410,20 +1655,22 @@
       try {
         readBuffer = this.device.createBuffer({
           size: bufferSize,
-          usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+          usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
         });
 
         const encoder = this.device.createCommandEncoder();
         encoder.copyTextureToBuffer(
           { texture: sourceTexture, origin: [minX, minY, 0] },
           { buffer: readBuffer, bytesPerRow, rowsPerImage: rectH },
-          [rectW, rectH, 1]
+          [rectW, rectH, 1],
         );
 
         this.device.queue.submit([encoder.finish()]);
       } catch (e) {
         if (readBuffer) {
-          try { readBuffer.destroy(); } catch (err) {}
+          try {
+            readBuffer.destroy();
+          } catch (err) {}
         }
         return null;
       }
@@ -1468,18 +1715,24 @@
         },
         destroy() {
           if (!this.destroyed && this.readBuffer) {
-            try { this.readBuffer.destroy(); } catch (e) {}
+            try {
+              this.readBuffer.destroy();
+            } catch (e) {}
             this.destroyed = true;
             this.readBuffer = null;
           }
-        }
+        },
       };
 
       return task;
     }
 
     async presentDiagnosticPreview() {
-      if (!window.CustomBrushDebugGpuTipPreview || !this.device || !this.shadowTexture) {
+      if (
+        !window.CustomBrushDebugGpuTipPreview ||
+        !this.device ||
+        !this.shadowTexture
+      ) {
         this.hidePreviewCanvas();
         this.previewPresented = false;
         return;
@@ -1492,12 +1745,17 @@
       const PREVIEW_BOX_H = 280;
 
       if (!this.previewCanvas) {
-        this.previewCanvas = document.createElement('canvas');
-        this.previewCanvas.id = 'custom-tip-gpu-preview-canvas';
-        this.previewCanvas.style.cssText = 'position:fixed;top:10px;right:10px;width:' + PREVIEW_BOX_W + 'px;height:' + PREVIEW_BOX_H + 'px;border:2px solid #3b82f6;background:rgba(15,23,42,0.9);z-index:999999;pointer-events:none;box-shadow:0 8px 24px rgba(0,0,0,0.6);border-radius:8px;';
+        this.previewCanvas = document.createElement("canvas");
+        this.previewCanvas.id = "custom-tip-gpu-preview-canvas";
+        this.previewCanvas.style.cssText =
+          "position:fixed;top:10px;right:10px;width:" +
+          PREVIEW_BOX_W +
+          "px;height:" +
+          PREVIEW_BOX_H +
+          "px;border:2px solid #3b82f6;background:rgba(15,23,42,0.9);z-index:999999;pointer-events:none;box-shadow:0 8px 24px rgba(0,0,0,0.6);border-radius:8px;";
         document.body.appendChild(this.previewCanvas);
       }
-      this.previewCanvas.style.display = 'block';
+      this.previewCanvas.style.display = "block";
       this.previewCanvas.width = PREVIEW_BOX_W;
       this.previewCanvas.height = PREVIEW_BOX_H;
 
@@ -1506,8 +1764,15 @@
 
       this.renderResolvePass();
       let sourceTexture = this.resolvedShadowTexture;
-      if (this.shouldApplyTextureStencil() && typeof window.CustomTipGpuResources !== 'undefined') {
-        const paperResource = await window.CustomTipGpuResources.getOrCreatePaperTexture(window.brushTextureCanvas, window.brushTextureVersion);
+      if (
+        this.shouldApplyTextureStencil() &&
+        typeof window.CustomTipGpuResources !== "undefined"
+      ) {
+        const paperResource =
+          await window.CustomTipGpuResources.getOrCreatePaperTexture(
+            window.brushTextureCanvas,
+            window.brushTextureVersion,
+          );
         if (paperResource && this.renderTextureStencilPass(paperResource)) {
           sourceTexture = this.texturedShadowTexture;
         }
@@ -1516,14 +1781,14 @@
       try {
         const readBuffer = this.device.createBuffer({
           size: bufferSize,
-          usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+          usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
         });
 
         const encoder = this.device.createCommandEncoder();
         encoder.copyTextureToBuffer(
           { texture: sourceTexture },
           { buffer: readBuffer, bytesPerRow },
-          [w, h, 1]
+          [w, h, 1],
         );
         this.device.queue.submit([encoder.finish()]);
 
@@ -1532,7 +1797,10 @@
 
         let nonZeroCount = 0;
         let maxAlpha = 0;
-        let minX = w, minY = h, maxX = -1, maxY = -1;
+        let minX = w,
+          minY = h,
+          maxX = -1,
+          maxY = -1;
 
         for (let y = 0; y < h; y++) {
           const rowOffset = y * bytesPerRow;
@@ -1552,7 +1820,7 @@
         this.nonTransparentPixelCount = nonZeroCount;
         this.maxAlpha = maxAlpha;
 
-        const ctx = this.previewCanvas.getContext('2d');
+        const ctx = this.previewCanvas.getContext("2d");
         if (!ctx) {
           readBuffer.unmap();
           readBuffer.destroy();
@@ -1573,7 +1841,12 @@
 
         const boundsW = maxX - minX + 1;
         const boundsH = maxY - minY + 1;
-        this.nonTransparentBounds = { x: minX, y: minY, width: boundsW, height: boundsH };
+        this.nonTransparentBounds = {
+          x: minX,
+          y: minY,
+          width: boundsW,
+          height: boundsH,
+        };
 
         const PAD = 20;
         const cropX = Math.max(0, minX - PAD);
@@ -1583,7 +1856,12 @@
         const cropW = cropMaxX - cropX;
         const cropH = cropMaxY - cropY;
 
-        this.previewSourceBounds = { x: cropX, y: cropY, width: cropW, height: cropH };
+        this.previewSourceBounds = {
+          x: cropX,
+          y: cropY,
+          width: cropW,
+          height: cropH,
+        };
 
         const scale = Math.min(PREVIEW_BOX_W / cropW, PREVIEW_BOX_H / cropH);
         this.previewScale = scale;
@@ -1615,15 +1893,25 @@
         readBuffer.destroy();
 
         if (!this.cropScratchCanvas) {
-          this.cropScratchCanvas = document.createElement('canvas');
+          this.cropScratchCanvas = document.createElement("canvas");
         }
         this.cropScratchCanvas.width = cropW;
         this.cropScratchCanvas.height = cropH;
-        const scratchCtx = this.cropScratchCanvas.getContext('2d');
+        const scratchCtx = this.cropScratchCanvas.getContext("2d");
         scratchCtx.putImageData(cropImgData, 0, 0);
 
         ctx.imageSmoothingEnabled = true;
-        ctx.drawImage(this.cropScratchCanvas, 0, 0, cropW, cropH, dstX, dstY, drawW, drawH);
+        ctx.drawImage(
+          this.cropScratchCanvas,
+          0,
+          0,
+          cropW,
+          cropH,
+          dstX,
+          dstY,
+          drawW,
+          drawH,
+        );
 
         this.previewPresented = true;
       } catch (e) {
@@ -1633,7 +1921,7 @@
 
     hidePreviewCanvas() {
       if (this.previewCanvas) {
-        this.previewCanvas.style.display = 'none';
+        this.previewCanvas.style.display = "none";
       }
     }
 
@@ -1672,7 +1960,7 @@
 
   const renderer = new CustomTipGpuRenderer();
 
-  if (typeof window !== 'undefined') {
+  if (typeof window !== "undefined") {
     window.CustomTipGpuRenderer = CustomTipGpuRenderer;
     window._customTipGpuRenderer = {
       onResolvedDab(d, options) {
@@ -1700,29 +1988,38 @@
         renderer.hideLiveOverlay(strokeId);
       },
       isEligible(context = {}) {
-        if (!navigator.gpu) return { eligible: false, reason: 'no-webgpu' };
-        if (renderer.device && renderer.device.lostReason) return { eligible: false, reason: 'device-lost' };
-        if (renderer.fallbackReason && renderer.fallbackReason.includes('failed')) {
+        if (!navigator.gpu) return { eligible: false, reason: "no-webgpu" };
+        if (renderer.device && renderer.device.lostReason)
+          return { eligible: false, reason: "device-lost" };
+        if (
+          renderer.fallbackReason &&
+          renderer.fallbackReason.includes("failed")
+        ) {
           return { eligible: false, reason: renderer.fallbackReason };
         }
-        
+
         // Supported composite modes
-        if (context.composite && context.composite !== 'source-over' && context.composite !== 'erase') {
-          return { eligible: false, reason: 'unsupported-composite' };
+        if (
+          context.composite &&
+          context.composite !== "source-over" &&
+          context.composite !== "erase"
+        ) {
+          return { eligible: false, reason: "unsupported-composite" };
         }
 
         return { eligible: true, reason: null };
       },
-      instance: renderer
+      instance: renderer,
     };
 
-    window.CustomTipGpuRunTestResolver = async function(targetCtx, options) {
-      const ctx = targetCtx || (typeof _strokeCtx !== 'undefined' ? _strokeCtx : null);
-      if (!ctx) return { success: false, reason: 'no-target-ctx' };
+    window.CustomTipGpuRunTestResolver = async function (targetCtx, options) {
+      const ctx =
+        targetCtx || (typeof _strokeCtx !== "undefined" ? _strokeCtx : null);
+      if (!ctx) return { success: false, reason: "no-target-ctx" };
       return await renderer.resolveInto(ctx, options);
     };
 
-    window.CustomBrushAnalyzeGpuTipRenderer = function() {
+    window.CustomBrushAnalyzeGpuTipRenderer = function () {
       const res = renderer.currentResource;
       const deviceLost = renderer.device ? !!renderer.device.lostReason : false;
       const eligibility = window._customTipGpuRenderer.isEligible();
@@ -1734,7 +2031,8 @@
 
         tipAssetId: res ? res.assetId : null,
         tipAssetVersion: res ? res.tipVersion : null,
-        legacyBrushTipVersion: typeof window !== 'undefined' ? (window.brushTipVersion || 0) : 0,
+        legacyBrushTipVersion:
+          typeof window !== "undefined" ? window.brushTipVersion || 0 : 0,
         tipDimensions: res ? { width: res.width, height: res.height } : null,
 
         resolvedDabCount: renderer.resolvedDabCount,
@@ -1748,7 +2046,7 @@
 
         supportedPaint: true,
         supportedErase: false,
-        supportedAaMode: 'all',
+        supportedAaMode: "all",
         gpuEligible: eligibility.eligible,
         gpuIneligibleReason: eligibility.reason,
 
@@ -1764,7 +2062,10 @@
         previewScale: renderer.previewScale || 1.0,
 
         presenterReady: !!renderer.presentPipeline,
-        overlayOwner: typeof window !== 'undefined' ? (window.CustomTipOverlayOwner || 'none') : 'none',
+        overlayOwner:
+          typeof window !== "undefined"
+            ? window.CustomTipOverlayOwner || "none"
+            : "none",
         overlayPresented: !!renderer.overlayPresented,
 
         resolverReady: true,
@@ -1783,7 +2084,7 @@
         unsupportedDabCount: renderer.unsupportedDabCount,
         fallbackReason: renderer.fallbackReason,
 
-        deviceLost
+        deviceLost,
       };
     };
   }

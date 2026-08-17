@@ -12,17 +12,23 @@
 //
 // Kept free of canvas/DOM/WebGPU calls so it can be unit tested headlessly.
 
-'use strict';
+"use strict";
 
 // Distance from point p=(px,py) to the segment a=(ax,ay)->b=(bx,by).
 // Degenerates to |p-a| when a===b (a round dab), matching prototype's
 // sdSegment exactly (denom < 1e-6 branch).
 function capsuleAxisDistance(px, py, ax, ay, bx, by) {
-  const pax = px - ax, pay = py - ay;
-  const bax = bx - ax, bay = by - ay;
+  const pax = px - ax,
+    pay = py - ay;
+  const bax = bx - ax,
+    bay = by - ay;
   const denom = bax * bax + bay * bay;
-  const h = denom < 1e-6 ? 0 : Math.max(0, Math.min(1, (pax * bax + pay * bay) / denom));
-  const dx = pax - bax * h, dy = pay - bay * h;
+  const h =
+    denom < 1e-6
+      ? 0
+      : Math.max(0, Math.min(1, (pax * bax + pay * bay) / denom));
+  const dx = pax - bax * h,
+    dy = pay - bay * h;
   return { dist: Math.sqrt(dx * dx + dy * dy), h, isRoundDab: denom < 1e-6 };
 }
 
@@ -33,7 +39,7 @@ function capsuleAxisDistance(px, py, ax, ay, bx, by) {
 function capsuleSignedDistance(px, py, ax, ay, r0, bx, by, r1) {
   const { dist, h, isRoundDab } = capsuleAxisDistance(px, py, ax, ay, bx, by);
   const localRadius = r0 + (r1 - r0) * h;
-  return isRoundDab ? (dist - r0) : (dist - localRadius);
+  return isRoundDab ? dist - r0 : dist - localRadius;
 }
 
 // Antialiased coverage (0..1) for one fragment/pixel at signed distance
@@ -73,7 +79,8 @@ function edgeCoverage(d, aa) {
 // 1.0) for callers that can't supply taper info.
 function aaBand(r0, r1, ax, ay, bx, by) {
   if (r0 === undefined) return 1.0;
-  const dx = bx - ax, dy = by - ay;
+  const dx = bx - ax,
+    dy = by - ay;
   const len = Math.sqrt(dx * dx + dy * dy);
   if (len < 1e-6) return 1.0; // degenerate/round-dab segment -- caller should use 1.0 (circular field)
   const taperRate = (r1 - r0) / len;
@@ -108,12 +115,18 @@ function subpixelAreaFactor(localRadius, isRoundDab) {
 // A missing/undefined mode (no caller opinion) preserves the ORIGINAL
 // unscaled behavior (scale 1, same as 'weak') so every pre-Phase-9E.1
 // caller/test that never passed a mode keeps producing identical output.
-const AA_MODE_SCALE = { off: 0, none: 0, weak: 1, medium: 1.6 / 0.85, strong: 2.6 / 0.85 };
+const AA_MODE_SCALE = {
+  off: 0,
+  none: 0,
+  weak: 1,
+  medium: 1.6 / 0.85,
+  strong: 2.6 / 0.85,
+};
 function aaModeScale(mode) {
   if (mode === undefined) return 1; // no mode supplied -- legacy unscaled behavior
-  if (mode === 'off' || mode === 'none') return AA_MODE_SCALE.off;
-  if (mode === 'weak') return AA_MODE_SCALE.weak;
-  if (mode === 'strong') return AA_MODE_SCALE.strong;
+  if (mode === "off" || mode === "none") return AA_MODE_SCALE.off;
+  if (mode === "weak") return AA_MODE_SCALE.weak;
+  if (mode === "strong") return AA_MODE_SCALE.strong;
   // 'medium', and anything unrecognized (e.g. the adapter's 'normal'
   // default) -- mirrors _normalizeAAMode's own unknown-mode fallback.
   return AA_MODE_SCALE.medium;
@@ -129,7 +142,7 @@ function aaModeScale(mode) {
 function capsuleCoverage(px, py, ax, ay, r0, bx, by, r1, aaMode, ss) {
   const { dist, h, isRoundDab } = capsuleAxisDistance(px, py, ax, ay, bx, by);
   const localRadius = r0 + (r1 - r0) * h;
-  const d = isRoundDab ? (dist - r0) : (dist - localRadius);
+  const d = isRoundDab ? dist - r0 : dist - localRadius;
   // Phase 9E.2: 'off'/'none' is a hard, pixel-perfect step -- NOT a
   // narrow-band approximation of one. Previously this fell through to
   // edgeCoverage() with a floored (but nonzero) band, and to
@@ -138,15 +151,16 @@ function capsuleCoverage(px, py, ax, ay, r0, bx, by, r1, aaMode, ss) {
   // radius. TVPaint's AA-off is a true binary in/out test, so short-
   // circuit entirely: no band, no smoothstep, no subpixel-area
   // compensation -- just the sign of the signed distance.
-  if (aaMode === 'off' || aaMode === 'none') {
+  if (aaMode === "off" || aaMode === "none") {
     return d <= 0 ? 1.0 : 0.0;
   }
   // Round caps (isRoundDab, or h clamped to 0/1 at a capsule's rounded
   // end) are a pure circular distance field -- band is exactly 1. Only
   // the straight, unclamped part of a tapered capsule needs the wider
   // taper-aware band (see aaBand's doc comment above).
-  const baseAa = (isRoundDab || h <= 0 || h >= 1) ? 1.0 : aaBand(r0, r1, ax, ay, bx, by);
-  const ssScale = (typeof ss === 'number' && ss > 0) ? (ss / 4.0) : 1.0;
+  const baseAa =
+    isRoundDab || h <= 0 || h >= 1 ? 1.0 : aaBand(r0, r1, ax, ay, bx, by);
+  const ssScale = typeof ss === "number" && ss > 0 ? ss / 4.0 : 1.0;
   const aa = baseAa * aaModeScale(aaMode) * ssScale;
   const cov = edgeCoverage(d, aa);
   const area = subpixelAreaFactor(localRadius, isRoundDab);
@@ -160,11 +174,15 @@ function capsuleCoverage(px, py, ax, ay, r0, bx, by, r1, aaMode, ss) {
 const AA_MARGIN = 2.0;
 function capsuleBounds(x0, y0, x1, y1, r0, r1) {
   const maxR = Math.max(r0, r1) + AA_MARGIN;
-  const minX = Math.min(x0, x1) - maxR, maxX = Math.max(x0, x1) + maxR;
-  const minY = Math.min(y0, y1) - maxR, maxY = Math.max(y0, y1) + maxR;
+  const minX = Math.min(x0, x1) - maxR,
+    maxX = Math.max(x0, x1) + maxR;
+  const minY = Math.min(y0, y1) - maxR,
+    maxY = Math.max(y0, y1) + maxR;
   return {
-    sx: Math.floor(minX), sy: Math.floor(minY),
-    ex: Math.ceil(maxX), ey: Math.ceil(maxY),
+    sx: Math.floor(minX),
+    sy: Math.floor(minY),
+    ex: Math.ceil(maxX),
+    ey: Math.ceil(maxY),
   };
 }
 
@@ -195,7 +213,7 @@ function capsuleBounds(x0, y0, x1, y1, r0, r1) {
 function pixelCoveredByCapsule(px, py, ax, ay, r0, bx, by, r1, pixelSize) {
   const { dist, h, isRoundDab } = capsuleAxisDistance(px, py, ax, ay, bx, by);
   const localRadius = r0 + (r1 - r0) * h;
-  const d = isRoundDab ? (dist - r0) : (dist - localRadius);
+  const d = isRoundDab ? dist - r0 : dist - localRadius;
   const halfDiag = (pixelSize == null ? 1 : pixelSize) * Math.SQRT1_2; // side * sqrt(2)/2
   return d <= halfDiag ? 1 : 0;
 }
@@ -382,8 +400,18 @@ function _quantizeSlope(slope) {
   if (!Number.isFinite(slope)) return slope;
   return Math.round(slope / _SLOPE_QUANT_STEP) * _SLOPE_QUANT_STEP;
 }
-function _dominantAxisPerpendicularDistance(px, py, ax, ay, bx, by, hintDx, hintDy) {
-  const dx = bx - ax, dy = by - ay;
+function _dominantAxisPerpendicularDistance(
+  px,
+  py,
+  ax,
+  ay,
+  bx,
+  by,
+  hintDx,
+  hintDy,
+) {
+  const dx = bx - ax,
+    dy = by - ay;
   if (Math.abs(dx) < 1e-9 && Math.abs(dy) < 1e-9) {
     // Degenerate/round-dab segment: no direction to be anisotropic
     // about -- fall back to plain Euclidean distance from the point.
@@ -395,8 +423,13 @@ function _dominantAxisPerpendicularDistance(px, py, ax, ay, bx, by, hintDx, hint
   // this one tiny segment's own (dx,dy) -- see the doc comment above this
   // function for why. The projection itself still uses this segment's own
   // exact endpoints/slope; only the x-dominant-vs-y-dominant CHOICE moves.
-  const hasHint = Number.isFinite(hintDx) && Number.isFinite(hintDy) && (Math.abs(hintDx) > 1e-9 || Math.abs(hintDy) > 1e-9);
-  let xDominant = hasHint ? (Math.abs(hintDx) >= Math.abs(hintDy)) : (Math.abs(dx) >= Math.abs(dy));
+  const hasHint =
+    Number.isFinite(hintDx) &&
+    Number.isFinite(hintDy) &&
+    (Math.abs(hintDx) > 1e-9 || Math.abs(hintDy) > 1e-9);
+  let xDominant = hasHint
+    ? Math.abs(hintDx) >= Math.abs(hintDy)
+    : Math.abs(dx) >= Math.abs(dy);
   // Guard: never let the hint pick an axis this segment's OWN geometry is
   // degenerate along (would divide by ~0 below). Only possible right at a
   // hint/segment disagreement, which only happens within a few segments of
@@ -431,7 +464,8 @@ function _dominantAxisPerpendicularDistance(px, py, ax, ay, bx, by, hintDx, hint
     // of extra chord length on either end -- see the doc comment above.
     const slack = segLen > 1e-9 ? _ANISOTROPIC_SLACK_PX / segLen : 0;
     if (t < -slack - 1e-9 || t > 1 + slack + 1e-9) return null;
-    const rawSlope = (hasHint && Math.abs(hintDx) > 1e-9) ? (hintDy / hintDx) : (dy / dx);
+    const rawSlope =
+      hasHint && Math.abs(hintDx) > 1e-9 ? hintDy / hintDx : dy / dx;
     const slope = _quantizeSlope(rawSlope);
     const lineY = ay + slope * (px - ax);
     return Math.abs(py - lineY);
@@ -440,17 +474,33 @@ function _dominantAxisPerpendicularDistance(px, py, ax, ay, bx, by, hintDx, hint
   const t = (py - ay) / dy;
   const slack = segLen > 1e-9 ? _ANISOTROPIC_SLACK_PX / segLen : 0;
   if (t < -slack || t > 1 + slack) return null;
-  const rawInvSlope = (hasHint && Math.abs(hintDy) > 1e-9) ? (hintDx / hintDy) : (dx / dy);
+  const rawInvSlope =
+    hasHint && Math.abs(hintDy) > 1e-9 ? hintDx / hintDy : dx / dy;
   const invSlope = _quantizeSlope(rawInvSlope);
   const lineX = ax + invSlope * (py - ay);
   return Math.abs(px - lineX);
 }
 
-function pixelCoveredByCapsuleForStroke(px, py, ax, ay, r0, bx, by, r1, pixelSize, isFirstSegmentIn, isLastSegmentIn, hintDx, hintDy) {
-  const isFirstSegment = !!isFirstSegmentIn, isLastSegment = !!isLastSegmentIn;
+function pixelCoveredByCapsuleForStroke(
+  px,
+  py,
+  ax,
+  ay,
+  r0,
+  bx,
+  by,
+  r1,
+  pixelSize,
+  isFirstSegmentIn,
+  isLastSegmentIn,
+  hintDx,
+  hintDy,
+) {
+  const isFirstSegment = !!isFirstSegmentIn,
+    isLastSegment = !!isLastSegmentIn;
   const { dist, h, isRoundDab } = capsuleAxisDistance(px, py, ax, ay, bx, by);
   const localRadius = r0 + (r1 - r0) * h;
-  const d = isRoundDab ? (dist - r0) : (dist - localRadius);
+  const d = isRoundDab ? dist - r0 : dist - localRadius;
   if (isFirstSegment || isLastSegment) {
     return d <= 0 ? 1 : 0;
   }
@@ -484,7 +534,16 @@ function pixelCoveredByCapsuleForStroke(px, py, ax, ay, r0, bx, by, r1, pixelSiz
   // the pixel is beyond the segment's own extent along its major axis
   // (see _dominantAxisPerpendicularDistance's null case), so endpoint/
   // cap-adjacent rejection behaves exactly as before 9E.7.
-  const axisDist = _dominantAxisPerpendicularDistance(px, py, ax, ay, bx, by, hintDx, hintDy);
+  const axisDist = _dominantAxisPerpendicularDistance(
+    px,
+    py,
+    ax,
+    ay,
+    bx,
+    by,
+    hintDx,
+    hintDy,
+  );
   if (axisDist === null) {
     // Phase 9E.8: a real curved stroke tessellates into segments far
     // SHORTER than one output pixel (dense dab spacing). When this
@@ -518,35 +577,53 @@ function pixelCoveredByCapsuleForStroke(px, py, ax, ay, r0, bx, by, r1, pixelSiz
 // floor regime.  Returning a record (including accepted:false) means the
 // station winner pass owns the decision; null means the caller must retain
 // the pre-existing cap/tip/above-floor/connectivity path.
-function floorRegimeStationCandidate(px, py, ax, ay, r0, bx, by, r1, pixelSize, isFirstSegmentIn, isLastSegmentIn, hintDx, hintDy) {
+function floorRegimeStationCandidate(
+  px,
+  py,
+  ax,
+  ay,
+  r0,
+  bx,
+  by,
+  r1,
+  pixelSize,
+  isFirstSegmentIn,
+  isLastSegmentIn,
+  hintDx,
+  hintDy,
+) {
   const axis = capsuleAxisDistance(px, py, ax, ay, bx, by);
   const localRadius = r0 + (r1 - r0) * axis.h;
   const size = pixelSize == null ? 1 : pixelSize;
   if (localRadius > size * 0.5) return null;
-  const isTaperingCap = (axis.isRoundDab || axis.h <= 0 || axis.h >= 1) && r0 !== r1;
+  const isTaperingCap =
+    (axis.isRoundDab || axis.h <= 0 || axis.h >= 1) && r0 !== r1;
   if (isTaperingCap) return null;
-  const dx = bx - ax, dy = by - ay;
+  const dx = bx - ax,
+    dy = by - ay;
   if (Math.abs(dx) < 1e-9 && Math.abs(dy) < 1e-9) return null;
   // Station identity and projection must be traversal invariant. Negating
   // a segment vector on reversal leaves |dx|/|dy| and dy/dx unchanged;
   // the historical smoothed hint does not have that property at a turn.
-  let majorAxis = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
-  if (majorAxis === 'x' && Math.abs(dx) < 1e-9) majorAxis = 'y';
-  else if (majorAxis === 'y' && Math.abs(dy) < 1e-9) majorAxis = 'x';
+  let majorAxis = Math.abs(dx) >= Math.abs(dy) ? "x" : "y";
+  if (majorAxis === "x" && Math.abs(dx) < 1e-9) majorAxis = "y";
+  else if (majorAxis === "y" && Math.abs(dy) < 1e-9) majorAxis = "x";
   // A station is a pixel-wide slice, so adjacent dense segments submit to
   // the same slice with half a station of bounded major-axis overlap.
   // `centerlineMinor` is direction-independent: traversing B->A produces
   // the same projected line coordinate as A->B. Phase 9F.2 uses it to
   // identify the same physical lane across a reversal.
   let centerlineMinor, axisDist;
-  if (majorAxis === 'x') {
-    const t = (px - ax) / dx, slack = size * 0.5 / Math.abs(dx);
+  if (majorAxis === "x") {
+    const t = (px - ax) / dx,
+      slack = (size * 0.5) / Math.abs(dx);
     if (t < -slack - 1e-9 || t > 1 + slack + 1e-9) return null;
     const rawSlope = dy / dx;
     centerlineMinor = ay + _quantizeSlope(rawSlope) * (px - ax);
     axisDist = Math.abs(py - centerlineMinor);
   } else {
-    const t = (py - ay) / dy, slack = size * 0.5 / Math.abs(dy);
+    const t = (py - ay) / dy,
+      slack = (size * 0.5) / Math.abs(dy);
     if (t < -slack || t > 1 + slack) return null;
     const rawInvSlope = dx / dy;
     centerlineMinor = ax + _quantizeSlope(rawInvSlope) * (py - ay);
@@ -578,9 +655,9 @@ const HardRoundCapsuleMathExports = {
   aaModeScale,
 };
 
-if (typeof module !== 'undefined' && module.exports) {
+if (typeof module !== "undefined" && module.exports) {
   module.exports = HardRoundCapsuleMathExports;
 }
-if (typeof window !== 'undefined') {
+if (typeof window !== "undefined") {
   window.HardRoundCapsuleMath = HardRoundCapsuleMathExports;
 }

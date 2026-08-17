@@ -19,7 +19,7 @@
 // double-divide/multiply or a brittle "brush name" check -- can be unit
 // tested headlessly (see hard-round-adapter.test.js).
 
-'use strict';
+"use strict";
 
 function clamp01(v) {
   return Math.max(0, Math.min(1, v));
@@ -60,11 +60,11 @@ function clamp01(v) {
 // @returns {boolean}
 function isHardRoundEligible(ctx) {
   if (!ctx) return false;
-  if (ctx.tool !== 'brush') return false;
+  if (ctx.tool !== "brush") return false;
   if (!ctx.isPen) return false;
   if (ctx.hasCustomTip) return false;
   if (!(ctx.hardness >= 0.995)) return false;
-  if (ctx.sizeControl !== 'pressure') return false;
+  if (ctx.sizeControl !== "pressure") return false;
   const roundness = ctx.roundness == null ? 1 : ctx.roundness;
   if (roundness < 0.995) return false;
   if (ctx.scatterEnabled) return false;
@@ -117,11 +117,14 @@ function resolveEffectiveRadius(opts) {
   // full-pressure radius of the nominal 1px preset. This changes geometry
   // only; alpha/flow are resolved independently below.
   const matchPrototypePressure = !!o.matchPrototypePressure;
-  const minSizeFrac = matchPrototypePressure ? 0 : clamp01(o.minSizeFrac == null ? 0.05 : o.minSizeFrac);
-  const curveKey = o.curveKey || 'linear';
+  const minSizeFrac = matchPrototypePressure
+    ? 0
+    : clamp01(o.minSizeFrac == null ? 0.05 : o.minSizeFrac);
+  const curveKey = o.curveKey || "linear";
   const influence = clamp01(o.influence == null ? 1 : o.influence);
 
-  const usesDefaultCurve = curveKey === 'linear' || typeof o.applyPressureCurve !== 'function';
+  const usesDefaultCurve =
+    curveKey === "linear" || typeof o.applyPressureCurve !== "function";
   let effectiveInfluence;
   if (usesDefaultCurve) {
     effectiveInfluence = influence;
@@ -131,7 +134,7 @@ function resolveEffectiveRadius(opts) {
   }
 
   const onePixelScale = matchPrototypePressure && baseSize <= 1 ? 0.5 : 1;
-  const maxR = baseSize / 2 * onePixelScale;
+  const maxR = (baseSize / 2) * onePixelScale;
   const minR = maxR * minSizeFrac;
   const r = minR + (maxR - minR) * effectiveInfluence;
   // Same-spirit absolute visibility floor as the legacy engine's
@@ -177,28 +180,41 @@ function resolveEffectiveRadius(opts) {
 function resolveSegmentRenderParams(segment, opts) {
   const seg = segment || {};
   const o = opts || {};
-  const getAlpha = typeof o.getEffectiveAlpha === 'function' ? o.getEffectiveAlpha : () => 1;
+  const getAlpha =
+    typeof o.getEffectiveAlpha === "function" ? o.getEffectiveAlpha : () => 1;
   const r0 = resolveEffectiveRadius({
-    baseSize: o.baseSize, minSizeFrac: o.minSizeFrac, curveKey: o.curveKey,
+    baseSize: o.baseSize,
+    minSizeFrac: o.minSizeFrac,
+    curveKey: o.curveKey,
     matchPrototypePressure: o.matchPrototypePressure,
-    pressure: seg.pressure0, influence: seg.influence0,
+    pressure: seg.pressure0,
+    influence: seg.influence0,
     applyPressureCurve: o.applyPressureCurve,
   });
   const r1 = resolveEffectiveRadius({
-    baseSize: o.baseSize, minSizeFrac: o.minSizeFrac, curveKey: o.curveKey,
+    baseSize: o.baseSize,
+    minSizeFrac: o.minSizeFrac,
+    curveKey: o.curveKey,
     matchPrototypePressure: o.matchPrototypePressure,
-    pressure: seg.pressure1, influence: seg.influence1,
+    pressure: seg.pressure1,
+    influence: seg.influence1,
     applyPressureCurve: o.applyPressureCurve,
   });
   const alpha0 = clamp01(getAlpha(seg.pressure0, seg.influence0));
   const alpha1 = clamp01(getAlpha(seg.pressure1, seg.influence1));
   return {
-    x0: seg.x0, y0: seg.y0, x1: seg.x1, y1: seg.y1,
-    r0, r1, alpha0, alpha1,
+    x0: seg.x0,
+    y0: seg.y0,
+    x1: seg.x1,
+    y1: seg.y1,
+    r0,
+    r1,
+    alpha0,
+    alpha1,
     rgb: o.rgb || [0, 0, 0],
-    composite: o.composite || 'paint',
+    composite: o.composite || "paint",
     hardness: o.hardness == null ? 1 : o.hardness,
-    aaMode: o.aaMode || 'normal',
+    aaMode: o.aaMode || "normal",
     // Phase 9E.4: passed through so the renderer can give the stroke's
     // true open start/end a strict 1px tip instead of the conservative
     // connectivity dilation used at interior joints. Caller (see
@@ -210,11 +226,15 @@ function resolveSegmentRenderParams(segment, opts) {
   };
 }
 
-const HardRoundAdapterExports = { isHardRoundEligible, resolveEffectiveRadius, resolveSegmentRenderParams };
+const HardRoundAdapterExports = {
+  isHardRoundEligible,
+  resolveEffectiveRadius,
+  resolveSegmentRenderParams,
+};
 
-if (typeof module !== 'undefined' && module.exports) {
+if (typeof module !== "undefined" && module.exports) {
   module.exports = HardRoundAdapterExports;
 }
-if (typeof window !== 'undefined') {
+if (typeof window !== "undefined") {
   window.HardRoundAdapter = HardRoundAdapterExports;
 }
