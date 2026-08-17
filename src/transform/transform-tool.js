@@ -689,6 +689,7 @@ window.addEventListener('active-artwork-changed',event=>{
   tfContextRefreshPending=false;enterTransformTool();if(restorePerspective&&tfActive)_tfSetPerspective(true);
 });
 function enterTransformTool(){
+  if(window.LightTable&&window.LightTable.transformMode) return;
   if(window.LightTable&&typeof window.LightTable.exitTransformMode==='function'){
     window.LightTable.exitTransformMode();
   }
@@ -1409,12 +1410,33 @@ window.addEventListener('tool-groups-ready',_tfRenderOptionsPanel);
 // active at a time.
 const _tfBtnFree=document.getElementById('transform-mode-free');
 const _tfBtnPersp=document.getElementById('transform-mode-perspective');
-if(_tfBtnFree) _tfBtnFree.onclick=()=>_tfSetPerspective(false);
-if(_tfBtnPersp) _tfBtnPersp.onclick=()=>_tfSetPerspective(true);
+const _tfBtnLtTable=document.getElementById('transform-mode-light-table');
+if(_tfBtnFree) _tfBtnFree.onclick=()=>{
+  if(window.LightTable&&window.LightTable.transformMode){
+    if(typeof window.LightTable.exitTransformMode==='function') window.LightTable.exitTransformMode();
+    if(typeof setTool==='function') setTool('transform', 'Transform');
+  } else {
+    _tfSetPerspective(false);
+  }
+};
+if(_tfBtnPersp) _tfBtnPersp.onclick=()=>{
+  if(window.LightTable&&window.LightTable.transformMode){
+    if(typeof window.LightTable.exitTransformMode==='function') window.LightTable.exitTransformMode();
+    if(typeof setTool==='function') setTool('transform', 'Transform');
+    _tfSetPerspective(true);
+  } else {
+    _tfSetPerspective(true);
+  }
+};
 
 function _tfSyncToggleUI(){
-  if(_tfBtnFree) _tfBtnFree.classList.toggle('active',!tfPerspective);
-  if(_tfBtnPersp) _tfBtnPersp.classList.toggle('active',tfPerspective);
+  const isLt=!!(window.LightTable&&window.LightTable.transformMode);
+  if(_tfBtnLtTable){
+    _tfBtnLtTable.style.display=isLt?'block':'none';
+    _tfBtnLtTable.classList.toggle('active',isLt);
+  }
+  if(_tfBtnFree) _tfBtnFree.classList.toggle('active',!isLt&&!tfPerspective);
+  if(_tfBtnPersp) _tfBtnPersp.classList.toggle('active',!isLt&&tfPerspective);
   _tfRenderOptionsPanel();
 }
 

@@ -431,14 +431,17 @@
     const corners=_ltCorners();
     const boxCenter=_ltBoxCenter();
     const pivotWorld=_ltPivotWorld();
-    let rotation=0, scaleX=1;
+    let rotation=0, scaleX=1, w=0, h=0;
     if(targets.length===1){
       const t=targets[0].transform||_ltDefaultTransform(targets[0]);
       rotation=t.rotation;
       scaleX=t.scaleX;
+      w=targets[0].drawing.width;
+      h=targets[0].drawing.height;
+    } else {
+      w=Math.abs(corners[1].x-corners[0].x)||targets[0].drawing.width;
+      h=Math.abs(corners[2].y-corners[1].y)||targets[0].drawing.height;
     }
-    const w=Math.abs(corners[1].x-corners[0].x)||targets[0].drawing.width;
-    const h=Math.abs(corners[2].y-corners[1].y)||targets[0].drawing.height;
     return _tfHitTestGeneric(p, corners, rotation, scaleX, boxCenter, w, h, pivotWorld);
   }
 
@@ -541,35 +544,51 @@
       _ltMove.startStates.forEach(st=>{
         const t=st.ref.transform;
         const newScale=Math.max(0.02,Math.min(50,st.scaleX*ratio));
-        const scaleFactor=st.scaleX>0?newScale/st.scaleX:1;
-        const refCenter={x:st.ref.drawing.width/2+st.positionX, y:st.ref.drawing.height/2+st.positionY};
-        const newCenterX=pivot.x+(refCenter.x-pivot.x)*scaleFactor;
-        const newCenterY=pivot.y+(refCenter.y-pivot.y)*scaleFactor;
+        const w=st.ref.drawing.width, h=st.ref.drawing.height;
+        const box={x:0, y:0, w, h};
+        const pivotLocal=_ltPivotLocal(st.ref);
 
-        t.positionX=newCenterX-st.ref.drawing.width/2;
-        t.positionY=newCenterY-st.ref.drawing.height/2;
-        t.scaleX=newScale;
-        t.scaleY=newScale;
+        if(typeof _tfSetStateForPivot==='function'){
+          _tfSetStateForPivot(pivot, st.rotation, newScale, t, pivotLocal, box, newScale);
+        } else {
+          const scaleFactor=st.scaleX>0?newScale/st.scaleX:1;
+          const refCenter={x:w/2+st.positionX, y:h/2+st.positionY};
+          const newCenterX=pivot.x+(refCenter.x-pivot.x)*scaleFactor;
+          const newCenterY=pivot.y+(refCenter.y-pivot.y)*scaleFactor;
+          t.positionX=newCenterX-w/2;
+          t.positionY=newCenterY-h/2;
+          t.scaleX=newScale;
+          t.scaleY=newScale;
+        }
       });
     } else if(_ltMove.mode==='rotate'){
       const ang=Math.atan2(p.y-_ltMove.startPivotWorld.y, p.x-_ltMove.startPivotWorld.x);
       let deltaDeg=(ang-_ltMove.startAngle)*180/Math.PI;
       if(e.shiftKey) deltaDeg=Math.round(deltaDeg/15)*15;
-      const rad=deltaDeg*Math.PI/180;
-      const cos=Math.cos(rad), sin=Math.sin(rad);
+      const newRot=_ltMove.startStates[0].rotation+deltaDeg;
       const pivot=_ltMove.startPivotWorld;
 
       _ltMove.startStates.forEach(st=>{
         const t=st.ref.transform;
-        const refCenter={x:st.ref.drawing.width/2+st.positionX, y:st.ref.drawing.height/2+st.positionY};
-        const relX=refCenter.x-pivot.x;
-        const relY=refCenter.y-pivot.y;
-        const newCenterX=pivot.x+relX*cos-relY*sin;
-        const newCenterY=pivot.y+relX*sin+relY*cos;
+        const refNewRot=st.rotation+deltaDeg;
+        const w=st.ref.drawing.width, h=st.ref.drawing.height;
+        const box={x:0, y:0, w, h};
+        const pivotLocal=_ltPivotLocal(st.ref);
 
-        t.positionX=newCenterX-st.ref.drawing.width/2;
-        t.positionY=newCenterY-st.ref.drawing.height/2;
-        t.rotation=st.rotation+deltaDeg;
+        if(typeof _tfSetStateForPivot==='function'){
+          _tfSetStateForPivot(pivot, refNewRot, st.scaleX, t, pivotLocal, box, st.scaleY);
+        } else {
+          const rad=deltaDeg*Math.PI/180;
+          const cos=Math.cos(rad), sin=Math.sin(rad);
+          const refCenter={x:w/2+st.positionX, y:h/2+st.positionY};
+          const relX=refCenter.x-pivot.x;
+          const relY=refCenter.y-pivot.y;
+          const newCenterX=pivot.x+relX*cos-relY*sin;
+          const newCenterY=pivot.y+relX*sin+relY*cos;
+          t.positionX=newCenterX-w/2;
+          t.positionY=newCenterY-h/2;
+          t.rotation=refNewRot;
+        }
       });
     }
     _ltDrawOverlay();
@@ -666,13 +685,23 @@
     },{capture:true});
   }
 
+  let _ltPreviousTool=null;
+  let _ltIsTransformToolMode=false;
+
   function exitTransformMode(){
     if(!ltTransformMode) return;
     _ltCancelMove();
     ltTransformMode=false;
+    _ltIsTransformToolMode=false;
     syncTransformToolbarState();
     _ltSyncOverlayInteractive();
     _ltClearOverlay();
+    if(typeof _tfSyncToggleUI==='function') _tfSyncToggleUI();
+    if(_ltPreviousTool){
+      const pt=_ltPreviousTool;
+      _ltPreviousTool=null;
+      if(typeof setTool==='function') setTool(pt.tool, pt.label);
+    }
     requestRepaint();
   }
   function toggleTransformMode(){
@@ -684,12 +713,25 @@
         if(window.RepeatableTransformController&&RepeatableTransformController.active)RepeatableTransformController.cancelForToolExit();
         else cancelTransformTool();
       }
+      const prevT=typeof tool!=='undefined'?tool:'brush';
+      const prevLbl=document.getElementById('stat-tool')?.textContent||'Brush';
+      _ltPreviousTool={tool:prevT, label:prevLbl};
+      _ltIsTransformToolMode=true;
+      if(typeof setTool==='function') setTool('transform', 'Transform');
       _ltSyncOverlayInteractive();
       _ltDrawOverlay();
+      if(typeof _tfSyncToggleUI==='function') _tfSyncToggleUI();
     } else {
       _ltCancelMove(); // toggling off mid-drag restores the pre-drag position
+      _ltIsTransformToolMode=false;
       _ltSyncOverlayInteractive();
       _ltClearOverlay(); // hide overlay, clear temp state; stored transform values are untouched
+      if(typeof _tfSyncToggleUI==='function') _tfSyncToggleUI();
+      if(_ltPreviousTool){
+        const pt=_ltPreviousTool;
+        _ltPreviousTool=null;
+        if(typeof setTool==='function') setTool(pt.tool, pt.label);
+      }
     }
   }
   function syncTransformToolbarState(){
@@ -1099,10 +1141,11 @@
   }
 
   // ── Phase 5C: Align Centers ─────────────────────────────────────────
-  // Moves ALL Light Table references together as one group so their overall group center
-  // aligns with the document canvas center (Clip Studio Paint style).
-  // Computes the combined center of all visible active references, calculates the translation offset to
-  // document center, and applies that exact shift (dx, dy) to every reference in the arrangement.
+  // Moves, rotates, and scales ALL Light Table references together as one group:
+  // 1. Computes group bounding box center, group average rotation, and group average scale (midpoint of min/max).
+  // 2. Applies rotation and scale deltas around the group center so the arrangement remains coherent.
+  // 3. Recomputes the resulting transformed group center and translates the entire group to document canvas center.
+  // Locked references participate along with unlocked ones (hidden and missing references are ignored).
   function alignCenters(){
     const targetRef=_ltValidTransformTarget();
     if(!targetRef) return;
@@ -1110,30 +1153,94 @@
     const activeRefs=references.filter(r=>!r.hidden&&!isMissing(r));
     if(!activeRefs.length) return;
 
+    // 1. Compute bounding box, rotation midpoint, and scale midpoint
     let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
+    let minRot=Infinity, maxRot=-Infinity;
+    let minScale=Infinity, maxScale=-Infinity;
+
     activeRefs.forEach(r=>{
-      const corners=_ltCorners(r);
+      const corners=_ltCornersForRef(r);
       corners.forEach(p=>{
         if(p.x<minX) minX=p.x;
         if(p.x>maxX) maxX=p.x;
         if(p.y<minY) minY=p.y;
         if(p.y>maxY) maxY=p.y;
       });
+
+      const t=r.transform||_ltDefaultTransform(r);
+      const rot=t.rotation||0;
+      if(rot<minRot) minRot=rot;
+      if(rot>maxRot) maxRot=rot;
+
+      const sx=t.scaleX!=null?t.scaleX:1;
+      const sy=t.scaleY!=null?t.scaleY:1;
+      const s=(Math.abs(sx)+Math.abs(sy))/2;
+      if(s<minScale) minScale=s;
+      if(s>maxScale) maxScale=s;
     });
 
-    const groupCenterX=(minX+maxX)/2;
-    const groupCenterY=(minY+maxY)/2;
+    const origGroupCenterX=(minX+maxX)/2;
+    const origGroupCenterY=(minY+maxY)/2;
+    const origPivot={x:origGroupCenterX, y:origGroupCenterY};
+
+    const groupRotation=(minRot+maxRot)/2;
+    const deltaRot=-groupRotation; // Bring group average rotation to 0° baseline
+
+    const groupScale=(minScale+maxScale)/2;
+    const scaleRatio=groupScale>0.0001?1/groupScale:1; // Normalize group average scale to 1.0 baseline
+
+    // 2. Apply rotation and scale around the original group center
+    const rotRad=deltaRot*Math.PI/180;
+    const cosR=Math.cos(rotRad), sinR=Math.sin(rotRad);
+
+    activeRefs.forEach(r=>{
+      const t=r.transform||(r.transform=_ltDefaultTransform(r));
+      const w=r.drawing.width, h=r.drawing.height;
+      const refCenter={x:w/2+t.positionX, y:h/2+t.positionY};
+
+      // Vector from group center to reference center
+      const relX=refCenter.x-origPivot.x;
+      const relY=refCenter.y-origPivot.y;
+
+      // Scale relative offset and rotate around group center
+      const scaledRelX=relX*scaleRatio;
+      const scaledRelY=relY*scaleRatio;
+
+      const newCenterX=origPivot.x+scaledRelX*cosR-scaledRelY*sinR;
+      const newCenterY=origPivot.y+scaledRelX*sinR+scaledRelY*cosR;
+
+      t.positionX=newCenterX-w/2;
+      t.positionY=newCenterY-h/2;
+      t.rotation+=deltaRot;
+      t.scaleX*=scaleRatio;
+      t.scaleY*=scaleRatio;
+    });
+
+    // 3. Recompute transformed bounding box after rotation & scale to calculate final translation to canvas center
+    let postMinX=Infinity, postMinY=Infinity, postMaxX=-Infinity, postMaxY=-Infinity;
+    activeRefs.forEach(r=>{
+      const corners=_ltCornersForRef(r);
+      corners.forEach(p=>{
+        if(p.x<postMinX) postMinX=p.x;
+        if(p.x>postMaxX) postMaxX=p.x;
+        if(p.y<postMinY) postMinY=p.y;
+        if(p.y>postMaxY) postMaxY=p.y;
+      });
+    });
+
+    const newGroupCenterX=(postMinX+postMaxX)/2;
+    const newGroupCenterY=(postMinY+postMaxY)/2;
 
     const dw=(typeof mainCanvas!=='undefined'&&mainCanvas.width)?mainCanvas.width:targetRef.drawing.width;
     const dh=(typeof mainCanvas!=='undefined'&&mainCanvas.height)?mainCanvas.height:targetRef.drawing.height;
     const docCenterX=dw/2;
     const docCenterY=dh/2;
 
-    const dx=docCenterX-groupCenterX;
-    const dy=docCenterY-groupCenterY;
+    const dx=docCenterX-newGroupCenterX;
+    const dy=docCenterY-newGroupCenterY;
 
-    references.forEach(r=>{
-      const rt=r.transform||(r.transform=_ltDefaultTransform(r));
+    activeRefs.forEach(r=>{
+      const rt=r.transform;
       rt.positionX+=dx;
       rt.positionY+=dy;
     });

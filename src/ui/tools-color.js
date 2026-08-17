@@ -382,6 +382,7 @@ function _syncBrushPresetsDocker(t){
   if(bpBody) bpBody.classList.toggle('active',!showTransform);
   if(tfBody) tfBody.classList.toggle('active',showTransform);
   if(nameEl) nameEl.textContent=showTransform?'Transform':'Brush Presets';
+  if(showTransform&&typeof _tfSyncToggleUI==='function') _tfSyncToggleUI();
 }
 function setTool(t,lbl){
   const previousTool=tool;

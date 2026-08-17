@@ -139,7 +139,7 @@
     const redundantSettings=shell.querySelector('.tool-group-dock-settings');if(redundantSettings)redundantSettings.remove();
     if(group.id==='brush'||group.id==='eraser'){
       const brushBody=shell.querySelector('.fp-body[data-body="brush-presets"]');if(brushBody)configureOptionsDrawer(brushBody,group);setBody('brush-presets');if(window._brushPresets)_brushPresets.switchTab(group.id);
-    }else if(group.id==='transform'){const transformBody=shell.querySelector('.fp-body[data-body="transform"]');if(transformBody)configureOptionsDrawer(transformBody,group);setBody('transform');}
+    }else if(group.id==='transform'){const transformBody=shell.querySelector('.fp-body[data-body="transform"]');if(transformBody)configureOptionsDrawer(transformBody,group);setBody('transform');if(typeof _tfSyncToggleUI==='function')_tfSyncToggleUI();}
     else{renderGeneric(group);setBody('tool-group');}
   }
   function renderSettings(){
