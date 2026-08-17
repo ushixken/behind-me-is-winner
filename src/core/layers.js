@@ -288,6 +288,12 @@ const layerCtxMenu=document.getElementById('layer-ctx-menu');
 let _layerCtxTargetIdx=null,_layerCtxTargetGid=null;
 function hideAllMenus(){ctxMenu.classList.remove('visible');rulerCtxMenu.classList.remove('visible');layerCtxMenu.classList.remove('visible');const bpCtx=document.getElementById('brush-preset-ctx-menu');if(bpCtx)bpCtx.classList.remove('visible');const bgCtx=document.getElementById('brush-group-ctx-menu');if(bgCtx)bgCtx.classList.remove('visible');closeAllDropdowns();}
 document.addEventListener('contextmenu',e=>{
+  if(window.PlatformInput&&typeof window.PlatformInput.shouldAllowContextMenu==='function'){
+    if(!window.PlatformInput.shouldAllowContextMenu(e)){
+      e.preventDefault();
+      return;
+    }
+  }
   if(rulerEl.contains(e.target)) return; // ruler has its own contextmenu listener
   const inLayerPanel=document.getElementById('right-panel').contains(e.target);
   if(inLayerPanel) return; // handled by the layer panel's own contextmenu listener
@@ -321,14 +327,16 @@ document.addEventListener('keydown',e=>{
   e.preventDefault();
   const target=document.elementFromPoint(_lastPtrX,_lastPtrY);
   if(!target) return;
-  target.dispatchEvent(new MouseEvent('contextmenu',{
+  const synthEv = new MouseEvent('contextmenu',{
     bubbles:true,
     cancelable:true,
     clientX:_lastPtrX,
     clientY:_lastPtrY,
     button:2,
     buttons:2
-  }));
+  });
+  synthEv.isSynthesizedKeybind = true;
+  target.dispatchEvent(synthEv);
 });
 
 document.addEventListener('click',e=>{const bpCtx=document.getElementById('brush-preset-ctx-menu');const bgCtx=document.getElementById('brush-group-ctx-menu');if(!ctxMenu.contains(e.target)&&!rulerCtxMenu.contains(e.target)&&!layerCtxMenu.contains(e.target)&&(!bpCtx||!bpCtx.contains(e.target))&&(!bgCtx||!bgCtx.contains(e.target))) hideAllMenus();});
@@ -490,6 +498,12 @@ document.getElementById('layer-ctx-cut-group').onclick=()=>{
 
 // ── Right-click on empty space inside the layer panel → open menu targeting curLayer
 document.getElementById('right-panel').addEventListener('contextmenu',e=>{
+  if(window.PlatformInput&&typeof window.PlatformInput.shouldAllowContextMenu==='function'){
+    if(!window.PlatformInput.shouldAllowContextMenu(e)){
+      e.preventDefault();
+      return;
+    }
+  }
   // Row-level listeners call stopPropagation, so this only fires on empty panel space
   e.preventDefault();
   hideAllMenus();

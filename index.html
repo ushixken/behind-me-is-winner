@@ -37,6 +37,9 @@
   // Track primary button state across all pointer types.
   document.addEventListener('pointerdown', e => {
     if (e.button === 0 || (e.buttons & 1)) primaryDown = true;
+    if (window.PlatformInput && typeof window.PlatformInput.recordPointerDown === 'function') {
+      window.PlatformInput.recordPointerDown(e);
+    }
   }, true);
 
   document.addEventListener('pointermove', e => {
@@ -1682,6 +1685,7 @@
 
 <!-- ── JavaScript Modules ───────────────────────────────────── -->
 <script src="src/ui/site-dialog.js"></script>
+<script src="src/core/platform-input.js"></script>
 <script src="src/core/rotation-snap.js"></script>
 <script src="src/core/core-state.js"></script>
 <script src="src/core/display-backend.js"></script>
