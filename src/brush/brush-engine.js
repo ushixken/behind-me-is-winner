@@ -14383,7 +14383,22 @@ function _brushPointerDown(e) {
   _strokeDabCount = 0; // reset fade counter
   _strokeDistSoFar = 0; // reset start-of-stroke taper
   _pendingDabs.length = 0; // discard any unflushed tail from a previous stroke
-  _frameDirty = null; // discard any stale accumulation from a previous/aborted stroke
+  // Only discard the accumulated dirty rect if nothing is still waiting to
+  // consume it. If a recomposite from the just-finished stroke is still
+  // pending (_recompRAF), that rect represents real unpainted pixels on the
+  // display canvas. Wiping it here means that pending recomposite gets
+  // rejected later (obsolete-session, since _activeStrokeSession has now
+  // moved on) with nothing left to paint, and the previous stroke's content
+  // never gets blitted to screen until some later full recomposite happens
+  // to cover it -- this is what causes a just-finished stroke to visually
+  // "disappear" during a fast follow-up stroke and reappear once that
+  // stroke's own finishing recomposite (often a wider/full repaint) runs.
+  // Preserving it here lets the new stroke's own dirty-rect growth
+  // naturally union with it, so it gets painted by the new stroke's own
+  // recomposite instead of being lost.
+  if (!_recompRAF) {
+    _frameDirty = null; // no pending recomposite -- safe to discard stale accumulation
+  }
   _strokeDirty = null; // begin affected-pixel tracking for this complete stroke
   _strokeVelocity = 0; // reset velocity
   _lastContactPressure = 0; // reset release-artifact contact-pressure guard
