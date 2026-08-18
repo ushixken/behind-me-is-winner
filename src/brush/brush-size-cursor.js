@@ -28,6 +28,18 @@
     cursorRaf = 0;
   let latestSourceEventType = "",
     latestSourceEventTime = -Infinity;
+  // After the window regains focus (e.g. alt-tab back), some browsers replay
+  // the FIRST pointer event with the coordinates the OS cursor had *before*
+  // the window lost focus (their internal pointer-position cache only gets
+  // corrected once that first event is processed), even though the real
+  // cursor is already somewhere else. Real-time events after that are
+  // accurate again. That single stale sample is what produces the visible
+  // "blink" back to the pre-alt-tab position — most noticeable during fast
+  // strokes because the stale frame lands amid a burst of correct ones.
+  // We guard against it by discarding the position (not the whole event —
+  // hover/stroke bookkeeping still applies) carried by the first pointer
+  // event received after a focus regain, and trusting the next one instead.
+  let awaitingFocusResync = false;
   if (typeof window.BrushCursorDebugTracking === "undefined")
     window.BrushCursorDebugTracking = false;
   if (!Array.isArray(window.BrushCursorTrackingLog))
@@ -100,7 +112,7 @@
     );
     const log = window.BrushCursorNativeFlashLog;
     log.push(entry);
-    if (log.length > 200) log.splice(0, log.length - 200);
+    if (log.length > 4000) log.splice(0, log.length - 4000);
   }
   window.BrushCursorNativeFlashNoteWrite = function (element, value, source) {
     nativeFlashRecord(null, "cursor-style-write", {
@@ -159,6 +171,14 @@
     const next = visible ? "block" : "none";
     if (cursorCanvas.style.display === next) return;
     cursorCanvas.style.display = next;
+    if (!visible) {
+      // Don't let the spike filter hold back the first frame after the
+      // cursor reappears (e.g. after alt-tab) just because the last
+      // rendered position is now far from wherever the pointer really is.
+      hasRendered = false;
+      suspectX = null;
+      suspectY = null;
+    }
     nativeFlashRecord(event, "custom-cursor-visibility", {
       visible: !!visible,
       reason: reason || null,
@@ -202,9 +222,45 @@
     );
     const log = window.BrushCursorTrackingLog;
     log.push(entry);
-    if (log.length > 100) log.splice(0, log.length - 100);
+    if (log.length > 3000) log.splice(0, log.length - 3000);
   }
-  window.BrushCursorAnalyzeTracking = function () {
+  // Scans the applied-position timeline (cursor-raf-apply entries, i.e. what
+  // actually got painted on screen) for a B that jumps far from both its
+  // neighbor A and the following C, while A and C stay close to each other —
+  // that shape (out-and-immediately-back) is exactly what "blink" looks like
+  // to the eye, whether it's a genuinely reverted position or just a frame
+  // that arrived very out of sequence with its neighbors.
+  function detectJumpBackCandidates(log, opts) {
+    const jumpPx = (opts && opts.jumpPx) || 40;
+    const applies = log.filter(
+      (e) =>
+        e.type === "cursor-raf-apply" &&
+        Number.isFinite(e.cursorX) &&
+        Number.isFinite(e.cursorY),
+    );
+    const dist = (a, b) => Math.hypot(a.cursorX - b.cursorX, a.cursorY - b.cursorY);
+    const candidates = [];
+    for (let i = 1; i < applies.length - 1; i++) {
+      const a = applies[i - 1],
+        b = applies[i],
+        c = applies[i + 1];
+      const ab = dist(a, b),
+        bc = dist(b, c),
+        ac = dist(a, c);
+      if (ab > jumpPx && bc > jumpPx && ac < jumpPx / 2) {
+        candidates.push({
+          before: a,
+          jumpedTo: b,
+          after: c,
+          jumpOutPx: Math.round(ab),
+          jumpBackPx: Math.round(bc),
+          netDriftPx: Math.round(ac),
+        });
+      }
+    }
+    return candidates;
+  }
+  window.BrushCursorAnalyzeTracking = function (opts) {
     const log = Array.isArray(window.BrushCursorTrackingLog)
       ? window.BrushCursorTrackingLog
       : [];
@@ -214,11 +270,15 @@
       const reason = entry.rejectionReason || "unknown";
       byReason[reason] = (byReason[reason] || 0) + 1;
     });
+    const jumpBackCandidates = detectJumpBackCandidates(log, opts);
     return {
       count: log.length,
       acceptedCount: log.filter((entry) => entry.accepted === true).length,
       rejectedCount: rejected.length,
       rejectionsByReason: byReason,
+      jumpBackCandidateCount: jumpBackCandidates.length,
+      firstJumpBackCandidate: jumpBackCandidates[0] || null,
+      jumpBackCandidates,
       firstEntry: log[0] || null,
       lastEntry: log[log.length - 1] || null,
       log: log.slice(),
@@ -248,9 +308,84 @@
       !transformActive
     );
   }
-  function setPosition() {
-    cursorCanvas.style.left = lastX + "px";
-    cursorCanvas.style.top = lastY + "px";
+  // Single-frame spike filter for the *displayed* position. Confirmed by
+  // captured data: a genuinely isolated pointer sample can land far from its
+  // neighbors for exactly one frame before the next sample snaps back near
+  // where it started (seen so far only in Brave — likely its Chromium fork
+  // coalescing/scheduling raw pointer samples slightly differently under its
+  // reduced-precision timers). Rather than paint every reported position
+  // immediately, a suspiciously large jump is held for one frame; if the
+  // following sample continues away from the last displayed spot, the jump
+  // is real and gets applied. If it instead snaps back close to the last
+  // displayed spot, the outlier is discarded and never painted at all. This
+  // adds at most one frame (~16ms) of latency, and only on the rare large
+  // jumps — imperceptible for a cursor, and it eliminates the blink.
+  const SPIKE_PX = 50;
+  let renderX = 0,
+    renderY = 0,
+    hasRendered = false,
+    suspectX = null,
+    suspectY = null;
+  // Both the persistent bottom-of-file rAF loop and track()'s own throttled
+  // rAF call update() -> setPosition() -> filteredPosition(), and they can
+  // both fire within the same animation-frame tick. Without a guard,
+  // filteredPosition() runs twice back-to-back with the identical lastX/
+  // lastY: the first call correctly holds a large jump as a one-frame
+  // "suspect," but the second call (same tick, same value) immediately sees
+  // that same value again and treats it as "confirmed," collapsing the
+  // intended one-frame hold to zero frames and letting the spike paint
+  // immediately. Dedupe by rAF timestamp so the filter only advances once
+  // per real animation frame no matter how many callers ask for it.
+  let lastFilteredFrameTime = -1;
+  function filteredPosition(frameTime) {
+    if (typeof frameTime === "number") {
+      if (frameTime === lastFilteredFrameTime) return;
+      lastFilteredFrameTime = frameTime;
+    }
+    if (!hasRendered) {
+      renderX = lastX;
+      renderY = lastY;
+      hasRendered = true;
+      return;
+    }
+    if (suspectX !== null) {
+      // Resolve last frame's held-back suspect jump now that we have a
+      // newer sample to compare it against.
+      const distSuspectToRender = Math.hypot(
+        suspectX - renderX,
+        suspectY - renderY,
+      );
+      const distNewToSuspect = Math.hypot(
+        lastX - suspectX,
+        lastY - suspectY,
+      );
+      suspectX = null;
+      suspectY = null;
+      // Confirmed: the new sample continues on from the suspect point
+      // (didn't snap back toward the old render position) — it was real
+      // movement, not a glitch, so display it now.
+      if (distNewToSuspect < distSuspectToRender * 0.75) {
+        renderX = lastX;
+        renderY = lastY;
+        return;
+      }
+      // Otherwise the suspect sample was an isolated outlier; fall through
+      // and treat this newer sample normally (it's typically close to
+      // renderX/renderY again already).
+    }
+    const distFromRender = Math.hypot(lastX - renderX, lastY - renderY);
+    if (distFromRender > SPIKE_PX) {
+      suspectX = lastX;
+      suspectY = lastY;
+      return; // hold at the current renderX/renderY for this frame
+    }
+    renderX = lastX;
+    renderY = lastY;
+  }
+  function setPosition(frameTime) {
+    filteredPosition(frameTime);
+    cursorCanvas.style.left = renderX + "px";
+    cursorCanvas.style.top = renderY + "px";
   }
   function prepare(cssSize) {
     const dpr = Math.max(1, window.devicePixelRatio || 1),
@@ -442,13 +577,13 @@
       lastPointerType,
     ].join("|");
   }
-  function update(force) {
+  function update(force, frameTime) {
     if (!shouldShow()) {
       setCustomCursorVisible(false, "shouldShow-false");
       lastSignature = "";
       return;
     }
-    setPosition();
+    setPosition(frameTime);
     const next = signature();
     // No difference blend mode needed — cross/point are now dark, circle is grey.
     cursorCanvas.style.mixBlendMode = "normal";
@@ -480,22 +615,37 @@
     const eventTime = Number.isFinite(event.timeStamp)
       ? event.timeStamp
       : performance.now();
-    if (eventTime < latestPointerTime) {
-      trace(event, false, "timestamp-older-than-latest", { latestPointerTime });
-      return;
-    }
-    latestPointerTime = eventTime;
+    // NOTE: we intentionally do NOT reject events whose timeStamp looks
+    // "older" than the last one. Browsers with anti-fingerprinting timestamp
+    // jitter (Brave, Firefox resistFingerprinting, Safari) can report a
+    // genuinely later event with a lower timeStamp than the previous event.
+    // Rejecting on that basis silently drops real position updates — most
+    // visible during fast strokes, where it looked like the cursor blinking
+    // back to an older position. JS dispatches events to this handler in
+    // true chronological order already, so no timestamp comparison is
+    // needed to keep updates in order; latestPointerTime is kept only for
+    // diagnostics below.
+    latestPointerTime = Math.max(latestPointerTime, eventTime);
     latestSourceEventType = event.type;
     latestSourceEventTime = eventTime;
     hovering = inCanvas || active;
+    lastPointerType = event.pointerType || lastPointerType;
+    if (awaitingFocusResync) {
+      // Discard just this one sample's position; everything else about the
+      // event (hover state, timing, stroke bookkeeping) is still honored.
+      awaitingFocusResync = false;
+      trace(event, false, "focus-resync-discarded-position", {
+        latestPointerTime,
+      });
+      return;
+    }
     lastX = event.clientX;
     lastY = event.clientY;
-    lastPointerType = event.pointerType || lastPointerType;
     trace(event, true, "", { latestPointerTime });
     if (!cursorRaf)
-      cursorRaf = requestAnimationFrame(() => {
+      cursorRaf = requestAnimationFrame((frameTime) => {
         cursorRaf = 0;
-        update(false);
+        update(false, frameTime);
         nativeFlashRecord(event, "cursor-raf-apply", {
           sourceEventType: latestSourceEventType,
           sourceEventTimestamp: latestSourceEventTime,
@@ -509,13 +659,16 @@
           });
         trace(null, true, "", {
           type: "cursor-raf-apply",
-          x: lastX,
-          y: lastY,
+          x: renderX,
+          y: renderY,
+          rawX: lastX,
+          rawY: lastY,
+          filterHeld: suspectX !== null,
           sourceEventType: latestSourceEventType,
           sourceEventTimestamp: latestSourceEventTime,
           rafPending: false,
-          cursorX: lastX,
-          cursorY: lastY,
+          cursorX: renderX,
+          cursorY: renderY,
         });
       });
   }
@@ -530,7 +683,37 @@
   });
   window.addEventListener(
     "pointerdown",
-    (event) => trace(event, true, ""),
+    (event) => {
+      nativeFlashRecord(event, "pointerdown");
+      // A stroke can start with pointerdown firing before any pointermove
+      // is received for the new position (e.g. right after alt-tabbing back
+      // into the window). Without this, lastX/lastY still hold the position
+      // from before the tab-away, so the very first frame(s) of a fast
+      // stroke render the cursor at that stale spot until the next
+      // pointermove's rAF catches up — seen as a brief "blink" back to the
+      // old location.
+      const eventTime = Number.isFinite(event.timeStamp)
+        ? event.timeStamp
+        : performance.now();
+      latestPointerTime = Math.max(latestPointerTime, eventTime);
+      latestSourceEventType = event.type;
+      latestSourceEventTime = eventTime;
+      lastPointerType = event.pointerType || lastPointerType;
+      hovering = true;
+      if (awaitingFocusResync) {
+        // Same stale-first-sample hazard as track(): a stroke can start
+        // with pointerdown as the very first post-focus event.
+        awaitingFocusResync = false;
+        trace(event, false, "focus-resync-discarded-position", {
+          latestPointerTime,
+        });
+        return;
+      }
+      lastX = event.clientX;
+      lastY = event.clientY;
+      update(true);
+      trace(event, true, "", { latestPointerTime });
+    },
     true,
   );
   window.addEventListener(
@@ -576,10 +759,23 @@
     hovering = false;
     setCustomCursorVisible(false, "blur", event);
   });
+  window.addEventListener("focus", (event) => {
+    nativeFlashRecord(event, "focus");
+    // Don't let the overlay reappear at the stale pre-blur lastX/lastY.
+    // Stay hidden until a fresh pointerenter/pointermove/pointerdown
+    // reports the real position; that also resets lastSignature so the
+    // first repaint after focus is a clean, non-blinking draw. Also arm
+    // the resync guard so the first pointer sample's *position* (which
+    // some browsers report as the stale pre-blur coordinates) is ignored.
+    hovering = false;
+    lastSignature = "";
+    awaitingFocusResync = true;
+    setCustomCursorVisible(false, "focus", event);
+  });
   window.addEventListener("tool-changed", () => update(true));
   window.addEventListener("brush-resize-preview-toggle", () => update(true));
-  (function loop() {
-    update(false);
+  (function loop(frameTime) {
+    update(false, frameTime);
     requestAnimationFrame(loop);
   })();
 })();
