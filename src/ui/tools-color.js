@@ -2355,8 +2355,15 @@ cpSwTransparent.addEventListener("click", () => {
   // a prior session had resized/persisted this panel).
   const INIT_W = 200,
     INIT_H = 240;
-  if (!panel.style.width) panel.style.width = INIT_W + "px";
-  if (!panel.style.height) panel.style.height = INIT_H + "px";
+  // Only stamp a default float size onto panels that are NOT currently
+  // docked. A docked panel's width/height are owned by FloatPanels'
+  // renderSide() (full column width/height via CSS), so overwriting them
+  // here would clobber that layout — which is exactly what used to crop
+  // the docked Color panel to a fixed 240px after a page reload.
+  if (!panel.classList.contains("docked")) {
+    if (!panel.style.width) panel.style.width = INIT_W + "px";
+    if (!panel.style.height) panel.style.height = INIT_H + "px";
+  }
   if (typeof FloatPanels !== "undefined" && FloatPanels.setFloatSize) {
     FloatPanels.setFloatSize(
       "color",
@@ -2618,6 +2625,19 @@ cpSwTransparent.addEventListener("click", () => {
     });
   });
   _ro.observe(panel);
+
+  // If the panel is already visible right when this script runs (e.g. it
+  // was restored as a docked, visible panel from a previous session),
+  // neither the hidden→visible MutationObserver nor a size-change
+  // ResizeObserver event is guaranteed to have fired yet. Do one explicit
+  // fit pass now so the wheel/buttons are sized correctly on first paint
+  // instead of waiting on an external trigger that may never come.
+  if (isPanelVisible()) {
+    requestAnimationFrame(() => {
+      ensureHeightFits();
+      updateWheel();
+    });
+  }
 })();
 
 // ── Init mode UI ──
