@@ -414,11 +414,11 @@
   function drawCenterDot(c) {
     ctx.save();
     ctx.beginPath();
-    ctx.arc(c, c, 1.25, 0, Math.PI * 2);
-    ctx.fillStyle = "#fff";
+    ctx.arc(c, c, 1.5, 0, Math.PI * 2);
+    ctx.fillStyle = "#ffffff";
     ctx.fill();
-    ctx.strokeStyle = "rgba(0,0,0,.72)";
-    ctx.lineWidth = 0.75;
+    ctx.strokeStyle = "rgba(0,0,0,.5)";
+    ctx.lineWidth = 0.5;
     ctx.stroke();
     ctx.restore();
   }
