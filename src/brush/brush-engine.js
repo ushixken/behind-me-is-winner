@@ -1,4 +1,4 @@
-﻿//
+//
 // DRAWING Ã¢â‚¬â€ getPos uses activeC's own getBoundingClientRect()
 // which accounts for the CSS transform, giving pixel-perfect coords
 //
@@ -5406,12 +5406,16 @@ function _customTipGpuEligibleNow() {
     typeof window.CustomTipGpuRenderer === "undefined"
   )
     return false;
-  if (
-    !window.brushTipCanvas ||
-    (window.brushTipCanvas.width || 0) <= 0 ||
-    (window.brushTipCanvas.height || 0) <= 0
-  )
-    return false;
+  const hasCustomTipCanvas =
+    window.brushTipCanvas &&
+    (window.brushTipCanvas.width || 0) > 0 &&
+    (window.brushTipCanvas.height || 0) > 0;
+  const isProceduralTexture =
+    !hasCustomTipCanvas &&
+    window.brushTextureEnabled &&
+    window.brushTextureCanvas &&
+    (typeof window.brushTextureStrength === "undefined" || window.brushTextureStrength > 0);
+  if (!hasCustomTipCanvas && !isProceduralTexture) return false;
   if (typeof tool !== "undefined" && tool !== "brush") return false;
   if (
     typeof _usesBrushPaintPipeline === "function" &&
@@ -5862,7 +5866,7 @@ function _shouldRunCustomTipGpuDiagnostic() {
 }
 
 function _emitResolvedCustomTipDab(d, options = {}) {
-  if (!window.brushTipCanvas) return;
+  if (!window.brushTipCanvas && !_customTipGpuStrokeActive && !_shouldRunCustomTipGpuDiagnostic()) return;
   if (window.CustomBrushDebugResolvedDabs) {
     if (!window._resolvedCustomTipDabLog) window._resolvedCustomTipDabLog = [];
     window._resolvedCustomTipDabLog.push({
@@ -6036,7 +6040,7 @@ function _taperDistance(amount) {
 }
 function _queueDab(d) {
   _brushDiagPerfNote("resolved", { radius: d.r });
-  if (window.brushTipCanvas) {
+  if (window.brushTipCanvas || _customTipGpuStrokeActive) {
     _emitResolvedCustomTipDab(d, { isTaperReplay: false });
   }
   if (!_replayingTaper && (_getStartTaper() > 0 || _getEndTaper() > 0))
@@ -6117,7 +6121,7 @@ function _flushStrokeTail() {
     const replayedDab = Object.assign({}, d, {
       r: Math.max(0.05, d.r * factors[i]),
     });
-    if (window.brushTipCanvas) {
+    if (window.brushTipCanvas || _customTipGpuStrokeActive) {
       _emitResolvedCustomTipDab(replayedDab, {
         isTaperReplay: true,
         taperIndex: i,
@@ -6482,6 +6486,7 @@ function _applyOldStabilizerFloor(x, y, amount, now) {
   return { x: x + (old.x - x) * weight, y: y + (old.y - y) * weight };
 }
 // ---------------------------------------------------------------------
+let _activeStrokePipeline = null;
 
 // uniform screen-space arc-length intervals. Coordinates and pen attributes
 // are interpolated together; no averaging filter or intentional trailing.
@@ -9909,7 +9914,20 @@ function _computeSpacingRadius(e, interpolatedPressure) {
 // ---------------------------------------------------------------------
 
 let _hardRoundCore = null; // single PrototypeStrokeCore instance, reused across strokes
+let _sharedTrajectoryCore = null; // single StrokeTrajectoryCore instance for shared routing
 let _hardRoundStrokeActive = false; // decided once at pointerdown, for the life of that stroke only
+
+function _getSharedTrajectoryCore() {
+  if (
+    !_sharedTrajectoryCore &&
+    typeof window !== "undefined" &&
+    window.StrokeTrajectoryCoreModule &&
+    window.StrokeTrajectoryCoreModule.StrokeTrajectoryCore
+  ) {
+    _sharedTrajectoryCore = new window.StrokeTrajectoryCoreModule.StrokeTrajectoryCore();
+  }
+  return _sharedTrajectoryCore;
+}
 
 function _hardRoundGetCore() {
   if (
@@ -13615,18 +13633,57 @@ function _hardRoundStartPreviewFlight(renderer, session) {
   });
   return true;
 }
+let _hardRoundLastHoldTickTime = 0;
+
 function _hardRoundSchedulePreviewFrame(renderer) {
   if (_hardRoundPreviewRAF !== null) return;
   const scheduledSession = _activeStrokeSession;
   _hardRoundPreviewRAFSession = scheduledSession;
   _hrFsRecordSchedule();
-  _hardRoundPreviewRAF = requestAnimationFrame(() => {
+  _hardRoundPreviewRAF = requestAnimationFrame((nowMs) => {
     const _hrMtCbStart = _hrMtActive() ? performance.now() : null;
     _hardRoundPreviewRAF = null;
     _hardRoundPreviewRAFSession = null;
     _hrFsRecordPreviewRafStart();
     if (scheduledSession !== _activeStrokeSession || !_inStroke) return;
     _hrPerfMarkPreviewRaf(scheduledSession);
+
+    // Stationary tickHold catch-up for active SHARED_STROKE_TRAJECTORY_CORE strokes
+    if (_hardRoundStrokeActive && _hardRoundCore && _hardRoundCore.drawing) {
+      const lastTickT = _hardRoundLastHoldTickTime || nowMs;
+      const dt = Math.max(1, Math.min(100, nowMs - lastTickT));
+      _hardRoundLastHoldTickTime = nowMs;
+      const holdSegs = _hardRoundCore.tickHold(dt);
+      if (holdSegs && holdSegs.length > 0) {
+        _hardRoundStampSegments(holdSegs, _lastPointerEvent);
+      }
+    } else if (_activeStrokePipeline && _activeStrokePipeline.trajectoryEngine === "SHARED_STROKE_TRAJECTORY_CORE") {
+      const trajCore = _getSharedTrajectoryCore();
+      if (trajCore && trajCore.drawing) {
+        const lastTickT = _hardRoundLastHoldTickTime || nowMs;
+        const dt = Math.max(1, Math.min(100, nowMs - lastTickT));
+        _hardRoundLastHoldTickTime = nowMs;
+        const genericHoldSamples = trajCore.tickHold(dt);
+        const ev = _lastPointerEvent || { pointerType: "pen" };
+        for (const genSample of genericHoldSamples) {
+          const conditionedSamples = _baselineConditionerPush(
+            _baselineSampleFromStabilizedPoint(ev, { x: genSample.x, y: genSample.y, pressure: genSample.pressure }, genSample.timeStamp),
+          );
+          for (const conditioned of conditionedSamples) {
+            _curveAddPoint(
+              conditioned.x,
+              conditioned.y,
+              conditioned.pressure,
+              conditioned.event,
+            );
+            currentPressure = conditioned.pressure;
+            lx = conditioned.x;
+            ly = conditioned.y;
+          }
+        }
+      }
+    }
+
     _hardRoundStartPreviewFlight(renderer, scheduledSession);
     if (_hrMtCbStart != null)
       _hrMtRecord(
@@ -14346,11 +14403,34 @@ function _brushPointerDown(e) {
   // known. Re-evaluating mid-stroke (e.g. if the user hot-swapped a setting
   // while held down) would risk switching renderers under a live stroke.
   _hardRoundPointerdownPreparing = true;
-  _hardRoundStrokeActive =
-    tool === "brush" &&
-    _hardRoundEligibleNow() &&
-    !!_hardRoundGetCore() &&
-    !!_hardRoundGetRenderer();
+  const isHrEligible = tool === "brush" && _hardRoundEligibleNow() && !!_hardRoundGetCore() && !!_hardRoundGetRenderer();
+  const isCustomEligible = _customTipGpuEligibleNow();
+
+  const strokeContext = {
+    tool,
+    isPen: _isDrawingWithPen,
+    hasCustomTip: !!window.brushTipCanvas,
+    hardness: brushHardness,
+    sizeControl: _getSizeControl(),
+    roundness: window.brushTipRoundness,
+    scatterEnabled: !!window._tsScatterEnabled,
+    textureEnabled: !!(
+      window.brushTextureEnabled &&
+      window.brushTextureCanvas &&
+      (typeof window.brushTextureStrength === "undefined" ||
+        window.brushTextureStrength > 0)
+    ),
+    airbrush: !!window._brushAirbrush,
+    isHardRoundEligible: isHrEligible,
+    isCustomTipGpuEligible: isCustomEligible,
+  };
+
+  const activePipeline = typeof window !== "undefined" && window.BrushRouting
+    ? window.BrushRouting.resolveStrokePipeline(strokeContext)
+    : { isHardRoundActive: isHrEligible, isCustomTipGpuActive: isCustomEligible };
+
+  _activeStrokePipeline = activePipeline;
+  _hardRoundStrokeActive = activePipeline.isHardRoundActive;
   _hardRoundPointerdownPreparing = false;
   if (window.HardRoundDebugRoutingTrace) {
     _hrRtNewStroke(
@@ -14469,7 +14549,22 @@ function _brushPointerDown(e) {
   _activeStrokeSession = ++_strokeSessionSerial;
   if (typeof window.markProjectDirty === "function")
     window.markProjectDirty("brush-stroke");
-  _customTipGpuStrokeActive = _customTipGpuEligibleNow();
+  if (_activeStrokePipeline && _activeStrokePipeline.trajectoryEngine === "SHARED_STROKE_TRAJECTORY_CORE" && !_hardRoundStrokeActive) {
+    const trajCore = _getSharedTrajectoryCore();
+    if (trajCore) {
+      trajCore.beginStroke({
+        x: p.x,
+        y: p.y,
+        pressure: currentPressure,
+        pointerType: e.pointerType,
+        timeStamp: e.timeStamp || performance.now(),
+      }, { zoom, stabilization: 0 });
+    }
+  }
+
+  _customTipGpuStrokeActive = _activeStrokePipeline
+    ? _activeStrokePipeline.isCustomTipGpuActive
+    : _customTipGpuEligibleNow();
   if (_customTipGpuStrokeActive) {
     _customTipGpuFallbackDabs = [];
     const targetW = _strokeCanvas
@@ -14783,6 +14878,7 @@ function _brushPointerDown(e) {
   if (latencyProfiler) latencyProfiler.point("first-dab-rasterization-start");
   try {
     if (_hardRoundStrokeActive) {
+      _hardRoundLastHoldTickTime = 0;
       // Phase 8C: Hard Round's initial dab comes from PrototypeStrokeCore's
       // beginStroke() zero-length segment instead of a direct _stampDab call,
       // so the very first mark already has this stroke's continuous-taper
@@ -15433,20 +15529,37 @@ function _handleMoveEvent(e) {
       });
       _emitHardRoundStabilizedPoint(p.x, p.y, p.pressure, ev, evTime, "move");
     } else {
-      const conditionedSamples = _baselineConditionerPush(
-        _baselineSampleFromStabilizedPoint(ev, p, evTime),
-      );
-      for (const conditioned of conditionedSamples) {
-        _curveAddPoint(
-          conditioned.x,
-          conditioned.y,
-          conditioned.pressure,
-          conditioned.event,
+      let genericSamples = [{ x: p.x, y: p.y, pressure: p.pressure, timeStamp: evTime }];
+      if (_activeStrokePipeline && _activeStrokePipeline.trajectoryEngine === "SHARED_STROKE_TRAJECTORY_CORE") {
+        const trajCore = _getSharedTrajectoryCore();
+        if (trajCore && trajCore.drawing) {
+          trajCore.updateSettings({ zoom, stabilization: 0 });
+          genericSamples = trajCore.pushSamples([{
+            x: p.x,
+            y: p.y,
+            pressure: p.pressure,
+            pointerType: ev.pointerType || "pen",
+            timeStamp: evTime,
+          }]);
+        }
+      }
+
+      for (const genSample of genericSamples) {
+        const conditionedSamples = _baselineConditionerPush(
+          _baselineSampleFromStabilizedPoint(ev, { x: genSample.x, y: genSample.y, pressure: genSample.pressure }, genSample.timeStamp),
         );
-        currentPressure = conditioned.pressure;
-        lx = conditioned.x;
-        ly = conditioned.y;
-        _lastPointerEvent = conditioned.event;
+        for (const conditioned of conditionedSamples) {
+          _curveAddPoint(
+            conditioned.x,
+            conditioned.y,
+            conditioned.pressure,
+            conditioned.event,
+          );
+          currentPressure = conditioned.pressure;
+          lx = conditioned.x;
+          ly = conditioned.y;
+          _lastPointerEvent = conditioned.event;
+        }
       }
     }
   }
@@ -15882,6 +15995,28 @@ function _pointerEndStroke(e) {
       return;
     }
     drawing = false;
+    if (_activeStrokePipeline && _activeStrokePipeline.trajectoryEngine === "SHARED_STROKE_TRAJECTORY_CORE") {
+      const trajCore = _getSharedTrajectoryCore();
+      if (trajCore && trajCore.drawing) {
+        const finishSamples = trajCore.finishStroke();
+        for (const genSample of finishSamples) {
+          const conditionedSamples = _baselineConditionerPush(
+            _baselineSampleFromStabilizedPoint(e, { x: genSample.x, y: genSample.y, pressure: genSample.pressure }, genSample.timeStamp),
+          );
+          for (const conditioned of conditionedSamples) {
+            _curveAddPoint(
+              conditioned.x,
+              conditioned.y,
+              conditioned.pressure,
+              conditioned.event,
+            );
+            currentPressure = conditioned.pressure;
+            lx = conditioned.x;
+            ly = conditioned.y;
+          }
+        }
+      }
+    }
     for (const conditioned of finalConditioned) {
       _stabilizerSetSampleContext(conditioned.pressure, e);
       const finalPoint = _stabilizePoint(

@@ -492,7 +492,7 @@ test("rapid-stroke finalization permanently session-gates shared mutations", () 
   const body = src.slice(start, end);
   assert.match(
     body,
-    /if\(stale\)return false/,
+    /if\s*\(stale\)\s*return false/,
     "stale finalizers must be rejected without a debug flag",
   );
   assert.doesNotMatch(
@@ -509,11 +509,11 @@ test("pointer-up detaches a finishing renderer before async finalization", () =>
   );
   assert.match(
     src,
-    /renderer\._hardRoundFinishingOwner=finalizingStrokeSession/,
+    /renderer\._hardRoundFinishingOwner\s*=\s*finalizingStrokeSession/,
   );
   assert.match(
     src,
-    /if\(_hardRoundRenderer===renderer\)_hardRoundRenderer=null/,
+    /if\s*\(_hardRoundRenderer\s*===\s*renderer\)\s*_hardRoundRenderer\s*=\s*null/,
   );
   assert.match(
     src,
@@ -538,7 +538,7 @@ test("migrated Hard Round path does not call _stampDab()", () => {
     path.join(__dirname, "..", "..", "..", "brush-engine.js"),
     "utf8",
   );
-  const start = src.indexOf("function _hardRoundStampSegments(segments, e){");
+  const start = src.indexOf("function _hardRoundStampSegments(segments, e) {");
   assert.ok(start >= 0, "_hardRoundStampSegments not found in brush-engine.js");
   // Accept either LF or CRLF working-tree line endings.
   const relativeEnd = src.slice(start).search(/\r?\n}\r?\n/);
@@ -565,16 +565,16 @@ test("Phase 9C.1: pointermove path presents a live preview via peekStroke(), not
     path.join(__dirname, "..", "..", "..", "brush-engine.js"),
     "utf8",
   );
-  const start = src.indexOf("function _hardRoundStampSegments(segments, e){");
+  const start = src.indexOf("function _hardRoundStampSegments(segments, e) {");
   const end = src.indexOf("\n}\n", start);
   const stampBody = src.slice(start, end);
   assert.ok(
-    /_hardRoundPresentLivePreview\(/.test(stampBody),
+    /_hardRoundRequestLivePreview\(/.test(stampBody),
     "_hardRoundStampSegments must call the live-preview presenter after drawSegments()",
   );
 
   const previewFnStart = src.indexOf(
-    "function _hardRoundPresentLivePreview(renderer){",
+    "function _hardRoundPresentLivePreview(",
   );
   assert.ok(
     previewFnStart >= 0,

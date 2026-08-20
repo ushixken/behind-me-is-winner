@@ -26,6 +26,7 @@
       this.cachedPaperTextureView = null;
       this.cachedPaperTextureVersion = -1;
       this.cachedPaperTextureCanvas = null;
+      this.cachedFallbackTipResource = null;
     }
 
     resolveCurrentTipAsset() {
@@ -272,9 +273,51 @@
       });
     }
 
+    async getOrCreateFallbackProceduralTipResource() {
+      if (this.cachedFallbackTipResource) {
+        return this.cachedFallbackTipResource;
+      }
+      const device = await this.getDevice();
+      if (!device) return null;
+      try {
+        const texture = device.createTexture({
+          size: [1, 1, 1],
+          format: "rgba8unorm",
+          usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+        });
+        const whitePixel = new Uint8Array([255, 255, 255, 255]);
+        device.queue.writeTexture(
+          { texture: texture },
+          whitePixel,
+          { bytesPerRow: 4, rowsPerImage: 1 },
+          [1, 1, 1],
+        );
+        const view = texture.createView();
+        this.cachedFallbackTipResource = {
+          key: "fallback_procedural_1x1",
+          assetId: "fallback_procedural_1x1",
+          width: 1,
+          height: 1,
+          texture,
+          view,
+          samplerLinear: this.sharedLinearSampler,
+          samplerNearest: this.sharedNearestSampler,
+          tipVersion: 0,
+          resourceBytes: 4,
+          legacyAlphaOnlyMask: true,
+          lastUsed: performance.now(),
+        };
+        return this.cachedFallbackTipResource;
+      } catch (e) {
+        return null;
+      }
+    }
+
     async getOrCreateCurrentTipResource() {
       const asset = this.resolveCurrentTipAsset();
-      if (!asset) return null;
+      if (!asset) {
+        return this.getOrCreateFallbackProceduralTipResource();
+      }
       return this.getOrCreateResource(asset);
     }
 
@@ -391,6 +434,12 @@
         this.cachedPaperTextureCanvas = null;
         this.cachedPaperTextureVersion = -1;
       }
+      if (this.cachedFallbackTipResource) {
+        try {
+          this.cachedFallbackTipResource.texture.destroy();
+        } catch (e) {}
+        this.cachedFallbackTipResource = null;
+      }
     }
   }
 
@@ -403,6 +452,8 @@
         manager.getOrCreateResource(assetDescriptor),
       getOrCreateCurrentTipResource: () =>
         manager.getOrCreateCurrentTipResource(),
+      getOrCreateFallbackProceduralTipResource: () =>
+        manager.getOrCreateFallbackProceduralTipResource(),
       getResourceForTip: (canvas, version) =>
         manager.getResourceForTip(canvas, version),
       getOrCreatePaperTexture: (canvas, version) =>

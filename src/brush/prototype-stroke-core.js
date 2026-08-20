@@ -212,6 +212,13 @@ class PrototypeStrokeCore {
    *   prototype's `setStabDebugConstantPressure` debug hook.
    */
   constructor(settings = {}) {
+    const StrokeCore =
+      typeof window !== "undefined" && window.StrokeTrajectoryCoreModule
+        ? window.StrokeTrajectoryCoreModule.StrokeTrajectoryCore
+        : typeof require !== "undefined"
+          ? require("./stroke-trajectory-core").StrokeTrajectoryCore
+          : null;
+    this.trajectoryCore = StrokeCore ? new StrokeCore(settings) : null;
     this._resetBuffers();
     this.updateSettings(settings);
   }
@@ -229,6 +236,7 @@ class PrototypeStrokeCore {
       this.settings || {},
       settings,
     );
+    if (this.trajectoryCore) this.trajectoryCore.updateSettings(settings);
   }
 
   _resetBuffers() {
@@ -415,6 +423,7 @@ class PrototypeStrokeCore {
   beginStroke(sample, settings) {
     if (settings) this.updateSettings(settings);
     this._resetBuffers();
+    if (this.trajectoryCore) this.trajectoryCore.beginStroke(sample, settings);
 
     const p = { x: sample.x, y: sample.y };
     this.drawing = true;
@@ -484,7 +493,12 @@ class PrototypeStrokeCore {
     );
 
     const out = [];
-    for (const ev of samples) {
+    const genericSamples = this.trajectoryCore
+      ? this.trajectoryCore.pushSamples(samples)
+      : null;
+
+    for (let idx = 0; idx < samples.length; idx++) {
+      const ev = samples[idx];
       const inputRaw = { x: ev.x, y: ev.y };
       const rawPressure = normalizeRawPressure(ev.pointerType, ev.pressure);
       const pressure = this._effectivePressure(rawPressure);
@@ -527,9 +541,13 @@ class PrototypeStrokeCore {
       if (pressure > CONTACT_PRESSURE_FLOOR)
         this.lastContactPressure = pressure;
 
-      this.delayedPressure = this._pushPressureBuf(pressure);
+      this.delayedPressure = genericSamples && genericSamples[idx]
+        ? genericSamples[idx].pressure
+        : this._pushPressureBuf(pressure);
       this.pressureBufferAdvanceCount++;
-      const raw = this._pushSmoothBuf(inputRaw);
+      const raw = genericSamples && genericSamples[idx]
+        ? { x: genericSamples[idx].x, y: genericSamples[idx].y }
+        : this._pushSmoothBuf(inputRaw);
       this.positionBufferAdvanceCount++;
 
       const jumpDx = raw.x - this.lastRaw.x,
@@ -577,15 +595,29 @@ class PrototypeStrokeCore {
     const ticks = Math.max(1, Math.round(dt * ticksPerMs));
 
     const out = [];
-    for (let i = 0; i < ticks; i++) {
-      const raw = this._pushSmoothBuf(this.lastInputRaw);
-      this.positionBufferAdvanceCount++;
-      this.delayedPressure = this._pushPressureBuf(this.lastInputPressure);
-      this.pressureBufferAdvanceCount++;
-      const dx = raw.x - this.lastRaw.x,
-        dy = raw.y - this.lastRaw.y;
-      if (Math.hypot(dx, dy) <= 1e-4) break;
-      this._feedPoint(out, raw, this.delayedPressure);
+    const genericHoldSamples = this.trajectoryCore
+      ? this.trajectoryCore.tickHold(dtMs)
+      : null;
+
+    if (genericHoldSamples && genericHoldSamples.length > 0) {
+      for (const genSample of genericHoldSamples) {
+        this.positionBufferAdvanceCount++;
+        this.pressureBufferAdvanceCount++;
+        this.delayedPressure = genSample.pressure;
+        const raw = { x: genSample.x, y: genSample.y };
+        this._feedPoint(out, raw, this.delayedPressure);
+      }
+    } else if (!this.trajectoryCore) {
+      for (let i = 0; i < ticks; i++) {
+        const raw = this._pushSmoothBuf(this.lastInputRaw);
+        this.positionBufferAdvanceCount++;
+        this.delayedPressure = this._pushPressureBuf(this.lastInputPressure);
+        this.pressureBufferAdvanceCount++;
+        const dx = raw.x - this.lastRaw.x,
+          dy = raw.y - this.lastRaw.y;
+        if (Math.hypot(dx, dy) <= 1e-4) break;
+        this._feedPoint(out, raw, this.delayedPressure);
+      }
     }
     return out;
   }

@@ -426,7 +426,7 @@ test("_hardRoundStampSegments source no longer calls _stampDab()", () => {
     path.join(__dirname, "..", "..", "..", "brush-engine.js"),
     "utf8",
   );
-  const start = src.indexOf("function _hardRoundStampSegments(segments, e){");
+  const start = src.indexOf("function _hardRoundStampSegments(segments, e) {");
   assert.ok(
     start >= 0,
     "could not locate _hardRoundStampSegments in brush-engine.js",
