@@ -849,11 +849,14 @@
       }
     }
 
-    presentLiveImmediately() {
+    async presentLiveImmediately() {
       if (!this.active) return { presented: false, reason: "inactive" };
       if (this.presentRaf) {
         cancelAnimationFrame(this.presentRaf);
         this.presentRaf = 0;
+      }
+      if (!this.currentResource && this.resourcePromise) {
+        await this.resourcePromise;
       }
       this.flushBatch();
       return this.presentLiveOverlay();

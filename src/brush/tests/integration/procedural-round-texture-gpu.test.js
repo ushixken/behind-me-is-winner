@@ -93,9 +93,16 @@ test("Dab Dispatch: _queueDab and _emitResolvedCustomTipDab dispatch dabs when _
     brushEngineSrc.includes("if (window.brushTipCanvas || _customTipGpuStrokeActive)"),
     "_queueDab must dispatch to _emitResolvedCustomTipDab when _customTipGpuStrokeActive is true",
   );
+});
+
+test("First-Stroke Presentation Lifecycle: presentLiveImmediately awaits pending resourcePromise for instant stroke #1 LIVE presentation", () => {
+  const rendererSrc = fs.readFileSync(
+    path.join(__dirname, "..", "..", "custom-tip-gpu-renderer.js"),
+    "utf8",
+  );
   assert.ok(
-    brushEngineSrc.includes("if (!window.brushTipCanvas && !_customTipGpuStrokeActive"),
-    "_emitResolvedCustomTipDab must not exit early when _customTipGpuStrokeActive is true",
+    rendererSrc.includes("if (!this.currentResource && this.resourcePromise)"),
+    "presentLiveImmediately must await resourcePromise when currentResource is not yet populated",
   );
 });
 

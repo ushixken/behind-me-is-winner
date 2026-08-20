@@ -15187,6 +15187,14 @@ function _brushPointerDown(e) {
           "function"
       ) {
         const pres = window._customTipGpuRenderer.presentLiveImmediately();
+        if (pres && typeof pres.then === "function") {
+          pres.then((pRes) => {
+            if (pRes && pRes.presented && window.HardRoundDebug) {
+              window.HardRoundDebug.backend = "WEBGPU-LIVE";
+              _hrDebugBadge(window.HardRoundDebug);
+            }
+          });
+        }
         isLive = !!(pres && pres.presented);
       }
       const activeSS =
