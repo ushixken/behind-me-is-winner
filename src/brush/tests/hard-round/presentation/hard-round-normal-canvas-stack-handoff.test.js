@@ -27,6 +27,22 @@ test("default Hard Round live preview uses canvas stack without requiring a debu
   assert.match(renderer, /canvasLivePresentation:\s*true/);
 });
 
+test("canvas-stack live result is accepted without GPU presentation metadata", () => {
+  const rejectionGuard = engine.slice(
+    engine.indexOf("if (\n        renderer.isGpuActive"),
+    engine.indexOf('_hr11b6Log("presentLivePreview-accepted"'),
+  );
+  assert.match(
+    rejectionGuard,
+    /renderer\.isGpuActive\s*&&\s*renderer\.isGpuActive\(\)\s*&&\s*!result\.canvasLivePresentation\s*&&\s*\(!result\.presentation\s*\|\|\s*result\.presentation\.presented\s*!==\s*true\)/,
+  );
+  assert.match(
+    rejectionGuard,
+    /presentLivePreviewRejectedCount/,
+    "ordinary GPU results should still be rejected by this guard when not presented",
+  );
+});
+
 test("explicit diagnostic live presentation override is still honored", () => {
   assert.match(
     renderer,

@@ -13358,6 +13358,7 @@ function _hardRoundPresentLivePreview(renderer) {
       if (
         renderer.isGpuActive &&
         renderer.isGpuActive() &&
+        !result.canvasLivePresentation &&
         (!result.presentation || result.presentation.presented !== true)
       ) {
         _hr11b6Log("presentLivePreview-rejected", _lastPointerEvent, {
