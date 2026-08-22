@@ -2885,9 +2885,17 @@
         // CPU backend's result already is. GPU accumulation/rasterization,
         // strokeMaskTex, segment generation, and the finished-frame path
         // (meta with no strokeId) are completely unaffected.
+        const _livePresentationMode =
+          typeof window !== "undefined"
+            ? window.HardRoundDebugLivePresentationMode == null
+              ? "NORMAL_CANVAS_STACK"
+              : window.HardRoundDebugLivePresentationMode
+            : "NORMAL_CANVAS_STACK";
         const _canvasLivePresentationOn =
-          typeof window !== "undefined" &&
-          !!window.HardRoundDebugCanvasLivePresentation;
+          (typeof window !== "undefined" &&
+            !!window.HardRoundDebugCanvasLivePresentation) ||
+          _livePresentationMode === "READBACK_2D" ||
+          _livePresentationMode === "NORMAL_CANVAS_STACK";
         const _isLivePreviewMeta = !!(meta && meta.strokeId != null);
         if (_canvasLivePresentationOn && _isLivePreviewMeta) {
           const _diagMeta = Object.assign(

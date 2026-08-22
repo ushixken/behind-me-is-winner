@@ -8802,6 +8802,17 @@ let _recompRAF = false,
   _recompGeneration = 0,
   _recompCoalescedRequests = 0,
   _deferredKeyVisualRefreshAfterNextPresentation = false;
+function _hrNormalCanvasStackLivePresentationActive() {
+  return !!(
+    window.HardRoundDebugLivePresentationMode == null ||
+    window.HardRoundDebugLivePresentationMode === "NORMAL_CANVAS_STACK" ||
+    window.HardRoundDebugLivePresentationMode === "READBACK_2D" ||
+    window.HardRoundDebugCanvasLivePresentation
+  );
+}
+function _hrShouldHoldNormalCanvasStackLiveUntilCommit() {
+  return _hrNormalCanvasStackLivePresentationActive();
+}
 function _flushDeferredKeyVisualRefreshAfterPresentation() {
   if (!_deferredKeyVisualRefreshAfterNextPresentation) return;
   _deferredKeyVisualRefreshAfterNextPresentation = false;
@@ -11462,6 +11473,15 @@ function _hardRoundFinalizeOwnedContext(context, e) {
         resolveOwnedResult(context);
       },
       (error) => {
+        if (
+          context.holdNormalCanvasStackLiveUntilCommit &&
+          _inStroke &&
+          context.strokeId === _activeStrokeSession
+        ) {
+          _inStroke = false;
+          if (_strokeCtx && _strokeCanvas)
+            _strokeCtx.clearRect(0, 0, _strokeCanvas.width, _strokeCanvas.height);
+        }
         _hardRoundPendingCpuFinishingContexts.delete(context.strokeId);
         if (_hardRoundFinishingContexts.get(context.strokeId) === context)
           _hardRoundReleaseFinishingContext(context);
@@ -11472,6 +11492,8 @@ function _hardRoundFinalizeOwnedContext(context, e) {
   const commit = _hardRoundCommitTail
     .then(() => resolution)
     .then((ready) => {
+      if (ready.holdNormalCanvasStackLiveUntilCommit && _inStroke)
+        _inStroke = false;
       if (ready.smartRaster) _commitFinishedSmartRasterStroke(ready);
       else _commitFinishedHardRoundStroke(ready);
       _hrRapidPresentation("commitCompleted", ready.strokeId, {
@@ -11568,6 +11590,15 @@ function _hardRoundFinalizeOwnedContext(context, e) {
       }
     });
   const settled = commit.finally(() => {
+    if (
+      context.holdNormalCanvasStackLiveUntilCommit &&
+      _inStroke &&
+      context.strokeId === _activeStrokeSession
+    ) {
+      _inStroke = false;
+      if (_strokeCtx && _strokeCanvas)
+        _strokeCtx.clearRect(0, 0, _strokeCanvas.width, _strokeCanvas.height);
+    }
     _hardRoundPendingCpuFinishingContexts.delete(context.strokeId);
     _hardRoundPendingCommitCount = Math.max(
       0,
@@ -13376,7 +13407,7 @@ function _hardRoundPresentLivePreview(renderer) {
         // untouched; only which surface the resolved pixels are drawn to
         // changes. finishStroke()/commit/_hardRoundPresentFinishedFrame() are
         // NOT touched by this flag -- it only affects this function.
-        if (window.HardRoundDebugCanvasLivePresentation) {
+        if (result.canvasLivePresentation || window.HardRoundDebugCanvasLivePresentation) {
           if (result.canvas) {
             _hardRoundSetGpuOverlayVisible(
               false,
@@ -15878,7 +15909,10 @@ function _pointerEndStroke(e) {
         // The renderer/result/destination are context-owned from here on.
         // Shared live state may be reused by the next pointerdown, while
         // this stroke retains its mandatory, ordered authoritative commit.
-        if (_inStroke) _inStroke = false;
+        ownedContext.holdNormalCanvasStackLiveUntilCommit =
+          _hrShouldHoldNormalCanvasStackLiveUntilCommit();
+        if (_inStroke && !ownedContext.holdNormalCanvasStackLiveUntilCommit)
+          _inStroke = false;
         ownedContext.presentFinishedFrame = ownedContext.gpuCommit;
         _hardRoundFinalizeOwnedContext(ownedContext, e);
         _hrSmartPointerupFinish(smartPointerupTiming);
