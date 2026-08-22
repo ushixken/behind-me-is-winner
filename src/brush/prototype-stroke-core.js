@@ -694,6 +694,21 @@ class PrototypeStrokeCore {
       : 0;
     const segments = [];
 
+    if (this.trajectoryCore) {
+      const finishSamples = this.trajectoryCore.finishStroke();
+      if (finishSamples && finishSamples.length) {
+        for (const sample of finishSamples) {
+          this._feedPoint(segments, sample, sample.pressure);
+        }
+      }
+      this._resetBuffers();
+      return {
+        segments,
+        mode: wasStoppedBeforeLift ? "stationary-hold" : "moving-release",
+        ticksEmitted: finishSamples ? finishSamples.length : 0,
+      };
+    }
+
     if (!endpoint || startDist < 0.15) {
       if (endpoint) this._feedPoint(segments, endpoint, nextFinishPressure());
       this._resetBuffers();
