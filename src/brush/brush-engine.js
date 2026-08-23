@@ -6476,6 +6476,12 @@ function _oldStabilizerAdvance(targetX, targetY, now) {
 // the fade weight above. Returns {x,y} unchanged (zero extra cost) once the
 // weight reaches 0, i.e. for every UI setting at/above the fade limit.
 function _applyOldStabilizerFloor(x, y, amount, now) {
+  if (
+    typeof window !== "undefined" &&
+    window.HardRoundDebugDisableOldStabilizerFloor &&
+    _hardRoundStrokeActive
+  )
+    return { x, y };
   const weight = _oldStabilizerFloorWeight(amount);
   if (weight <= 0) return { x, y };
   const old = _oldStabilizerAdvance(
@@ -6855,7 +6861,24 @@ function _emitHardRoundStabilizedPoint(
     pointerType: ev ? ev.pointerType : "pen",
     timeStamp: Number.isFinite(timeStamp) ? timeStamp : performance.now(),
   };
+  if (
+    window.HardRoundDebugNewestSampleTip ||
+    window.HardRoundDebugTipLag
+  ) {
+    _hrNewestSampleTipTarget = {
+      x: sample.x,
+      y: sample.y,
+      pressure: sample.pressure,
+      time: sample.timeStamp,
+    };
+  }
+  _hrTlRecordStage("coreInput", sample.x, sample.y, sample.timeStamp);
   const segments = _hardRoundCore.pushSamples([sample]);
+  if (_hrTlActive() && segments && segments.length) {
+    const last = segments[segments.length - 1];
+    if (last && Number.isFinite(last.x1) && Number.isFinite(last.y1))
+      _hrTlRecordStage("coreOutput", last.x1, last.y1, sample.timeStamp);
+  }
   _hardRoundStampSegments(segments, ev || _lastPointerEvent);
   lx = x;
   ly = y;
@@ -8880,6 +8903,18 @@ function _scheduleRecomposite(options) {
     _flushLiveColorEraserPreview();
     recomposite(curLayer, curFrame, rect);
     const immediateDuration = performance.now() - immediateStart;
+    if (_hrTlActive()) {
+      const accepted = _hrTlData().latest.acceptedPreview;
+      if (accepted) {
+        _hrTlRecordStage("recomposite", accepted.x, accepted.y, performance.now());
+        _hrTlPush("ages", "acceptedPreviewToRecomposite", performance.now() - accepted.wallTime);
+      }
+    }
+    if (_hrLcActive()) {
+      _hrLcInc("recomposite");
+      _hrLcTime("recomposite");
+      _hrLcDuration("recompositeMs", immediateDuration);
+    }
     _hrMtRecord(
       "_scheduleRecomposite-immediate-recomposite",
       immediateStart,
@@ -9013,6 +9048,18 @@ function _scheduleRecomposite(options) {
     _flushLiveColorEraserPreview();
     recomposite(layerIndex, frameIndex, rect);
     const scheduledDuration = performance.now() - scheduledStart;
+    if (_hrTlActive()) {
+      const accepted = _hrTlData().latest.acceptedPreview;
+      if (accepted) {
+        _hrTlRecordStage("recomposite", accepted.x, accepted.y, performance.now());
+        _hrTlPush("ages", "acceptedPreviewToRecomposite", performance.now() - accepted.wallTime);
+      }
+    }
+    if (_hrLcActive()) {
+      _hrLcInc("recomposite");
+      _hrLcTime("recomposite");
+      _hrLcDuration("recompositeMs", scheduledDuration);
+    }
     _hrMtRecord(
       "_scheduleRecomposite-scheduled-recomposite",
       scheduledStart,
@@ -10201,6 +10248,12 @@ window.BrushAnalyzeStabilizerParity = function () {
 // to N one-segment calls while avoiding N synchronous raster stalls in the
 // input handler.
 const _hardRoundPendingRenderSegments = [];
+const _hardRoundPendingRenderSegmentTimes = [];
+let _hrTipLagLastRenderedEndpoint = null;
+let _hrTipLagLastFlushedEndpoint = null;
+let _hrTipLagLastDisplayedEndpoint = null;
+let _hrNewestSampleTipTarget = null;
+let _hrNewestSampleTipOverlayDirty = null;
 // Phase 11A.30: single master flag for this diagnostic phase. Default
 // false = no routine Phase 11A.30 console logging. When true, only the
 // concise [11A.30] ... results are printed (see _pointerEndStroke and
@@ -10942,14 +10995,41 @@ function _hrPerfMarkPointerup(strokeId) {
 
 function _hardRoundFlushPending(renderer) {
   if (!renderer || !_hardRoundPendingRenderSegments.length) return 0;
+  const _hrLcFlushStart = _hrLcActive() ? performance.now() : null;
   const _hrFsFlushStart = _hrFsActive() ? performance.now() : null;
   const pending = _hardRoundPendingRenderSegments.splice(
     0,
     _hardRoundPendingRenderSegments.length,
   );
+  const pendingTimes = _hardRoundPendingRenderSegmentTimes.splice(
+    0,
+    pending.length,
+  );
+  if (_hrLcFlushStart != null && pendingTimes.length) {
+    const oldest = pendingTimes[0];
+    _hrLcPending(
+      pending.length + _hardRoundPendingRenderSegments.length,
+      Number.isFinite(oldest) ? _hrLcFlushStart - oldest : null,
+    );
+  }
+  if (_hrTlActive() && pending.length) {
+    const last = pending[pending.length - 1];
+    if (last && Number.isFinite(last.x1) && Number.isFinite(last.y1)) {
+      _hrTipLagLastFlushedEndpoint = {
+        x: last.x1,
+        y: last.y1,
+        time: performance.now(),
+      };
+      _hrTlRecordStage("flushed", last.x1, last.y1, _hrTipLagLastFlushedEndpoint.time);
+    }
+  }
   const _hrFsDrawStart = _hrFsActive() ? performance.now() : null;
   _hrInputLatencyNote(_activeStrokeSession, "firstRendererGeometryTime");
   renderer.drawSegments(pending);
+  if (_hrLcFlushStart != null) {
+    _hrLcDuration("flushPendingMs", performance.now() - _hrLcFlushStart);
+    _hrLcInc("segmentsFlushed", pending.length);
+  }
   if (_hrFsDrawStart != null) {
     const _hrFsDrawMs = performance.now() - _hrFsDrawStart;
     _hrFsRecordFlushPending(
@@ -12342,6 +12422,11 @@ function _hardRoundStampSegments(segments, e) {
   if (!segments || !segments.length) return;
   if (_hardRoundStrokeActive)
     _hrFirstPresentNote(_activeStrokeSession, "firstSegmentGeneratedTime");
+  if (_hrTlActive() && segments.length) {
+    const lastCore = segments[segments.length - 1];
+    if (lastCore && Number.isFinite(lastCore.x1) && Number.isFinite(lastCore.y1))
+      _hrTlRecordStage("coreOutput", lastCore.x1, lastCore.y1, performance.now());
+  }
   const brushDiagStart = window.BrushDebugPerf ? performance.now() : 0;
   // Phase 9E.4: mark the stroke's true open start/end (not just this
   // batch's first/last -- batches are per pointermove, the stroke's own
@@ -12415,6 +12500,18 @@ function _hardRoundStampSegments(segments, e) {
     if (resolvedLength > 0)
       _brushDiagPerfNote("spacing", { step: resolvedLength });
   }
+  if ((_hrTlActive() || window.HardRoundDebugNewestSampleTip) && renderSegs.length) {
+    const last = renderSegs[renderSegs.length - 1];
+    if (last && Number.isFinite(last.x1) && Number.isFinite(last.y1)) {
+      _hrTipLagLastRenderedEndpoint = {
+        x: last.x1,
+        y: last.y1,
+        time: performance.now(),
+      };
+      _hrTipLagLastDisplayedEndpoint = _hrTipLagLastRenderedEndpoint;
+      _hrTlRecordStage("renderedSegment", last.x1, last.y1, _hrTipLagLastRenderedEndpoint.time);
+    }
+  }
   if (_hrMtAdapterStart != null)
     _hrMtRecord(
       "HardRoundAdapter.resolveSegmentRenderParams-loop",
@@ -12432,6 +12529,18 @@ function _hardRoundStampSegments(segments, e) {
   // own per-batch present(). The final, authoritative resolve still happens
   // once via endStroke() at pointerup (see the pointerup call site below).
   _hardRoundPendingRenderSegments.push(...renderSegs);
+  if (_hrLcActive()) {
+    const now = performance.now();
+    for (let i = 0; i < renderSegs.length; i++)
+      _hardRoundPendingRenderSegmentTimes.push(now);
+    _hrLcInc("segmentsGenerated", renderSegs.length);
+    _hrLcPending(
+      _hardRoundPendingRenderSegments.length,
+      _hardRoundPendingRenderSegmentTimes.length
+        ? now - _hardRoundPendingRenderSegmentTimes[0]
+        : 0,
+    );
+  }
   // TEMP DIAGNOSTIC (Phase 11A.27): opt-in only. Logs how many render-ready
   // segments this call added to the pending queue, and the queue's total
   // length afterward -- the two numbers the phase asks for
@@ -12986,6 +13095,437 @@ if (typeof window.HardRoundDebugSharedPresentation === "undefined")
   window.HardRoundDebugSharedPresentation = false;
 if (typeof window.HardRoundDebugPresentationLifecycle === "undefined")
   window.HardRoundDebugPresentationLifecycle = false;
+if (typeof window.HardRoundDebugLiveCadence === "undefined")
+  window.HardRoundDebugLiveCadence = false;
+if (typeof window.HardRoundDebugImmediateLiveFollowup === "undefined")
+  window.HardRoundDebugImmediateLiveFollowup = false;
+if (typeof window.HardRoundDebugGpuDirtyLiveReadback === "undefined")
+  window.HardRoundDebugGpuDirtyLiveReadback = false;
+if (typeof window.HardRoundDebugTipLag === "undefined")
+  window.HardRoundDebugTipLag = false;
+if (typeof window.HardRoundDebugNewestSampleTip === "undefined")
+  window.HardRoundDebugNewestSampleTip = false;
+if (typeof window.HardRoundDebugDisableOldStabilizerFloor === "undefined")
+  window.HardRoundDebugDisableOldStabilizerFloor = false;
+if (typeof window.HardRoundDebugDisablePrototypeZoomMinimum === "undefined")
+  window.HardRoundDebugDisablePrototypeZoomMinimum = false;
+
+const _hrLiveCadenceLimit = 2000;
+function _hrLcData() {
+  if (!window.HardRoundLiveCadenceData) {
+    window.HardRoundLiveCadenceData = {
+      startedAt: performance.now(),
+      counts: Object.create(null),
+      times: Object.create(null),
+      durations: Object.create(null),
+      values: Object.create(null),
+      maxPendingSegments: 0,
+      maxPendingAgeMs: 0,
+    };
+  }
+  return window.HardRoundLiveCadenceData;
+}
+function _hrLcActive() {
+  return typeof window !== "undefined" && !!window.HardRoundDebugLiveCadence;
+}
+function _hrLcInc(name, n = 1) {
+  if (!_hrLcActive()) return;
+  const d = _hrLcData();
+  d.counts[name] = (d.counts[name] || 0) + n;
+}
+function _hrLcPush(bucket, name, value) {
+  if (!_hrLcActive() || !Number.isFinite(value)) return;
+  const d = _hrLcData();
+  const root = bucket === "durations" ? d.durations : d.times;
+  const arr = root[name] || (root[name] = []);
+  arr.push(value);
+  if (arr.length > _hrLiveCadenceLimit) arr.shift();
+}
+function _hrLcTime(name, t = performance.now()) {
+  _hrLcPush("times", name, t);
+}
+function _hrLcDuration(name, ms) {
+  _hrLcPush("durations", name, ms);
+}
+function _hrLcValue(name, value) {
+  _hrLcPush("values", name, value);
+}
+function _hrLcPending(count, ageMs) {
+  if (!_hrLcActive()) return;
+  const d = _hrLcData();
+  d.maxPendingSegments = Math.max(d.maxPendingSegments || 0, count || 0);
+  if (Number.isFinite(ageMs))
+    d.maxPendingAgeMs = Math.max(d.maxPendingAgeMs || 0, ageMs);
+}
+function _hrLcStats(values) {
+  const arr = (values || []).filter(Number.isFinite).sort((a, b) => a - b);
+  if (!arr.length) return { count: 0, avg: null, p50: null, p95: null };
+  const pick = (p) => arr[Math.min(arr.length - 1, Math.floor((arr.length - 1) * p))];
+  return {
+    count: arr.length,
+    avg: arr.reduce((a, b) => a + b, 0) / arr.length,
+    p50: pick(0.5),
+    p95: pick(0.95),
+  };
+}
+function _hrLcIntervalStats(times) {
+  const src = (times || []).filter(Number.isFinite);
+  const intervals = [];
+  for (let i = 1; i < src.length; i++) intervals.push(src[i] - src[i - 1]);
+  const stats = _hrLcStats(intervals);
+  return Object.assign(stats, {
+    rateHz:
+      stats.avg && stats.avg > 0 ? 1000 / stats.avg : src.length > 1 ? 0 : null,
+  });
+}
+window.HardRoundLiveCadenceNote = function (type, detail = {}) {
+  if (!_hrLcActive()) return;
+  const now = performance.now();
+  const d = _hrLcData();
+  if (type === "gpu-resolve-into") {
+    _hrLcDuration("gpuResolveIntoMs", detail.totalMs);
+    _hrLcDuration("mapAsyncMs", detail.mapAsyncMs);
+    _hrLcDuration("cpuPixelConversionMs", detail.pixelConversionMs);
+    _hrLcDuration("putImageDataMs", detail.putImageDataMs);
+    _hrLcDuration("cpuPixelConversionPutImageDataMs", detail.cpuPixelConversionPutImageDataMs);
+    const fullPixels = detail.fullFramePixels;
+    const dirtyPixels = detail.dirtyPixels;
+    if (Number.isFinite(fullPixels) && fullPixels > 0 && Number.isFinite(dirtyPixels)) {
+      d.fullFramePixels = fullPixels;
+      _hrLcValue("dirtyPixels", dirtyPixels);
+      _hrLcValue("dirtyToFullRatio", dirtyPixels / fullPixels);
+      if (detail.partial) _hrLcInc("partialReadback");
+      else _hrLcInc("fullFallback");
+    }
+    return;
+  }
+  if (type === "recomposite") {
+    _hrLcTime("recomposite", now);
+    _hrLcDuration("recompositeMs", detail.durationMs);
+  }
+};
+window.HardRoundAnalyzeLiveCadence = function () {
+  const d = window.HardRoundLiveCadenceData || _hrLcData();
+  const durationMs = Math.max(0, performance.now() - d.startedAt);
+  const durationSeconds = durationMs / 1000;
+  const count = (name) => d.counts[name] || 0;
+  const rate = (name) =>
+    durationSeconds > 0 ? count(name) / durationSeconds : null;
+  return {
+    enabled: !!window.HardRoundDebugLiveCadence,
+    durationMs,
+    counts: Object.assign({}, d.counts),
+    ratesHz: {
+      pointerrawupdate: rate("pointerrawupdate"),
+      pointermove: rate("pointermove"),
+      coalescedSamples: rate("coalescedSamples"),
+      previewAccepted: rate("previewAccepted"),
+      previewFlightCompleted: rate("previewFlightCompleted"),
+      recomposite: rate("recomposite"),
+    },
+    intervalsMs: {
+      pointerrawupdate: _hrLcIntervalStats(d.times.pointerrawupdate),
+      pointermove: _hrLcIntervalStats(d.times.pointermove),
+      previewAccepted: _hrLcIntervalStats(d.times.previewAccepted),
+      previewFlightCompleted: _hrLcIntervalStats(d.times.previewFlightCompleted),
+      recomposite: _hrLcIntervalStats(d.times.recomposite),
+    },
+    durationsMs: {
+      previewFlight: _hrLcStats(d.durations.previewFlightMs),
+      flushPending: _hrLcStats(d.durations.flushPendingMs),
+      peekStroke: _hrLcStats(d.durations.peekStrokeMs),
+      gpuResolveInto: _hrLcStats(d.durations.gpuResolveIntoMs),
+      mapAsync: _hrLcStats(d.durations.mapAsyncMs),
+      cpuPixelConversion: _hrLcStats(d.durations.cpuPixelConversionMs),
+      putImageData: _hrLcStats(d.durations.putImageDataMs),
+      cpuPixelConversionPutImageData: _hrLcStats(
+        d.durations.cpuPixelConversionPutImageDataMs,
+      ),
+      strokeCanvasDraw: _hrLcStats(d.durations.strokeCanvasDrawMs),
+      recomposite: _hrLcStats(d.durations.recompositeMs),
+    },
+    coalescing: {
+      previewRequestCount: count("previewRequest"),
+      previewFlightStartedCount: count("previewFlightStarted"),
+      previewFlightCompletedCount: count("previewFlightCompleted"),
+      previewAcceptedCount: count("previewAccepted"),
+      followupRequestedCount: count("followupRequested"),
+      followupStartedCount: count("followupStarted"),
+      maxPendingSegments: d.maxPendingSegments || 0,
+      maxPendingAgeMs: d.maxPendingAgeMs || 0,
+    },
+    dirtyReadback: {
+      fullFramePixels: d.fullFramePixels || null,
+      partialReadbackCount: count("partialReadback"),
+      fullFallbackCount: count("fullFallback"),
+      dirtyPixelsAvg: _hrLcStats(d.values.dirtyPixels).avg,
+      dirtyPixelsP95: _hrLcStats(d.values.dirtyPixels).p95,
+      dirtyToFullRatioAvg: _hrLcStats(d.values.dirtyToFullRatio).avg,
+      dirtyToFullRatioP95: _hrLcStats(d.values.dirtyToFullRatio).p95,
+    },
+  };
+};
+
+const _hrTipLagLimit = 1000;
+function _hrTlActive() {
+  return typeof window !== "undefined" && !!window.HardRoundDebugTipLag;
+}
+function _hrTlData() {
+  if (!window.HardRoundTipLagData) {
+    window.HardRoundTipLagData = {
+      startedAt: performance.now(),
+      latest: Object.create(null),
+      samples: Object.create(null),
+      ages: Object.create(null),
+      speedBins: {
+        slow: { count: 0, sum: 0, max: 0 },
+        medium: { count: 0, sum: 0, max: 0 },
+        fast: { count: 0, sum: 0, max: 0 },
+      },
+      lastRaw: null,
+      stabilization: null,
+    };
+  }
+  return window.HardRoundTipLagData;
+}
+function _hrTlPush(root, name, value) {
+  if (!_hrTlActive() || !Number.isFinite(value)) return;
+  const d = _hrTlData();
+  const arr = d[root][name] || (d[root][name] = []);
+  arr.push(value);
+  if (arr.length > _hrTipLagLimit) arr.shift();
+}
+function _hrTlStats(values) {
+  const arr = (values || []).filter(Number.isFinite).sort((a, b) => a - b);
+  if (!arr.length)
+    return { count: 0, mean: null, median: null, p95: null, max: null };
+  const pick = (p) => arr[Math.min(arr.length - 1, Math.floor((arr.length - 1) * p))];
+  return {
+    count: arr.length,
+    mean: arr.reduce((a, b) => a + b, 0) / arr.length,
+    median: pick(0.5),
+    p95: pick(0.95),
+    max: arr[arr.length - 1],
+  };
+}
+function _hrTlPoint(x, y, time, extra) {
+  return Object.assign(
+    {
+      x,
+      y,
+      time: Number.isFinite(time) ? time : performance.now(),
+      wallTime: performance.now(),
+      zoom: Number.isFinite(zoom) ? zoom : 1,
+    },
+    extra || {},
+  );
+}
+function _hrTlRecordRaw(x, y, time, type, extra) {
+  if (!_hrTlActive()) return;
+  const d = _hrTlData();
+  const now = performance.now();
+  const z = Math.max(0.0001, Number.isFinite(zoom) ? zoom : 1);
+  const p = _hrTlPoint(x, y, time, Object.assign({ type }, extra || {}));
+  if (d.lastRaw) {
+    const dt = Math.max(0.001, now - d.lastRaw.wallTime);
+    p.speedScreenPxPerSec =
+      (Math.hypot(x - d.lastRaw.x, y - d.lastRaw.y) * z * 1000) / dt;
+  } else p.speedScreenPxPerSec = 0;
+  d.latest.raw = p;
+  d.lastRaw = p;
+}
+function _hrTlRecordStage(name, x, y, time, extra) {
+  if (!_hrTlActive()) return;
+  const d = _hrTlData();
+  const p = _hrTlPoint(x, y, time, extra);
+  d.latest[name] = p;
+  const raw = d.latest.raw || d.latest.coalesced;
+  if (!raw) return;
+  const z = Math.max(0.0001, Number.isFinite(zoom) ? zoom : 1);
+  const dist = Math.hypot(p.x - raw.x, p.y - raw.y) * z;
+  const age = p.wallTime - raw.wallTime;
+  _hrTlPush("samples", "rawTo" + name[0].toUpperCase() + name.slice(1) + "ScreenPx", dist);
+  _hrTlPush("ages", "rawTo" + name[0].toUpperCase() + name.slice(1), age);
+  if (name === "coreOutput" && d.latest.stabilized) {
+    const s = d.latest.stabilized;
+    _hrTlPush(
+      "samples",
+      "stabilizedToCoreOutputScreenPx",
+      Math.hypot(p.x - s.x, p.y - s.y) * z,
+    );
+  }
+  if (name === "acceptedPreview") {
+    const speed = raw.speedScreenPxPerSec || 0;
+    const bucket = speed < 150 ? "slow" : speed < 700 ? "medium" : "fast";
+    const b = d.speedBins[bucket];
+    b.count++;
+    b.sum += dist;
+    b.max = Math.max(b.max, dist);
+  }
+}
+function _hrTlRecordStabilization() {
+  if (!_hrTlActive()) return;
+  const ui = _stabilizationAmount();
+  const oldFloorDisabled = !!window.HardRoundDebugDisableOldStabilizerFloor;
+  const prototypeZoomMinimumDisabled =
+    !!window.HardRoundDebugDisablePrototypeZoomMinimum;
+  const oldFloorWeight = oldFloorDisabled ? 0 : _oldStabilizerFloorWeight(ui);
+  const z = Math.min(Math.max(Number(zoom) || 1, 0.05), 5);
+  const t = (Math.log(z) - Math.log(0.05)) / (Math.log(5) - Math.log(0.05));
+  const prototypeZoomMinimum = prototypeZoomMinimumDisabled
+    ? 0
+    : 0.15 * (1 - t);
+  const compT = Math.min(Math.max(ui / 0.2, 0), 1);
+  const compWeight = 1 - compT * compT * (3 - 2 * compT);
+  const internal = Math.min(1, Math.max(0, ui + prototypeZoomMinimum * compWeight));
+  _hrTlData().stabilization = {
+    uiAmount: ui,
+    oldStabilizerFloorDisabled: oldFloorDisabled,
+    oldStabilizerFloorWeight: oldFloorWeight,
+    prototypeZoomMinimumDisabled,
+    prototypeZoomMinimum,
+    prototypeInternalAmount: internal,
+    prototypeMovingAverageWindow: internal <= 0 ? 1 : Math.max(2, Math.round(internal * 200)),
+    zoom: Number.isFinite(zoom) ? zoom : null,
+  };
+}
+window.HardRoundTipLagNote = function (stage, detail = {}) {
+  if (!_hrTlActive()) return;
+  if (!Number.isFinite(detail.x) || !Number.isFinite(detail.y)) return;
+  _hrTlRecordStage(stage, detail.x, detail.y, detail.time, detail);
+};
+window.HardRoundAnalyzeTipLag = function () {
+  const d = window.HardRoundTipLagData || _hrTlData();
+  const sample = (name) => _hrTlStats(d.samples[name]);
+  const age = (name) => _hrTlStats(d.ages[name]);
+  const latestRaw = d.latest && d.latest.raw;
+  const z = Math.max(0.0001, Number.isFinite(zoom) ? zoom : 1);
+  const rawToDocPoint = (point) =>
+    latestRaw && point && Number.isFinite(point.x) && Number.isFinite(point.y)
+      ? Math.hypot(point.x - latestRaw.x, point.y - latestRaw.y) * z
+      : null;
+  const cursor = typeof window !== "undefined" && window.BrushCursorLatestPosition;
+  const latestRawToCustomCursorScreenPx =
+    latestRaw &&
+    cursor &&
+    Number.isFinite(latestRaw.clientX) &&
+    Number.isFinite(latestRaw.clientY) &&
+    Number.isFinite(cursor.renderX) &&
+    Number.isFinite(cursor.renderY)
+      ? Math.hypot(cursor.renderX - latestRaw.clientX, cursor.renderY - latestRaw.clientY)
+      : null;
+  const speedBin = (name) => {
+    const b = d.speedBins[name];
+    return {
+      count: b.count,
+      meanRawToAcceptedPreviewScreenPx: b.count ? b.sum / b.count : null,
+      maxRawToAcceptedPreviewScreenPx: b.count ? b.max : null,
+    };
+  };
+  return {
+    enabled: !!window.HardRoundDebugTipLag,
+    durationMs: performance.now() - d.startedAt,
+    latest: d.latest,
+    stabilization: d.stabilization,
+    rawToStabilizedScreenPx: sample("rawToStabilizedScreenPx"),
+    stabilizedToCoreOutputScreenPx: sample("stabilizedToCoreOutputScreenPx"),
+    rawToCoreOutputScreenPx: sample("rawToCoreOutputScreenPx"),
+    rawToFlushedScreenPx: sample("rawToFlushedScreenPx"),
+    rawToAcceptedPreviewScreenPx: sample("rawToAcceptedPreviewScreenPx"),
+    latestRawToCustomCursorScreenPx,
+    latestRawToMidpointTipScreenPx: rawToDocPoint(_hrTipLagLastRenderedEndpoint),
+    latestRawToDisplayedTipScreenPx: rawToDocPoint(
+      _hrTipLagLastDisplayedEndpoint || _hrTipLagLastRenderedEndpoint,
+    ),
+    agesMs: {
+      rawToCoreOutput: age("rawToCoreOutput"),
+      rawToFlush: age("rawToFlushed"),
+      rawToAcceptedPreview: age("rawToAcceptedPreview"),
+      acceptedPreviewToRecomposite: age("acceptedPreviewToRecomposite"),
+      rawToRecomposite: age("rawToRecomposite"),
+    },
+    speedVsLag: {
+      slow: speedBin("slow"),
+      medium: speedBin("medium"),
+      fast: speedBin("fast"),
+    },
+  };
+};
+
+function _hrNewestSampleTipRect(from, to, radius) {
+  if (!from || !to) return null;
+  const pad = Math.max(2, Math.ceil((Number(radius) || getBrushSize() / 2) + 3));
+  const minX = Math.floor(Math.min(from.x, to.x) - pad);
+  const minY = Math.floor(Math.min(from.y, to.y) - pad);
+  const maxX = Math.ceil(Math.max(from.x, to.x) + pad);
+  const maxY = Math.ceil(Math.max(from.y, to.y) + pad);
+  const w = _strokeCanvas ? _strokeCanvas.width : activeC.width;
+  const h = _strokeCanvas ? _strokeCanvas.height : activeC.height;
+  const x = Math.max(0, minX);
+  const y = Math.max(0, minY);
+  const x2 = Math.min(w, maxX);
+  const y2 = Math.min(h, maxY);
+  if (x2 <= x || y2 <= y) return null;
+  return { x, y, width: x2 - x, height: y2 - y };
+}
+
+function _hrRestoreNewestSampleTipOverlayBase(sourceCanvas) {
+  const r = _hrNewestSampleTipOverlayDirty;
+  _hrNewestSampleTipOverlayDirty = null;
+  if (!r || !_strokeCtx || !sourceCanvas) return;
+  _strokeCtx.clearRect(r.x, r.y, r.width, r.height);
+  _strokeCtx.drawImage(
+    sourceCanvas,
+    r.x,
+    r.y,
+    r.width,
+    r.height,
+    r.x,
+    r.y,
+    r.width,
+    r.height,
+  );
+}
+
+function _hrDrawNewestSampleTipOverlay(sourceCanvas) {
+  if (!window.HardRoundDebugNewestSampleTip || !_strokeCtx) return;
+  const from = _hrTipLagLastRenderedEndpoint;
+  const to = _hrNewestSampleTipTarget;
+  if (!from || !to) return;
+  if (
+    !Number.isFinite(from.x) ||
+    !Number.isFinite(from.y) ||
+    !Number.isFinite(to.x) ||
+    !Number.isFinite(to.y)
+  )
+    return;
+  const z = Math.max(0.0001, Number.isFinite(zoom) ? zoom : 1);
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  if (Math.hypot(dx, dy) * z <= 0.25) return;
+  const radius = Math.max(0.5, getBrushSize() / 2);
+  const dirty = _hrNewestSampleTipRect(from, to, radius);
+  if (!dirty) return;
+  const rgb = tool === "eraser" ? [0, 0, 0] : _hexToRGB(color);
+  _strokeCtx.save();
+  _strokeCtx.globalCompositeOperation = "source-over";
+  const alpha = Number.isFinite(brushOpacity) ? brushOpacity : 1;
+  _strokeCtx.strokeStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${Math.max(0, Math.min(1, alpha))})`;
+  _strokeCtx.lineWidth = radius * 2;
+  _strokeCtx.lineCap = "round";
+  _strokeCtx.lineJoin = "round";
+  _strokeCtx.beginPath();
+  _strokeCtx.moveTo(from.x, from.y);
+  _strokeCtx.lineTo(to.x, to.y);
+  _strokeCtx.stroke();
+  _strokeCtx.restore();
+  _hrNewestSampleTipOverlayDirty = dirty;
+  _hrTipLagLastDisplayedEndpoint = {
+    x: to.x,
+    y: to.y,
+    time: performance.now(),
+  };
+}
 
 const _hardRoundInputLatencyRecords = [];
 function _hrInputLatencyRecord(strokeId, initial = {}) {
@@ -13232,7 +13772,8 @@ function _hardRoundPresentLivePreview(renderer) {
         )
       )
         return null;
-      return renderer.peekStroke({
+      const peekStart = _hrLcActive() ? performance.now() : null;
+      const peekResult = renderer.peekStroke({
         strokeId: session,
         previewGeneration,
         renderer,
@@ -13244,8 +13785,19 @@ function _hardRoundPresentLivePreview(renderer) {
             : "none-private-gpu-renderer"
           : "ordered-canvas-base",
       });
+      if (peekStart == null) return peekResult;
+      return Promise.resolve(peekResult).then((result) => {
+        if (result) result.__hardRoundPeekStartTime = peekStart;
+        return result;
+      });
     })
     .then(async (result) => {
+      const peekDoneAt = performance.now();
+      if (_hrLcActive() && result && result.__hardRoundPeekStartTime != null)
+        _hrLcDuration(
+          "peekStrokeMs",
+          peekDoneAt - result.__hardRoundPeekStartTime,
+        );
       if (previewGeneration !== _hardRoundPreviewGeneration) return;
       // --- 11B.13 frame-stall diagnostic: resolve-time bookkeeping ---
       _hrFsRecordPresentResolve(_hrFsPresentStart);
@@ -13383,6 +13935,15 @@ function _hardRoundPresentLivePreview(renderer) {
       _hr11b6Log("presentLivePreview-accepted", _lastPointerEvent, {
         resultSegmentCount: result.segmentCount,
       });
+      if (_hrTlActive() && _hrTipLagLastFlushedEndpoint)
+        _hrTlRecordStage(
+          "acceptedPreview",
+          _hrTipLagLastFlushedEndpoint.x,
+          _hrTipLagLastFlushedEndpoint.y,
+          performance.now(),
+        );
+      _hrLcInc("previewAccepted");
+      _hrLcTime("previewAccepted");
       const gpuPreviewAccepted = !!(
         renderer.isGpuActive && renderer.isGpuActive()
       );
@@ -13410,17 +13971,38 @@ function _hardRoundPresentLivePreview(renderer) {
         // NOT touched by this flag -- it only affects this function.
         if (result.canvasLivePresentation || window.HardRoundDebugCanvasLivePresentation) {
           if (result.canvas) {
+            const drawStart = _hrLcActive() ? performance.now() : null;
             _hardRoundSetGpuOverlayVisible(
               false,
               "presentLivePreview-canvasLivePresentationMode",
             );
-            _strokeCtx.clearRect(
-              0,
-              0,
-              _strokeCanvas.width,
-              _strokeCanvas.height,
-            );
-            _strokeCtx.drawImage(result.canvas, 0, 0);
+            const dirty = result.dirtyRegion;
+            if (dirty && dirty.width > 0 && dirty.height > 0) {
+              _strokeCtx.clearRect(dirty.x, dirty.y, dirty.width, dirty.height);
+              _strokeCtx.drawImage(
+                result.canvas,
+                dirty.x,
+                dirty.y,
+                dirty.width,
+                dirty.height,
+                dirty.x,
+                dirty.y,
+                dirty.width,
+                dirty.height,
+              );
+            } else {
+              _strokeCtx.clearRect(
+                0,
+                0,
+                _strokeCanvas.width,
+                _strokeCanvas.height,
+              );
+              _strokeCtx.drawImage(result.canvas, 0, 0);
+            }
+            _hrRestoreNewestSampleTipOverlayBase(result.canvas);
+            _hrDrawNewestSampleTipOverlay(result.canvas);
+            if (drawStart != null)
+              _hrLcDuration("strokeCanvasDrawMs", performance.now() - drawStart);
           }
           if (_dbgOrderEntry) {
             _dbgOrderEntry.overlayShown = false;
@@ -13641,6 +14223,9 @@ let _hardRoundPreviewNeedsFollowup = false;
 let _hardRoundPreviewRequestedRenderer = null;
 function _hardRoundStartPreviewFlight(renderer, session) {
   if (session !== _activeStrokeSession || !_inStroke) return false;
+  const flightStart = _hrLcActive() ? performance.now() : null;
+  _hrLcInc("previewFlightStarted");
+  _hrLcTime("previewFlightStarted", flightStart || performance.now());
   _hardRoundFlushPending(renderer);
   const flightToken = { sessionId: session, renderer };
   _hardRoundPreviewInFlight = true;
@@ -13648,6 +14233,11 @@ function _hardRoundStartPreviewFlight(renderer, session) {
   _hardRoundPreviewNeedsFollowup = false;
   Promise.resolve(_hardRoundPresentLivePreview(renderer)).finally(() => {
     if (_hardRoundPreviewInFlightToken !== flightToken) return;
+    if (flightStart != null) {
+      _hrLcInc("previewFlightCompleted");
+      _hrLcTime("previewFlightCompleted");
+      _hrLcDuration("previewFlightMs", performance.now() - flightStart);
+    }
     _hardRoundPreviewInFlight = false;
     _hardRoundPreviewInFlightToken = null;
     const requestedRenderer = _hardRoundPreviewRequestedRenderer;
@@ -13660,8 +14250,12 @@ function _hardRoundStartPreviewFlight(renderer, session) {
       requestedRenderer &&
       _hardRoundPreviewSession === _activeStrokeSession &&
       _inStroke
-    )
-      _hardRoundRequestLivePreview(requestedRenderer);
+    ) {
+      _hrLcInc("followupStarted");
+      if (window.HardRoundDebugImmediateLiveFollowup)
+        _hardRoundStartPreviewFlight(requestedRenderer, _activeStrokeSession);
+      else _hardRoundRequestLivePreview(requestedRenderer);
+    }
   });
   return true;
 }
@@ -13727,9 +14321,11 @@ function _hardRoundSchedulePreviewFrame(renderer) {
 }
 function _hardRoundRequestLivePreview(renderer, immediate = false) {
   if (!renderer || !_inStroke || !_strokeCtx || !_strokeCanvas) return;
+  _hrLcInc("previewRequest");
   _hardRoundPreviewRequestedRenderer = renderer;
   _hardRoundPreviewSession = _activeStrokeSession;
   if (_hardRoundPreviewInFlight) {
+    _hrLcInc("followupRequested");
     _hardRoundPreviewNeedsFollowup = true;
     return;
   }
@@ -15197,6 +15793,12 @@ function _brushPointerDown(e) {
         _hrDebugBadge(window.HardRoundDebug);
       })();
       _hardRoundPendingRenderSegments.length = 0;
+      _hardRoundPendingRenderSegmentTimes.length = 0;
+      _hrTipLagLastRenderedEndpoint = null;
+      _hrTipLagLastFlushedEndpoint = null;
+      _hrTipLagLastDisplayedEndpoint = null;
+      _hrNewestSampleTipTarget = null;
+      _hrNewestSampleTipOverlayDirty = null;
       _hardRoundNextStampIsFirst = true;
       _hardRoundStampSegments([beginSeg], e);
       // Preserve the original immediate first-dab behavior; only movement
@@ -15502,6 +16104,14 @@ function _handleMoveEvent(e) {
     typeof e.getCoalescedEvents === "function" && e.getCoalescedEvents().length
       ? e.getCoalescedEvents()
       : [e];
+  if (_hrLcActive()) {
+    const type = e.type || "pointermove";
+    if (type === "pointerrawupdate" || type === "pointermove") {
+      _hrLcInc(type);
+      _hrLcTime(type);
+      _hrLcInc("coalescedSamples", events.length);
+    }
+  }
   _brushDiagPerfNote("raw-samples", { count: events.length });
   if (_hrMtCoalesceStart != null)
     _hrMtRecord("getCoalescedEvents", _hrMtCoalesceStart, performance.now());
@@ -15551,7 +16161,18 @@ function _handleMoveEvent(e) {
       Number.isFinite(ev.timeStamp) && ev.timeStamp > 0
         ? ev.timeStamp
         : performance.now();
+    if (_hrTlActive()) {
+      _hrTlRecordStabilization();
+      _hrTlRecordRaw(raw.x, raw.y, evTime, e.type || "pointermove", {
+        clientX: ev.clientX,
+        clientY: ev.clientY,
+      });
+      _hrTlData().latest.coalesced = _hrTlPoint(raw.x, raw.y, evTime, {
+        type: ev.type || e.type || "coalesced",
+      });
+    }
     const p = _stabilizePoint(raw.x, raw.y, evTime);
+    _hrTlRecordStage("stabilized", p.x, p.y, evTime);
     if (_hardRoundStrokeActive)
       _hrInputLatencyNote(_activeStrokeSession, "firstStabilizerOutputTime");
     if (_hardRoundStrokeActive)

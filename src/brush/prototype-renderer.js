@@ -1343,6 +1343,7 @@
 
     reset() {
       if (!this.ready) return;
+      this._liveDirty = null;
       // Phase 11B.4 TEMP DIAGNOSTIC: bump a generation counter every time
       // strokeMaskTex is cleared (real bookkeeping already done by this
       // method -- beginStroke()/cancelStroke() are its only callers). Read
@@ -1363,6 +1364,42 @@
       });
       pass.end();
       this.device.queue.submit([enc.finish()]);
+    }
+
+    _unionLiveDirty(x, y, w, h) {
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return;
+      const x0 = Math.max(0, Math.floor(x));
+      const y0 = Math.max(0, Math.floor(y));
+      const x1 = Math.min(this.w, Math.ceil(x + w));
+      const y1 = Math.min(this.h, Math.ceil(y + h));
+      if (x1 <= x0 || y1 <= y0) return;
+      if (!this._liveDirty) this._liveDirty = { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+      else {
+        const d = this._liveDirty;
+        const dx0 = Math.min(d.x, x0);
+        const dy0 = Math.min(d.y, y0);
+        const dx1 = Math.max(d.x + d.width, x1);
+        const dy1 = Math.max(d.y + d.height, y1);
+        this._liveDirty = { x: dx0, y: dy0, width: dx1 - dx0, height: dy1 - dy0 };
+      }
+    }
+
+    noteLiveSegmentDirty(seg) {
+      if (!seg) return;
+      const r0 = Math.max(0, Number(seg.r0) || 0);
+      const r1 = Math.max(0, Number(seg.r1) || 0);
+      const pad = 3;
+      const x0 = Math.min(seg.x0 - r0, seg.x1 - r1) - pad;
+      const y0 = Math.min(seg.y0 - r0, seg.y1 - r1) - pad;
+      const x1 = Math.max(seg.x0 + r0, seg.x1 + r1) + pad;
+      const y1 = Math.max(seg.y0 + r0, seg.y1 + r1) + pad;
+      this._unionLiveDirty(x0, y0, x1 - x0, y1 - y0);
+    }
+
+    consumeLiveDirtyRegion() {
+      const d = this._liveDirty;
+      this._liveDirty = null;
+      return d ? { x: d.x, y: d.y, width: d.width, height: d.height } : null;
     }
 
     drawSegment(seg) {
@@ -2017,6 +2054,11 @@
     // as the CPU backend's resolveInto().
     async resolveInto(outCtx, rgb, composite) {
       if (!this.ready) return false;
+      const cadenceOn =
+        typeof window !== "undefined" &&
+        !!window.HardRoundDebugLiveCadence &&
+        typeof window.HardRoundLiveCadenceNote === "function";
+      const cadenceStart = cadenceOn ? performance.now() : null;
       const device = this.device;
       const resolveTex = device.createTexture({
         size: [this.w, this.h],
@@ -2054,7 +2096,9 @@
       );
       device.queue.submit([enc.finish()]);
 
+      const mapStart = cadenceOn ? performance.now() : null;
       await readBuf.mapAsync(GPUMapMode.READ);
+      const mapDone = cadenceOn ? performance.now() : null;
       const mapped = new Uint8Array(readBuf.getMappedRange());
       const img = outCtx.createImageData(this.w, this.h);
       const d = img.data;
@@ -2073,11 +2117,117 @@
           d[dstOff + 3] = Math.round(coverage * 255);
         }
       }
+      const putStart = cadenceOn ? performance.now() : null;
       outCtx.putImageData(img, 0, 0);
+      const putDone = cadenceOn ? performance.now() : null;
       readBuf.unmap();
       readBuf.destroy();
       resolveTex.destroy();
+      if (cadenceOn) {
+        window.HardRoundLiveCadenceNote("gpu-resolve-into", {
+          totalMs: putDone - cadenceStart,
+          mapAsyncMs: mapDone - mapStart,
+          pixelConversionMs: putStart - mapDone,
+          putImageDataMs: putDone - putStart,
+          cpuPixelConversionPutImageDataMs: putDone - mapDone,
+          fullFramePixels: this.w * this.h,
+          dirtyPixels: this.w * this.h,
+          partial: false,
+        });
+      }
       return true;
+    }
+
+    async resolveDirtyInto(outCtx, rgb, composite, dirtyRegion) {
+      if (!this.ready || !dirtyRegion) return null;
+      const ox = Math.max(0, Math.floor(dirtyRegion.x || 0));
+      const oy = Math.max(0, Math.floor(dirtyRegion.y || 0));
+      const ow = Math.min(this.w - ox, Math.ceil(dirtyRegion.width || 0));
+      const oh = Math.min(this.h - oy, Math.ceil(dirtyRegion.height || 0));
+      if (ow <= 0 || oh <= 0) return null;
+      const cadenceOn =
+        typeof window !== "undefined" &&
+        !!window.HardRoundDebugLiveCadence &&
+        typeof window.HardRoundLiveCadenceNote === "function";
+      const cadenceStart = cadenceOn ? performance.now() : null;
+      const device = this.device;
+      const resolveTex = device.createTexture({
+        size: [this.w, this.h],
+        format: "rgba8unorm",
+        usage:
+          GPUTextureUsage.RENDER_ATTACHMENT |
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_SRC,
+      });
+      const enc = device.createCommandEncoder();
+      const pass = enc.beginRenderPass({
+        colorAttachments: [
+          {
+            view: resolveTex.createView(),
+            loadOp: "clear",
+            storeOp: "store",
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          },
+        ],
+      });
+      pass.setPipeline(this.blitPipeline);
+      pass.setBindGroup(0, this.blitBindGroup);
+      pass.draw(3);
+      pass.end();
+
+      const bytesPerRow = Math.ceil((ow * 4) / 256) * 256;
+      const readBuf = device.createBuffer({
+        size: bytesPerRow * oh,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+      });
+      enc.copyTextureToBuffer(
+        { texture: resolveTex, origin: { x: ox, y: oy } },
+        { buffer: readBuf, bytesPerRow },
+        [ow, oh],
+      );
+      device.queue.submit([enc.finish()]);
+
+      const mapStart = cadenceOn ? performance.now() : null;
+      await readBuf.mapAsync(GPUMapMode.READ);
+      const mapDone = cadenceOn ? performance.now() : null;
+      const mapped = new Uint8Array(readBuf.getMappedRange());
+      const img = outCtx.createImageData(ow, oh);
+      const d = img.data;
+      const isErase = composite === "erase";
+      const cr = isErase ? 0 : rgb[0],
+        cg = isErase ? 0 : rgb[1],
+        cb = isErase ? 0 : rgb[2];
+      for (let y = 0; y < oh; y++) {
+        for (let x = 0; x < ow; x++) {
+          const srcOff = y * bytesPerRow + x * 4;
+          const dstOff = (y * ow + x) * 4;
+          const coverage = mapped[srcOff] / 255;
+          d[dstOff] = cr;
+          d[dstOff + 1] = cg;
+          d[dstOff + 2] = cb;
+          d[dstOff + 3] = Math.round(coverage * 255);
+        }
+      }
+      const putStart = cadenceOn ? performance.now() : null;
+      outCtx.putImageData(img, ox, oy);
+      const putDone = cadenceOn ? performance.now() : null;
+      readBuf.unmap();
+      readBuf.destroy();
+      resolveTex.destroy();
+      if (cadenceOn) {
+        window.HardRoundLiveCadenceNote("gpu-resolve-into", {
+          totalMs: putDone - cadenceStart,
+          mapAsyncMs: mapDone - mapStart,
+          pixelConversionMs: putStart - mapDone,
+          putImageDataMs: putDone - putStart,
+          cpuPixelConversionPutImageDataMs: putDone - mapDone,
+          dirtyRegion: { x: ox, y: oy, width: ow, height: oh },
+          fullFramePixels: this.w * this.h,
+          dirtyPixels: ow * oh,
+          partial: true,
+        });
+      }
+      return { x: ox, y: oy, width: ow, height: oh };
     }
 
     // TEMP DIAGNOSTIC (Phase 11A.25): renders the CURRENT strokeMaskTex
@@ -2739,8 +2889,14 @@
         if (!seg) continue;
         this._rgb = seg.rgb || this._rgb;
         this._composite = seg.composite || this._composite;
-        if (this._usingGpu) this.gpu.drawSegment(seg);
-        else this.cpu.drawSegment(seg);
+        if (this._usingGpu) {
+          if (
+            typeof window !== "undefined" &&
+            window.HardRoundDebugGpuDirtyLiveReadback
+          )
+            this.gpu.noteLiveSegmentDirty(seg);
+          this.gpu.drawSegment(seg);
+        } else this.cpu.drawSegment(seg);
       }
       this._segmentCount += segments.reduce(
         (count, seg) => count + (seg ? 1 : 0),
@@ -2902,12 +3058,27 @@
             { segmentCount: this._segmentCount },
             meta || {},
           );
-          await this._resolveToOutput(true, _diagMeta);
+          let dirtyRegion = null;
+          if (
+            typeof window !== "undefined" &&
+            window.HardRoundDebugGpuDirtyLiveReadback
+          ) {
+            dirtyRegion = this.gpu.consumeLiveDirtyRegion();
+            if (dirtyRegion)
+              dirtyRegion = await this.gpu.resolveDirtyInto(
+                this._outCtx,
+                this._rgb,
+                this._composite,
+                dirtyRegion,
+              );
+          }
+          if (!dirtyRegion) await this._resolveToOutput(true, _diagMeta);
           return {
             canvas: this._outCanvas,
             composite: this._composite,
             segmentCount: this._segmentCount,
             canvasLivePresentation: true,
+            dirtyRegion: dirtyRegion || null,
           };
         }
         // Phase 11B.3 TEMP DIAGNOSTIC (opt-in, default off): when

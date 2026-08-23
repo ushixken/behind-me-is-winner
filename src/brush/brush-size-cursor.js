@@ -46,6 +46,8 @@
     window.BrushCursorTrackingLog = [];
   if (typeof window.BrushCursorDebugNativeFlash === "undefined")
     window.BrushCursorDebugNativeFlash = false;
+  if (typeof window.BrushCursorDebugImmediateRawPosition === "undefined")
+    window.BrushCursorDebugImmediateRawPosition = false;
   if (!Array.isArray(window.BrushCursorNativeFlashLog))
     window.BrushCursorNativeFlashLog = [];
 
@@ -386,6 +388,31 @@
     filteredPosition(frameTime);
     cursorCanvas.style.left = renderX + "px";
     cursorCanvas.style.top = renderY + "px";
+    window.BrushCursorLatestPosition = {
+      rawX: lastX,
+      rawY: lastY,
+      renderX,
+      renderY,
+      time: Number.isFinite(frameTime) ? frameTime : performance.now(),
+      immediate: false,
+    };
+  }
+  function setImmediateRawPosition() {
+    renderX = lastX;
+    renderY = lastY;
+    hasRendered = true;
+    suspectX = null;
+    suspectY = null;
+    cursorCanvas.style.left = renderX + "px";
+    cursorCanvas.style.top = renderY + "px";
+    window.BrushCursorLatestPosition = {
+      rawX: lastX,
+      rawY: lastY,
+      renderX,
+      renderY,
+      time: performance.now(),
+      immediate: true,
+    };
   }
   function prepare(cssSize) {
     const dpr = Math.max(1, window.devicePixelRatio || 1),
@@ -641,6 +668,11 @@
     }
     lastX = event.clientX;
     lastY = event.clientY;
+    if (
+      window.BrushCursorDebugImmediateRawPosition &&
+      (event.type === "pointerrawupdate" || event.type === "pointermove")
+    )
+      setImmediateRawPosition();
     trace(event, true, "", { latestPointerTime });
     if (!cursorRaf)
       cursorRaf = requestAnimationFrame((frameTime) => {

@@ -274,7 +274,11 @@ class PrototypeStrokeCore {
 
   _computeInternalStabilization() {
     const userAmount = clamp01(this.settings.stabilization);
-    const zoomMinimum = zoomStabilizationMinimum(this.settings.zoom);
+    const zoomMinimum =
+      typeof globalThis !== "undefined" &&
+      globalThis.HardRoundDebugDisablePrototypeZoomMinimum
+        ? 0
+        : zoomStabilizationMinimum(this.settings.zoom);
     const compensationWeight = zoomCompensationWeight(userAmount);
     return Math.min(
       1,
