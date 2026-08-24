@@ -28,6 +28,8 @@
     cursorRaf = 0;
   let latestSourceEventType = "",
     latestSourceEventTime = -Infinity;
+  let lastPenRawWallTime = -Infinity,
+    lastPenRawPointerId = null;
   // After the window regains focus (e.g. alt-tab back), some browsers replay
   // the FIRST pointer event with the coordinates the OS cursor had *before*
   // the window lost focus (their internal pointer-position cache only gets
@@ -46,8 +48,6 @@
     window.BrushCursorTrackingLog = [];
   if (typeof window.BrushCursorDebugNativeFlash === "undefined")
     window.BrushCursorDebugNativeFlash = false;
-  if (typeof window.BrushCursorDebugImmediateRawPosition === "undefined")
-    window.BrushCursorDebugImmediateRawPosition = false;
   if (!Array.isArray(window.BrushCursorNativeFlashLog))
     window.BrushCursorNativeFlashLog = [];
 
@@ -339,6 +339,27 @@
   // immediately. Dedupe by rAF timestamp so the filter only advances once
   // per real animation frame no matter how many callers ask for it.
   let lastFilteredFrameTime = -1;
+  function applyCursorPosition(x, y, immediate, eventTime) {
+    cursorCanvas.style.left = x + "px";
+    cursorCanvas.style.top = y + "px";
+    const styleWriteTime = performance.now();
+    window.BrushCursorLatestPosition = {
+      rawX: lastX,
+      rawY: lastY,
+      renderX: x,
+      renderY: y,
+      time: styleWriteTime,
+      latestEventTimestamp: Number.isFinite(eventTime)
+        ? eventTime
+        : latestSourceEventTime,
+      latestStyleWriteTime: styleWriteTime,
+      eventToStyleWriteMs: Number.isFinite(eventTime)
+        ? styleWriteTime - eventTime
+        : null,
+      immediate: !!immediate,
+      styleMode: "leftTop",
+    };
+  }
   function filteredPosition(frameTime) {
     if (typeof frameTime === "number") {
       if (frameTime === lastFilteredFrameTime) return;
@@ -386,16 +407,7 @@
   }
   function setPosition(frameTime) {
     filteredPosition(frameTime);
-    cursorCanvas.style.left = renderX + "px";
-    cursorCanvas.style.top = renderY + "px";
-    window.BrushCursorLatestPosition = {
-      rawX: lastX,
-      rawY: lastY,
-      renderX,
-      renderY,
-      time: Number.isFinite(frameTime) ? frameTime : performance.now(),
-      immediate: false,
-    };
+    applyCursorPosition(renderX, renderY, false, latestSourceEventTime);
   }
   function setImmediateRawPosition() {
     renderX = lastX;
@@ -403,16 +415,33 @@
     hasRendered = true;
     suspectX = null;
     suspectY = null;
-    cursorCanvas.style.left = renderX + "px";
-    cursorCanvas.style.top = renderY + "px";
-    window.BrushCursorLatestPosition = {
-      rawX: lastX,
-      rawY: lastY,
-      renderX,
-      renderY,
-      time: performance.now(),
-      immediate: true,
-    };
+    applyCursorPosition(renderX, renderY, true, latestSourceEventTime);
+  }
+  function newestCoalescedPositionEvent(event) {
+    if (!event || typeof event.getCoalescedEvents !== "function") return event;
+    let events = null;
+    try {
+      events = event.getCoalescedEvents();
+    } catch (_) {
+      events = null;
+    }
+    if (!events || !events.length) return event;
+    return events[events.length - 1] || event;
+  }
+  function shouldUseImmediatePenPosition(event) {
+    if (!event || event.pointerType !== "pen") return false;
+    if (event.type === "pointerrawupdate") return true;
+    if (event.type !== "pointermove") return false;
+    // Fallback path for browsers/devices that do not deliver pointerrawupdate.
+    // If raw pen input was just seen, pointermove is often a later-dispatched
+    // compatibility event carrying an older/coarser sample; don't let it write
+    // a second stale position over the lower-latency raw sample.
+    if (
+      lastPenRawPointerId === event.pointerId &&
+      performance.now() - lastPenRawWallTime < 50
+    )
+      return false;
+    return true;
   }
   function prepare(cssSize) {
     const dpr = Math.max(1, window.devicePixelRatio || 1),
@@ -629,6 +658,7 @@
     nativeFlashRecord(event, event.type);
     if (window.HardRoundSmartPointerupTimingNote)
       window.HardRoundSmartPointerupTimingNote("pen-event", event);
+    const positionEvent = newestCoalescedPositionEvent(event);
     const active = strokeActive(),
       target = event.target;
     const inCanvas = !!(
@@ -639,8 +669,10 @@
       trace(event, false, "outside-canvas-and-no-stroke");
       return;
     }
-    const eventTime = Number.isFinite(event.timeStamp)
-      ? event.timeStamp
+    const eventTime = Number.isFinite(positionEvent.timeStamp)
+      ? positionEvent.timeStamp
+      : Number.isFinite(event.timeStamp)
+        ? event.timeStamp
       : performance.now();
     // NOTE: we intentionally do NOT reject events whose timeStamp looks
     // "older" than the last one. Browsers with anti-fingerprinting timestamp
@@ -657,6 +689,11 @@
     latestSourceEventTime = eventTime;
     hovering = inCanvas || active;
     lastPointerType = event.pointerType || lastPointerType;
+    const immediatePenPosition = shouldUseImmediatePenPosition(event);
+    if (event.pointerType === "pen" && event.type === "pointerrawupdate") {
+      lastPenRawWallTime = performance.now();
+      lastPenRawPointerId = event.pointerId;
+    }
     if (awaitingFocusResync) {
       // Discard just this one sample's position; everything else about the
       // event (hover state, timing, stroke bookkeeping) is still honored.
@@ -666,11 +703,17 @@
       });
       return;
     }
-    lastX = event.clientX;
-    lastY = event.clientY;
+    const skipStalePenMovePosition =
+      event.pointerType === "pen" &&
+      event.type === "pointermove" &&
+      !immediatePenPosition;
+    if (!skipStalePenMovePosition) {
+      lastX = positionEvent.clientX;
+      lastY = positionEvent.clientY;
+    }
     if (
-      window.BrushCursorDebugImmediateRawPosition &&
-      (event.type === "pointerrawupdate" || event.type === "pointermove")
+      !skipStalePenMovePosition &&
+      immediatePenPosition
     )
       setImmediateRawPosition();
     trace(event, true, "", { latestPointerTime });
