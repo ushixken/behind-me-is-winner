@@ -263,8 +263,9 @@
     _sharedTrajectoryZoomMinimumDisabledForPosition(userAmount) {
       return (
         userAmount === 0 &&
-        typeof globalThis !== "undefined" &&
-        !!globalThis.HardRoundDebugDisableSharedTrajectoryZoomMinimum
+        (this.settings.positionAlreadyStabilized === true ||
+          (typeof globalThis !== "undefined" &&
+            !!globalThis.HardRoundDebugDisableSharedTrajectoryZoomMinimum))
       );
     }
 
@@ -362,7 +363,8 @@
     _effectiveStabilizationAmount(kind = "position") {
       const uAmount = Math.max(0, Math.min(1, this.settings.stabilization || 0));
       const zMin =
-        kind === "position" && this._sharedTrajectoryZoomMinimumDisabledForPosition(uAmount)
+        (kind === "position" && this._sharedTrajectoryZoomMinimumDisabledForPosition(uAmount)) ||
+        (kind === "pressure" && uAmount === 0 && this.settings.pressureAlreadyStabilized === true)
           ? 0
           : zoomStabilizationMinimum(this.settings.zoom || 1.0);
       const compW = zoomCompensationWeight(uAmount);
@@ -394,6 +396,8 @@
       return {
         uiAmount,
         zoom: this.settings.zoom || 1.0,
+        positionAlreadyStabilized: this.settings.positionAlreadyStabilized === true,
+        pressureAlreadyStabilized: this.settings.pressureAlreadyStabilized === true,
         positionZoomMinimumDisabled,
         positionWindowOverride:
           positionWindowSelection.source === "fixed"
@@ -1178,6 +1182,21 @@
     tickHold(dtMs) {
       if (!this.drawing || !this.lastInputRaw || !this.lastRaw) return [];
       if (shortLookaheadEnabled() || curveReconstructionEnabled()) return [];
+      if (oneEuroEnabled(this.settings) && this.oneEuro) {
+        // Raw One Euro input bypasses smoothBuf. Replaying that buffer here
+        // would reconnect the stroke to its old, pre-filter position.
+        const alpha = this._oneEuroAlpha(oneEuroConfig().minCutoff,
+          Math.max(0, Math.min(dtMs, 100)) / 1000);
+        const previous = this.lastRaw;
+        this.oneEuro.x += (this.lastInputRaw.x - this.oneEuro.x) * alpha;
+        this.oneEuro.y += (this.lastInputRaw.y - this.oneEuro.y) * alpha;
+        this.lastRaw = { x: this.oneEuro.x, y: this.oneEuro.y };
+        this.delayedPressure = this._pushPressureBuf(this.lastInputPressure);
+        if (Math.hypot(previous.x - this.lastRaw.x, previous.y - this.lastRaw.y) <= 1e-4)
+          return [];
+        return [{ ...this.lastRaw, pressure: this.delayedPressure,
+          timeStamp: performance.now(), _debugSeq: this.oneEuroRepresentedSeq }];
+      }
       const dt = Math.min(dtMs, 100);
       const catchUpDurationMs = 350;
       const ticksPerMs = this._movingAverageAmount("position") / catchUpDurationMs;

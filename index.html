@@ -14,7 +14,86 @@
     <link rel="stylesheet" href="src/timeline/audio-slip-tool.css" />
     <link rel="stylesheet" href="src/timeline/audio-import.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    <script src="src/core/pen-input-relay.js"></script>
+    <script src="src/core/pen-input-relay.js" defer></script>
+
+    <!-- ── JavaScript Modules ───────────────────────────────────── -->
+    <script src="src/ui/site-dialog.js" defer></script>
+    <script src="src/ui/transient-manager.js" defer></script>
+    <script src="src/core/platform-input.js" defer></script>
+    <script src="src/core/rotation-snap.js" defer></script>
+    <script src="src/core/core-state.js" defer></script>
+    <script src="src/core/display-backend.js" defer></script>
+    <script src="src/core/overlay-renderer.js" defer></script>
+    <script src="src/debug/brush-latency-profiler.js" defer></script>
+    <script src="src/ui/cursor-prefs.js" defer></script>
+    <script src="src/brush/brush-size-unit.js" defer></script>
+    <script src="src/brush/stroke-trajectory-core.js" defer></script>
+    <script src="src/brush/prototype-stroke-core.js" defer></script>
+    <script src="src/brush/hard-round-adapter.js" defer></script>
+    <script src="src/brush/hard-round-capsule-math.js" defer></script>
+    <script src="src/brush/hard-round-capsule-renderer.js" defer></script>
+    <script src="src/brush/hard-round-capsule-gpu.js" defer></script>
+    <script src="src/brush/prototype-renderer.js" defer></script>
+    <script src="src/brush/custom-tip-gpu-resources.js" defer></script>
+    <script src="src/brush/custom-tip-gpu-renderer.js" defer></script>
+    <script src="src/brush/brush-engine.js" defer></script>
+    <script src="src/smart-raster/smart-raster-cm.js" defer></script>
+    <script src="src/smart-raster/smart-raster-layer.js" defer></script>
+    <script src="src/smart-raster/smart-raster-v4.js" defer></script>
+    <script src="src/ui/panels.js" defer></script>
+    <script src="src/smart-raster/smart-raster-typed.js" defer></script>
+    <script src="src/smart-raster/smart-raster-v4-shadow.js" defer></script>
+    <script src="src/ui/tools-color.js" defer></script>
+    <script src="src/core/palette.js" defer></script>
+    <script src="src/brush/brush-presets.js" defer></script>
+    <script src="src/timeline/timeline-scrub-controller.js" defer></script>
+    <script src="src/timeline/timeline.js" defer></script>
+    <script src="src/timeline/audio-clip-time-mapping.js" defer></script>
+    <script src="src/timeline/audio-waveform-envelope.js" defer></script>
+    <script src="src/timeline/audio-timeline.js" defer></script>
+    <script src="src/timeline/audio-clips-advanced.js" defer></script>
+    <script src="src/timeline/audio-waveform-height.js" defer></script>
+    <script src="src/timeline/audio-split-tool.js" defer></script>
+    <script src="src/timeline/audio-stretch-tool.js" defer></script>
+    <script src="src/timeline/audio-slip-tool.js" defer></script>
+    <script src="src/timeline/audio-import.js" defer></script>
+    <script src="src/timeline/audio-playback.js" defer></script>
+    <script src="src/core/layers.js" defer></script>
+    <script src="src/core/project-io.js" defer></script>
+    <script src="src/core/project-recovery.js" defer></script>
+    <script src="src/timeline/keyframe-switcher.js" defer></script>
+    <script src="src/timeline/keyframe-exposure.js" defer></script>
+    <script src="src/geometry/freehand-closed-path.js" defer></script>
+    <script src="src/timeline/light-table.js" defer></script>
+    <script src="src/core/keybinds.js" defer></script>
+    <script src="src/selection/linked-pixel-selection.js" defer></script>
+    <script src="src/selection/lasso-selection.js" defer></script>
+    <script src="src/selection/rectangle-selection.js" defer></script>
+    <script src="src/selection/ellipse-selection.js" defer></script>
+    <script src="src/selection/magic-wand-selection.js" defer></script>
+    <script src="src/fill/fill-mask-engine.js" defer></script>
+    <script src="src/fill/binary-contour-smoothing.js" defer></script>
+    <script src="src/fill/bucket-fill-aa.js" defer></script>
+    <script src="src/fill/lasso-fill.js" defer></script>
+    <script src="src/brush/brush-size-drag.js" defer></script>
+    <script src="src/brush/brush-size-cursor.js" defer></script>
+    <script src="src/ui/ui-controls.js" defer></script>
+    <script src="src/ui/scrollbar-pointer-capture.js" defer></script>
+    <script src="src/ui/panel-pan.js" defer></script>
+    <script src="src/import/image-import.js" defer></script>
+    <script src="src/transform/perspective-controller.js" defer></script>
+    <script src="src/transform/transform-tool.js" defer></script>
+    <script src="src/transform/repeatable-transform.js" defer></script>
+    <script src="src/transform/resize-canvas-tool.js" defer></script>
+    <script src="src/selection/selection-move.js" defer></script>
+    <script src="src/ui/tool-groups.js" defer></script>
+    <script src="src/camera/camera-system.js" defer></script>
+    <script src="src/camera/camera-view.js" defer></script>
+    <script src="assets/vendor/gif.js/gif.js" defer></script>
+    <script src="src/export/gif-encoder.js" defer></script>
+    <script src="src/export/export-system.js" defer></script>
+    <script src="src/timeline/graph-editor.js" defer></script>
+    <script src="src/ui/local-storage-panel.js" defer></script>
   </head>
   <body>
     <!-- ── MENU BAR ────────────────────────────────────────────── -->
@@ -35,16 +114,29 @@
         </div>
       </div>
 
-      <input id="project-file-input" type="file" accept=".awproj,application/zip" hidden />
+      <input
+        id="project-file-input"
+        type="file"
+        accept=".awproj,application/zip"
+        hidden
+      />
 
       <div class="mb-item" id="mb-edit">
         Edit
         <div class="dropdown" id="dd-edit">
-          <div class="dd-item" id="dd-undo">Undo<span class="dd-shortcut">Ctrl+Z</span></div>
-          <div class="dd-item" id="dd-redo">Redo<span class="dd-shortcut">Ctrl+Y</span></div>
+          <div class="dd-item" id="dd-undo">
+            Undo<span class="dd-shortcut">Ctrl+Z</span>
+          </div>
+          <div class="dd-item" id="dd-redo">
+            Redo<span class="dd-shortcut">Ctrl+Y</span>
+          </div>
           <div class="dd-sep"></div>
-          <div class="dd-item" id="dd-cut">Cut Layer<span class="dd-shortcut">Ctrl+X</span></div>
-          <div class="dd-item" id="dd-copy">Copy Layer<span class="dd-shortcut">Ctrl+C</span></div>
+          <div class="dd-item" id="dd-cut">
+            Cut Layer<span class="dd-shortcut">Ctrl+X</span>
+          </div>
+          <div class="dd-item" id="dd-copy">
+            Copy Layer<span class="dd-shortcut">Ctrl+C</span>
+          </div>
           <div class="dd-item" id="dd-paste">
             Paste Layer<span class="dd-shortcut">Ctrl+V</span>
           </div>
@@ -104,7 +196,8 @@
           </div>
           <div class="dd-sep"></div>
           <div class="dd-item" id="dd-toggle-draw-mode">
-            <span class="dd-check" id="chk-draw-mode"></span>Draw Mode<span class="dd-shortcut"
+            <span class="dd-check" id="chk-draw-mode"></span>Draw Mode<span
+              class="dd-shortcut"
               >9</span
             >
           </div>
@@ -120,7 +213,9 @@
       <div class="mb-item" id="mb-settings">
         Settings
         <div class="dropdown" id="dd-settings">
-          <div class="dd-item" id="dd-canvas-settings">Canvas &amp; Background</div>
+          <div class="dd-item" id="dd-canvas-settings">
+            Canvas &amp; Background
+          </div>
           <div class="dd-item" id="dd-zoom-settings">Zoom Settings</div>
           <div class="dd-item" id="dd-keybind-settings">Keybinds</div>
         </div>
@@ -132,7 +227,9 @@
       <button class="tbtn" id="btn-undo" title="Undo Ctrl+Z">↩</button>
       <button class="tbtn" id="btn-redo" title="Redo Ctrl+Y">↪</button>
       <div class="tsep"></div>
-      <button class="tbtn" id="btn-flip-h" title="Flip Horizontal (H)">⇄</button>
+      <button class="tbtn" id="btn-flip-h" title="Flip Horizontal (H)">
+        ⇄
+      </button>
       <button class="tbtn" id="btn-flip-v" title="Flip Vertical (V)">⇅</button>
       <div class="tsep"></div>
       <div
@@ -147,7 +244,11 @@
     <!-- ── MAIN AREA ───────────────────────────────────────────── -->
     <div id="main-area">
       <div id="canvas-area">
-        <canvas id="webgpu-presentation-canvas" aria-hidden="true" hidden></canvas>
+        <canvas
+          id="webgpu-presentation-canvas"
+          aria-hidden="true"
+          hidden
+        ></canvas>
         <div id="canvas-wrap">
           <canvas id="composite-canvas"></canvas>
           <!-- display-canvas: what's actually shown on screen. composite-canvas stays
@@ -159,8 +260,16 @@
           <canvas id="display-canvas"></canvas>
           <canvas id="onion-canvas"></canvas>
           <canvas id="active-canvas"></canvas>
-          <canvas id="hard-round-gpu-overlay" aria-hidden="true" hidden></canvas>
-          <canvas id="custom-tip-gpu-overlay" aria-hidden="true" hidden></canvas>
+          <canvas
+            id="hard-round-gpu-overlay"
+            aria-hidden="true"
+            hidden
+          ></canvas>
+          <canvas
+            id="custom-tip-gpu-overlay"
+            aria-hidden="true"
+            hidden
+          ></canvas>
           <canvas id="transform-canvas"></canvas>
         </div>
         <!-- perspective-guide-canvas: sized to the VIEWPORT (canvas-area), not the
@@ -178,10 +287,15 @@
          only in this phase (pointer-events stay off). -->
         <canvas id="lt-transform-ui-canvas" aria-hidden="true"></canvas>
         <div id="camera-view-preview" aria-hidden="true" hidden>
-          <canvas id="camera-view-canvas" aria-label="Camera output preview"></canvas>
+          <canvas
+            id="camera-view-canvas"
+            aria-label="Camera output preview"
+          ></canvas>
           <div id="camera-view-empty" hidden>
             <span>No active camera</span>
-            <button id="camera-view-activate" type="button">Activate Camera</button>
+            <button id="camera-view-activate" type="button">
+              Activate Camera
+            </button>
           </div>
         </div>
         <div id="resize-canvas-settings" aria-hidden="true">
@@ -189,19 +303,39 @@
           <label class="rc-field"
             ><span>Width</span
             ><span class="rc-input-wrap"
-              ><input id="rc-width" type="number" min="1" max="32768" step="1" /><em>px</em></span
+              ><input
+                id="rc-width"
+                type="number"
+                min="1"
+                max="32768"
+                step="1"
+              /><em>px</em></span
             ></label
           >
           <label class="rc-field"
             ><span>Height</span
             ><span class="rc-input-wrap"
-              ><input id="rc-height" type="number" min="1" max="32768" step="1" /><em>px</em></span
+              ><input
+                id="rc-height"
+                type="number"
+                min="1"
+                max="32768"
+                step="1"
+              /><em>px</em></span
             ></label
           >
           <div class="rc-anchor-label">Anchor</div>
-          <div id="rc-anchor-grid" role="radiogroup" aria-label="Canvas resize anchor"></div>
+          <div
+            id="rc-anchor-grid"
+            role="radiogroup"
+            aria-label="Canvas resize anchor"
+          ></div>
         </div>
-        <div id="resize-canvas-actions" class="tf-floating-actions" aria-hidden="true">
+        <div
+          id="resize-canvas-actions"
+          class="tf-floating-actions"
+          aria-hidden="true"
+        >
           <button
             id="rc-confirm"
             class="tf-floating-action confirm"
@@ -242,14 +376,21 @@
         >
           <div class="fp-tabbar" style="display: none"></div>
           <div class="fp-titlebar">
-            <span class="fp-name">Tools</span><span class="fp-close" title="Close panel">✕</span>
+            <span class="fp-name">Tools</span
+            ><span class="fp-close" title="Close panel">✕</span>
           </div>
           <div class="fp-body-wrap">
             <div class="fp-body active" data-body="tools">
               <div id="tools-panel-body">
-                <button class="tbtn active" id="tp-btn-brush" title="Brush (B)">✏</button>
-                <button class="tbtn" id="tp-btn-eraser" title="Eraser (E)">⌫</button>
-                <button class="tbtn" id="tp-btn-fill" title="Fill (F)">■</button>
+                <button class="tbtn active" id="tp-btn-brush" title="Brush (B)">
+                  ✏
+                </button>
+                <button class="tbtn" id="tp-btn-eraser" title="Eraser (E)">
+                  ⌫
+                </button>
+                <button class="tbtn" id="tp-btn-fill" title="Fill (F)">
+                  ■
+                </button>
                 <button class="tbtn" id="tp-btn-line" title="Line (L)">
                   <span class="tool-group-main-icon">↖</span>
                 </button>
@@ -269,7 +410,9 @@
                     />
                   </svg>
                 </button>
-                <button class="tbtn" id="tp-btn-selection" title="Selection">&#x25CC;</button>
+                <button class="tbtn" id="tp-btn-selection" title="Selection">
+                  &#x25CC;
+                </button>
                 <button
                   class="tbtn"
                   id="tp-btn-smart-selection"
@@ -278,7 +421,13 @@
                 >
                   &#10022;
                 </button>
-                <button class="tbtn" id="tp-btn-transform" title="Transform (T)">⛶</button>
+                <button
+                  class="tbtn"
+                  id="tp-btn-transform"
+                  title="Transform (T)"
+                >
+                  ⛶
+                </button>
                 <button
                   class="tbtn"
                   id="tp-btn-canvas-resize"
@@ -296,7 +445,12 @@
                     />
                   </svg>
                 </button>
-                <button class="tbtn" id="tp-btn-camera" title="Camera" aria-label="Camera">
+                <button
+                  class="tbtn"
+                  id="tp-btn-camera"
+                  title="Camera"
+                  aria-label="Camera"
+                >
                   <svg viewBox="0 0 24 24" aria-hidden="true">
                     <rect
                       x="3.5"
@@ -349,14 +503,19 @@
         >
           <div class="fp-tabbar" style="display: none"></div>
           <div class="fp-titlebar">
-            <span class="fp-name">Color</span><span class="fp-close" title="Close panel">✕</span>
+            <span class="fp-name">Color</span
+            ><span class="fp-close" title="Close panel">✕</span>
           </div>
           <div class="fp-body-wrap">
             <div class="fp-body active" data-body="color">
               <div id="color-panel-body">
                 <!-- Wheel + inner shape + FG/BG swatches overlaid at bottom-left -->
                 <div class="cp-wheel-wrap">
-                  <canvas id="cp-wheel-canvas" width="240" height="240"></canvas>
+                  <canvas
+                    id="cp-wheel-canvas"
+                    width="240"
+                    height="240"
+                  ></canvas>
                   <canvas id="cp-sq-canvas"></canvas>
                   <!-- FG/BG/Transparent swatches — same group layout as Tools panel -->
                   <div id="cp-swatch-stack">
@@ -370,14 +529,21 @@
                       id="cp-sw-fg"
                       title="Foreground (click to edit)"
                     ></div>
-                    <div id="cp-sw-transparent" title="Set foreground transparent"></div>
+                    <div
+                      id="cp-sw-transparent"
+                      title="Set foreground transparent"
+                    ></div>
                   </div>
                 </div>
                 <!-- Shape + mode toggles: one row when large, two rows when small -->
                 <div class="cp-toggle-rows" id="cp-toggle-rows">
                   <div class="cp-toggle-row cp-shape-row">
-                    <button class="cp-toggle-btn active" id="cp-shape-square">■ Sq</button>
-                    <button class="cp-toggle-btn" id="cp-shape-triangle">▲ Tri</button>
+                    <button class="cp-toggle-btn active" id="cp-shape-square">
+                      ■ Sq
+                    </button>
+                    <button class="cp-toggle-btn" id="cp-shape-triangle">
+                      ▲ Tri
+                    </button>
                   </div>
                   <div class="cp-toggle-row cp-mode-row">
                     <button class="cp-toggle-btn" id="cp-mode-rgb">RGB</button>
@@ -387,7 +553,10 @@
                   </div>
                 </div>
                 <!-- Dynamic sliders (hidden by default; toggled by clicking mode buttons) -->
-                <div id="cp-sliders-wrap" style="display: none; flex-direction: column; gap: 4px">
+                <div
+                  id="cp-sliders-wrap"
+                  style="display: none; flex-direction: column; gap: 4px"
+                >
                   <div class="cp-slider-row">
                     <label id="cp-l1">R</label
                     ><input type="range" id="cp-s1" min="0" max="255" /><input
@@ -438,7 +607,8 @@
         >
           <div class="fp-tabbar" style="display: none"></div>
           <div class="fp-titlebar">
-            <span class="fp-name">Flipper</span><span class="fp-close" title="Close panel">✕</span>
+            <span class="fp-name">Flipper</span
+            ><span class="fp-close" title="Close panel">✕</span>
           </div>
           <div class="fp-body-wrap">
             <div
@@ -471,7 +641,8 @@
                   style="flex: 1"
                   title="Jump to previous keyframe"
                 >
-                  <span class="kfsw-nav-full">◀ Prev</span><span class="kfsw-nav-short">◀</span>
+                  <span class="kfsw-nav-full">◀ Prev</span
+                  ><span class="kfsw-nav-short">◀</span>
                 </button>
                 <button
                   class="tbtn"
@@ -479,7 +650,8 @@
                   style="flex: 1"
                   title="Jump to next keyframe"
                 >
-                  <span class="kfsw-nav-full">Next ▶</span><span class="kfsw-nav-short">▶</span>
+                  <span class="kfsw-nav-full">Next ▶</span
+                  ><span class="kfsw-nav-short">▶</span>
                 </button>
               </div>
               <div class="kfsw-flipthrough" id="kfsw-flipthrough">
@@ -504,14 +676,22 @@
                 <!-- <div class="tf-panel-label">Options</div> -->
                 <div class="kfsw-row">
                   <label for="kfsw-step">Frame step</label>
-                  <input type="number" id="kfsw-step" min="1" max="100" value="1" />
+                  <input
+                    type="number"
+                    id="kfsw-step"
+                    min="1"
+                    max="100"
+                    value="1"
+                  />
                 </div>
                 <label
                   class="kfsw-checkbox"
                   title="When checked, Prev/Next always move by the frame step and ignore keyframe positions entirely."
                 >
                   <input type="checkbox" id="kfsw-bypass" />
-                  <span><span class="kfsw-bypass-full">Enable </span>Bypass</span>
+                  <span
+                    ><span class="kfsw-bypass-full">Enable </span>Bypass</span
+                  >
                 </label>
               </div>
             </div>
@@ -527,7 +707,8 @@
         >
           <div class="fp-tabbar" style="display: none"></div>
           <div class="fp-titlebar">
-            <span class="fp-name">Exposure</span><span class="fp-close" title="Close panel">✕</span>
+            <span class="fp-name">Exposure</span
+            ><span class="fp-close" title="Close panel">✕</span>
           </div>
           <div class="fp-body-wrap">
             <div
@@ -538,22 +719,32 @@
               <div class="kfexp-info-box" id="kfexp-info-box">
                 <div class="tf-panel-label">Info</div>
                 <div class="kfexp-info" id="kfexp-info">
-                  Insert/Remove hold frames at the <b>current</b> keyframe only. Seek to a keyframe,
-                  set value, then Increase or Decrease.
+                  Insert/Remove hold frames at the <b>current</b> keyframe only.
+                  Seek to a keyframe, set value, then Increase or Decrease.
                 </div>
               </div>
               <div class="kfexp-controls">
-                <div class="tf-panel-label" id="kfexp-options-label">Options</div>
+                <div class="tf-panel-label" id="kfexp-options-label">
+                  Options
+                </div>
                 <div class="kfsw-row">
                   <label for="kfexp-amount">Frames</label>
-                  <input type="number" id="kfexp-amount" min="1" max="999" value="2" />
+                  <input
+                    type="number"
+                    id="kfexp-amount"
+                    min="1"
+                    max="999"
+                    value="2"
+                  />
                 </div>
                 <label
                   class="kfsw-checkbox"
                   title="When checked, forces the gap to the next keyframe to exactly the Exposure value."
                 >
                   <input type="checkbox" id="kfexp-bypass" />
-                  <span><span class="kfexp-bypass-full">Enable </span>Bypass</span>
+                  <span
+                    ><span class="kfexp-bypass-full">Enable </span>Bypass</span
+                  >
                 </label>
               </div>
               <div class="kfexp-buttons">
@@ -575,7 +766,9 @@
                 </button>
               </div>
               <div class="kfexp-hint-box" id="kfexp-hint-box">
-                <span class="kfexp-hint">Tip: assign shortcuts via Settings → Keybinds.</span>
+                <span class="kfexp-hint"
+                  >Tip: assign shortcuts via Settings → Keybinds.</span
+                >
               </div>
               <div class="kfexp-status" id="kfexp-status"></div>
             </div>
@@ -595,7 +788,11 @@
             ><span class="fp-close" title="Close panel">✕</span>
           </div>
           <div class="fp-body-wrap">
-            <div class="fp-body active" data-body="drawing-marks" style="flex-direction: column">
+            <div
+              class="fp-body active"
+              data-body="drawing-marks"
+              style="flex-direction: column"
+            >
               <div class="dm-mark-row">
                 <div class="dm-swatch-wrap">
                   <span class="dm-swatch" id="dm-swatch"></span>
@@ -654,7 +851,9 @@
           <div class="fp-body-wrap">
             <div class="fp-body active" data-body="onion-skin">
               <div class="onion-settings-row">
-                <label class="onion-color-control" title="Previous drawing color"
+                <label
+                  class="onion-color-control"
+                  title="Previous drawing color"
                   ><span>Previous</span
                   ><input
                     id="onion-previous-color"
@@ -674,7 +873,11 @@
                     aria-expanded="false"
                   >
                     <span id="onion-type-value">Drawings</span
-                    ><span class="ts-brush-blend-mode-chevron" aria-hidden="true">&#9662;</span>
+                    ><span
+                      class="ts-brush-blend-mode-chevron"
+                      aria-hidden="true"
+                      >&#9662;</span
+                    >
                   </button></label
                 >
                 <label
@@ -711,7 +914,11 @@
             ><span class="fp-close" title="Close panel">&times;</span>
           </div>
           <div class="fp-body-wrap">
-            <div class="fp-body active" data-body="light-table" style="flex-direction: column">
+            <div
+              class="fp-body active"
+              data-body="light-table"
+              style="flex-direction: column"
+            >
               <div class="lt-toolbar" id="lt-toolbar">
                 <div class="lt-toolbar-row lt-toolbar-row-main">
                   <div class="lt-toolbar-group lt-group-primary">
@@ -733,7 +940,9 @@
                       title="Delete the selected Light Table reference"
                     >
                       <svg viewBox="0 0 16 16" aria-hidden="true">
-                        <path d="M3 4h10M6.5 4V2.5h3V4M4.5 4l.6 9.5h5.8L11.5 4"></path>
+                        <path
+                          d="M3 4h10M6.5 4V2.5h3V4M4.5 4l.6 9.5h5.8L11.5 4"
+                        ></path>
                       </svg>
                       <span class="tlabel">Delete</span>
                     </button>
@@ -753,7 +962,10 @@
                     <span class="tlabel">Transform</span>
                   </button>
                 </div>
-                <div class="lt-toolbar-row lt-toolbar-row-transform" id="lt-transform-actions">
+                <div
+                  class="lt-toolbar-row lt-toolbar-row-transform"
+                  id="lt-transform-actions"
+                >
                   <div class="lt-toolbar-group lt-group-transform">
                     <button
                       type="button"
@@ -762,7 +974,9 @@
                       title="Flip Horizontal selected Light Table reference"
                     >
                       <svg viewBox="0 0 16 16" aria-hidden="true">
-                        <path d="M8 2v12M2 8l4-4M2 8l4 4M14 8l-4-4M14 8l-4 4"></path>
+                        <path
+                          d="M8 2v12M2 8l4-4M2 8l4 4M14 8l-4-4M14 8l-4 4"
+                        ></path>
                       </svg>
                       <span class="tlabel">Flip H</span>
                     </button>
@@ -773,7 +987,9 @@
                       title="Flip Vertical selected Light Table reference"
                     >
                       <svg viewBox="0 0 16 16" aria-hidden="true">
-                        <path d="M2 8h12M8 2l-4 4M8 2l4 4M8 14l-4-4M8 14l4-4"></path>
+                        <path
+                          d="M2 8h12M8 2l-4 4M8 2l4 4M8 14l-4-4M8 14l4-4"
+                        ></path>
                       </svg>
                       <span class="tlabel">Flip V</span>
                     </button>
@@ -784,7 +1000,9 @@
                       title="Reset transform for the selected Light Table reference"
                     >
                       <svg viewBox="0 0 16 16" aria-hidden="true">
-                        <path d="M3.5 8a4.5 4.5 0 1 0 1.3-3.2L3.5 3.5V7h3.5"></path>
+                        <path
+                          d="M3.5 8a4.5 4.5 0 1 0 1.3-3.2L3.5 3.5V7h3.5"
+                        ></path>
                       </svg>
                       <span class="tlabel">Reset</span>
                     </button>
@@ -868,7 +1086,14 @@
               <!-- Size bar -->
               <div id="bp-size-bar">
                 <label>Size</label>
-                <input type="range" id="bp-sz" min="1" max="2000" step="0.1" value="6" />
+                <input
+                  type="range"
+                  id="bp-sz"
+                  min="1"
+                  max="2000"
+                  step="0.1"
+                  value="6"
+                />
                 <span
                   class="size-val-edit"
                   id="bp-sz-val"
@@ -876,14 +1101,26 @@
                   tabindex="0"
                   >6</span
                 >
-                <button class="bp-icon-btn" id="btn-open-tool-settings" title="Tool Settings">
+                <button
+                  class="bp-icon-btn"
+                  id="btn-open-tool-settings"
+                  title="Tool Settings"
+                >
                   ⚙
                 </button>
               </div>
               <!-- Search + group/brush management -->
               <div id="bp-search-wrap">
-                <input id="bp-search" type="text" placeholder="🔍  Search brushes…" />
-                <button class="bp-icon-btn" id="bp-add-group" title="New group folder">
+                <input
+                  id="bp-search"
+                  type="text"
+                  placeholder="🔍  Search brushes…"
+                />
+                <button
+                  class="bp-icon-btn"
+                  id="bp-add-group"
+                  title="New group folder"
+                >
                   📁<span style="font-size: 8px; margin-left: 1px">+</span>
                 </button>
                 <button
@@ -902,14 +1139,25 @@
                 </button>
               </div>
               <!-- Scrollable grouped grid -->
-              <div id="brush-preset-grid" style="flex: 1; overflow-y: auto; overflow-x: hidden">
+              <div
+                id="brush-preset-grid"
+                style="flex: 1; overflow-y: auto; overflow-x: hidden"
+              >
                 <!-- populated by JS -->
               </div>
               <div id="bp-no-results">No brushes match your search.</div>
               <section class="tool-options-drawer tool-settings-drawer">
-                <button type="button" class="tool-options-drawer-header" aria-expanded="false">
-                  <span class="tool-options-drawer-label">TOOL SETTINGS · BRUSH</span>
-                  <span class="tool-options-drawer-chevron" aria-hidden="true">&#9652;</span>
+                <button
+                  type="button"
+                  class="tool-options-drawer-header"
+                  aria-expanded="false"
+                >
+                  <span class="tool-options-drawer-label"
+                    >TOOL SETTINGS · BRUSH</span
+                  >
+                  <span class="tool-options-drawer-chevron" aria-hidden="true"
+                    >&#9652;</span
+                  >
                 </button>
                 <div
                   class="tool-options-drawer-content ts-docked-simple-settings"
@@ -917,7 +1165,11 @@
                 ></div>
               </section>
             </div>
-            <div class="fp-body transform-subtools-body" data-body="transform" data-space-pan>
+            <div
+              class="fp-body transform-subtools-body"
+              data-body="transform"
+              data-space-pan
+            >
               <div class="tool-group-section-header">Transform Modes</div>
               <button
                 class="tf-mode-btn active"
@@ -945,9 +1197,17 @@
                 ⛶ Light Table Transform
               </button>
               <section class="tool-options-drawer">
-                <button type="button" class="tool-options-drawer-header" aria-expanded="false">
-                  <span class="tool-options-drawer-label">TRANSFORM OPTIONS</span>
-                  <span class="tool-options-drawer-chevron" aria-hidden="true">&#9652;</span>
+                <button
+                  type="button"
+                  class="tool-options-drawer-header"
+                  aria-expanded="false"
+                >
+                  <span class="tool-options-drawer-label"
+                    >TRANSFORM OPTIONS</span
+                  >
+                  <span class="tool-options-drawer-chevron" aria-hidden="true"
+                    >&#9652;</span
+                  >
                 </button>
                 <div class="tool-options-drawer-content" id="tf-options-body">
                   <!-- populated by JS, per current transform mode (see transform-tool.js) -->
@@ -1059,7 +1319,11 @@
               class="palette-style-layering-control"
               title="Render Smart Raster styles in Advanced Palette order."
             >
-              <input id="palette-style-layering" name="palette_style_layering" type="checkbox" />
+              <input
+                id="palette-style-layering"
+                name="palette_style_layering"
+                type="checkbox"
+              />
               <span>Style Layering</span>
             </label>
             <div class="palette-menu-sep" role="separator"></div>
@@ -1078,11 +1342,19 @@
             <button id="palette-duplicate" type="button">Duplicate</button>
             <div class="palette-menu-sep" role="separator"></div>
             <button id="palette-import" type="button">Import Palette</button>
-            <button id="palette-export-active" type="button">Export Active Palette</button>
-            <button id="palette-export-active-gpl" type="button">Export Active GPL</button>
-            <button id="palette-export-all" type="button">Export All Palettes</button>
+            <button id="palette-export-active" type="button">
+              Export Active Palette
+            </button>
+            <button id="palette-export-active-gpl" type="button">
+              Export Active GPL
+            </button>
+            <button id="palette-export-all" type="button">
+              Export All Palettes
+            </button>
             <div class="palette-menu-sep" role="separator"></div>
-            <button id="palette-delete" class="danger" type="button">Delete Palette</button>
+            <button id="palette-delete" class="danger" type="button">
+              Delete Palette
+            </button>
           </div>
           <div
             id="palette-toolbar-submenu"
@@ -1095,17 +1367,34 @@
             role="status"
           ></div>
           <div id="palette-rename-inline" class="palette-inline-editor hidden">
-            <input id="palette-rename-inline-input" type="text" aria-label="Palette name" />
+            <input
+              id="palette-rename-inline-input"
+              type="text"
+              aria-label="Palette name"
+            />
             <div class="palette-inline-actions">
               <button id="palette-rename-inline-ok" type="button">OK</button>
-              <button id="palette-rename-inline-cancel" type="button">Cancel</button>
+              <button id="palette-rename-inline-cancel" type="button">
+                Cancel
+              </button>
             </div>
           </div>
-          <div id="palette-delete-confirm" class="palette-delete-confirm hidden">
+          <div
+            id="palette-delete-confirm"
+            class="palette-delete-confirm hidden"
+          >
             <div id="palette-delete-confirm-text">Delete this palette?</div>
             <div class="palette-inline-actions">
-              <button id="palette-delete-confirm-ok" class="danger" type="button">Delete</button>
-              <button id="palette-delete-confirm-cancel" type="button">Cancel</button>
+              <button
+                id="palette-delete-confirm-ok"
+                class="danger"
+                type="button"
+              >
+                Delete
+              </button>
+              <button id="palette-delete-confirm-cancel" type="button">
+                Cancel
+              </button>
             </div>
           </div>
         </div>
@@ -1115,7 +1404,11 @@
           accept=".json,.gpl,application/json,text/plain"
           hidden
         />
-        <div id="palette-dropdown" class="palette-dropdown hidden" aria-label="Palette list"></div>
+        <div
+          id="palette-dropdown"
+          class="palette-dropdown hidden"
+          aria-label="Palette list"
+        ></div>
         <!-- LAYERS PANEL -->
         <div
           id="right-panel"
@@ -1125,14 +1418,21 @@
         >
           <div class="fp-tabbar" style="display: none"></div>
           <div class="fp-titlebar">
-            <span class="fp-name">Layers</span><span class="fp-close" title="Close panel">✕</span>
+            <span class="fp-name">Layers</span
+            ><span class="fp-close" title="Close panel">✕</span>
           </div>
           <div class="fp-body-wrap">
             <div class="fp-body active" data-body="layers">
               <div id="layer-panel-header">
                 <div id="layer-opacity-row">
                   <label>Opacity</label>
-                  <input type="range" id="layer-opacity-slider" min="0" max="100" value="100" />
+                  <input
+                    type="range"
+                    id="layer-opacity-slider"
+                    min="0"
+                    max="100"
+                    value="100"
+                  />
                   <span id="layer-opacity-val">100%</span>
                   <button
                     id="layer-del-btn"
@@ -1164,7 +1464,13 @@
               </div>
               <div id="layers-list" data-space-pan></div>
               <div id="layer-btns">
-                <button class="layer-add-btn" id="add-layer-btn" title="Add layer">+ Layer</button>
+                <button
+                  class="layer-add-btn"
+                  id="add-layer-btn"
+                  title="Add layer"
+                >
+                  + Layer
+                </button>
                 <button
                   class="layer-add-btn"
                   id="add-smart-raster-btn"
@@ -1172,7 +1478,13 @@
                 >
                   + Smart Raster
                 </button>
-                <button class="layer-add-btn" id="add-group-btn" title="Add group">📁 Group</button>
+                <button
+                  class="layer-add-btn"
+                  id="add-group-btn"
+                  title="Add group"
+                >
+                  📁 Group
+                </button>
               </div>
             </div>
           </div>
@@ -1207,7 +1519,9 @@
                 <path
                   d="M5.2 10.3A4.2 4.2 0 1 1 10.8 10.3c-.7.5-1 1-1.1 1.7H6.3c-.1-.7-.4-1.2-1.1-1.7Z"
                 ></path>
-                <path d="M6.4 14h3.2M8 0v1.2M1.7 2.6l.9.8M14.3 2.6l-.9.8"></path>
+                <path
+                  d="M6.4 14h3.2M8 0v1.2M1.7 2.6l.9.8M14.3 2.6l-.9.8"
+                ></path>
               </svg>
             </button>
           </div>
@@ -1216,21 +1530,28 @@
             <button class="tl-btn" id="btn-prev" title="First">⏮</button>
             <button class="tl-btn" id="btn-stepb" title="Step back">◀</button>
             <button class="tl-btn" id="btn-play">▶ Play</button>
-            <button class="tl-btn" id="btn-stepf" title="Step forward">▶</button>
+            <button class="tl-btn" id="btn-stepf" title="Step forward">
+              ▶
+            </button>
             <button class="tl-btn" id="btn-last" title="Last">⏭</button>
           </div>
           <div id="tl-controls-right">
             <span class="tlabel">FPS</span>
             <input type="range" id="fps-tl" min="1" max="24" value="24" />
             <span class="tval" id="fps-val" title="Click to set FPS">24</span>
-            <span id="frame-info" title="Click to set total frame count">Frame 1 / 63</span>
+            <span id="frame-info" title="Click to set total frame count"
+              >Frame 1 / 63</span
+            >
           </div>
         </div>
         <div id="tl-body">
           <div id="tl-animation-pane">
             <div id="tl-labels-col">
               <div id="tl-labels-ruler-spacer">
-                <div id="tl-hide-zone" title="Drag a layer here to hide it from the timeline">
+                <div
+                  id="tl-hide-zone"
+                  title="Drag a layer here to hide it from the timeline"
+                >
                   ⌫ Hide
                 </div>
               </div>
@@ -1255,8 +1576,14 @@
           ></div>
           <section id="audio-timeline" aria-label="Audio Tracks">
             <div id="audio-timeline-header">
-              <button id="audio-timeline-collapse" type="button" aria-expanded="true">
-                <span class="audio-timeline-disclosure" aria-hidden="true">▼</span>
+              <button
+                id="audio-timeline-collapse"
+                type="button"
+                aria-expanded="true"
+              >
+                <span class="audio-timeline-disclosure" aria-hidden="true"
+                  >▼</span
+                >
                 <span>Audio Tracks</span>
               </button>
               <div
@@ -1276,7 +1603,10 @@
               </div>
             </div>
             <div id="audio-timeline-body">
-              <div id="audio-timeline-labels" aria-label="Audio track list"></div>
+              <div
+                id="audio-timeline-labels"
+                aria-label="Audio track list"
+              ></div>
               <div id="audio-timeline-grid-viewport">
                 <div id="audio-timeline-grid"></div>
               </div>
@@ -1300,11 +1630,25 @@
         <section id="graph-editor" hidden>
           <div id="graph-editor-toolbar">
             <div class="graph-mode-switch" role="group" aria-label="Graph type">
-              <button type="button" class="graph-mode-btn active" data-graph-mode="value">
+              <button
+                type="button"
+                class="graph-mode-btn active"
+                data-graph-mode="value"
+              >
                 Value</button
-              ><button type="button" class="graph-mode-btn" data-graph-mode="speed">Speed</button>
+              ><button
+                type="button"
+                class="graph-mode-btn"
+                data-graph-mode="speed"
+              >
+                Speed
+              </button>
             </div>
-            <select id="graph-channel" class="ts-select" aria-label="Graph channel">
+            <select
+              id="graph-channel"
+              class="ts-select"
+              aria-label="Graph channel"
+            >
               <option value="x">Position X</option>
               <option value="y">Position Y</option>
               <option value="zoom">Zoom</option>
@@ -1367,13 +1711,21 @@
 
     <!-- ── CANVAS CONTEXT MENU ─────────────────────────────────── -->
     <div id="draw-mode-exit-zone" aria-hidden="true">
-      <button type="button" id="draw-mode-exit" aria-label="Exit Draw Mode">Exit Draw Mode</button>
+      <button type="button" id="draw-mode-exit" aria-label="Exit Draw Mode">
+        Exit Draw Mode
+      </button>
     </div>
 
     <div class="ctx-menu" id="ctx-menu">
-      <div class="ctx-item" id="ctx-cut">Cut Frame<span class="ctx-shortcut">Ctrl+X</span></div>
-      <div class="ctx-item" id="ctx-copy">Copy Frame<span class="ctx-shortcut">Ctrl+C</span></div>
-      <div class="ctx-item" id="ctx-paste">Paste Frame<span class="ctx-shortcut">Ctrl+V</span></div>
+      <div class="ctx-item" id="ctx-cut">
+        Cut Frame<span class="ctx-shortcut">Ctrl+X</span>
+      </div>
+      <div class="ctx-item" id="ctx-copy">
+        Copy Frame<span class="ctx-shortcut">Ctrl+C</span>
+      </div>
+      <div class="ctx-item" id="ctx-paste">
+        Paste Frame<span class="ctx-shortcut">Ctrl+V</span>
+      </div>
       <div class="ctx-sep"></div>
       <div class="ctx-item" id="ctx-duplicate">Duplicate Frame</div>
       <div class="ctx-sep"></div>
@@ -1403,26 +1755,44 @@
       <div class="ctx-item" id="layer-ctx-rename">✏ Rename</div>
       <!-- Layer-level operations (shown only for layers) -->
       <div class="ctx-sep layer-ctx-layer-only"></div>
-      <div class="ctx-item layer-ctx-layer-only" id="layer-ctx-cut-layer">✂ Cut Layer</div>
-      <div class="ctx-item layer-ctx-layer-only" id="layer-ctx-copy-layer">⎘ Copy Layer</div>
-      <div class="ctx-item layer-ctx-layer-only" id="layer-ctx-paste-layer">⎗ Paste Layer</div>
+      <div class="ctx-item layer-ctx-layer-only" id="layer-ctx-cut-layer">
+        ✂ Cut Layer
+      </div>
+      <div class="ctx-item layer-ctx-layer-only" id="layer-ctx-copy-layer">
+        ⎘ Copy Layer
+      </div>
+      <div class="ctx-item layer-ctx-layer-only" id="layer-ctx-paste-layer">
+        ⎗ Paste Layer
+      </div>
       <div class="ctx-item layer-ctx-layer-only" id="layer-ctx-duplicate-layer">
         ⧉ Duplicate Layer
       </div>
       <div class="ctx-sep layer-ctx-layer-only"></div>
-      <div class="ctx-item danger layer-ctx-layer-only" id="layer-ctx-delete-layer">
+      <div
+        class="ctx-item danger layer-ctx-layer-only"
+        id="layer-ctx-delete-layer"
+      >
         ⌫ Delete Layer
       </div>
       <!-- Group-level operations (shown only for groups) -->
       <div class="ctx-sep layer-ctx-group-only"></div>
-      <div class="ctx-item layer-ctx-group-only" id="layer-ctx-cut-group">✂ Cut Group</div>
-      <div class="ctx-item layer-ctx-group-only" id="layer-ctx-copy-group">⎘ Copy Group</div>
-      <div class="ctx-item layer-ctx-group-only" id="layer-ctx-paste-group">⎗ Paste Group</div>
+      <div class="ctx-item layer-ctx-group-only" id="layer-ctx-cut-group">
+        ✂ Cut Group
+      </div>
+      <div class="ctx-item layer-ctx-group-only" id="layer-ctx-copy-group">
+        ⎘ Copy Group
+      </div>
+      <div class="ctx-item layer-ctx-group-only" id="layer-ctx-paste-group">
+        ⎗ Paste Group
+      </div>
       <div class="ctx-item layer-ctx-group-only" id="layer-ctx-duplicate-group">
         ⧉ Duplicate Group
       </div>
       <div class="ctx-sep layer-ctx-group-only"></div>
-      <div class="ctx-item danger layer-ctx-group-only" id="layer-ctx-delete-group">
+      <div
+        class="ctx-item danger layer-ctx-group-only"
+        id="layer-ctx-delete-group"
+      >
         ⌫ Delete Group
       </div>
     </div>
@@ -1433,7 +1803,9 @@
       <div class="ctx-sep"></div>
       <div class="ctx-item" id="bp-ctx-cut">✂ Cut</div>
       <div class="ctx-item" id="bp-ctx-add-eraser">Add to Erasers</div>
-      <div class="ctx-item danger" id="bp-ctx-remove-eraser">Remove from Erasers</div>
+      <div class="ctx-item danger" id="bp-ctx-remove-eraser">
+        Remove from Erasers
+      </div>
       <div class="ctx-sep" id="bp-ctx-eraser-sep"></div>
       <div class="ctx-item" id="bp-ctx-copy">⎘ Copy</div>
       <div class="ctx-item" id="bp-ctx-paste">⎗ Paste</div>
@@ -1457,8 +1829,12 @@
         <h2>Delete Group?</h2>
         <p>Delete this group and all brushes inside it?</p>
         <div class="modal-actions">
-          <button class="modal-btn" id="delete-brush-group-cancel">Cancel</button>
-          <button class="modal-btn danger" id="delete-brush-group-confirm">Delete Group</button>
+          <button class="modal-btn" id="delete-brush-group-cancel">
+            Cancel
+          </button>
+          <button class="modal-btn danger" id="delete-brush-group-confirm">
+            Delete Group
+          </button>
         </div>
       </div>
     </div>
@@ -1468,29 +1844,57 @@
         <div class="modal-section">Resolution Presets</div>
         <div class="preset-row">
           <button class="preset-btn" data-w="800" data-h="450">800×450</button>
-          <button class="preset-btn" data-w="1280" data-h="720">1280×720</button>
-          <button class="preset-btn" data-w="1920" data-h="1080">1920×1080</button>
+          <button class="preset-btn" data-w="1280" data-h="720">
+            1280×720
+          </button>
+          <button class="preset-btn" data-w="1920" data-h="1080">
+            1920×1080
+          </button>
           <button class="preset-btn" data-w="512" data-h="512">512×512</button>
           <button class="preset-btn" data-w="480" data-h="270">480×270</button>
         </div>
         <div class="modal-row">
           <label>Width (px)</label
-          ><input type="number" id="canvas-w-input" min="8" max="4096" value="1920" />
+          ><input
+            type="number"
+            id="canvas-w-input"
+            min="8"
+            max="4096"
+            value="1920"
+          />
         </div>
         <div class="modal-row">
           <label>Height (px)</label
-          ><input type="number" id="canvas-h-input" min="8" max="4096" value="1080" />
+          ><input
+            type="number"
+            id="canvas-h-input"
+            min="8"
+            max="4096"
+            value="1080"
+          />
         </div>
         <div class="modal-section">Playback FPS Limit</div>
         <div class="modal-row">
           <label>Max FPS</label
-          ><input type="number" id="canvas-maxfps-input" min="1" max="120" value="24" />
+          ><input
+            type="number"
+            id="canvas-maxfps-input"
+            min="1"
+            max="120"
+            value="24"
+          />
         </div>
         <div class="modal-section">Frame Count</div>
         <div class="modal-row">
           <label>Duration</label>
           <div class="timing-pair">
-            <input type="number" id="canvas-frames-sec-input" min="0" max="999" value="2" />
+            <input
+              type="number"
+              id="canvas-frames-sec-input"
+              min="0"
+              max="999"
+              value="2"
+            />
             <span class="timing-colon">:</span>
             <input
               type="number"
@@ -1535,7 +1939,10 @@
           <div
             class="bg-swatch"
             data-color="transparent"
-            style="background: repeating-conic-gradient(#999 0% 25%, #ddd 0% 50%) 0 0/14px 14px"
+            style="
+              background: repeating-conic-gradient(#999 0% 25%, #ddd 0% 50%) 0
+                0/14px 14px;
+            "
             title="Transparent"
           ></div>
         </div>
@@ -1557,13 +1964,25 @@
         <div class="modal-section">Playback FPS Limit</div>
         <div class="modal-row">
           <label>Max FPS</label
-          ><input type="number" id="frames-maxfps-input" min="1" max="120" value="24" />
+          ><input
+            type="number"
+            id="frames-maxfps-input"
+            min="1"
+            max="120"
+            value="24"
+          />
         </div>
         <div class="modal-section">Duration</div>
         <div class="modal-row">
           <label>Duration</label>
           <div class="timing-pair">
-            <input type="number" id="frames-sec-input" min="0" max="999" value="2" />
+            <input
+              type="number"
+              id="frames-sec-input"
+              min="0"
+              max="999"
+              value="2"
+            />
             <span class="timing-colon">:</span>
             <input
               type="number"
@@ -1595,18 +2014,40 @@
         <h2>Zoom Settings</h2>
         <div class="modal-row">
           <label>Zoom speed</label
-          ><input type="number" id="zoom-speed-input" min="1" max="10" step="1" value="4" />
+          ><input
+            type="number"
+            id="zoom-speed-input"
+            min="1"
+            max="10"
+            step="1"
+            value="4"
+          />
         </div>
         <div class="modal-row">
           <label>Min zoom</label
-          ><input type="number" id="zoom-min-input" min="0.05" max="1" step="0.05" value="0.1" />
+          ><input
+            type="number"
+            id="zoom-min-input"
+            min="0.05"
+            max="1"
+            step="0.05"
+            value="0.1"
+          />
         </div>
         <div class="modal-row">
           <label>Max zoom</label
-          ><input type="number" id="zoom-max-input" min="1" max="32" step="0.5" value="16" />
+          ><input
+            type="number"
+            id="zoom-max-input"
+            min="1"
+            max="32"
+            step="0.5"
+            value="16"
+          />
         </div>
         <p style="font-size: 11px; color: var(--text2)">
-          Scroll wheel zooms toward cursor. Speed range: 1–10 (1 = slow, 4 = default, 10 = fast)
+          Scroll wheel zooms toward cursor. Speed range: 1–10 (1 = slow, 4 =
+          default, 10 = fast)
         </p>
         <div class="modal-actions">
           <button class="modal-btn" id="modal-zoom-cancel">Cancel</button>
@@ -1629,7 +2070,14 @@
           max-height: calc(100vh - 32px);
         "
       >
-        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 4px">
+        <div
+          style="
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 4px;
+          "
+        >
           <h2 style="margin-bottom: 0; flex: 1">⚙ Tool Settings</h2>
           <div class="ts-mode-toggle" id="ts-mode-toggle">
             <button
@@ -1645,12 +2093,20 @@
         <div
           id="tool-settings-modal-body"
           data-space-pan
-          style="flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column"
+          style="
+            flex: 1;
+            min-height: 0;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+          "
         >
           <div id="tool-settings-body">
             <!-- ── PS-STYLE SIDEBAR (Advanced mode only) ── -->
             <div class="ts-ps-sidebar ts-advanced-only">
-              <div class="ts-ps-nav-item active" data-panel="tip-image">Tip Shape</div>
+              <div class="ts-ps-nav-item active" data-panel="tip-image">
+                Tip Shape
+              </div>
               <div class="ts-ps-nav-item" data-panel="dynamics">
                 <span>Dynamics</span>
               </div>
@@ -1868,7 +2324,11 @@
                       </button>
                     </div>
                   </div>
-                  <div class="ts-field" data-eye="stabilization" id="ts-stabilization-field">
+                  <div
+                    class="ts-field"
+                    data-eye="stabilization"
+                    id="ts-stabilization-field"
+                  >
                     <div class="ts-divider" style="margin: 6px 0"></div>
                     <div class="ts-row">
                       <span class="ts-label">Stabilization</span>
@@ -1929,7 +2389,12 @@
                           cursor: pointer;
                         "
                       >
-                        <input type="checkbox" class="ts-check" id="ts-aa" checked />
+                        <input
+                          type="checkbox"
+                          class="ts-check"
+                          id="ts-aa"
+                          checked
+                        />
                         Anti-alias (AA)
                       </label>
                     </div>
@@ -1965,11 +2430,20 @@
                         title="Controls how brush paint combines with existing artwork."
                       >
                         <span id="ts-brush-blend-mode-value">Normal</span>
-                        <span class="ts-brush-blend-mode-chevron" aria-hidden="true">&#9662;</span>
+                        <span
+                          class="ts-brush-blend-mode-chevron"
+                          aria-hidden="true"
+                          >&#9662;</span
+                        >
                       </button>
                     </div>
                   </div>
-                  <div class="ts-field" data-eye="eraser-mode" id="ts-eraser-mode-field" hidden>
+                  <div
+                    class="ts-field"
+                    data-eye="eraser-mode"
+                    id="ts-eraser-mode-field"
+                    hidden
+                  >
                     <div class="ts-row ts-brush-blend-mode-row">
                       <button
                         class="ts-brush-blend-mode-trigger"
@@ -1982,7 +2456,11 @@
                         title="Controls whether the eraser removes all pixels or only the active foreground color/style."
                       >
                         <span id="ts-eraser-mode-value">Normal</span>
-                        <span class="ts-brush-blend-mode-chevron" aria-hidden="true">&#9662;</span>
+                        <span
+                          class="ts-brush-blend-mode-chevron"
+                          aria-hidden="true"
+                          >&#9662;</span
+                        >
                       </button>
                     </div>
                   </div>
@@ -1990,7 +2468,11 @@
               </div>
 
               <!-- BRUSH TIP IMAGE -->
-              <div class="ts-ps-panel" data-panel="tip-image" id="ts-tip-image-section">
+              <div
+                class="ts-ps-panel"
+                data-panel="tip-image"
+                id="ts-tip-image-section"
+              >
                 <div class="ts-section-body">
                   <div
                     class="ts-label-sm"
@@ -2005,10 +2487,24 @@
                   >
                     Tip Shape
                   </div>
-                  <div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-size">
-                    <button type="button" class="ts-eye-btn" data-eye-btn="size">👁</button
+                  <div
+                    class="ts-row ts-advanced-mirror-row"
+                    data-mirror-target="ts-size"
+                  >
+                    <button
+                      type="button"
+                      class="ts-eye-btn"
+                      data-eye-btn="size"
+                    >
+                      👁</button
                     ><span class="ts-label">Size</span
-                    ><input type="range" class="ts-range" min="1" max="2000" step="0.1" /><span
+                    ><input
+                      type="range"
+                      class="ts-range"
+                      min="1"
+                      max="2000"
+                      step="0.1"
+                    /><span
                       class="ts-val ts-value-edit"
                       data-value-target="ts-size"
                       data-size-value="true"
@@ -2016,20 +2512,46 @@
                     ></span>
                   </div>
                   <div class="ts-divider"></div>
-                  <div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-opacity">
-                    <button type="button" class="ts-eye-btn" data-eye-btn="opacity">👁</button
+                  <div
+                    class="ts-row ts-advanced-mirror-row"
+                    data-mirror-target="ts-opacity"
+                  >
+                    <button
+                      type="button"
+                      class="ts-eye-btn"
+                      data-eye-btn="opacity"
+                    >
+                      👁</button
                     ><span class="ts-label">Opacity</span
-                    ><input type="range" class="ts-range" min="1" max="100" /><span
+                    ><input
+                      type="range"
+                      class="ts-range"
+                      min="1"
+                      max="100"
+                    /><span
                       class="ts-val ts-value-edit"
                       data-value-target="ts-opacity"
                       tabindex="0"
                     ></span>
                   </div>
                   <div class="ts-divider"></div>
-                  <div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-flow">
-                    <button type="button" class="ts-eye-btn" data-eye-btn="flow">👁</button
+                  <div
+                    class="ts-row ts-advanced-mirror-row"
+                    data-mirror-target="ts-flow"
+                  >
+                    <button
+                      type="button"
+                      class="ts-eye-btn"
+                      data-eye-btn="flow"
+                    >
+                      👁</button
                     ><span class="ts-label">Flow</span
-                    ><input type="range" class="ts-range" min="1" max="100" /><span
+                    ><input
+                      type="range"
+                      class="ts-range"
+                      min="1"
+                      max="100"
+                    /><span
                       class="ts-val ts-value-edit"
                       data-value-target="ts-flow"
                       tabindex="0"
@@ -2037,18 +2559,39 @@
                   </div>
 
                   <div class="ts-divider"></div>
-                  <div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-hardness">
-                    <button type="button" class="ts-eye-btn" data-eye-btn="hardness">👁</button
+                  <div
+                    class="ts-row ts-advanced-mirror-row"
+                    data-mirror-target="ts-hardness"
+                  >
+                    <button
+                      type="button"
+                      class="ts-eye-btn"
+                      data-eye-btn="hardness"
+                    >
+                      👁</button
                     ><span class="ts-label">Hardness</span
-                    ><input type="range" class="ts-range" min="0" max="100" /><span
+                    ><input
+                      type="range"
+                      class="ts-range"
+                      min="0"
+                      max="100"
+                    /><span
                       class="ts-val ts-value-edit"
                       data-value-target="ts-hardness"
                       tabindex="0"
                     ></span>
                   </div>
                   <div class="ts-divider"></div>
-                  <div class="ts-row ts-advanced-mirror-row" data-mirror-target="ts-spacing-mode">
-                    <button type="button" class="ts-eye-btn" data-eye-btn="spacing">👁</button
+                  <div
+                    class="ts-row ts-advanced-mirror-row"
+                    data-mirror-target="ts-spacing-mode"
+                  >
+                    <button
+                      type="button"
+                      class="ts-eye-btn"
+                      data-eye-btn="spacing"
+                    >
+                      👁</button
                     ><span class="ts-label">Spacing Mode</span
                     ><select class="ts-select">
                       <option value="fixed" selected>Fixed Distance</option>
@@ -2069,7 +2612,12 @@
                     id="ts-advanced-spacing-manual-row"
                   >
                     <span class="ts-label">Spacing</span
-                    ><input type="range" class="ts-range" min="1" max="200" /><span
+                    ><input
+                      type="range"
+                      class="ts-range"
+                      min="1"
+                      max="200"
+                    /><span
                       class="ts-val ts-value-edit"
                       data-value-target="ts-spacing"
                       tabindex="0"
@@ -2081,9 +2629,16 @@
                       class="ts-row ts-advanced-mirror-row tool-aa-toggle"
                       data-mirror-target="ts-aa"
                     >
-                      <button type="button" class="ts-eye-btn" data-eye-btn="aa">👁</button
-                      ><label class="ts-label-sm tool-setting__label ts-mirror-check-label"
-                        ><input type="checkbox" class="ts-check" /> Anti-alias (AA)</label
+                      <button
+                        type="button"
+                        class="ts-eye-btn"
+                        data-eye-btn="aa"
+                      >
+                        👁</button
+                      ><label
+                        class="ts-label-sm tool-setting__label ts-mirror-check-label"
+                        ><input type="checkbox" class="ts-check" /> Anti-alias
+                        (AA)</label
                       >
                     </div>
                     <div
@@ -2130,7 +2685,14 @@
                         image-rendering: pixelated;
                       "
                     ></canvas>
-                    <div style="flex: 1; display: flex; flex-direction: column; gap: 5px">
+                    <div
+                      style="
+                        flex: 1;
+                        display: flex;
+                        flex-direction: column;
+                        gap: 5px;
+                      "
+                    >
                       <button
                         class="ts-import-btn"
                         id="ts-tip-load-btn"
@@ -2215,37 +2777,84 @@
                   <div class="ts-row">
                     <label
                       class="ts-label-sm"
-                      style="flex: 1; display: flex; align-items: center; gap: 5px; cursor: pointer"
-                      ><input type="checkbox" class="ts-check" id="ts-tip-flip-x" /> Flip X</label
+                      style="
+                        flex: 1;
+                        display: flex;
+                        align-items: center;
+                        gap: 5px;
+                        cursor: pointer;
+                      "
+                      ><input
+                        type="checkbox"
+                        class="ts-check"
+                        id="ts-tip-flip-x"
+                      />
+                      Flip X</label
                     >
                     <label
                       class="ts-label-sm"
-                      style="flex: 1; display: flex; align-items: center; gap: 5px; cursor: pointer"
-                      ><input type="checkbox" class="ts-check" id="ts-tip-flip-y" /> Flip Y</label
+                      style="
+                        flex: 1;
+                        display: flex;
+                        align-items: center;
+                        gap: 5px;
+                        cursor: pointer;
+                      "
+                      ><input
+                        type="checkbox"
+                        class="ts-check"
+                        id="ts-tip-flip-y"
+                      />
+                      Flip Y</label
                     >
                   </div>
-                  <div class="ts-row" id="ts-tip-mode-row" style="display: none">
+                  <div
+                    class="ts-row"
+                    id="ts-tip-mode-row"
+                    style="display: none"
+                  >
                     <span class="ts-label">Tip Mode</span>
                     <select class="ts-select" id="ts-tip-mode">
                       <option value="multiply">Multiply (soft mask)</option>
                       <option value="replace">Replace (hard shape)</option>
                     </select>
                   </div>
-                  <div class="ts-row" id="ts-tip-soft-row" style="display: none">
+                  <div
+                    class="ts-row"
+                    id="ts-tip-soft-row"
+                    style="display: none"
+                  >
                     <label
                       class="ts-label-sm"
-                      style="flex: 1; display: flex; align-items: center; gap: 5px; cursor: pointer"
+                      style="
+                        flex: 1;
+                        display: flex;
+                        align-items: center;
+                        gap: 5px;
+                        cursor: pointer;
+                      "
                     >
-                      <input type="checkbox" class="ts-check" id="ts-tip-soft-alpha" checked />
+                      <input
+                        type="checkbox"
+                        class="ts-check"
+                        id="ts-tip-soft-alpha"
+                        checked
+                      />
                       Soft Edge (radial falloff)
                     </label>
                   </div>
                   <div
                     id="ts-tip-help"
-                    style="font-size: 9px; color: var(--text2); line-height: 1.4; margin-top: 2px"
+                    style="
+                      font-size: 9px;
+                      color: var(--text2);
+                      line-height: 1.4;
+                      margin-top: 2px;
+                    "
                   >
-                    Load a grayscale PNG to use as the brush dab shape. White = full paint, black =
-                    transparent. ABR files can be converted to PNG with external tools.
+                    Load a grayscale PNG to use as the brush dab shape. White =
+                    full paint, black = transparent. ABR files can be converted
+                    to PNG with external tools.
                   </div>
                 </div>
               </div>
@@ -2342,7 +2951,11 @@
                       <option value="pressure">Pen Pressure</option>
                     </select>
                   </div>
-                  <div class="ts-row" id="ts-min-flow-row" style="display: none">
+                  <div
+                    class="ts-row"
+                    id="ts-min-flow-row"
+                    style="display: none"
+                  >
                     <span class="ts-label">Minimum Flow</span>
                     <input
                       type="range"
@@ -2418,10 +3031,16 @@
                   <div class="ts-row">
                     <span class="ts-label">Rotation Mode</span>
                     <select class="ts-select" id="ts-rotation-mode">
-                      <option value="fixed-rotation" selected>Fixed Rotation</option>
+                      <option value="fixed-rotation" selected>
+                        Fixed Rotation
+                      </option>
                       <option value="stroke-direction">Stroke Direction</option>
-                      <option value="random" disabled>Random (Coming Soon)</option>
-                      <option value="pen-tilt" disabled>Pen Tilt (Coming Soon)</option>
+                      <option value="random" disabled>
+                        Random (Coming Soon)
+                      </option>
+                      <option value="pen-tilt" disabled>
+                        Pen Tilt (Coming Soon)
+                      </option>
                     </select>
                   </div>
                   <div class="ts-row" id="ts-angle-row">
@@ -2470,9 +3089,19 @@
                   <div class="ts-row">
                     <label
                       class="ts-label-sm"
-                      style="flex: 1; display: flex; align-items: center; gap: 5px; cursor: pointer"
+                      style="
+                        flex: 1;
+                        display: flex;
+                        align-items: center;
+                        gap: 5px;
+                        cursor: pointer;
+                      "
                     >
-                      <input type="checkbox" class="ts-check" id="ts-scatter-enabled" />
+                      <input
+                        type="checkbox"
+                        class="ts-check"
+                        id="ts-scatter-enabled"
+                      />
                       Enable Scatter
                     </label>
                   </div>
@@ -2526,11 +3155,16 @@
                     <select class="ts-select" id="ts-taper-mode">
                       <option value="off" selected>Off</option>
                       <option value="percentage">Percentage</option>
-                      <option value="length" disabled>Length (Coming Soon)</option>
+                      <option value="length" disabled>
+                        Length (Coming Soon)
+                      </option>
                       <option value="fade" disabled>Fade (Coming Soon)</option>
                     </select>
                   </div>
-                  <div class="ts-row" title="Reduces brush size at the beginning of the stroke.">
+                  <div
+                    class="ts-row"
+                    title="Reduces brush size at the beginning of the stroke."
+                  >
                     <span class="ts-label">Start Taper</span
                     ><input
                       type="range"
@@ -2542,7 +3176,10 @@
                       disabled
                     /><span class="ts-val" id="ts-start-taper-val">0%</span>
                   </div>
-                  <div class="ts-row" title="Reduces brush size at the end of the stroke.">
+                  <div
+                    class="ts-row"
+                    title="Reduces brush size at the end of the stroke."
+                  >
                     <span class="ts-label">End Taper</span
                     ><input
                       type="range"
@@ -2569,13 +3206,23 @@
                         height: 64px;
                         border-radius: 5px;
                         border: 1px solid var(--border2);
-                        background: repeating-conic-gradient(var(--bg3) 0% 25%, var(--bg2) 25% 50%)
+                        background: repeating-conic-gradient(
+                            var(--bg3) 0% 25%,
+                            var(--bg2) 25% 50%
+                          )
                           0 0/12px 12px;
                         flex-shrink: 0;
                         image-rendering: pixelated;
                       "
                     ></canvas>
-                    <div style="flex: 1; display: flex; flex-direction: column; gap: 5px">
+                    <div
+                      style="
+                        flex: 1;
+                        display: flex;
+                        flex-direction: column;
+                        gap: 5px;
+                      "
+                    >
                       <button
                         class="ts-import-btn"
                         id="ts-texture-load-btn"
@@ -2602,14 +3249,27 @@
                       ></span>
                       <label
                         class="ts-label-sm"
-                        style="display: flex; align-items: center; gap: 5px; cursor: pointer"
+                        style="
+                          display: flex;
+                          align-items: center;
+                          gap: 5px;
+                          cursor: pointer;
+                        "
                       >
-                        <input type="checkbox" class="ts-check" id="ts-texture-invert" />
+                        <input
+                          type="checkbox"
+                          class="ts-check"
+                          id="ts-texture-invert"
+                        />
                         Invert
                       </label>
                     </div>
                   </div>
-                  <div class="ts-row" id="ts-texture-scale-row" style="display: none">
+                  <div
+                    class="ts-row"
+                    id="ts-texture-scale-row"
+                    style="display: none"
+                  >
                     <span class="ts-label">Scale</span>
                     <input
                       type="range"
@@ -2621,7 +3281,11 @@
                     />
                     <span class="ts-val" id="ts-texture-scale-val">100%</span>
                   </div>
-                  <div class="ts-row" id="ts-texture-brightness-row" style="display: none">
+                  <div
+                    class="ts-row"
+                    id="ts-texture-brightness-row"
+                    style="display: none"
+                  >
                     <span class="ts-label">Brightness</span>
                     <input
                       type="range"
@@ -2633,7 +3297,11 @@
                     />
                     <span class="ts-val" id="ts-texture-brightness-val">0</span>
                   </div>
-                  <div class="ts-row" id="ts-texture-contrast-row" style="display: none">
+                  <div
+                    class="ts-row"
+                    id="ts-texture-contrast-row"
+                    style="display: none"
+                  >
                     <span class="ts-label">Contrast</span>
                     <input
                       type="range"
@@ -2645,17 +3313,35 @@
                     />
                     <span class="ts-val" id="ts-texture-contrast-val">0</span>
                   </div>
-                  <div class="ts-row" id="ts-texture-each-row" style="display: none">
+                  <div
+                    class="ts-row"
+                    id="ts-texture-each-row"
+                    style="display: none"
+                  >
                     <label
                       class="ts-label-sm"
-                      style="flex: 1; display: flex; align-items: center; gap: 5px; cursor: pointer"
+                      style="
+                        flex: 1;
+                        display: flex;
+                        align-items: center;
+                        gap: 5px;
+                        cursor: pointer;
+                      "
                       title="On: each dab samples an independent patch of the texture. Off: the texture stays locked to the canvas, like paper showing through the stroke."
                     >
-                      <input type="checkbox" class="ts-check" id="ts-texture-each" />
+                      <input
+                        type="checkbox"
+                        class="ts-check"
+                        id="ts-texture-each"
+                      />
                       Texture Each Tip
                     </label>
                     <span class="ts-label" style="flex: 0 0 auto">Mode:</span>
-                    <select class="ts-select" id="ts-texture-mode" style="flex: 0 0 110px">
+                    <select
+                      class="ts-select"
+                      id="ts-texture-mode"
+                      style="flex: 0 0 110px"
+                    >
                       <option value="multiply">Multiply</option>
                       <option value="overlay">Overlay</option>
                       <option value="hard-light">Hard Light</option>
@@ -2665,7 +3351,11 @@
                       <option value="screen">Screen</option>
                     </select>
                   </div>
-                  <div class="ts-row" id="ts-texture-strength-row" style="display: none">
+                  <div
+                    class="ts-row"
+                    id="ts-texture-strength-row"
+                    style="display: none"
+                  >
                     <span class="ts-label">Strength</span>
                     <input
                       type="range"
@@ -2675,7 +3365,9 @@
                       max="100"
                       value="100"
                     />
-                    <span class="ts-val" id="ts-texture-strength-val">100%</span>
+                    <span class="ts-val" id="ts-texture-strength-val"
+                      >100%</span
+                    >
                   </div>
                   <div
                     class="ts-row"
@@ -2697,9 +3389,15 @@
                   </div>
                   <div
                     id="ts-texture-img-help"
-                    style="font-size: 9px; color: var(--text2); line-height: 1.4; margin-top: 2px"
+                    style="
+                      font-size: 9px;
+                      color: var(--text2);
+                      line-height: 1.4;
+                      margin-top: 2px;
+                    "
                   >
-                    Load a tileable PNG to apply as a paper / canvas texture over each dab.
+                    Load a tileable PNG to apply as a paper / canvas texture
+                    over each dab.
                   </div>
                 </div>
               </div>
@@ -2715,20 +3413,33 @@
                       margin-bottom: 4px;
                     "
                   >
-                    Paste or load settings from Photoshop (.abr metadata), Clip Studio (.sut), or
-                    Krita (.kpp) to map parameters into this panel.
+                    Paste or load settings from Photoshop (.abr metadata), Clip
+                    Studio (.sut), or Krita (.kpp) to map parameters into this
+                    panel.
                   </p>
                   <button class="ts-import-btn" id="ts-btn-import-preset">
                     📂 Load Preset File…
                   </button>
-                  <button class="ts-import-btn" id="ts-btn-paste-json" style="margin-top: 3px">
+                  <button
+                    class="ts-import-btn"
+                    id="ts-btn-paste-json"
+                    style="margin-top: 3px"
+                  >
                     📋 Paste JSON Settings
                   </button>
                   <div class="ts-divider" style="margin: 6px 0"></div>
-                  <p style="font-size: 9px; color: var(--text2); margin-bottom: 4px">
+                  <p
+                    style="
+                      font-size: 9px;
+                      color: var(--text2);
+                      margin-bottom: 4px;
+                    "
+                  >
                     Save current settings:
                   </p>
-                  <button class="ts-import-btn" id="ts-btn-export-json">💾 Export as JSON</button>
+                  <button class="ts-import-btn" id="ts-btn-export-json">
+                    💾 Export as JSON
+                  </button>
                 </div>
               </div>
             </div>
@@ -2738,17 +3449,34 @@
         </div>
         <!-- /tool-settings-modal-body -->
         <div class="modal-actions">
-          <button class="modal-btn primary" id="tool-settings-modal-close">Done</button>
+          <button class="modal-btn primary" id="tool-settings-modal-close">
+            Done
+          </button>
         </div>
       </div>
       <!-- /tool-settings-modal -->
-      <div id="ts-simple-settings-popup" class="ts-simple-settings-popup" aria-hidden="true"></div>
-      <div id="ts-pressure-editor-popup" class="ts-pressure-editor-popup" aria-hidden="true">
+      <div
+        id="ts-simple-settings-popup"
+        class="ts-simple-settings-popup"
+        aria-hidden="true"
+      ></div>
+      <div
+        id="ts-pressure-editor-popup"
+        class="ts-pressure-editor-popup"
+        aria-hidden="true"
+      >
         <div class="ts-simple-popup-title">Pressure Curve</div>
-        <canvas id="ts-pressure-editor-canvas" width="240" height="150"></canvas>
+        <canvas
+          id="ts-pressure-editor-canvas"
+          width="240"
+          height="150"
+        ></canvas>
         <div class="ts-pressure-editor-actions">
-          <button type="button" class="ts-pill" id="ts-pressure-reset">Reset</button
-          ><button type="button" class="ts-pill active" id="ts-pressure-done">Done</button>
+          <button type="button" class="ts-pill" id="ts-pressure-reset">
+            Reset</button
+          ><button type="button" class="ts-pill active" id="ts-pressure-done">
+            Done
+          </button>
         </div>
       </div>
     </div>
@@ -2764,14 +3492,20 @@
 
         <div id="pref-body">
           <div class="pref-ps-sidebar" id="pref-ps-sidebar">
-            <div class="pref-ps-nav-item active" data-panel="cursor">Cursor</div>
+            <div class="pref-ps-nav-item active" data-panel="cursor">
+              Cursor
+            </div>
             <div class="pref-ps-nav-item" data-panel="recovery">Recovery</div>
-            <div class="pref-ps-nav-item" data-panel="storage">Local Storage</div>
+            <div class="pref-ps-nav-item" data-panel="storage">
+              Local Storage
+            </div>
           </div>
 
           <div class="pref-ps-panels">
             <div class="pref-ps-panel active" data-panel="cursor">
-              <p style="font-size: 11px; color: var(--text2); margin-bottom: 4px">
+              <p
+                style="font-size: 11px; color: var(--text2); margin-bottom: 4px"
+              >
                 Controls what the pointer looks like while it's over the canvas.
               </p>
               <label
@@ -2793,7 +3527,8 @@
                   style="margin-top: 2px"
                 />
                 <span>
-                  <span style="font-weight: 600; color: var(--text); display: block"
+                  <span
+                    style="font-weight: 600; color: var(--text); display: block"
                     >Crosshair — default</span
                   >
                   <span style="font-size: 11px; color: var(--text2)"
@@ -2820,9 +3555,13 @@
                   style="margin-top: 2px"
                 />
                 <span>
-                  <span style="font-weight: 600; color: var(--text); display: block">Point</span>
+                  <span
+                    style="font-weight: 600; color: var(--text); display: block"
+                    >Point</span
+                  >
                   <span style="font-size: 11px; color: var(--text2)"
-                    >A small dot marking the exact draw point, without crosshair lines.</span
+                    >A small dot marking the exact draw point, without crosshair
+                    lines.</span
                   >
                 </span>
               </label>
@@ -2845,11 +3584,13 @@
                   style="margin-top: 2px"
                 />
                 <span>
-                  <span style="font-weight: 600; color: var(--text); display: block"
+                  <span
+                    style="font-weight: 600; color: var(--text); display: block"
                     >Brush Size</span
                   >
                   <span style="font-size: 11px; color: var(--text2)"
-                    >A live circle showing the exact brush/eraser radius, scaled with zoom.</span
+                    >A live circle showing the exact brush/eraser radius, scaled
+                    with zoom.</span
                   >
                 </span>
               </label>
@@ -2872,20 +3613,28 @@
                   style="margin-top: 2px"
                 />
                 <span>
-                  <span style="font-weight: 600; color: var(--text); display: block"
+                  <span
+                    style="font-weight: 600; color: var(--text); display: block"
                     >Brush Shape</span
                   >
                   <span style="font-size: 11px; color: var(--text2)"
-                    >The active round or custom brush-tip silhouette, including roundness and
-                    rotation.</span
+                    >The active round or custom brush-tip silhouette, including
+                    roundness and rotation.</span
                   >
                 </span>
               </label>
             </div>
 
             <div class="pref-ps-panel" data-panel="recovery">
-              <p style="font-size: 11px; color: var(--text2); margin-bottom: 12px">
-                Controls how frequently unsaved project changes are backed up for crash recovery.
+              <p
+                style="
+                  font-size: 11px;
+                  color: var(--text2);
+                  margin-bottom: 12px;
+                "
+              >
+                Controls how frequently unsaved project changes are backed up
+                for crash recovery.
               </p>
               <div
                 style="
@@ -2899,10 +3648,14 @@
                   gap: 8px;
                 "
               >
-                <div style="font-weight: 600; color: var(--text); font-size: 12px">
+                <div
+                  style="font-weight: 600; color: var(--text); font-size: 12px"
+                >
                   Recovery Autosave
                 </div>
-                <div style="font-size: 11px; color: var(--text2); line-height: 1.4">
+                <div
+                  style="font-size: 11px; color: var(--text2); line-height: 1.4"
+                >
                   Keeps a temporary recovery copy of unsaved work in IndexedDB.
                 </div>
                 <div
@@ -2916,7 +3669,11 @@
                 >
                   <label
                     for="pref-recovery-delay"
-                    style="font-size: 12px; color: var(--text); font-weight: 500"
+                    style="
+                      font-size: 12px;
+                      color: var(--text);
+                      font-weight: 500;
+                    "
                     >Save recovery after:</label
                   >
                   <select
@@ -2944,8 +3701,11 @@
             </div>
 
             <div class="pref-ps-panel" data-panel="storage">
-              <p style="font-size: 11px; color: var(--text2); margin-bottom: 4px">
-                These settings are saved on this device and loaded every time you open the app.
+              <p
+                style="font-size: 11px; color: var(--text2); margin-bottom: 4px"
+              >
+                These settings are saved on this device and loaded every time
+                you open the app.
               </p>
               <div
                 style="
@@ -2959,20 +3719,35 @@
                   <b>Total:</b> <span id="ls-total-size">0 B</span>
                 </div>
                 <div style="display: flex; gap: 8px">
-                  <button class="modal-btn" id="ls-get-zip" style="padding: 5px 12px">
+                  <button
+                    class="modal-btn"
+                    id="ls-get-zip"
+                    style="padding: 5px 12px"
+                  >
                     Get All as ZIP
                   </button>
                 </div>
               </div>
               <div id="ls-bulk-actions" class="ls-bulk-actions">
-                <span id="ls-selected-count" class="ls-selected-count" aria-live="polite"
+                <span
+                  id="ls-selected-count"
+                  class="ls-selected-count"
+                  aria-live="polite"
                   >0 items selected</span
                 >
                 <div class="ls-bulk-buttons">
-                  <button type="button" class="modal-btn" id="ls-clear-selection">
+                  <button
+                    type="button"
+                    class="modal-btn"
+                    id="ls-clear-selection"
+                  >
                     Clear Selection
                   </button>
-                  <button type="button" class="modal-btn danger" id="ls-delete-selected">
+                  <button
+                    type="button"
+                    class="modal-btn danger"
+                    id="ls-delete-selected"
+                  >
                     Delete Selected
                   </button>
                 </div>
@@ -2991,7 +3766,9 @@
         </div>
 
         <div class="modal-actions">
-          <button class="modal-btn primary" id="modal-preferences-close">Done</button>
+          <button class="modal-btn primary" id="modal-preferences-close">
+            Done
+          </button>
         </div>
       </div>
     </div>
@@ -3025,13 +3802,15 @@
               gap: 6px;
             "
           >
-            <span class="keybinds-info-chevron">▶</span> 🖊 Drawing tablet right-click not working?
+            <span class="keybinds-info-chevron">▶</span> 🖊 Drawing tablet
+            right-click not working?
           </summary>
           <div style="margin-top: 8px">
-            Chrome blocks pen right-clicks on this page when "Windows Ink" is on. Fix: set your pen
-            driver button to
-            <strong>Press Key → F2</strong> instead of <strong>Mouse Right Button</strong> (see
-            "Pen/Tablet Context Menu" below).
+            Chrome blocks pen right-clicks on this page when "Windows Ink" is
+            on. Fix: set your pen driver button to
+            <strong>Press Key → F2</strong> instead of
+            <strong>Mouse Right Button</strong> (see "Pen/Tablet Context Menu"
+            below).
           </div>
         </details>
         <div
@@ -3051,10 +3830,12 @@
             <span style="width: 150px">Pan</span><span>Space + Drag</span>
           </div>
           <div class="modal-row" style="margin: 0 0 4px">
-            <span style="width: 150px">Zoom</span><span>Ctrl + Space + Drag</span>
+            <span style="width: 150px">Zoom</span
+            ><span>Ctrl + Space + Drag</span>
           </div>
           <div class="modal-row" style="margin: 0">
-            <span style="width: 150px">Rotate</span><span>Shift + Space + Drag</span>
+            <span style="width: 150px">Rotate</span
+            ><span>Shift + Space + Drag</span>
           </div>
         </div>
         <input
@@ -3074,7 +3855,10 @@
             outline: none;
           "
         />
-        <div id="keybinds-list" style="max-height: 340px; overflow-y: auto"></div>
+        <div
+          id="keybinds-list"
+          style="max-height: 340px; overflow-y: auto"
+        ></div>
         <div class="modal-actions">
           <button
             class="modal-btn"
@@ -3083,7 +3867,11 @@
           >
             ⬇ Export
           </button>
-          <button class="modal-btn" id="modal-keybinds-import" title="Load keybinds from a file">
+          <button
+            class="modal-btn"
+            id="modal-keybinds-import"
+            title="Load keybinds from a file"
+          >
             ⬆ Import
           </button>
           <input
@@ -3092,8 +3880,12 @@
             accept="application/json,.json"
             style="display: none"
           />
-          <button class="modal-btn" id="modal-keybinds-reset">↺ Reset to Defaults</button>
-          <button class="modal-btn primary" id="modal-keybinds-close">Done</button>
+          <button class="modal-btn" id="modal-keybinds-reset">
+            ↺ Reset to Defaults
+          </button>
+          <button class="modal-btn primary" id="modal-keybinds-close">
+            Done
+          </button>
         </div>
       </div>
     </div>
@@ -3107,8 +3899,12 @@
           style="font-size: 12px; color: var(--text2); margin-bottom: 14px"
         ></p>
         <div class="modal-actions">
-          <button class="modal-btn" id="modal-keybind-conflict-cancel">Cancel</button>
-          <button class="modal-btn primary" id="modal-keybind-conflict-swap">Swap</button>
+          <button class="modal-btn" id="modal-keybind-conflict-cancel">
+            Cancel
+          </button>
+          <button class="modal-btn primary" id="modal-keybind-conflict-swap">
+            Swap
+          </button>
         </div>
       </div>
     </div>
@@ -3119,7 +3915,13 @@
         <h2>Set FPS</h2>
         <div class="modal-row">
           <label>FPS (1–<span id="fps-max-label">60</span>)</label>
-          <input type="number" id="fps-direct-input" min="1" max="60" value="12" />
+          <input
+            type="number"
+            id="fps-direct-input"
+            min="1"
+            max="60"
+            value="12"
+          />
         </div>
         <div class="modal-actions">
           <button class="modal-btn" id="modal-fps-cancel">Cancel</button>
@@ -3135,14 +3937,23 @@
         <p id="del-bulk-msg"></p>
         <p
           id="del-bulk-group-warn"
-          style="margin-top: 8px; font-size: 12px; color: var(--red); display: none"
+          style="
+            margin-top: 8px;
+            font-size: 12px;
+            color: var(--red);
+            display: none;
+          "
         ></p>
         <div class="modal-actions">
           <button class="modal-btn" id="del-bulk-cancel">Cancel</button>
           <button
             class="modal-btn"
             id="del-bulk-ok"
-            style="background: var(--red); border-color: var(--red); color: #fff"
+            style="
+              background: var(--red);
+              border-color: var(--red);
+              color: #fff;
+            "
           >
             Delete All
           </button>
@@ -3162,23 +3973,36 @@
         ></p>
         <div class="del-group-opts">
           <label class="del-group-opt">
-            <input type="radio" name="add-layer-placement" value="inside" checked />
+            <input
+              type="radio"
+              name="add-layer-placement"
+              value="inside"
+              checked
+            />
             <div>
               <div class="opt-label">Inside group</div>
-              <div class="opt-desc">New layer is added at the top of the group</div>
+              <div class="opt-desc">
+                New layer is added at the top of the group
+              </div>
             </div>
           </label>
           <label class="del-group-opt">
             <input type="radio" name="add-layer-placement" value="outside" />
             <div>
               <div class="opt-label">Above group</div>
-              <div class="opt-desc">New layer is added above the group, outside it</div>
+              <div class="opt-desc">
+                New layer is added above the group, outside it
+              </div>
             </div>
           </label>
         </div>
         <div class="modal-actions">
-          <button class="modal-btn" id="modal-add-layer-placement-cancel">Cancel</button>
-          <button class="modal-btn primary" id="modal-add-layer-placement-ok">Add Layer</button>
+          <button class="modal-btn" id="modal-add-layer-placement-cancel">
+            Cancel
+          </button>
+          <button class="modal-btn primary" id="modal-add-layer-placement-ok">
+            Add Layer
+          </button>
         </div>
       </div>
     </div>
@@ -3196,7 +4020,9 @@
             <input type="radio" name="group-action" value="wrap" checked />
             <div>
               <div class="opt-label">Group this group</div>
-              <div class="opt-desc">Wraps the selected group in a new parent group</div>
+              <div class="opt-desc">
+                Wraps the selected group in a new parent group
+              </div>
             </div>
           </label>
           <label class="del-group-opt">
@@ -3204,14 +4030,19 @@
             <div>
               <div class="opt-label">Insert group inside this group</div>
               <div class="opt-desc">
-                Adds a new group (with a starter layer) nested inside the selected group
+                Adds a new group (with a starter layer) nested inside the
+                selected group
               </div>
             </div>
           </label>
         </div>
         <div class="modal-actions">
-          <button class="modal-btn" id="modal-group-action-cancel">Cancel</button>
-          <button class="modal-btn primary" id="modal-group-action-ok">OK</button>
+          <button class="modal-btn" id="modal-group-action-cancel">
+            Cancel
+          </button>
+          <button class="modal-btn primary" id="modal-group-action-ok">
+            OK
+          </button>
         </div>
       </div>
     </div>
@@ -3224,11 +4055,17 @@
           Start a new project? All unsaved work will be lost.
         </p>
         <div class="modal-actions">
-          <button class="modal-btn" id="modal-new-project-cancel">Cancel</button>
+          <button class="modal-btn" id="modal-new-project-cancel">
+            Cancel
+          </button>
           <button
             class="modal-btn"
             id="modal-new-project-ok"
-            style="background: var(--red); border-color: var(--red); color: #fff"
+            style="
+              background: var(--red);
+              border-color: var(--red);
+              color: #fff;
+            "
           >
             New Project
           </button>
@@ -3278,7 +4115,9 @@
         ></p>
         <div class="modal-actions">
           <button class="modal-btn" id="palette-confirm-cancel">Cancel</button>
-          <button class="modal-btn danger" id="palette-confirm-ok">Delete</button>
+          <button class="modal-btn danger" id="palette-confirm-ok">
+            Delete
+          </button>
         </div>
       </div>
     </div>
@@ -3299,17 +4138,23 @@
     <div class="modal-overlay" id="modal-del-layer">
       <div class="modal" style="min-width: 280px">
         <h2>Delete Layer</h2>
-        <p id="del-layer-msg">Are you sure you want to delete this layer? This cannot be undone.</p>
+        <p id="del-layer-msg">
+          Are you sure you want to delete this layer? This cannot be undone.
+        </p>
         <label class="del-modal-check"
-          ><input type="checkbox" id="del-layer-skip-confirm" /> Don't ask again when deleting
-          layers</label
+          ><input type="checkbox" id="del-layer-skip-confirm" /> Don't ask again
+          when deleting layers</label
         >
         <div class="modal-actions">
           <button class="modal-btn" id="del-layer-cancel">Cancel</button>
           <button
             class="modal-btn"
             id="del-layer-ok"
-            style="background: var(--red); border-color: var(--red); color: #fff"
+            style="
+              background: var(--red);
+              border-color: var(--red);
+              color: #fff;
+            "
           >
             Delete
           </button>
@@ -3324,17 +4169,26 @@
         <p id="del-group-msg">How do you want to delete this group?</p>
         <div class="del-group-opts">
           <label class="del-group-opt">
-            <input type="radio" name="del-group-mode" value="with-children" checked />
+            <input
+              type="radio"
+              name="del-group-mode"
+              value="with-children"
+              checked
+            />
             <div>
               <div class="opt-label">Group and all layers inside</div>
-              <div class="opt-desc">Permanently delete the folder and every layer it contains</div>
+              <div class="opt-desc">
+                Permanently delete the folder and every layer it contains
+              </div>
             </div>
           </label>
           <label class="del-group-opt">
             <input type="radio" name="del-group-mode" value="group-only" />
             <div>
               <div class="opt-label">Group only</div>
-              <div class="opt-desc">Remove the folder — layers inside become ungrouped</div>
+              <div class="opt-desc">
+                Remove the folder — layers inside become ungrouped
+              </div>
             </div>
           </label>
         </div>
@@ -3343,7 +4197,11 @@
           <button
             class="modal-btn"
             id="del-group-ok"
-            style="background: var(--red); border-color: var(--red); color: #fff"
+            style="
+              background: var(--red);
+              border-color: var(--red);
+              color: #fff;
+            "
           >
             Delete
           </button>
@@ -3408,32 +4266,49 @@
     <div class="modal-overlay" id="modal-img-import">
       <div class="modal">
         <h2>Import Image</h2>
-        <p class="sub" id="img-import-sub">Where do you want to place the image?</p>
+        <p class="sub" id="img-import-sub">
+          Where do you want to place the image?
+        </p>
         <div class="img-import-opts">
           <label class="img-import-opt selected" id="opt-new-layer-wrap">
-            <input type="radio" name="img-import-dest" value="new-layer" checked />
+            <input
+              type="radio"
+              name="img-import-dest"
+              value="new-layer"
+              checked
+            />
             <div class="opt-body">
               <div class="opt-label">✦ New layer</div>
               <div class="opt-desc">
-                Create a new layer above the current selection and place the image on it.
+                Create a new layer above the current selection and place the
+                image on it.
               </div>
             </div>
           </label>
           <label class="img-import-opt" id="opt-cur-layer-wrap">
             <input type="radio" name="img-import-dest" value="cur-layer" />
             <div class="opt-body">
-              <div class="opt-label">Current layer — <em id="opt-cur-layer-name"></em></div>
+              <div class="opt-label">
+                Current layer — <em id="opt-cur-layer-name"></em>
+              </div>
               <div class="opt-desc" id="opt-cur-layer-desc">
                 Draw the image onto the current frame of the active layer.
               </div>
             </div>
           </label>
-          <label class="img-import-opt" id="opt-group-layer-wrap" style="display: none">
+          <label
+            class="img-import-opt"
+            id="opt-group-layer-wrap"
+            style="display: none"
+          >
             <input type="radio" name="img-import-dest" value="group-layer" />
             <div class="opt-body">
-              <div class="opt-label">📁 New layer inside <em id="opt-group-name"></em></div>
+              <div class="opt-label">
+                📁 New layer inside <em id="opt-group-name"></em>
+              </div>
               <div class="opt-desc">
-                Create a new layer inside the active group and place the image on it.
+                Create a new layer inside the active group and place the image
+                on it.
               </div>
             </div>
           </label>
@@ -3453,84 +4328,5 @@
         </div>
       </div>
     </div>
-
-    <!-- ── JavaScript Modules ───────────────────────────────────── -->
-    <script src="src/ui/site-dialog.js"></script>
-    <script src="src/ui/transient-manager.js"></script>
-    <script src="src/core/platform-input.js"></script>
-    <script src="src/core/rotation-snap.js"></script>
-    <script src="src/core/core-state.js"></script>
-    <script src="src/core/display-backend.js"></script>
-    <script src="src/core/overlay-renderer.js"></script>
-    <script src="src/debug/brush-latency-profiler.js"></script>
-    <script src="src/ui/cursor-prefs.js"></script>
-    <script src="src/brush/brush-size-unit.js"></script>
-    <script src="src/brush/stroke-trajectory-core.js"></script>
-    <script src="src/brush/prototype-stroke-core.js"></script>
-    <script src="src/brush/hard-round-adapter.js"></script>
-    <script src="src/brush/hard-round-capsule-math.js"></script>
-    <script src="src/brush/hard-round-capsule-renderer.js"></script>
-    <script src="src/brush/hard-round-capsule-gpu.js"></script>
-    <script src="src/brush/prototype-renderer.js"></script>
-    <script src="src/brush/custom-tip-gpu-resources.js"></script>
-    <script src="src/brush/custom-tip-gpu-renderer.js"></script>
-    <script src="src/brush/brush-engine.js"></script>
-    <script src="src/smart-raster/smart-raster-cm.js"></script>
-    <script src="src/smart-raster/smart-raster-layer.js"></script>
-    <script src="src/smart-raster/smart-raster-v4.js"></script>
-    <script src="src/ui/panels.js"></script>
-    <script src="src/smart-raster/smart-raster-typed.js"></script>
-    <script src="src/smart-raster/smart-raster-v4-shadow.js"></script>
-    <script src="src/ui/tools-color.js"></script>
-    <script src="src/core/palette.js"></script>
-    <script src="src/brush/brush-presets.js"></script>
-    <script src="src/timeline/timeline-scrub-controller.js"></script>
-    <script src="src/timeline/timeline.js"></script>
-    <script src="src/timeline/audio-clip-time-mapping.js"></script>
-    <script src="src/timeline/audio-waveform-envelope.js"></script>
-    <script src="src/timeline/audio-timeline.js"></script>
-    <script src="src/timeline/audio-clips-advanced.js"></script>
-    <script src="src/timeline/audio-waveform-height.js"></script>
-    <script src="src/timeline/audio-split-tool.js"></script>
-    <script src="src/timeline/audio-stretch-tool.js"></script>
-    <script src="src/timeline/audio-slip-tool.js"></script>
-    <script src="src/timeline/audio-import.js"></script>
-    <script src="src/timeline/audio-playback.js"></script>
-    <script src="src/core/layers.js"></script>
-    <script src="src/core/project-io.js"></script>
-    <script src="src/core/project-recovery.js"></script>
-    <script src="src/timeline/keyframe-switcher.js"></script>
-    <script src="src/timeline/keyframe-exposure.js"></script>
-    <script src="src/geometry/freehand-closed-path.js"></script>
-    <script src="src/timeline/light-table.js"></script>
-    <script src="src/core/keybinds.js"></script>
-    <script src="src/selection/linked-pixel-selection.js"></script>
-    <script src="src/selection/lasso-selection.js"></script>
-    <script src="src/selection/rectangle-selection.js"></script>
-    <script src="src/selection/ellipse-selection.js"></script>
-    <script src="src/selection/magic-wand-selection.js"></script>
-    <script src="src/fill/fill-mask-engine.js"></script>
-    <script src="src/fill/binary-contour-smoothing.js"></script>
-    <script src="src/fill/bucket-fill-aa.js"></script>
-    <script src="src/fill/lasso-fill.js"></script>
-    <script src="src/brush/brush-size-drag.js"></script>
-    <script src="src/brush/brush-size-cursor.js"></script>
-    <script src="src/ui/ui-controls.js"></script>
-    <script src="src/ui/scrollbar-pointer-capture.js"></script>
-    <script src="src/ui/panel-pan.js"></script>
-    <script src="src/import/image-import.js"></script>
-    <script src="src/transform/perspective-controller.js"></script>
-    <script src="src/transform/transform-tool.js"></script>
-    <script src="src/transform/repeatable-transform.js"></script>
-    <script src="src/transform/resize-canvas-tool.js"></script>
-    <script src="src/selection/selection-move.js"></script>
-    <script src="src/ui/tool-groups.js"></script>
-    <script src="src/camera/camera-system.js"></script>
-    <script src="src/camera/camera-view.js"></script>
-    <script src="assets/vendor/gif.js/gif.js"></script>
-    <script src="src/export/gif-encoder.js"></script>
-    <script src="src/export/export-system.js"></script>
-    <script src="src/timeline/graph-editor.js"></script>
-    <script src="src/ui/local-storage-panel.js"></script>
   </body>
 </html>

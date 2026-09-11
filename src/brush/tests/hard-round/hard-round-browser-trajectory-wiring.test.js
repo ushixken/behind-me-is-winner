@@ -16,13 +16,16 @@ const prototypeSource = fs.readFileSync(
   "utf8",
 );
 
-const trajectoryTag = '<script src="src/brush/stroke-trajectory-core.js"></script>';
-const prototypeTag = '<script src="src/brush/prototype-stroke-core.js"></script>';
-const trajectoryIndex = indexSource.indexOf(trajectoryTag);
-const prototypeIndex = indexSource.indexOf(prototypeTag);
+const trajectoryTag = indexSource.match(/<script\b[^>]*\bsrc="src\/brush\/stroke-trajectory-core\.js"[^>]*><\/script>/);
+const prototypeTag = indexSource.match(/<script\b[^>]*\bsrc="src\/brush\/prototype-stroke-core\.js"[^>]*><\/script>/);
+const trajectoryIndex = trajectoryTag ? trajectoryTag.index : -1;
+const prototypeIndex = prototypeTag ? prototypeTag.index : -1;
 
 assert.ok(trajectoryIndex >= 0, "index.html must load stroke-trajectory-core.js");
 assert.ok(prototypeIndex >= 0, "index.html must load prototype-stroke-core.js");
+assert.doesNotMatch(trajectoryTag[0] + prototypeTag[0], /\sasync\b/);
+assert.equal(/\sdefer\b/.test(trajectoryTag[0]), /\sdefer\b/.test(prototypeTag[0]),
+  "both scripts must use the same ordered loading mode");
 assert.ok(
   trajectoryIndex < prototypeIndex,
   "the shared trajectory browser global must load before PrototypeStrokeCore",

@@ -6,7 +6,7 @@ const path = require("node:path");
 const engine = fs.readFileSync(
   path.join(__dirname, "..", "..", "..", "brush-engine.js"),
   "utf8",
-);
+).replace(/\r\n/g, "\n");
 const renderer = fs.readFileSync(
   path.join(__dirname, "..", "..", "..", "prototype-renderer.js"),
   "utf8",

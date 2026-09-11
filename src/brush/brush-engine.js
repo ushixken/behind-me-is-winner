@@ -6326,7 +6326,7 @@ function _resetStabilization(x, y, t) {
     cancelAnimationFrame(_stabilizerRAF);
     _stabilizerRAF = 0;
   }
-  _oldStabilizerReset(x, y);
+  _oldStabilizerReset(x, y, t);
   _tipDisplayReset(x, y, performance.now());
 }
 function _stabilizerCancel() {
@@ -6433,17 +6433,46 @@ const _OLD_STABILIZER_FLOOR_FADE_LIMIT = 0.12; // UI amount (0-1) above which th
 let _oldStabX = 0,
   _oldStabY = 0,
   _oldStabSpeed = 0,
-  _oldStabLastT = 0;
+  _oldStabLastT = 0,
+  _oldStabLastInputT = null;
+let _hardRoundLowZoomPoint = null;
+
+// A short spatial low-pass for zero-stabilization, zoomed-out drawing.
+// Unlike a sample-count window, its extra lag is bounded in CSS pixels:
+// |target - output| = radius * distance / (radius + distance) < radius.
+// Every result lies between the previous output and the current target.
+function _hardRoundDenoiseLowZoom(x, y, amount) {
+  if (!_hardRoundStrokeActive || amount !== 0 || !(zoom > 0 && zoom < 1)) {
+    _hardRoundLowZoomPoint = null;
+    return { x, y };
+  }
+  if (!_hardRoundLowZoomPoint) {
+    _hardRoundLowZoomPoint = { x, y };
+    return { x, y };
+  }
+  const dx = x - _hardRoundLowZoomPoint.x;
+  const dy = y - _hardRoundLowZoomPoint.y;
+  const distance = Math.hypot(dx, dy) * zoom;
+  const radius = 0.5 * (1 - zoom);
+  const alpha = distance / (distance + radius);
+  _hardRoundLowZoomPoint = {
+    x: _hardRoundLowZoomPoint.x + dx * alpha,
+    y: _hardRoundLowZoomPoint.y + dy * alpha,
+  };
+  return { ..._hardRoundLowZoomPoint };
+}
 function _oldStabilizerFloorWeight(amount) {
   const t = Math.min(Math.max(amount / _OLD_STABILIZER_FLOOR_FADE_LIMIT, 0), 1);
   const smooth = t * t * (3 - 2 * t); // smoothstep
   return 1 - smooth; // 1 at UI 0, 0 at/after the fade limit
 }
-function _oldStabilizerReset(x, y) {
+function _oldStabilizerReset(x, y, sampleTime) {
+  _hardRoundLowZoomPoint = { x, y };
   _oldStabX = x;
   _oldStabY = y;
   _oldStabSpeed = 0;
   _oldStabLastT = performance.now();
+  _oldStabLastInputT = Number.isFinite(sampleTime) ? sampleTime : null;
 }
 function _oldStabilizerCancel() {
   _oldStabSpeed = 0;
@@ -6454,10 +6483,22 @@ function _oldStabilizerCancel() {
 // the time constant instead of opening an ever-growing gap (that file's
 // filter, unlike the point-count engine above, is not meant to rubberband --
 // it exists purely to eat jitter at the low end).
-function _oldStabilizerAdvance(targetX, targetY, now) {
+function _oldStabilizerAdvance(targetX, targetY, now, sampleTime) {
+  // Coalesced pen samples retain their capture times even when JS processes
+  // them in a burst. Only real Hard Round input supplies this clock; idle
+  // catch-up and other brushes continue to use wall time.
+  let elapsedMs = now - (_oldStabLastT || now);
+  if (Number.isFinite(sampleTime)) {
+    if (_oldStabLastInputT != null) {
+      elapsedMs = Math.max(0, sampleTime - _oldStabLastInputT);
+      _oldStabLastInputT = Math.max(_oldStabLastInputT, sampleTime);
+    } else {
+      _oldStabLastInputT = sampleTime;
+    }
+  }
   const dt = Math.max(
     0.00025,
-    Math.min(0.05, (now - (_oldStabLastT || now)) / 1000),
+    Math.min(0.05, elapsedMs / 1000),
   );
   _oldStabLastT = now;
   const dist = Math.hypot(targetX - _oldStabX, targetY - _oldStabY);
@@ -6475,7 +6516,7 @@ function _oldStabilizerAdvance(targetX, targetY, now) {
 // Blends the point-count engine's output with the old engine's output by
 // the fade weight above. Returns {x,y} unchanged (zero extra cost) once the
 // weight reaches 0, i.e. for every UI setting at/above the fade limit.
-function _applyOldStabilizerFloor(x, y, amount, now) {
+function _applyOldStabilizerFloor(x, y, amount, now, sampleTime) {
   if (
     typeof window !== "undefined" &&
     window.HardRoundDebugDisableOldStabilizerFloor &&
@@ -6488,8 +6529,13 @@ function _applyOldStabilizerFloor(x, y, amount, now) {
     _stabilizerTargetX,
     _stabilizerTargetY,
     now,
+    _hardRoundStrokeActive ? sampleTime : undefined,
   );
-  return { x: x + (old.x - x) * weight, y: y + (old.y - y) * weight };
+  return _hardRoundDenoiseLowZoom(
+    x + (old.x - x) * weight,
+    y + (old.y - y) * weight,
+    amount,
+  );
 }
 // ---------------------------------------------------------------------
 let _activeStrokePipeline = null;
@@ -6818,6 +6864,7 @@ function _stabilizePoint(x, y, t) {
     avg.y,
     amount,
     _stabilizerLastAdvanceT,
+    t,
   );
   _stabilizerX = floored.x;
   _stabilizerY = floored.y;
@@ -10086,7 +10133,12 @@ function _hardRoundGetCore() {
     typeof window !== "undefined" &&
     window.PrototypeStrokeCore
   ) {
-    _hardRoundCore = new window.PrototypeStrokeCore();
+    // Position and pressure already pass through the UI stabilizer. Keep them
+    // paired instead of delaying either with another zoom-dependent average.
+    _hardRoundCore = new window.PrototypeStrokeCore({
+      positionAlreadyStabilized: true,
+      pressureAlreadyStabilized: true,
+    });
   }
   return _hardRoundCore;
 }
@@ -17735,6 +17787,12 @@ let _hardRoundPreviewNeedsFollowup = false;
 let _hardRoundPreviewRequestedRenderer = null;
 function _hardRoundStartPreviewFlight(renderer, session) {
   if (session !== _activeStrokeSession || !_inStroke) return false;
+  // A queued RAF can outlive the request that scheduled it. Enforce ownership
+  // here as well as at the request entry point, before flushing any geometry.
+  if (_hardRoundPreviewInFlight) {
+    _hardRoundPreviewNeedsFollowup = true;
+    return false;
+  }
   const flightStart = _hrLcActive() ? performance.now() : null;
   const cadenceFlightId = ++_hrPresentationCadenceFlightSerial;
   const cadenceGeneration = _hardRoundPreviewGeneration;
@@ -17847,6 +17905,10 @@ function _hardRoundSchedulePreviewFrame(renderer) {
     _hardRoundPreviewRAFSession = null;
     _hrFsRecordPreviewRafStart();
     if (scheduledSession !== _activeStrokeSession || !_inStroke) return;
+    if (_hardRoundPreviewInFlight) {
+      _hardRoundPreviewNeedsFollowup = true;
+      return;
+    }
     _hrPerfMarkPreviewRaf(scheduledSession);
 
     // Stationary tickHold catch-up for active SHARED_STROKE_TRAJECTORY_CORE strokes
