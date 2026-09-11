@@ -3157,12 +3157,24 @@
         // CPU backend's result already is. GPU accumulation/rasterization,
         // strokeMaskTex, segment generation, and the finished-frame path
         // (meta with no strokeId) are completely unaffected.
+        //
+        // Default restored to the zero-readback GPU overlay path (see
+        // 6a9a25d, "add GPU-native Hard Round live overlay foundation").
+        // NORMAL_CANVAS_STACK was made the default in 9e8cceb as a
+        // stability fallback after a real pointer-up handoff bug; the
+        // large number of overlay-ownership/flight/retirement fixes that
+        // landed after that commit (see git log on this file) addressed
+        // that class of bug directly, so the slow per-frame mapAsync
+        // readback no longer needs to be the default for every stroke.
+        // NORMAL_CANVAS_STACK and READBACK_2D remain available as explicit
+        // opt-in values (window.HardRoundDebugLivePresentationMode) for
+        // regression comparison against this change.
         const _livePresentationMode =
           typeof window !== "undefined"
             ? window.HardRoundDebugLivePresentationMode == null
-              ? "NORMAL_CANVAS_STACK"
+              ? "GPU_OVERLAY"
               : window.HardRoundDebugLivePresentationMode
-            : "NORMAL_CANVAS_STACK";
+            : "GPU_OVERLAY";
         const _canvasLivePresentationOn =
           (typeof window !== "undefined" &&
             !!window.HardRoundDebugCanvasLivePresentation) ||
@@ -3827,102 +3839,6 @@
             (err && err.message ? err.message : String(err)),
         };
       }
-      // --- B: GPU, production dispatch (unmerged) ---
-      try {
-        const rB = new PrototypeRenderer({
-          width,
-          height,
-          ss,
-          preferGpu: true,
-        });
-        if (rB._gpuInitPromise) await rB._gpuInitPromise;
-        rB.beginStroke();
-        if (!rB._usingGpu) {
-          result.B = {
-            error:
-              "GPU unavailable in this environment -- cannot run the GPU-production variant here.",
-          };
-        } else {
-          const batchesB = _hrDeepCloneBatches(captured.batches);
-          let submittedB = 0;
-          batchesB.forEach((batch) => {
-            submittedB += batch.length;
-            rB.drawSegments(batch);
-          });
-          const outB = await rB.endStroke({ readback: true });
-          capB = _hrDiagCaptureCanvas(outB.canvas);
-          result.B = {
-            backend: "gpu-production-unmerged",
-            usingGpu: true,
-            ...capB,
-            data: undefined,
-          };
-          result.segmentCounts.gpuUnmergedSubmittedRaw = submittedB;
-          result.segmentCounts.gpuUnmergedFinalSegmentCount = outB.segmentCount;
-        }
-      } catch (err) {
-        result.B = {
-          error:
-            "GPU-production variant failed: " +
-            (err && err.message ? err.message : String(err)),
-        };
-      }
-      if (capA && capB) result.AvB = _hrDiagCompareCaptures(capA, capB);
-
-      // --- C: GPU, diagnostic dispatch (merged before gpu.drawSegment()) ---
-      try {
-        const rC = new PrototypeRenderer({
-          width,
-          height,
-          ss,
-          preferGpu: true,
-        });
-        if (rC._gpuInitPromise) await rC._gpuInitPromise;
-        rC.beginStroke();
-        if (!rC._usingGpu) {
-          result.C = {
-            error:
-              "GPU unavailable in this environment -- cannot run the GPU-merged-diagnostic variant here.",
-          };
-        } else {
-          const batchesC = _hrDeepCloneBatches(captured.batches);
-          let submittedC = 0;
-          batchesC.forEach((batch) => {
-            if (!batch.length) return;
-            const merged = mergeEquivalentConstantCapsules(batch);
-            submittedC += merged.length;
-            for (const seg of merged) {
-              if (!seg) continue;
-              rC._rgb = seg.rgb || rC._rgb;
-              rC._composite = seg.composite || rC._composite;
-              rC.gpu.drawSegment(seg);
-            }
-            rC._segmentCount += batch.reduce((n, s) => n + (s ? 1 : 0), 0);
-            rC.gpu.flush();
-          });
-          const outC = await rC.endStroke({ readback: true });
-          capC = _hrDiagCaptureCanvas(outC.canvas);
-          result.C = {
-            backend: "gpu-diagnostic-merged",
-            usingGpu: true,
-            ...capC,
-            data: undefined,
-          };
-          result.segmentCounts.gpuMergedSubmitted = submittedC;
-          result.segmentCounts.gpuMergedFinalSegmentCount = outC.segmentCount;
-        }
-      } catch (err) {
-        result.C = {
-          error:
-            "GPU-merged-diagnostic variant failed: " +
-            (err && err.message ? err.message : String(err)),
-        };
-      }
-      if (capA && capC) result.AvC = _hrDiagCompareCaptures(capA, capC);
-      if (capB && capC) result.BvC = _hrDiagCompareCaptures(capB, capC);
-
-      return result;
-
       // --- B: GPU, production dispatch (unmerged) ---
       try {
         const rB = new PrototypeRenderer({

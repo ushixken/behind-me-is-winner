@@ -8945,7 +8945,6 @@ let _recompRAF = false,
   _deferredKeyVisualRefreshAfterNextPresentation = false;
 function _hrNormalCanvasStackLivePresentationActive() {
   return !!(
-    window.HardRoundDebugLivePresentationMode == null ||
     window.HardRoundDebugLivePresentationMode === "NORMAL_CANVAS_STACK" ||
     window.HardRoundDebugLivePresentationMode === "READBACK_2D" ||
     window.HardRoundDebugCanvasLivePresentation

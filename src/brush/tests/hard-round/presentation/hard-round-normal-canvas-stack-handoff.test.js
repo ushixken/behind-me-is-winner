@@ -12,10 +12,10 @@ const renderer = fs.readFileSync(
   "utf8",
 );
 
-test("default Hard Round live preview uses canvas stack without requiring a debug global", () => {
+test("default Hard Round live preview uses the zero-readback GPU overlay path", () => {
   assert.match(
     renderer,
-    /HardRoundDebugLivePresentationMode == null\s*\?\s*"NORMAL_CANVAS_STACK"/,
+    /HardRoundDebugLivePresentationMode == null\s*\?\s*"GPU_OVERLAY"/,
   );
   assert.doesNotMatch(
     renderer,
@@ -52,9 +52,9 @@ test("explicit diagnostic live presentation override is still honored", () => {
   assert.match(renderer, /_livePresentationMode\s*===\s*"NORMAL_CANVAS_STACK"/);
 });
 
-test("canvas-stack Hard Round pointerup holds live representation until final commit", () => {
+test("canvas-stack Hard Round pointerup holds live representation only when explicitly requested", () => {
   assert.match(engine, /function _hrNormalCanvasStackLivePresentationActive\(\)/);
-  assert.match(engine, /window\.HardRoundDebugLivePresentationMode == null/);
+  assert.doesNotMatch(engine, /window\.HardRoundDebugLivePresentationMode == null/);
   assert.match(engine, /window\.HardRoundDebugLivePresentationMode === "NORMAL_CANVAS_STACK"/);
   assert.match(engine, /function _hrShouldHoldNormalCanvasStackLiveUntilCommit\(\)/);
   assert.match(
