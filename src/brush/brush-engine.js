@@ -1,4 +1,4 @@
-//
+﻿//
 // DRAWING Ã¢â‚¬â€ getPos uses activeC's own getBoundingClientRect()
 // which accounts for the CSS transform, giving pixel-perfect coords
 //
@@ -6862,7 +6862,12 @@ function _emitHardRoundStabilizedPoint(
     timeStamp: Number.isFinite(timeStamp) ? timeStamp : performance.now(),
   };
   if (
-    window.HardRoundDebugNewestSampleTip ||
+    window.HardRoundDebugLiveNewestSampleTail ||
+    window.HardRoundDebugIntegratedNewestSampleTip ||
+    _hrCblActive() ||
+    _hrTwActive() ||
+    _hrGaActive() ||
+    _hrTemporalActive() ||
     window.HardRoundDebugTipLag
   ) {
     _hrNewestSampleTipTarget = {
@@ -6870,14 +6875,80 @@ function _emitHardRoundStabilizedPoint(
       y: sample.y,
       pressure: sample.pressure,
       time: sample.timeStamp,
+      wallTime: performance.now(),
+      zoom: Number.isFinite(zoom) ? zoom : 1,
     };
   }
+  if (_hrCblActive() || _hrTwActive() || _hrGaActive() || _hrTemporalActive())
+    _hrCblLastCoreInput = {
+      seq: _hrCblInputSeq,
+      x: sample.x,
+      y: sample.y,
+      time: sample.timeStamp,
+      wallTime: performance.now(),
+      zoom: Number.isFinite(zoom) ? zoom : 1,
+    };
+  _hrTwRecordStage("coreInput", _hrCblLastCoreInput, _hrCblInputSeq);
   _hrTlRecordStage("coreInput", sample.x, sample.y, sample.timeStamp);
   const segments = _hardRoundCore.pushSamples([sample]);
-  if (_hrTlActive() && segments && segments.length) {
+  if (
+    (_hrCblActive() || _hrTwActive() || _hrGaActive() || _hrTemporalActive()) &&
+    segments &&
+    segments.length
+  ) {
+    for (const seg of segments) seg._debugSeq = _hrCblInputSeq;
+  }
+  if (
+    (_hrCblActive() || _hrTwActive() || _hrGaActive()) &&
+    _hardRoundCore &&
+    _hardRoundCore.lastRaw
+  )
+    _hrCblLastInternalRaw = {
+      seq: _hrCblInputSeq,
+      x: _hardRoundCore.lastRaw.x,
+      y: _hardRoundCore.lastRaw.y,
+      time: sample.timeStamp,
+      wallTime: performance.now(),
+      zoom: Number.isFinite(zoom) ? zoom : 1,
+    };
+  _hrTwRecordStage("internalRaw", _hrCblLastInternalRaw, _hrCblInputSeq);
+  if (segments && segments.length) {
+    const lastStartupSegment = segments[segments.length - 1];
+    if (
+      lastStartupSegment &&
+      Number.isFinite(lastStartupSegment.x1) &&
+      Number.isFinite(lastStartupSegment.y1)
+    )
+      _hrStartupMarkActive("firstEmittedTime");
+    _hrPcRecord("emittedGeometry");
+  }
+  if (
+    (_hrTlActive() ||
+      _hrCblActive() ||
+      _hrTwActive() ||
+      _hrGaActive() ||
+      _hrTemporalActive()) &&
+    segments &&
+    segments.length
+  ) {
     const last = segments[segments.length - 1];
-    if (last && Number.isFinite(last.x1) && Number.isFinite(last.y1))
+    if (last && Number.isFinite(last.x1) && Number.isFinite(last.y1)) {
+      if (_hrCblActive() || _hrTwActive() || _hrGaActive() || _hrTemporalActive()) {
+        _hrTipLagLastRenderedEndpoint = {
+          seq: _hrCblInputSeq,
+          x: last.x1,
+          y: last.y1,
+          time: sample.timeStamp,
+          wallTime: performance.now(),
+          zoom: Number.isFinite(zoom) ? zoom : 1,
+        };
+        _hrCblLastEmittedEndpoint = _hrTlClonePoint(_hrTipLagLastRenderedEndpoint);
+        if (_hrCblLastEmittedEndpoint) _hrCblLastEmittedEndpoint.seq = _hrCblInputSeq;
+      }
+      _hrTwRecordStage("emitted", _hrCblLastEmittedEndpoint, _hrCblInputSeq);
+      _hrTemporalRecordEmitted(_hrCblLastEmittedEndpoint);
       _hrTlRecordStage("coreOutput", last.x1, last.y1, sample.timeStamp);
+    }
   }
   _hardRoundStampSegments(segments, ev || _lastPointerEvent);
   lx = x;
@@ -8902,6 +8973,15 @@ function _scheduleRecomposite(options) {
     const immediateStart = performance.now();
     _flushLiveColorEraserPreview();
     recomposite(curLayer, curFrame, rect);
+    _hrStartupMarkActive("firstRecompositeTime");
+    _hrPcRecord("visibleRecomposite", {
+      generation: _hrDisplayedStrokeCanvasGenerationId,
+    });
+    _hrGaRecordPresentation("visibleRecomposite", {
+      generation: _hrDisplayedStrokeCanvasGenerationId,
+      represented: _hrTipLagLastDisplayedBodyEndpoint,
+    });
+    _hrTemporalRecordVisible(_hrTipLagLastDisplayedBodyEndpoint);
     const immediateDuration = performance.now() - immediateStart;
     if (_hrTlActive()) {
       const accepted = _hrTlData().latest.acceptedPreview;
@@ -8915,6 +8995,7 @@ function _scheduleRecomposite(options) {
       _hrLcTime("recomposite");
       _hrLcDuration("recompositeMs", immediateDuration);
     }
+    _hrCblRecordRecomposite(immediateDuration);
     _hrMtRecord(
       "_scheduleRecomposite-immediate-recomposite",
       immediateStart,
@@ -9047,6 +9128,17 @@ function _scheduleRecomposite(options) {
     const scheduledStart = performance.now();
     _flushLiveColorEraserPreview();
     recomposite(layerIndex, frameIndex, rect);
+    _hrStartupMark(sessionId, "firstRecompositeTime");
+    _hrPcRecord("visibleRecomposite", {
+      strokeId: sessionId,
+      generation: _hrDisplayedStrokeCanvasGenerationId,
+    });
+    _hrGaRecordPresentation("visibleRecomposite", {
+      strokeId: sessionId,
+      generation: _hrDisplayedStrokeCanvasGenerationId,
+      represented: _hrTipLagLastDisplayedBodyEndpoint,
+    });
+    _hrTemporalRecordVisible(_hrTipLagLastDisplayedBodyEndpoint);
     const scheduledDuration = performance.now() - scheduledStart;
     if (_hrTlActive()) {
       const accepted = _hrTlData().latest.acceptedPreview;
@@ -9060,6 +9152,7 @@ function _scheduleRecomposite(options) {
       _hrLcTime("recomposite");
       _hrLcDuration("recompositeMs", scheduledDuration);
     }
+    _hrCblRecordRecomposite(scheduledDuration);
     _hrMtRecord(
       "_scheduleRecomposite-scheduled-recomposite",
       scheduledStart,
@@ -10251,9 +10344,28 @@ const _hardRoundPendingRenderSegments = [];
 const _hardRoundPendingRenderSegmentTimes = [];
 let _hrTipLagLastRenderedEndpoint = null;
 let _hrTipLagLastFlushedEndpoint = null;
+let _hrTipLagLastAcceptedPreviewEndpoint = null;
+let _hrTipLagLastDisplayedBodyEndpoint = null;
 let _hrTipLagLastDisplayedEndpoint = null;
 let _hrNewestSampleTipTarget = null;
 let _hrNewestSampleTipOverlayDirty = null;
+let _hrLiveNewestSampleTailSegment = null;
+let _hrLiveNewestSampleTailStart = null;
+let _hrLiveNewestSampleTailEnd = null;
+let _hrIntegratedTipGenerationId = 0;
+let _hrIntegratedTipTopology = null;
+let _hrAcceptedPreviewGenerationId = null;
+let _hrDisplayedStrokeCanvasGenerationId = null;
+let _hrCursorBrushLatestRaw = null;
+let _hrCblLastStabilized = null;
+let _hrCblLastCoreInput = null;
+let _hrCblLastInternalRaw = null;
+let _hrCblLastEmittedEndpoint = null;
+let _hrCblInputSeq = 0;
+let _hrCblStabilizedSeq = 0;
+let _hrCblCoreInputSeq = 0;
+let _hrCblInternalRawSeq = 0;
+let _hrCblEmittedEndpointSeq = 0;
 // Phase 11A.30: single master flag for this diagnostic phase. Default
 // false = no routine Phase 11A.30 console logging. When true, only the
 // concise [11A.30] ... results are printed (see _pointerEndStroke and
@@ -11012,14 +11124,28 @@ function _hardRoundFlushPending(renderer) {
       Number.isFinite(oldest) ? _hrLcFlushStart - oldest : null,
     );
   }
-  if (_hrTlActive() && pending.length) {
+  if (
+    (_hrTlActive() ||
+      _hrCblActive() ||
+      _hrTwActive() ||
+      _hrGaActive() ||
+      _hrTemporalActive() ||
+      window.HardRoundDebugIntegratedNewestSampleTip) &&
+    pending.length
+  ) {
     const last = pending[pending.length - 1];
     if (last && Number.isFinite(last.x1) && Number.isFinite(last.y1)) {
       _hrTipLagLastFlushedEndpoint = {
         x: last.x1,
         y: last.y1,
         time: performance.now(),
+        wallTime: performance.now(),
+        zoom: Number.isFinite(zoom) ? zoom : 1,
       };
+      const seq = Number.isFinite(last._debugSeq) ? last._debugSeq : _hrCblInputSeq;
+      _hrTipLagLastFlushedEndpoint.seq = seq;
+      _hrTwRecordStage("flushed", _hrTipLagLastFlushedEndpoint, seq);
+      _hrTemporalRecordFlush(_hrTipLagLastFlushedEndpoint);
       _hrTlRecordStage("flushed", last.x1, last.y1, _hrTipLagLastFlushedEndpoint.time);
     }
   }
@@ -11056,6 +11182,8 @@ function _hardRoundFlushPending(renderer) {
     });
   }
   _hr11b6Log("flushPending", null, { flushedCount: pending.length });
+  _hrStartupMarkActive("firstFlushTime");
+  _hrPcRecord("rendererFlush");
   return pending.length;
 }
 function _hardRoundSsForMode(mode) {
@@ -12468,6 +12596,7 @@ function _hardRoundStampSegments(segments, e) {
   const renderSegs = [];
   const _hrMtAdapterStart = _hrMtActive() ? performance.now() : null;
   for (const seg of segments) {
+    _hrOescRecordSegment("coreSegment", seg);
     currentPressure = seg.pressure0;
     const alpha0 = _getEffectiveBrushParams(e).alpha;
     currentPressure = seg.pressure1;
@@ -12486,6 +12615,20 @@ function _hardRoundStampSegments(segments, e) {
       getEffectiveAlpha: (pressure) =>
         pressure === seg.pressure0 ? alpha0 : alpha1,
     });
+    if (
+      (_hrCblActive() ||
+        _hrTwActive() ||
+        _hrTemporalActive() ||
+        _hrOescActive()) &&
+      Number.isFinite(seg._debugSeq)
+    ) {
+      resolved._debugSeq = seg._debugSeq;
+      resolved._debugFilteredX = seg._debugFilteredX;
+      resolved._debugFilteredY = seg._debugFilteredY;
+      resolved._debugPreviousFilteredX = seg._debugPreviousFilteredX;
+      resolved._debugPreviousFilteredY = seg._debugPreviousFilteredY;
+    }
+    _hrOescRecordSegment("renderSegment", resolved);
     renderSegs.push(resolved);
     _brushDiagPerfNote("resolved", {
       count: 1,
@@ -12499,16 +12642,25 @@ function _hardRoundStampSegments(segments, e) {
     );
     if (resolvedLength > 0)
       _brushDiagPerfNote("spacing", { step: resolvedLength });
+    _hrRqRecordSegment(resolved);
   }
-  if ((_hrTlActive() || window.HardRoundDebugNewestSampleTip) && renderSegs.length) {
+  if (
+    (_hrTlActive() ||
+      window.HardRoundDebugLiveNewestSampleTail ||
+      window.HardRoundDebugIntegratedNewestSampleTip) &&
+    renderSegs.length
+  ) {
     const last = renderSegs[renderSegs.length - 1];
     if (last && Number.isFinite(last.x1) && Number.isFinite(last.y1)) {
       _hrTipLagLastRenderedEndpoint = {
         x: last.x1,
         y: last.y1,
         time: performance.now(),
+        wallTime: performance.now(),
+        zoom: Number.isFinite(zoom) ? zoom : 1,
       };
       _hrTipLagLastDisplayedEndpoint = _hrTipLagLastRenderedEndpoint;
+      _hrLiveNewestSampleTailSegment = last;
       _hrTlRecordStage("renderedSegment", last.x1, last.y1, _hrTipLagLastRenderedEndpoint.time);
     }
   }
@@ -13099,16 +13251,56 @@ if (typeof window.HardRoundDebugLiveCadence === "undefined")
   window.HardRoundDebugLiveCadence = false;
 if (typeof window.HardRoundDebugImmediateLiveFollowup === "undefined")
   window.HardRoundDebugImmediateLiveFollowup = false;
+if (typeof window.HardRoundDebugFrameBudgetedLivePreview === "undefined")
+  window.HardRoundDebugFrameBudgetedLivePreview = false;
 if (typeof window.HardRoundDebugGpuDirtyLiveReadback === "undefined")
   window.HardRoundDebugGpuDirtyLiveReadback = false;
+if (typeof window.HardRoundDebugPresentationCadence === "undefined")
+  window.HardRoundDebugPresentationCadence = false;
+if (typeof window.HardRoundDebugVisibleBrushGenerationLag === "undefined")
+  window.HardRoundDebugVisibleBrushGenerationLag = false;
+if (typeof window.HardRoundDebugStrokeStartupLatency === "undefined")
+  window.HardRoundDebugStrokeStartupLatency = false;
 if (typeof window.HardRoundDebugTipLag === "undefined")
   window.HardRoundDebugTipLag = false;
-if (typeof window.HardRoundDebugNewestSampleTip === "undefined")
-  window.HardRoundDebugNewestSampleTip = false;
+if (typeof window.HardRoundDebugLiveNewestSampleTail === "undefined")
+  window.HardRoundDebugLiveNewestSampleTail = false;
+if (typeof window.HardRoundDebugIntegratedNewestSampleTip === "undefined")
+  window.HardRoundDebugIntegratedNewestSampleTip = false;
 if (typeof window.HardRoundDebugDisableOldStabilizerFloor === "undefined")
   window.HardRoundDebugDisableOldStabilizerFloor = false;
 if (typeof window.HardRoundDebugDisablePrototypeZoomMinimum === "undefined")
   window.HardRoundDebugDisablePrototypeZoomMinimum = false;
+if (typeof window.HardRoundDebugDisableSharedTrajectoryZoomMinimum === "undefined")
+  window.HardRoundDebugDisableSharedTrajectoryZoomMinimum = false;
+if (typeof window.HardRoundDebugSharedTrajectoryPositionWindow === "undefined")
+  window.HardRoundDebugSharedTrajectoryPositionWindow = null;
+if (
+  typeof window.HardRoundDebugSharedTrajectorySpeedAdaptiveWindow ===
+  "undefined"
+)
+  window.HardRoundDebugSharedTrajectorySpeedAdaptiveWindow = null;
+if (typeof window.HardRoundDebugShortLookaheadTrajectory === "undefined")
+  window.HardRoundDebugShortLookaheadTrajectory = false;
+if (
+  typeof window.HardRoundDebugOneSampleDelayedCurveReconstruction ===
+  "undefined"
+)
+  window.HardRoundDebugOneSampleDelayedCurveReconstruction = false;
+if (typeof window.HardRoundDebugTemporalStrokeTiming === "undefined")
+  window.HardRoundDebugTemporalStrokeTiming = false;
+if (typeof window.HardRoundDebugOneEuroTrajectoryFilter === "undefined")
+  window.HardRoundDebugOneEuroTrajectoryFilter = null;
+if (typeof window.HardRoundDebugOneEuroSegmentContinuity === "undefined")
+  window.HardRoundDebugOneEuroSegmentContinuity = false;
+if (typeof window.HardRoundDebugOneEuroPrototypeCoreState === "undefined")
+  window.HardRoundDebugOneEuroPrototypeCoreState = false;
+if (typeof window.HardRoundDebugPrototypeSubdivision === "undefined")
+  window.HardRoundDebugPrototypeSubdivision = false;
+if (typeof window.HardRoundDebugPrototypeStateMutation === "undefined")
+  window.HardRoundDebugPrototypeStateMutation = false;
+if (typeof window.HardRoundDebugSharedTrajectoryZoomWindow === "undefined")
+  window.HardRoundDebugSharedTrajectoryZoomWindow = null;
 
 const _hrLiveCadenceLimit = 2000;
 function _hrLcData() {
@@ -13199,6 +13391,16 @@ window.HardRoundLiveCadenceNote = function (type, detail = {}) {
     }
     return;
   }
+  if (type === "integrated-terminal") {
+    _hrLcDuration("integratedTerminalDrawMs", detail.drawMs);
+    if (Number.isFinite(detail.segmentCount))
+      _hrLcInc("integratedTerminalSegments", detail.segmentCount);
+    if (Number.isFinite(detail.dirtyPixels))
+      _hrLcValue("integratedTerminalDirtyPixels", detail.dirtyPixels);
+    if (detail.previousTerminalDirtyUnion)
+      _hrLcInc("previousTerminalDirtyUnion");
+    return;
+  }
   if (type === "recomposite") {
     _hrLcTime("recomposite", now);
     _hrLcDuration("recompositeMs", detail.durationMs);
@@ -13221,6 +13423,7 @@ window.HardRoundAnalyzeLiveCadence = function () {
       coalescedSamples: rate("coalescedSamples"),
       previewAccepted: rate("previewAccepted"),
       previewFlightCompleted: rate("previewFlightCompleted"),
+      strokeCanvasUpdate: rate("strokeCanvasUpdate"),
       recomposite: rate("recomposite"),
     },
     intervalsMs: {
@@ -13228,6 +13431,7 @@ window.HardRoundAnalyzeLiveCadence = function () {
       pointermove: _hrLcIntervalStats(d.times.pointermove),
       previewAccepted: _hrLcIntervalStats(d.times.previewAccepted),
       previewFlightCompleted: _hrLcIntervalStats(d.times.previewFlightCompleted),
+      strokeCanvasUpdate: _hrLcIntervalStats(d.times.strokeCanvasUpdate),
       recomposite: _hrLcIntervalStats(d.times.recomposite),
     },
     durationsMs: {
@@ -13238,6 +13442,11 @@ window.HardRoundAnalyzeLiveCadence = function () {
       mapAsync: _hrLcStats(d.durations.mapAsyncMs),
       cpuPixelConversion: _hrLcStats(d.durations.cpuPixelConversionMs),
       putImageData: _hrLcStats(d.durations.putImageDataMs),
+      terminalRestore: _hrLcStats(d.durations.terminalRestoreMs),
+      terminalDraw: _hrLcStats(d.durations.terminalDrawMs),
+      integratedTerminalDraw: _hrLcStats(
+        d.durations.integratedTerminalDrawMs,
+      ),
       cpuPixelConversionPutImageData: _hrLcStats(
         d.durations.cpuPixelConversionPutImageDataMs,
       ),
@@ -13245,12 +13454,17 @@ window.HardRoundAnalyzeLiveCadence = function () {
       recomposite: _hrLcStats(d.durations.recompositeMs),
     },
     coalescing: {
+      frameBudgeted: !!window.HardRoundDebugFrameBudgetedLivePreview,
       previewRequestCount: count("previewRequest"),
       previewFlightStartedCount: count("previewFlightStarted"),
       previewFlightCompletedCount: count("previewFlightCompleted"),
       previewAcceptedCount: count("previewAccepted"),
       followupRequestedCount: count("followupRequested"),
       followupStartedCount: count("followupStarted"),
+      skippedImmediateFollowups: count("skippedImmediateFollowup"),
+      frameBudgetedFollowups: count("frameBudgetedFollowup"),
+      integratedTerminalSegments: count("integratedTerminalSegments"),
+      previousTerminalDirtyUnionCount: count("previousTerminalDirtyUnion"),
       maxPendingSegments: d.maxPendingSegments || 0,
       maxPendingAgeMs: d.maxPendingAgeMs || 0,
     },
@@ -13262,7 +13476,697 @@ window.HardRoundAnalyzeLiveCadence = function () {
       dirtyPixelsP95: _hrLcStats(d.values.dirtyPixels).p95,
       dirtyToFullRatioAvg: _hrLcStats(d.values.dirtyToFullRatio).avg,
       dirtyToFullRatioP95: _hrLcStats(d.values.dirtyToFullRatio).p95,
+      integratedTerminalDirtyPixelsAvg: _hrLcStats(
+        d.values.integratedTerminalDirtyPixels,
+      ).avg,
+      integratedTerminalDirtyPixelsP95: _hrLcStats(
+        d.values.integratedTerminalDirtyPixels,
+      ).p95,
     },
+  };
+};
+
+const _hrStartupLimit = 80;
+let _hrStartupLastStrokeEndTime = null;
+let _hrStartupLastPointerDownTime = null;
+function _hrStartupActive() {
+  return (
+    typeof window !== "undefined" &&
+    !!window.HardRoundDebugStrokeStartupLatency
+  );
+}
+function _hrStartupData() {
+  if (!window.HardRoundStrokeStartupLatencyData) {
+    window.HardRoundStrokeStartupLatencyData = {
+      startedAt: performance.now(),
+      records: [],
+      byStroke: Object.create(null),
+    };
+  }
+  return window.HardRoundStrokeStartupLatencyData;
+}
+function _hrStartupBeginStroke(strokeId, pointerDownTime) {
+  if (!_hrStartupActive() || !Number.isFinite(strokeId)) return;
+  const now = Number.isFinite(pointerDownTime) ? pointerDownTime : performance.now();
+  const d = _hrStartupData();
+  const idleReference = Number.isFinite(_hrStartupLastStrokeEndTime)
+    ? _hrStartupLastStrokeEndTime
+    : _hrStartupLastPointerDownTime;
+  const record = {
+    strokeId,
+    idleBeforeStrokeMs: Number.isFinite(idleReference)
+      ? Math.max(0, now - idleReference)
+      : null,
+    pointerDownTime: now,
+    firstRawTime: null,
+    firstEmittedTime: null,
+    firstFlushTime: null,
+    firstPreviewStartTime: null,
+    firstPreviewCompletedTime: null,
+    firstPreviewAcceptedTime: null,
+    firstStrokeCanvasUpdateTime: null,
+    firstRecompositeTime: null,
+  };
+  d.byStroke[strokeId] = record;
+  d.records.push(record);
+  while (d.records.length > _hrStartupLimit) {
+    const old = d.records.shift();
+    if (old && Number.isFinite(old.strokeId)) delete d.byStroke[old.strokeId];
+  }
+  _hrStartupLastPointerDownTime = now;
+}
+function _hrStartupMark(strokeId, field, time = performance.now()) {
+  if (!_hrStartupActive() || !Number.isFinite(strokeId) || !field) return;
+  const record = _hrStartupData().byStroke[strokeId];
+  if (!record || record[field] != null) return;
+  record[field] = Number.isFinite(time) ? time : performance.now();
+}
+function _hrStartupMarkActive(field, time = performance.now()) {
+  _hrStartupMark(_activeStrokeSession, field, time);
+}
+function _hrStartupNoteStrokeEnd(strokeId, time = performance.now()) {
+  if (!_hrStartupActive() || !Number.isFinite(strokeId)) return;
+  _hrStartupLastStrokeEndTime = Number.isFinite(time) ? time : performance.now();
+}
+function _hrStartupDelta(record, from, to) {
+  if (!record || !Number.isFinite(record[from]) || !Number.isFinite(record[to]))
+    return null;
+  return record[to] - record[from];
+}
+function _hrStartupStats(values) {
+  const arr = (values || []).filter(Number.isFinite).sort((a, b) => a - b);
+  if (!arr.length)
+    return { count: 0, mean: null, median: null, p95: null, max: null };
+  const pick = (p) => arr[Math.min(arr.length - 1, Math.floor((arr.length - 1) * p))];
+  return {
+    count: arr.length,
+    mean: arr.reduce((sum, v) => sum + v, 0) / arr.length,
+    median: pick(0.5),
+    p95: pick(0.95),
+    max: arr[arr.length - 1],
+  };
+}
+function _hrStartupBucketName(idleMs) {
+  if (!Number.isFinite(idleMs)) return "unknown";
+  if (idleMs < 250) return "under250ms";
+  if (idleMs < 1000) return "250msTo1s";
+  if (idleMs < 3000) return "1sTo3s";
+  if (idleMs < 5000) return "3sTo5s";
+  return "over5s";
+}
+function _hrStartupDerived(record) {
+  return {
+    pointerDownToRawMs: _hrStartupDelta(record, "pointerDownTime", "firstRawTime"),
+    rawToEmittedMs: _hrStartupDelta(record, "firstRawTime", "firstEmittedTime"),
+    emittedToFlushMs: _hrStartupDelta(record, "firstEmittedTime", "firstFlushTime"),
+    flushToPreviewStartMs: _hrStartupDelta(
+      record,
+      "firstFlushTime",
+      "firstPreviewStartTime",
+    ),
+    previewFlightMs: _hrStartupDelta(
+      record,
+      "firstPreviewStartTime",
+      "firstPreviewCompletedTime",
+    ),
+    previewCompletedToAcceptedMs: _hrStartupDelta(
+      record,
+      "firstPreviewCompletedTime",
+      "firstPreviewAcceptedTime",
+    ),
+    acceptedToStrokeCanvasUpdateMs: _hrStartupDelta(
+      record,
+      "firstPreviewAcceptedTime",
+      "firstStrokeCanvasUpdateTime",
+    ),
+    strokeCanvasUpdateToRecompositeMs: _hrStartupDelta(
+      record,
+      "firstStrokeCanvasUpdateTime",
+      "firstRecompositeTime",
+    ),
+    pointerDownToFirstVisibleMs: _hrStartupDelta(
+      record,
+      "pointerDownTime",
+      "firstRecompositeTime",
+    ),
+    rawToFirstVisibleMs: _hrStartupDelta(
+      record,
+      "firstRawTime",
+      "firstRecompositeTime",
+    ),
+  };
+}
+function _hrStartupSummarizeRecords(records) {
+  const collect = (name) =>
+    _hrStartupStats(
+      records
+        .map((record) => _hrStartupDerived(record)[name])
+        .filter(Number.isFinite),
+    );
+  return {
+    count: records.length,
+    pointerDownToFirstVisible: collect("pointerDownToFirstVisibleMs"),
+    rawToFirstVisible: collect("rawToFirstVisibleMs"),
+    previewFlight: collect("previewFlightMs"),
+  };
+}
+window.HardRoundAnalyzeStrokeStartupLatency = function () {
+  const d = window.HardRoundStrokeStartupLatencyData || _hrStartupData();
+  const records = (d.records || []).map((record) => {
+    const durations = _hrStartupDerived(record);
+    return Object.assign({}, record, {
+      idleBucket: _hrStartupBucketName(record.idleBeforeStrokeMs),
+      durations,
+    });
+  });
+  const buckets = {
+    under250ms: [],
+    "250msTo1s": [],
+    "1sTo3s": [],
+    "3sTo5s": [],
+    over5s: [],
+    unknown: [],
+  };
+  for (const record of records) {
+    const bucket = buckets[record.idleBucket] || buckets.unknown;
+    bucket.push(record);
+  }
+  return {
+    enabled: !!window.HardRoundDebugStrokeStartupLatency,
+    durationMs: performance.now() - d.startedAt,
+    strokeCount: records.length,
+    latest: records.length ? records[records.length - 1] : null,
+    overall: _hrStartupSummarizeRecords(records),
+    idleBuckets: Object.fromEntries(
+      Object.entries(buckets).map(([name, items]) => [
+        name,
+        _hrStartupSummarizeRecords(items),
+      ]),
+    ),
+    records,
+  };
+};
+
+const _hrPresentationCadenceStrokeLimit = 24;
+const _hrPresentationCadenceEventLimit = 2400;
+let _hrPresentationCadenceFlightSerial = 0;
+function _hrPcActive() {
+  return (
+    typeof window !== "undefined" &&
+    !!window.HardRoundDebugPresentationCadence
+  );
+}
+function _hrPcData() {
+  if (!window.HardRoundPresentationCadenceData) {
+    window.HardRoundPresentationCadenceData = {
+      startedAt: performance.now(),
+      strokes: [],
+      byStroke: Object.create(null),
+    };
+  }
+  return window.HardRoundPresentationCadenceData;
+}
+function _hrPcStroke(strokeId) {
+  if (!_hrPcActive() || !Number.isFinite(strokeId)) return null;
+  const d = _hrPcData();
+  let stroke = d.byStroke[strokeId];
+  if (!stroke) {
+    stroke = {
+      strokeId,
+      startTime: performance.now(),
+      endTime: null,
+      events: [],
+      counts: Object.create(null),
+      maxInFlight: 0,
+      inFlight: 0,
+      acceptedGenerations: [],
+      strokeCanvasGenerations: [],
+      recompositeGenerations: [],
+      dropped: Object.create(null),
+    };
+    d.byStroke[strokeId] = stroke;
+    d.strokes.push(stroke);
+    while (d.strokes.length > _hrPresentationCadenceStrokeLimit) {
+      const old = d.strokes.shift();
+      if (old && Number.isFinite(old.strokeId)) delete d.byStroke[old.strokeId];
+    }
+  }
+  return stroke;
+}
+function _hrPcRecord(type, detail = {}) {
+  if (!_hrPcActive()) return null;
+  const strokeId = Number.isFinite(detail.strokeId)
+    ? detail.strokeId
+    : _activeStrokeSession;
+  const stroke = _hrPcStroke(strokeId);
+  if (!stroke) return null;
+  const now = Number.isFinite(detail.time) ? detail.time : performance.now();
+  const entry = {
+    type,
+    time: now,
+    generation: Number.isFinite(detail.generation) ? detail.generation : null,
+    flightId: Number.isFinite(detail.flightId) ? detail.flightId : null,
+  };
+  if (detail.reason) entry.reason = detail.reason;
+  stroke.events.push(entry);
+  while (stroke.events.length > _hrPresentationCadenceEventLimit)
+    stroke.events.shift();
+  stroke.counts[type] = (stroke.counts[type] || 0) + 1;
+  if (type === "previewStart") {
+    stroke.inFlight++;
+    stroke.maxInFlight = Math.max(stroke.maxInFlight || 0, stroke.inFlight);
+  } else if (type === "previewComplete") {
+    stroke.inFlight = Math.max(0, stroke.inFlight - 1);
+  } else if (type === "acceptedPreview") {
+    stroke.acceptedGenerations.push(entry.generation);
+  } else if (type === "strokeCanvasUpdate") {
+    stroke.strokeCanvasGenerations.push(entry.generation);
+  } else if (type === "visibleRecomposite") {
+    stroke.recompositeGenerations.push(entry.generation);
+  } else if (type === "previewDropped") {
+    const reason = detail.reason || "unknown";
+    stroke.dropped[reason] = (stroke.dropped[reason] || 0) + 1;
+  } else if (type === "strokeEnd") {
+    stroke.endTime = now;
+  }
+  return entry;
+}
+function _hrPcIntervalStats(times) {
+  const src = (times || []).filter(Number.isFinite).sort((a, b) => a - b);
+  const intervals = [];
+  for (let i = 1; i < src.length; i++) intervals.push(src[i] - src[i - 1]);
+  const stats = _hrStartupStats(intervals);
+  let stddev = null;
+  if (intervals.length) {
+    const mean = stats.mean;
+    stddev = Math.sqrt(
+      intervals.reduce((sum, value) => sum + (value - mean) * (value - mean), 0) /
+        intervals.length,
+    );
+  }
+  return Object.assign(stats, {
+    stddev,
+    countAbove16_7Ms: intervals.filter((value) => value > 16.7).length,
+    countAbove25Ms: intervals.filter((value) => value > 25).length,
+    countAbove33_3Ms: intervals.filter((value) => value > 33.3).length,
+    longestIntervalMs: stats.max,
+  });
+}
+function _hrPcAnalyzeStroke(stroke) {
+  const timesFor = (type) =>
+    stroke.events
+      .filter((entry) => entry.type === type && Number.isFinite(entry.time))
+      .map((entry) => entry.time);
+  const visibleTimes = timesFor("visibleRecomposite");
+  const activeEnd = Number.isFinite(stroke.endTime)
+    ? stroke.endTime
+    : visibleTimes.length
+      ? visibleTimes[visibleTimes.length - 1]
+      : performance.now();
+  let longestNoVisibleMs = null;
+  if (visibleTimes.length) {
+    const gaps = [];
+    gaps.push(Math.max(0, visibleTimes[0] - stroke.startTime));
+    for (let i = 1; i < visibleTimes.length; i++)
+      gaps.push(visibleTimes[i] - visibleTimes[i - 1]);
+    gaps.push(Math.max(0, activeEnd - visibleTimes[visibleTimes.length - 1]));
+    longestNoVisibleMs = Math.max(...gaps.filter(Number.isFinite));
+  } else {
+    longestNoVisibleMs = Math.max(0, activeEnd - stroke.startTime);
+  }
+  const acceptedList = stroke.acceptedGenerations.filter(Number.isFinite);
+  const canvasList = stroke.strokeCanvasGenerations.filter(Number.isFinite);
+  const recomposedList = stroke.recompositeGenerations.filter(Number.isFinite);
+  const accepted = new Set(acceptedList);
+  const canvas = new Set(canvasList);
+  const recomposed = new Set(recomposedList);
+  return {
+    strokeId: stroke.strokeId,
+    eventCount: stroke.events.length,
+    counts: Object.assign({}, stroke.counts),
+    previewFlightsStarted: stroke.counts.previewStart || 0,
+    previewFlightsCompleted: stroke.counts.previewComplete || 0,
+    previewAccepted: stroke.counts.acceptedPreview || 0,
+    previewDropped: Object.assign({}, stroke.dropped),
+    maxSimultaneousInFlightCount: stroke.maxInFlight || 0,
+    generationCorrespondence: {
+      acceptedEventCount: stroke.acceptedGenerations.length,
+      strokeCanvasUpdateEventCount: stroke.strokeCanvasGenerations.length,
+      visibleRecompositeEventCount: stroke.recompositeGenerations.length,
+      acceptedUniqueGenerationCount: accepted.size,
+      strokeCanvasUpdateUniqueGenerationCount: canvas.size,
+      visibleRecompositeUniqueGenerationCount: recomposed.size,
+      acceptedNullGenerationCount:
+        stroke.acceptedGenerations.length - acceptedList.length,
+      strokeCanvasUpdateNullGenerationCount:
+        stroke.strokeCanvasGenerations.length - canvasList.length,
+      visibleRecompositeNullGenerationCount:
+        stroke.recompositeGenerations.length - recomposedList.length,
+      acceptedWithoutStrokeCanvasUpdate: Array.from(accepted).filter(
+        (generation) => !canvas.has(generation),
+      ),
+      strokeCanvasUpdateWithoutRecompose: Array.from(canvas).filter(
+        (generation) => !recomposed.has(generation),
+      ),
+    },
+    longestNoVisibleGenerationMs: longestNoVisibleMs,
+    intervalsMs: {
+      rawInput: _hrPcIntervalStats(timesFor("rawInput")),
+      emittedGeometry: _hrPcIntervalStats(timesFor("emittedGeometry")),
+      rendererFlush: _hrPcIntervalStats(timesFor("rendererFlush")),
+      previewStart: _hrPcIntervalStats(timesFor("previewStart")),
+      previewCompletion: _hrPcIntervalStats(timesFor("previewComplete")),
+      acceptedPreview: _hrPcIntervalStats(timesFor("acceptedPreview")),
+      strokeCanvasUpdate: _hrPcIntervalStats(timesFor("strokeCanvasUpdate")),
+      visibleRecomposite: _hrPcIntervalStats(timesFor("visibleRecomposite")),
+    },
+  };
+}
+window.HardRoundAnalyzePresentationCadence = function () {
+  const d = window.HardRoundPresentationCadenceData || _hrPcData();
+  const strokes = (d.strokes || []).map(_hrPcAnalyzeStroke);
+  const aggregateTimes = Object.create(null);
+  for (const stroke of d.strokes || []) {
+    for (const entry of stroke.events || []) {
+      const arr = aggregateTimes[entry.type] || (aggregateTimes[entry.type] = []);
+      if (Number.isFinite(entry.time)) arr.push(entry.time);
+    }
+  }
+  return {
+    enabled: !!window.HardRoundDebugPresentationCadence,
+    durationMs: performance.now() - d.startedAt,
+    strokeCount: strokes.length,
+    latest: strokes.length ? strokes[strokes.length - 1] : null,
+    overallIntervalsMs: {
+      rawInput: _hrPcIntervalStats(aggregateTimes.rawInput),
+      emittedGeometry: _hrPcIntervalStats(aggregateTimes.emittedGeometry),
+      rendererFlush: _hrPcIntervalStats(aggregateTimes.rendererFlush),
+      previewStart: _hrPcIntervalStats(aggregateTimes.previewStart),
+      previewCompletion: _hrPcIntervalStats(aggregateTimes.previewComplete),
+      acceptedPreview: _hrPcIntervalStats(aggregateTimes.acceptedPreview),
+      strokeCanvasUpdate: _hrPcIntervalStats(aggregateTimes.strokeCanvasUpdate),
+      visibleRecomposite: _hrPcIntervalStats(aggregateTimes.visibleRecomposite),
+    },
+    strokes,
+  };
+};
+
+const _hrGenLagStrokeLimit = 24;
+const _hrGenLagEventLimit = 1600;
+function _hrGaActive() {
+  return (
+    typeof window !== "undefined" &&
+    !!window.HardRoundDebugVisibleBrushGenerationLag
+  );
+}
+function _hrGaData() {
+  if (!window.HardRoundVisibleBrushGenerationLagData) {
+    window.HardRoundVisibleBrushGenerationLagData = {
+      startedAt: performance.now(),
+      strokes: [],
+      byStroke: Object.create(null),
+      inFlight: Object.create(null),
+      completionOrder: [],
+      acceptanceOrder: [],
+    };
+  }
+  return window.HardRoundVisibleBrushGenerationLagData;
+}
+function _hrGaStroke(strokeId) {
+  if (!_hrGaActive() || !Number.isFinite(strokeId)) return null;
+  const d = _hrGaData();
+  let stroke = d.byStroke[strokeId];
+  if (!stroke) {
+    stroke = {
+      strokeId,
+      startedAt: performance.now(),
+      endedAt: null,
+      events: [],
+      samples: Object.create(null),
+      acceptanceOrder: [],
+      completionOrder: [],
+      staleCompletions: 0,
+      staleVisibleEvents: 0,
+    };
+    d.byStroke[strokeId] = stroke;
+    d.strokes.push(stroke);
+    while (d.strokes.length > _hrGenLagStrokeLimit) {
+      const old = d.strokes.shift();
+      if (old && Number.isFinite(old.strokeId)) delete d.byStroke[old.strokeId];
+    }
+  }
+  return stroke;
+}
+function _hrGaClone(point) {
+  return _hrTlClonePoint(point);
+}
+function _hrGaPointToScreen(point, raw) {
+  return _hrCblPointToScreen(point, raw);
+}
+function _hrGaDistance(a, b) {
+  return _hrCblDistance(a, b);
+}
+function _hrGaPushSample(stroke, name, value) {
+  if (!stroke || !Number.isFinite(value)) return;
+  const arr = stroke.samples[name] || (stroke.samples[name] = []);
+  arr.push(value);
+  if (arr.length > _hrGenLagEventLimit) arr.shift();
+}
+function _hrGaInFlightIds(strokeId) {
+  const d = _hrGaData();
+  return Object.values(d.inFlight)
+    .filter((entry) => entry && entry.strokeId === strokeId)
+    .map((entry) => ({
+      flightId: entry.flightId,
+      generation: entry.generation,
+      representedSeq: entry.representedSeq,
+      startedAt: entry.startedAt,
+    }));
+}
+function _hrGaRecordFlight(type, detail = {}) {
+  if (!_hrGaActive()) return;
+  const d = _hrGaData();
+  const strokeId = Number.isFinite(detail.strokeId)
+    ? detail.strokeId
+    : _activeStrokeSession;
+  const stroke = _hrGaStroke(strokeId);
+  if (!stroke) return;
+  const now = performance.now();
+  const flightId = Number.isFinite(detail.flightId) ? detail.flightId : null;
+  const generation = Number.isFinite(detail.generation) ? detail.generation : null;
+  const existingFlight =
+    flightId != null && d.inFlight[flightId] ? d.inFlight[flightId] : null;
+  const represented = _hrGaClone(
+    detail.represented || (existingFlight && existingFlight.represented),
+  );
+  if (type === "previewStart" && flightId != null) {
+    d.inFlight[flightId] = {
+      strokeId,
+      generation,
+      flightId,
+      startedAt: now,
+      represented,
+      representedSeq:
+        represented && Number.isFinite(represented.seq) ? represented.seq : null,
+    };
+  } else if (
+    (type === "previewComplete" || type === "previewDropped") &&
+    flightId != null
+  ) {
+    delete d.inFlight[flightId];
+  }
+  if (type === "previewComplete") {
+    const item = {
+      strokeId,
+      generation,
+      flightId,
+      time: now,
+      representedSeq:
+        represented && Number.isFinite(represented.seq) ? represented.seq : null,
+    };
+    d.completionOrder.push(item);
+    stroke.completionOrder.push(item);
+  } else if (type === "previewDropped") {
+    stroke.events.push({
+      type,
+      time: now,
+      generation,
+      flightId,
+      reason: detail.reason || "unknown",
+    });
+  } else if (type === "strokeEnd") {
+    stroke.endedAt = now;
+  }
+  while (d.completionOrder.length > _hrGenLagEventLimit) d.completionOrder.shift();
+  while (stroke.completionOrder.length > _hrGenLagEventLimit)
+    stroke.completionOrder.shift();
+}
+function _hrGaRecordPresentation(type, detail = {}) {
+  if (!_hrGaActive()) return;
+  const strokeId = Number.isFinite(detail.strokeId)
+    ? detail.strokeId
+    : _activeStrokeSession;
+  const stroke = _hrGaStroke(strokeId);
+  if (!stroke) return;
+  const now = performance.now();
+  const d = _hrGaData();
+  const flight =
+    Number.isFinite(detail.flightId) && d.inFlight[detail.flightId]
+      ? d.inFlight[detail.flightId]
+      : null;
+  const raw = _hrGaClone(_hrCursorBrushLatestRaw);
+  const emitted = _hrGaClone(_hrCblLastEmittedEndpoint || _hrTipLagLastRenderedEndpoint);
+  const represented = _hrGaClone(
+    detail.represented ||
+      (flight && flight.represented) ||
+      _hrTipLagLastDisplayedBodyEndpoint ||
+      _hrTipLagLastAcceptedPreviewEndpoint ||
+      _hrTipLagLastFlushedEndpoint,
+  );
+  const rawScreen =
+    raw && Number.isFinite(raw.clientX) && Number.isFinite(raw.clientY)
+      ? { x: raw.clientX, y: raw.clientY, time: raw.time, wallTime: raw.wallTime }
+      : null;
+  const emittedScreen = _hrGaPointToScreen(emitted, raw);
+  const representedScreen = _hrGaPointToScreen(represented, raw);
+  const inFlight = _hrGaInFlightIds(strokeId);
+  const newerRawSamples =
+    raw && represented && Number.isFinite(raw.seq) && Number.isFinite(represented.seq)
+      ? Math.max(0, raw.seq - represented.seq)
+      : null;
+  const newerEmittedSamples =
+    emitted &&
+    represented &&
+    Number.isFinite(emitted.seq) &&
+    Number.isFinite(represented.seq)
+      ? Math.max(0, emitted.seq - represented.seq)
+      : null;
+  const rawToVisible =
+    type === "visibleRecomposite"
+      ? _hrGaDistance(rawScreen, representedScreen)
+      : null;
+  const newestEmittedToRepresented = _hrGaDistance(emittedScreen, representedScreen);
+  const newestRawToRepresented = _hrGaDistance(rawScreen, representedScreen);
+  const visibleAge =
+    raw && represented && Number.isFinite(raw.wallTime) && Number.isFinite(represented.wallTime)
+      ? Math.max(0, now - represented.wallTime)
+      : null;
+  const visibleAgeRelativeToRaw =
+    raw && represented && Number.isFinite(raw.wallTime) && Number.isFinite(represented.wallTime)
+      ? Math.max(0, raw.wallTime - represented.wallTime)
+      : null;
+  const staleAgainstNewestProduced =
+    represented &&
+    emitted &&
+    Number.isFinite(represented.seq) &&
+    Number.isFinite(emitted.seq) &&
+    represented.seq < emitted.seq;
+  const entry = {
+    type,
+    time: now,
+    generation: Number.isFinite(detail.generation) ? detail.generation : null,
+    flightId: Number.isFinite(detail.flightId) ? detail.flightId : null,
+    newestRaw: raw,
+    newestEmitted: emitted,
+    represented,
+    representedSeq:
+      represented && Number.isFinite(represented.seq) ? represented.seq : null,
+    newestRawSeq: raw && Number.isFinite(raw.seq) ? raw.seq : null,
+    newestEmittedSeq: emitted && Number.isFinite(emitted.seq) ? emitted.seq : null,
+    screen: {
+      newestRaw: rawScreen,
+      newestEmitted: emittedScreen,
+      represented: representedScreen,
+    },
+    newerRawSamples,
+    newerEmittedSamples,
+    inFlightPreviewCount: inFlight.length,
+    inFlightPreviewGenerationIds: inFlight,
+    visibleGenerationAgeMs: visibleAge,
+    visibleGenerationAgeRelativeToNewestRawMs: visibleAgeRelativeToRaw,
+    newestRawToVisibleBrushScreenPx: rawToVisible,
+    newestRawToRepresentedScreenPx: newestRawToRepresented,
+    newestEmittedToRepresentedScreenPx: newestEmittedToRepresented,
+    olderThanNewestEmitted: !!staleAgainstNewestProduced,
+  };
+  stroke.events.push(entry);
+  while (stroke.events.length > _hrGenLagEventLimit) stroke.events.shift();
+  if (type === "acceptedPreview") {
+    const item = {
+      strokeId,
+      generation: entry.generation,
+      flightId: entry.flightId,
+      time: now,
+      representedSeq: represented ? represented.seq : null,
+      newestRawSeq: raw ? raw.seq : null,
+      newestEmittedSeq: emitted ? emitted.seq : null,
+    };
+    _hrGaData().acceptanceOrder.push(item);
+    stroke.acceptanceOrder.push(item);
+  }
+  if (staleAgainstNewestProduced) stroke.staleVisibleEvents++;
+  _hrGaPushSample(stroke, "newerRawSamples", newerRawSamples);
+  _hrGaPushSample(stroke, "newerEmittedSamples", newerEmittedSamples);
+  _hrGaPushSample(stroke, "inFlightPreviewCount", inFlight.length);
+  _hrGaPushSample(stroke, "visibleGenerationAgeMs", visibleAge);
+  _hrGaPushSample(
+    stroke,
+    "visibleGenerationAgeRelativeToNewestRawMs",
+    visibleAgeRelativeToRaw,
+  );
+  _hrGaPushSample(stroke, "newestRawToVisibleBrushScreenPx", rawToVisible);
+  _hrGaPushSample(stroke, "newestRawToRepresentedScreenPx", newestRawToRepresented);
+  _hrGaPushSample(
+    stroke,
+    "newestEmittedToRepresentedScreenPx",
+    newestEmittedToRepresented,
+  );
+  const globalData = d;
+  while (globalData.acceptanceOrder.length > _hrGenLagEventLimit)
+    globalData.acceptanceOrder.shift();
+  while (stroke.acceptanceOrder.length > _hrGenLagEventLimit)
+    stroke.acceptanceOrder.shift();
+}
+function _hrGaSummarizeStroke(stroke) {
+  const stats = (name) => _hrStartupStats(stroke.samples[name]);
+  const latest = stroke.events.length ? stroke.events[stroke.events.length - 1] : null;
+  return {
+    strokeId: stroke.strokeId,
+    eventCount: stroke.events.length,
+    acceptedPreviewCount: stroke.events.filter((e) => e.type === "acceptedPreview").length,
+    strokeCanvasUpdateCount: stroke.events.filter((e) => e.type === "strokeCanvasUpdate").length,
+    visibleRecompositeCount: stroke.events.filter((e) => e.type === "visibleRecomposite").length,
+    staleVisibleEvents: stroke.staleVisibleEvents || 0,
+    completionOrder: stroke.completionOrder.slice(-24),
+    acceptanceOrder: stroke.acceptanceOrder.slice(-24),
+    stats: {
+      newerRawSamples: stats("newerRawSamples"),
+      newerEmittedSamples: stats("newerEmittedSamples"),
+      inFlightPreviewCount: stats("inFlightPreviewCount"),
+      visibleGenerationAgeMs: stats("visibleGenerationAgeMs"),
+      visibleGenerationAgeRelativeToNewestRawMs: stats(
+        "visibleGenerationAgeRelativeToNewestRawMs",
+      ),
+      newestRawToVisibleBrushScreenPx: stats("newestRawToVisibleBrushScreenPx"),
+      newestRawToRepresentedScreenPx: stats("newestRawToRepresentedScreenPx"),
+      newestEmittedToRepresentedScreenPx: stats(
+        "newestEmittedToRepresentedScreenPx",
+      ),
+    },
+    latest,
+  };
+}
+window.HardRoundAnalyzeVisibleBrushGenerationLag = function () {
+  const d = window.HardRoundVisibleBrushGenerationLagData || _hrGaData();
+  const strokes = (d.strokes || []).map(_hrGaSummarizeStroke);
+  return {
+    enabled: !!window.HardRoundDebugVisibleBrushGenerationLag,
+    durationMs: performance.now() - d.startedAt,
+    strokeCount: strokes.length,
+    latest: strokes.length ? strokes[strokes.length - 1] : null,
+    strokes,
+    globalCompletionOrder: (d.completionOrder || []).slice(-32),
+    globalAcceptanceOrder: (d.acceptanceOrder || []).slice(-32),
   };
 };
 
@@ -13294,6 +14198,38 @@ function _hrTlPush(root, name, value) {
   const arr = d[root][name] || (d[root][name] = []);
   arr.push(value);
   if (arr.length > _hrTipLagLimit) arr.shift();
+}
+function _hrTlClonePoint(point) {
+  if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
+  return {
+    seq: Number.isFinite(point.seq) ? point.seq : null,
+    x: point.x,
+    y: point.y,
+    time: Number.isFinite(point.time) ? point.time : performance.now(),
+    wallTime: Number.isFinite(point.wallTime) ? point.wallTime : performance.now(),
+    zoom: Number.isFinite(point.zoom)
+      ? point.zoom
+      : Number.isFinite(zoom)
+        ? zoom
+        : 1,
+  };
+}
+function _hrTlScreenDistance(a, b) {
+  if (!a || !b) return null;
+  if (
+    !Number.isFinite(a.x) ||
+    !Number.isFinite(a.y) ||
+    !Number.isFinite(b.x) ||
+    !Number.isFinite(b.y)
+  )
+    return null;
+  const z = Math.max(0.0001, Number.isFinite(zoom) ? zoom : 1);
+  return Math.hypot(a.x - b.x, a.y - b.y) * z;
+}
+function _hrTlRecordPair(name, a, b) {
+  const dist = _hrTlScreenDistance(a, b);
+  if (dist == null) return;
+  _hrTlPush("samples", name + "ScreenPx", dist);
 }
 function _hrTlStats(values) {
   const arr = (values || []).filter(Number.isFinite).sort((a, b) => a - b);
@@ -13414,6 +14350,29 @@ window.HardRoundAnalyzeTipLag = function () {
     Number.isFinite(cursor.renderY)
       ? Math.hypot(cursor.renderX - latestRaw.clientX, cursor.renderY - latestRaw.clientY)
       : null;
+  const midpointToNewestScreenPx =
+    _hrTipLagLastRenderedEndpoint &&
+    _hrNewestSampleTipTarget &&
+    Number.isFinite(_hrNewestSampleTipTarget.x) &&
+    Number.isFinite(_hrNewestSampleTipTarget.y)
+      ? Math.hypot(
+          _hrNewestSampleTipTarget.x - _hrTipLagLastRenderedEndpoint.x,
+          _hrNewestSampleTipTarget.y - _hrTipLagLastRenderedEndpoint.y,
+        ) * z
+      : null;
+  const displayedTipToNewestScreenPx =
+    (_hrTipLagLastDisplayedEndpoint || _hrTipLagLastRenderedEndpoint) &&
+    _hrNewestSampleTipTarget &&
+    Number.isFinite(_hrNewestSampleTipTarget.x) &&
+    Number.isFinite(_hrNewestSampleTipTarget.y)
+      ? Math.hypot(
+          _hrNewestSampleTipTarget.x -
+            (_hrTipLagLastDisplayedEndpoint || _hrTipLagLastRenderedEndpoint).x,
+          _hrNewestSampleTipTarget.y -
+          (_hrTipLagLastDisplayedEndpoint || _hrTipLagLastRenderedEndpoint).y,
+        ) * z
+      : null;
+  const pair = (a, b) => _hrTlScreenDistance(a, b);
   const speedBin = (name) => {
     const b = d.speedBins[name];
     return {
@@ -13432,11 +14391,127 @@ window.HardRoundAnalyzeTipLag = function () {
     rawToCoreOutputScreenPx: sample("rawToCoreOutputScreenPx"),
     rawToFlushedScreenPx: sample("rawToFlushedScreenPx"),
     rawToAcceptedPreviewScreenPx: sample("rawToAcceptedPreviewScreenPx"),
+    liveTailTopology: {
+      latestCoreBodyEndpoint: _hrTlClonePoint(_hrTipLagLastRenderedEndpoint),
+      latestFlushedBodyEndpoint: _hrTlClonePoint(_hrTipLagLastFlushedEndpoint),
+      latestAcceptedPreviewEndpoint: _hrTlClonePoint(
+        _hrTipLagLastAcceptedPreviewEndpoint,
+      ),
+      latestDisplayedBodyEndpoint: _hrTlClonePoint(
+        _hrTipLagLastDisplayedBodyEndpoint,
+      ),
+      liveTailStart: _hrTlClonePoint(_hrLiveNewestSampleTailStart),
+      liveTailEnd: _hrTlClonePoint(_hrLiveNewestSampleTailEnd),
+      newestCoreInput: _hrTlClonePoint(_hrNewestSampleTipTarget),
+      latestDistancesScreenPx: {
+        coreBodyToNewest: pair(
+          _hrTipLagLastRenderedEndpoint,
+          _hrNewestSampleTipTarget,
+        ),
+        flushedBodyToNewest: pair(
+          _hrTipLagLastFlushedEndpoint,
+          _hrNewestSampleTipTarget,
+        ),
+        acceptedBodyToNewest: pair(
+          _hrTipLagLastAcceptedPreviewEndpoint,
+          _hrNewestSampleTipTarget,
+        ),
+        displayedBodyToNewest: pair(
+          _hrTipLagLastDisplayedBodyEndpoint,
+          _hrNewestSampleTipTarget,
+        ),
+        liveTailLength: pair(
+          _hrLiveNewestSampleTailStart,
+          _hrLiveNewestSampleTailEnd,
+        ),
+        displayedBodyToLiveTailStart: pair(
+          _hrTipLagLastDisplayedBodyEndpoint,
+          _hrLiveNewestSampleTailStart,
+        ),
+        displayedBodyToLiveTailEnd: pair(
+          _hrTipLagLastDisplayedBodyEndpoint,
+          _hrLiveNewestSampleTailEnd,
+        ),
+      },
+      statsScreenPx: {
+        coreBodyToNewest: sample("coreBodyToNewestScreenPx"),
+        flushedBodyToNewest: sample("flushedBodyToNewestScreenPx"),
+        acceptedBodyToNewest: sample("acceptedBodyToNewestScreenPx"),
+        displayedBodyToNewest: sample("displayedBodyToNewestScreenPx"),
+        liveTailLength: sample("liveTailLengthScreenPx"),
+        displayedBodyToLiveTailStart: sample(
+          "displayedBodyToLiveTailStartScreenPx",
+        ),
+        displayedBodyToLiveTailEnd: sample(
+          "displayedBodyToLiveTailEndScreenPx",
+        ),
+      },
+    },
+    integratedTipTopology: _hrIntegratedTipTopology
+      ? {
+          generationId: _hrIntegratedTipTopology.generationId,
+          previewGeneration: _hrIntegratedTipTopology.previewGeneration,
+          acceptedGenerationId:
+            _hrIntegratedTipTopology.acceptedGenerationId || null,
+          displayedGenerationId:
+            _hrIntegratedTipTopology.displayedGenerationId || null,
+          generationBodyEndpoint: _hrTlClonePoint(
+            _hrIntegratedTipTopology.generationBodyEndpoint,
+          ),
+          generationNewestIncludedInput: _hrTlClonePoint(
+            _hrIntegratedTipTopology.generationNewestIncludedInput,
+          ),
+          integratedTipStart: _hrTlClonePoint(
+            _hrIntegratedTipTopology.integratedTipStart,
+          ),
+          integratedTipEnd: _hrTlClonePoint(
+            _hrIntegratedTipTopology.integratedTipEnd,
+          ),
+          latestAcceptedPreviewEndpoint: _hrTlClonePoint(
+            _hrIntegratedTipTopology.latestAcceptedPreviewEndpoint,
+          ),
+          latestDisplayedBodyEndpoint: _hrTlClonePoint(
+            _hrIntegratedTipTopology.latestDisplayedBodyEndpoint,
+          ),
+          latestDistancesScreenPx: {
+            bodyToNewest: pair(
+              _hrIntegratedTipTopology.generationBodyEndpoint,
+              _hrIntegratedTipTopology.generationNewestIncludedInput,
+            ),
+            integratedTipLength: pair(
+              _hrIntegratedTipTopology.integratedTipStart,
+              _hrIntegratedTipTopology.integratedTipEnd,
+            ),
+            bodyToIntegratedTipStart: pair(
+              _hrIntegratedTipTopology.generationBodyEndpoint,
+              _hrIntegratedTipTopology.integratedTipStart,
+            ),
+            integratedTipEndToNewest: pair(
+              _hrIntegratedTipTopology.integratedTipEnd,
+              _hrIntegratedTipTopology.generationNewestIncludedInput,
+            ),
+          },
+          statsScreenPx: {
+            bodyToNewest: sample("integratedBodyToNewestScreenPx"),
+            integratedTipLength: sample("integratedTipLengthScreenPx"),
+            bodyToIntegratedTipStart: sample(
+              "integratedBodyToTipStartScreenPx",
+            ),
+            integratedTipEndToNewest: sample(
+              "integratedTipEndToNewestScreenPx",
+            ),
+          },
+        }
+      : null,
     latestRawToCustomCursorScreenPx,
     latestRawToMidpointTipScreenPx: rawToDocPoint(_hrTipLagLastRenderedEndpoint),
     latestRawToDisplayedTipScreenPx: rawToDocPoint(
       _hrTipLagLastDisplayedEndpoint || _hrTipLagLastRenderedEndpoint,
     ),
+    midpointToNewestScreenPx,
+    displayedTipToNewestScreenPx,
+    liveTailLengthScreenPx: midpointToNewestScreenPx,
+    liveTailActive: !!window.HardRoundDebugLiveNewestSampleTail,
     agesMs: {
       rawToCoreOutput: age("rawToCoreOutput"),
       rawToFlush: age("rawToFlushed"),
@@ -13449,6 +14524,2081 @@ window.HardRoundAnalyzeTipLag = function () {
       medium: speedBin("medium"),
       fast: speedBin("fast"),
     },
+  };
+};
+
+if (typeof window.HardRoundDebugCursorToBrushLatency === "undefined")
+  window.HardRoundDebugCursorToBrushLatency = false;
+const _hrCursorBrushLimit = 1000;
+function _hrCblActive() {
+  return typeof window !== "undefined" && !!window.HardRoundDebugCursorToBrushLatency;
+}
+function _hrCblData() {
+  if (!window.HardRoundCursorToBrushLatencyData) {
+    window.HardRoundCursorToBrushLatencyData = {
+      startedAt: performance.now(),
+      samples: Object.create(null),
+      ages: Object.create(null),
+      pendingSegments: [],
+      pendingOldestAgeMs: [],
+      latest: null,
+      speedBins: Object.create(null),
+    };
+  }
+  return window.HardRoundCursorToBrushLatencyData;
+}
+function _hrCblBucket() {
+  return { count: 0, sum: 0, max: 0 };
+}
+function _hrCblPush(root, name, value) {
+  if (!_hrCblActive() || !Number.isFinite(value)) return;
+  const d = _hrCblData();
+  const arr = d[root][name] || (d[root][name] = []);
+  arr.push(value);
+  if (arr.length > _hrCursorBrushLimit) arr.shift();
+}
+function _hrCblPushArray(arr, value) {
+  if (!_hrCblActive() || !Number.isFinite(value)) return;
+  arr.push(value);
+  if (arr.length > _hrCursorBrushLimit) arr.shift();
+}
+function _hrCblStats(values) {
+  const arr = (values || []).filter(Number.isFinite).sort((a, b) => a - b);
+  if (!arr.length)
+    return { count: 0, mean: null, median: null, p95: null, max: null };
+  const pick = (p) => arr[Math.min(arr.length - 1, Math.floor((arr.length - 1) * p))];
+  return {
+    count: arr.length,
+    mean: arr.reduce((sum, v) => sum + v, 0) / arr.length,
+    median: pick(0.5),
+    p95: pick(0.95),
+    max: arr[arr.length - 1],
+  };
+}
+function _hrCblRecordRaw(docX, docY, time, type, ev) {
+  if (!_hrCblActive() && !_hrTwActive() && !_hrGaActive() && !_hrTemporalActive())
+    return;
+  const now = performance.now();
+  const prev = _hrCursorBrushLatestRaw;
+  const z = Math.max(0.0001, Number.isFinite(zoom) ? zoom : 1);
+  const raw = {
+    seq: ++_hrCblInputSeq,
+    x: docX,
+    y: docY,
+    time: Number.isFinite(time) ? time : now,
+    wallTime: now,
+    zoom: z,
+    type: type || null,
+    clientX: ev && Number.isFinite(ev.clientX) ? ev.clientX : null,
+    clientY: ev && Number.isFinite(ev.clientY) ? ev.clientY : null,
+    speedScreenPxPerSec: 0,
+  };
+  if (prev) {
+    const dt = Math.max(0.001, now - prev.wallTime);
+    const dx = docX - prev.x;
+    const dy = docY - prev.y;
+    const dist = Math.hypot(dx, dy);
+    raw.speedScreenPxPerSec = (dist * z * 1000) / dt;
+    if (dist > 1e-6) {
+      raw.motionUnitX = dx / dist;
+      raw.motionUnitY = dy / dist;
+    }
+  }
+  _hrCursorBrushLatestRaw = raw;
+  _hrTemporalRecordRaw(raw);
+  _hrTwRecordRaw(raw);
+}
+function _hrCblStabilizationState() {
+  const ui = _stabilizationAmount();
+  const oldFloorDisabled = !!window.HardRoundDebugDisableOldStabilizerFloor;
+  const prototypeZoomMinimumDisabled =
+    !!window.HardRoundDebugDisablePrototypeZoomMinimum;
+  const oldFloorWeight = oldFloorDisabled ? 0 : _oldStabilizerFloorWeight(ui);
+  const z = Math.min(Math.max(Number(zoom) || 1, 0.05), 5);
+  const t = (Math.log(z) - Math.log(0.05)) / (Math.log(5) - Math.log(0.05));
+  const prototypeZoomMinimum = prototypeZoomMinimumDisabled
+    ? 0
+    : 0.15 * (1 - t);
+  const compT = Math.min(Math.max(ui / 0.2, 0), 1);
+  const compWeight = 1 - compT * compT * (3 - 2 * compT);
+  const internal = Math.min(1, Math.max(0, ui + prototypeZoomMinimum * compWeight));
+  const shared =
+    _hardRoundCore &&
+    _hardRoundCore.trajectoryCore &&
+    typeof _hardRoundCore.trajectoryCore.diagnosticState === "function"
+      ? _hardRoundCore.trajectoryCore.diagnosticState()
+      : null;
+  return {
+    uiAmount: ui,
+    oldStabilizerFloorDisabled: oldFloorDisabled,
+    oldStabilizerFloorWeight: oldFloorWeight,
+    prototypeZoomMinimumDisabled,
+    prototypeZoomMinimum,
+    prototypeInternalAmount: internal,
+    prototypeMovingAverageWindow: internal <= 0 ? 1 : Math.max(2, Math.round(internal * 200)),
+    sharedTrajectoryZoomMinimumDisabled: shared
+      ? !!shared.positionZoomMinimumDisabled
+      : !!window.HardRoundDebugDisableSharedTrajectoryZoomMinimum,
+    sharedTrajectoryPositionWindowOverride: shared
+      ? shared.positionWindowOverride
+      : window.HardRoundDebugSharedTrajectoryPositionWindow ?? null,
+    sharedTrajectoryZoomWindowOverride: shared
+      ? shared.positionZoomWindowOverride
+      : null,
+    sharedTrajectorySpeedAdaptiveWindowOverride:
+      shared && shared.positionWindowOverrideSource === "speed"
+        ? shared.positionSpeedAdaptiveWindow
+        : window.HardRoundDebugSharedTrajectorySpeedAdaptiveWindow || null,
+    sharedTrajectorySpeedAdaptiveBucket: shared
+      ? shared.positionSpeedAdaptiveBucket
+      : null,
+    sharedTrajectorySpeedScreenPxPerMs: shared
+      ? shared.currentSpeedScreenPxPerMs
+      : null,
+    sharedTrajectorySmoothedSpeedScreenPxPerMs: shared
+      ? shared.smoothedSpeedScreenPxPerMs
+      : null,
+    sharedTrajectoryZoomWindowBucket: shared
+      ? shared.positionZoomWindowBucket
+      : null,
+    sharedTrajectoryPositionWindowOverrideSource: shared
+      ? shared.positionWindowOverrideSource
+      : "normal",
+    sharedTrajectorySelectedPositionWindow: shared
+      ? shared.selectedPositionWindow
+      : null,
+    sharedTrajectoryUiAmount: shared ? shared.uiAmount : ui,
+    sharedTrajectoryZoomMinimum: shared ? shared.positionZoomMinimum : null,
+    sharedTrajectoryEffectiveAmount: shared ? shared.positionEffectiveAmount : null,
+    sharedTrajectoryMovingAverageWindow: shared
+      ? shared.positionMovingAverageWindow
+      : null,
+    sharedTrajectoryPressureEffectiveAmount: shared
+      ? shared.pressureEffectiveAmount
+      : null,
+    sharedTrajectoryPressureMovingAverageWindow: shared
+      ? shared.pressureMovingAverageWindow
+      : null,
+    zoom: Number.isFinite(zoom) ? zoom : null,
+  };
+}
+window.HardRoundAnalyzeSharedTrajectorySpeedAdaptiveWindow = function () {
+  const shared =
+    _hardRoundCore &&
+    _hardRoundCore.trajectoryCore &&
+    typeof _hardRoundCore.trajectoryCore.diagnosticState === "function"
+      ? _hardRoundCore.trajectoryCore.diagnosticState()
+      : null;
+  const data = window.HardRoundSharedTrajectorySpeedAdaptiveData || null;
+  return {
+    enabled: !!window.HardRoundDebugSharedTrajectorySpeedAdaptiveWindow,
+    zoom: shared ? shared.zoom : Number.isFinite(zoom) ? zoom : null,
+    currentSpeedScreenPxPerMs: shared
+      ? shared.currentSpeedScreenPxPerMs
+      : null,
+    smoothedSpeedScreenPxPerMs: shared
+      ? shared.smoothedSpeedScreenPxPerMs
+      : null,
+    selectedBucket: shared ? shared.positionSpeedAdaptiveBucket : null,
+    selectedWindow: shared ? shared.selectedPositionWindow : null,
+    overrideSource: shared ? shared.positionWindowOverrideSource : null,
+    fixedOverride: window.HardRoundDebugSharedTrajectoryPositionWindow ?? null,
+    speedAdaptiveOverride:
+      window.HardRoundDebugSharedTrajectorySpeedAdaptiveWindow || null,
+    zoomAwareOverride: window.HardRoundDebugSharedTrajectoryZoomWindow || null,
+    rawInputSeq: data && data.latest ? data.latest.rawInputSeq : _hrCblInputSeq,
+    emittedSeq:
+      data && data.latest
+        ? data.latest.emittedSeq
+        : _hrCblLastEmittedEndpoint &&
+            Number.isFinite(_hrCblLastEmittedEndpoint.seq)
+          ? _hrCblLastEmittedEndpoint.seq
+          : null,
+    bucketCounts:
+      data && data.bucketCounts
+        ? Object.assign({}, data.bucketCounts)
+        : { slow: 0, medium: 0, fast: 0, veryFast: 0 },
+    windowCounts:
+      data && data.windowCounts ? Object.assign({}, data.windowCounts) : {},
+    latest: data && data.latest ? Object.assign({}, data.latest) : null,
+  };
+};
+function _hrShortLookaheadStats(values) {
+  const arr = (values || []).filter(Number.isFinite).sort((a, b) => a - b);
+  if (!arr.length)
+    return { count: 0, mean: null, p95: null, max: null };
+  const pick = (p) => arr[Math.min(arr.length - 1, Math.floor((arr.length - 1) * p))];
+  return {
+    count: arr.length,
+    mean: arr.reduce((sum, v) => sum + v, 0) / arr.length,
+    p95: pick(0.95),
+    max: arr[arr.length - 1],
+  };
+}
+window.HardRoundAnalyzeShortLookaheadTrajectory = function () {
+  const shared =
+    _hardRoundCore &&
+    _hardRoundCore.trajectoryCore &&
+    typeof _hardRoundCore.trajectoryCore.diagnosticState === "function"
+      ? _hardRoundCore.trajectoryCore.diagnosticState()
+      : null;
+  const data = window.HardRoundShortLookaheadTrajectoryData || null;
+  const gap = data
+    ? _hrShortLookaheadStats(data.values && data.values.rawToRepresentedScreenPx)
+    : _hrShortLookaheadStats([]);
+  const latest = data && data.latest ? data.latest : null;
+  return {
+    enabled: !!window.HardRoundDebugShortLookaheadTrajectory,
+    zoom: latest ? latest.zoom : shared ? shared.zoom : Number.isFinite(zoom) ? zoom : null,
+    rawSeq: latest ? latest.rawSeq : shared ? shared.shortLookaheadRawSeq : null,
+    representedSeq: latest
+      ? latest.representedSeq
+      : shared
+        ? shared.shortLookaheadRepresentedSeq
+        : null,
+    lookaheadSamples: latest ? latest.lookaheadSamples : null,
+    currentRawToRepresentedScreenPx: latest
+      ? latest.currentRawToRepresentedScreenPx
+      : null,
+    meanRawToRepresentedScreenPx: gap.mean,
+    p95RawToRepresentedScreenPx: gap.p95,
+    maxRawToRepresentedScreenPx: gap.max,
+    segmentCount: data ? data.segmentCount || 0 : 0,
+    lineFallbackCount: data ? data.lineFallbackCount || 0 : 0,
+    tangentClampCount: data ? data.tangentClampCount || 0 : 0,
+  };
+};
+window.HardRoundAnalyzeOneSampleDelayedCurveReconstruction = function () {
+  const shared =
+    _hardRoundCore &&
+    _hardRoundCore.trajectoryCore &&
+    typeof _hardRoundCore.trajectoryCore.diagnosticState === "function"
+      ? _hardRoundCore.trajectoryCore.diagnosticState()
+      : null;
+  const data = window.HardRoundOneSampleDelayedCurveReconstructionData || null;
+  const gap = data
+    ? _hrShortLookaheadStats(data.values && data.values.rawToRepresentedScreenPx)
+    : _hrShortLookaheadStats([]);
+  const subdiv = data
+    ? _hrShortLookaheadStats(data.values && data.values.subdivisionsPerSegment)
+    : _hrShortLookaheadStats([]);
+  const latest = data && data.latest ? data.latest : null;
+  return {
+    enabled: !!window.HardRoundDebugOneSampleDelayedCurveReconstruction,
+    zoom: latest ? latest.zoom : shared ? shared.zoom : Number.isFinite(zoom) ? zoom : null,
+    rawSeq: latest ? latest.rawSeq : shared ? shared.oneSampleCurveRawSeq : null,
+    representedSeq: latest
+      ? latest.representedSeq
+      : shared
+        ? shared.oneSampleCurveRepresentedSeq
+        : null,
+    representedSeqLag: latest ? latest.representedSeqLag : null,
+    currentRawToRepresentedScreenPx: latest
+      ? latest.currentRawToRepresentedScreenPx
+      : null,
+    meanRawToRepresentedScreenPx: gap.mean,
+    p95RawToRepresentedScreenPx: gap.p95,
+    maxRawToRepresentedScreenPx: gap.max,
+    reconstructedSegmentCount: data ? data.reconstructedSegmentCount || 0 : 0,
+    generatedSubdivisionCount: data ? data.generatedSubdivisionCount || 0 : 0,
+    meanSubdivisionsPerSegment: subdiv.mean,
+    maxSubdivisionsPerSegment: subdiv.max,
+    lineFallbackCount: data ? data.lineFallbackCount || 0 : 0,
+    cornerHandleReductionCount: data ? data.cornerHandleReductionCount || 0 : 0,
+    duplicatePointCount: data ? data.duplicatePointCount || 0 : 0,
+    fallbackReasons:
+      data && data.fallbackReasons
+        ? Object.assign({}, data.fallbackReasons)
+        : {
+            duplicateSegmentEndpoints: 0,
+            duplicateLookahead: 0,
+            missingPreviousRaw: 0,
+            missingLookahead: 0,
+            zeroTimeDelta: 0,
+            zeroChordLength: 0,
+            invalidTangent: 0,
+            finishFlush: 0,
+            other: 0,
+          },
+    failedSamples:
+      data && Array.isArray(data.failedSamples)
+        ? data.failedSamples.slice(0, 10)
+        : [],
+  };
+};
+window.HardRoundAnalyzeOneEuroTrajectoryFilter = function () {
+  const shared =
+    _hardRoundCore &&
+    _hardRoundCore.trajectoryCore &&
+    typeof _hardRoundCore.trajectoryCore.diagnosticState === "function"
+      ? _hardRoundCore.trajectoryCore.diagnosticState()
+      : null;
+  const data = window.HardRoundOneEuroTrajectoryFilterData || null;
+  const gap = data
+    ? _hrShortLookaheadStats(data.values && data.values.rawToRepresentedScreenPx)
+    : _hrShortLookaheadStats([]);
+  const latest = data && data.latest ? data.latest : null;
+  const bucketStats = {};
+  const buckets =
+    data && data.speedBuckets
+      ? data.speedBuckets
+      : {
+          slow: { distances: [], count: 0 },
+          medium: { distances: [], count: 0 },
+          fast: { distances: [], count: 0 },
+          veryFast: { distances: [], count: 0 },
+        };
+  for (const [name, bucket] of Object.entries(buckets)) {
+    bucketStats[name] = {
+      sampleCount: bucket.count || 0,
+      rawToRepresentedScreenPx: _hrShortLookaheadStats(bucket.distances || []),
+    };
+  }
+  return {
+    enabled: !!window.HardRoundDebugOneEuroTrajectoryFilter,
+    zoom: latest ? latest.zoom : shared ? shared.zoom : Number.isFinite(zoom) ? zoom : null,
+    currentSpeedScreenPxPerSec: latest ? latest.currentSpeedScreenPxPerSec : null,
+    currentAdaptiveCutoff: latest ? latest.currentAdaptiveCutoff : null,
+    currentAlpha: latest ? latest.currentAlpha : null,
+    rawSeq: latest ? latest.rawSeq : shared ? shared.oneEuroRawSeq : null,
+    representedSeq: latest
+      ? latest.representedSeq
+      : shared
+        ? shared.oneEuroRepresentedSeq
+        : null,
+    representedSeqLag: latest ? latest.representedSeqLag : null,
+    currentRawToRepresentedScreenPx: latest
+      ? latest.currentRawToRepresentedScreenPx
+      : null,
+    meanRawToRepresentedScreenPx: gap.mean,
+    p95RawToRepresentedScreenPx: gap.p95,
+    maxRawToRepresentedScreenPx: gap.max,
+    speedBuckets: bucketStats,
+  };
+};
+function _hrOescActive() {
+  return (
+    typeof window !== "undefined" &&
+    !!window.HardRoundDebugOneEuroSegmentContinuity
+  );
+}
+function _hrOescData() {
+  if (!window.HardRoundOneEuroSegmentContinuityData) {
+    window.HardRoundOneEuroSegmentContinuityData = {
+      startedAt: performance.now(),
+      filteredOutputs: [],
+      filteredBySeq: Object.create(null),
+      coreSegments: [],
+      renderSegments: [],
+      suspiciousSegments: [],
+      duplicateRepresentedSeqCount: 0,
+      repeatedCoreSeqCount: 0,
+      repeatedRenderSeqCount: 0,
+      backwardSequenceCount: 0,
+      coreBackwardSequenceCount: 0,
+      renderBackwardSequenceCount: 0,
+      nonLocalSegmentCount: 0,
+      maxNonLocalSegmentDistance: 0,
+      lastFilteredSeq: null,
+      lastCoreSegmentSeq: null,
+      lastRenderSegmentSeq: null,
+      seenCoreSeq: Object.create(null),
+      seenRenderSeq: Object.create(null),
+    };
+  }
+  return window.HardRoundOneEuroSegmentContinuityData;
+}
+function _hrOescPush(list, value, limit = 2000) {
+  if (!Array.isArray(list)) return;
+  list.push(value);
+  if (list.length > limit) list.splice(0, list.length - limit);
+}
+function _hrOescDistance(a, b) {
+  if (!a || !b) return null;
+  if (
+    !Number.isFinite(a.x) ||
+    !Number.isFinite(a.y) ||
+    !Number.isFinite(b.x) ||
+    !Number.isFinite(b.y)
+  )
+    return null;
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+function _hrOescRecordSegment(stage, seg) {
+  if (!_hrOescActive() || !seg) return;
+  const d = _hrOescData();
+  const seq = Number.isFinite(seg._debugSeq) ? seg._debugSeq : null;
+  const zoomValue = Math.max(0.0001, Number.isFinite(zoom) ? zoom : 1);
+  const list = stage === "renderSegment" ? d.renderSegments : d.coreSegments;
+  const seen = stage === "renderSegment" ? d.seenRenderSeq : d.seenCoreSeq;
+  const lastKey =
+    stage === "renderSegment" ? "lastRenderSegmentSeq" : "lastCoreSegmentSeq";
+  const repeatedKey =
+    stage === "renderSegment" ? "repeatedRenderSeqCount" : "repeatedCoreSeqCount";
+  const backwardKey =
+    stage === "renderSegment"
+      ? "renderBackwardSequenceCount"
+      : "coreBackwardSequenceCount";
+  const previousStageSeq = Number.isFinite(d[lastKey]) ? d[lastKey] : null;
+  if (Number.isFinite(seq)) {
+    if (seen[seq]) {
+      d[repeatedKey] = (d[repeatedKey] || 0) + 1;
+      d.duplicateRepresentedSeqCount = (d.duplicateRepresentedSeqCount || 0) + 1;
+    }
+    seen[seq] = true;
+    if (Number.isFinite(previousStageSeq) && seq < previousStageSeq) {
+      d[backwardKey] = (d[backwardKey] || 0) + 1;
+      d.backwardSequenceCount = (d.backwardSequenceCount || 0) + 1;
+    }
+    d[lastKey] = seq;
+  }
+  const start = { x: seg.x0, y: seg.y0 };
+  const end = { x: seg.x1, y: seg.y1 };
+  const filtered =
+    Number.isFinite(seg._debugFilteredX) && Number.isFinite(seg._debugFilteredY)
+      ? { x: seg._debugFilteredX, y: seg._debugFilteredY }
+      : seq != null && d.filteredBySeq && d.filteredBySeq[seq]
+        ? d.filteredBySeq[seq].filtered
+        : null;
+  const previousFiltered =
+    Number.isFinite(seg._debugPreviousFilteredX) &&
+    Number.isFinite(seg._debugPreviousFilteredY)
+      ? { x: seg._debugPreviousFilteredX, y: seg._debugPreviousFilteredY }
+      : seq != null && d.filteredBySeq && d.filteredBySeq[seq - 1]
+        ? d.filteredBySeq[seq - 1].filtered
+        : null;
+  const previousToFiltered = _hrOescDistance(previousFiltered, filtered);
+  const segmentLength = _hrOescDistance(start, end);
+  const startToPreviousFiltered = _hrOescDistance(start, previousFiltered);
+  const startToFiltered = _hrOescDistance(start, filtered);
+  const endToFiltered = _hrOescDistance(end, filtered);
+  const previousToFilteredScreen =
+    previousToFiltered == null ? null : previousToFiltered * zoomValue;
+  const segmentLengthScreen = segmentLength == null ? null : segmentLength * zoomValue;
+  const startToPreviousFilteredScreen =
+    startToPreviousFiltered == null ? null : startToPreviousFiltered * zoomValue;
+  const startToFilteredScreen =
+    startToFiltered == null ? null : startToFiltered * zoomValue;
+  const endToFilteredScreen = endToFiltered == null ? null : endToFiltered * zoomValue;
+  const nonLocalByStart =
+    startToPreviousFilteredScreen != null &&
+    previousToFilteredScreen != null &&
+    startToPreviousFilteredScreen >
+      Math.max(8, previousToFilteredScreen * 4 + 2);
+  const nonLocalByLength =
+    segmentLengthScreen != null &&
+    previousToFilteredScreen != null &&
+    segmentLengthScreen > Math.max(24, previousToFilteredScreen * 8 + 8);
+  const nonLocal = !!(nonLocalByStart || nonLocalByLength);
+  const entry = {
+    stage,
+    strokeId: _activeStrokeSession || null,
+    rawSeq: seq,
+    representedSeq: seq,
+    sequenceDelta:
+      Number.isFinite(seq) && Number.isFinite(previousStageSeq)
+        ? seq - previousStageSeq
+        : null,
+    filtered,
+    previousFiltered,
+    emitted: { x: seg.x1, y: seg.y1 },
+    segmentStart: start,
+    segmentEnd: end,
+    distancePreviousFilteredToFilteredScreenPx: previousToFilteredScreen,
+    distanceSegmentStartToEndScreenPx: segmentLengthScreen,
+    distanceSegmentStartToPreviousFilteredScreenPx:
+      startToPreviousFilteredScreen,
+    distanceSegmentStartToFilteredScreenPx: startToFilteredScreen,
+    distanceSegmentEndToFilteredScreenPx: endToFilteredScreen,
+    source:
+      seg.isStrokeStart
+        ? "stroke-start"
+        : seg.isStrokeEnd
+          ? "stroke-end"
+          : "raw",
+    nonLocal,
+    nonLocalReason: nonLocalByStart
+      ? "segmentStartFarFromPreviousFiltered"
+      : nonLocalByLength
+        ? "segmentLengthLargeRelativeToFilteredStep"
+        : null,
+    time: performance.now(),
+  };
+  _hrOescPush(list, entry);
+  if (nonLocal) {
+    d.nonLocalSegmentCount = (d.nonLocalSegmentCount || 0) + 1;
+    const nonLocalDistance = Math.max(
+      startToPreviousFilteredScreen || 0,
+      segmentLengthScreen || 0,
+    );
+    if (nonLocalDistance > (d.maxNonLocalSegmentDistance || 0))
+      d.maxNonLocalSegmentDistance = nonLocalDistance;
+    _hrOescPush(d.suspiciousSegments, entry, 20);
+  }
+}
+function _hrOescStageStats(list) {
+  const segments = list || [];
+  return {
+    count: segments.length,
+    segmentLengthScreenPx: _hrShortLookaheadStats(
+      segments.map((s) => s.distanceSegmentStartToEndScreenPx),
+    ),
+    startToPreviousFilteredScreenPx: _hrShortLookaheadStats(
+      segments.map((s) => s.distanceSegmentStartToPreviousFilteredScreenPx),
+    ),
+    endToFilteredScreenPx: _hrShortLookaheadStats(
+      segments.map((s) => s.distanceSegmentEndToFilteredScreenPx),
+    ),
+    nonLocalCount: segments.filter((s) => s.nonLocal).length,
+  };
+}
+window.HardRoundAnalyzeOneEuroSegmentContinuity = function () {
+  const d = window.HardRoundOneEuroSegmentContinuityData || null;
+  if (!d) {
+    return {
+      enabled: !!window.HardRoundDebugOneEuroSegmentContinuity,
+      filteredOutputCount: 0,
+      coreSegmentCount: 0,
+      renderSegmentCount: 0,
+    };
+  }
+  const latestFiltered = Array.isArray(d.filteredOutputs)
+    ? d.filteredOutputs[d.filteredOutputs.length - 1] || null
+    : null;
+  const latestCore = Array.isArray(d.coreSegments)
+    ? d.coreSegments[d.coreSegments.length - 1] || null
+    : null;
+  const latestRender = Array.isArray(d.renderSegments)
+    ? d.renderSegments[d.renderSegments.length - 1] || null
+    : null;
+  return {
+    enabled: !!window.HardRoundDebugOneEuroSegmentContinuity,
+    filteredOutputCount: d.filteredOutputs ? d.filteredOutputs.length : 0,
+    coreSegmentCount: d.coreSegments ? d.coreSegments.length : 0,
+    renderSegmentCount: d.renderSegments ? d.renderSegments.length : 0,
+    duplicateRepresentedSeqCount: d.duplicateRepresentedSeqCount || 0,
+    repeatedCoreSeqCount: d.repeatedCoreSeqCount || 0,
+    repeatedRenderSeqCount: d.repeatedRenderSeqCount || 0,
+    backwardSequenceCount: d.backwardSequenceCount || 0,
+    coreBackwardSequenceCount: d.coreBackwardSequenceCount || 0,
+    renderBackwardSequenceCount: d.renderBackwardSequenceCount || 0,
+    nonLocalSegmentCount: d.nonLocalSegmentCount || 0,
+    maximumNonLocalSegmentDistance: d.maxNonLocalSegmentDistance || 0,
+    filteredStepScreenPx: _hrShortLookaheadStats(
+      (d.filteredOutputs || []).map((s) =>
+        Number.isFinite(s.distancePreviousFilteredToFiltered)
+          ? s.distancePreviousFilteredToFiltered *
+            Math.max(0.0001, Number.isFinite(zoom) ? zoom : 1)
+          : null,
+      ),
+    ),
+    core: _hrOescStageStats(d.coreSegments),
+    renderReady: _hrOescStageStats(d.renderSegments),
+    latest: {
+      filtered: latestFiltered,
+      coreSegment: latestCore,
+      renderSegment: latestRender,
+    },
+    suspiciousSegments: Array.isArray(d.suspiciousSegments)
+      ? d.suspiciousSegments.slice(0, 20)
+      : [],
+  };
+};
+window.HardRoundAnalyzeOneEuroPrototypeCoreState = function () {
+  const d = window.HardRoundOneEuroPrototypeCoreStateData || null;
+  const continuity = window.HardRoundOneEuroSegmentContinuityData || null;
+  if (!d) {
+    return {
+      enabled: !!window.HardRoundDebugOneEuroPrototypeCoreState,
+      filteredOutputCount:
+        continuity && continuity.filteredOutputs
+          ? continuity.filteredOutputs.length
+          : 0,
+      prototypeInputCount: 0,
+      generatedSegmentCount: 0,
+    };
+  }
+  const inputs = Array.isArray(d.inputs) ? d.inputs : [];
+  const localities = (name) =>
+    _hrShortLookaheadStats(
+      inputs.map((entry) =>
+        entry && entry.locality ? entry.locality[name] : null,
+      ),
+    );
+  const generatedCounts = inputs.map((entry) =>
+    entry && Number.isFinite(entry.generatedSegmentCount)
+      ? entry.generatedSegmentCount
+      : null,
+  );
+  const uniqueRepresentedSeqCount = d.uniqueSeq
+    ? Object.keys(d.uniqueSeq).length
+    : 0;
+  return {
+    enabled: !!window.HardRoundDebugOneEuroPrototypeCoreState,
+    filteredOutputCount:
+      continuity && continuity.filteredOutputs
+        ? continuity.filteredOutputs.length
+        : d.filteredBySeq
+          ? Object.keys(d.filteredBySeq).length
+          : 0,
+    prototypeInputCount: d.prototypeInputCount || 0,
+    uniqueRepresentedSeqCount,
+    generatedSegmentCount: d.generatedSegmentCount || 0,
+    meanSegmentsPerInput:
+      d.prototypeInputCount > 0
+        ? (d.generatedSegmentCount || 0) / d.prototypeInputCount
+        : null,
+    p95SegmentsPerInput: _hrShortLookaheadStats(generatedCounts).p95,
+    maxSegmentsPerInput: _hrShortLookaheadStats(generatedCounts).max,
+    repeatedRepresentedSeqSegmentCount:
+      d.repeatedRepresentedSeqSegmentCount || 0,
+    incomingToLastRawScreenPx: localities("incomingToLastRawScreenPx"),
+    incomingToLastMidScreenPx: localities("incomingToLastMidScreenPx"),
+    previousFilteredToLastRawScreenPx: localities(
+      "previousFilteredToLastRawScreenPx",
+    ),
+    previousFilteredToLastMidScreenPx: localities(
+      "previousFilteredToLastMidScreenPx",
+    ),
+    currentFilteredToLastRawScreenPx: localities(
+      "currentFilteredToLastRawScreenPx",
+    ),
+    currentFilteredToLastMidScreenPx: localities(
+      "currentFilteredToLastMidScreenPx",
+    ),
+    farthestGeneratedSegmentToIncomingScreenPx: localities(
+      "farthestGeneratedSegmentToIncomingScreenPx",
+    ),
+    suspiciousCounts: d.suspiciousCounts || {},
+    suspiciousInputs: Array.isArray(d.suspiciousInputs)
+      ? d.suspiciousInputs.slice(0, 10)
+      : [],
+  };
+};
+window.HardRoundAnalyzePrototypeSubdivision = function () {
+  const d = window.HardRoundPrototypeSubdivisionData || null;
+  if (!d) {
+    return {
+      enabled: !!window.HardRoundDebugPrototypeSubdivision,
+      inputCount: 0,
+      subdividedInputCount: 0,
+    };
+  }
+  return {
+    enabled: !!window.HardRoundDebugPrototypeSubdivision,
+    inputCount: d.inputCount || 0,
+    subdividedInputCount: d.subdividedInputCount || 0,
+    meanSubdivisionSteps:
+      d.inputCount > 0 ? (d.totalSubdivisionSteps || 0) / d.inputCount : null,
+    p95SubdivisionSteps: _hrShortLookaheadStats(d.subdivisionStepValues || []).p95,
+    maxSubdivisionSteps: d.maxSubdivisionSteps || 0,
+    meanScreenStepPx: _hrShortLookaheadStats(d.screenStepValues || []).mean,
+    p95ScreenStepPx: _hrShortLookaheadStats(d.screenStepValues || []).p95,
+    maxScreenStepPx: _hrShortLookaheadStats(d.screenStepValues || []).max,
+    meanDocumentStep: _hrShortLookaheadStats(d.documentStepValues || []).mean,
+    maxDocumentStep: _hrShortLookaheadStats(d.documentStepValues || []).max,
+    maxStep: _hrShortLookaheadStats(d.maxStepValues || []),
+    maxStepScreenPx: _hrShortLookaheadStats(
+      (d.inputs || []).map((entry) => entry.maxStepScreenPx),
+    ),
+    zoom: _hrShortLookaheadStats(d.zoomValues || []),
+    generatedSegmentsPerInput: _hrShortLookaheadStats(
+      d.generatedSegmentsPerInput || [],
+    ),
+    totalGeneratedSegmentCount: d.generatedSegmentCount || 0,
+    suspiciousInputCount: Array.isArray(d.suspiciousInputs)
+      ? d.suspiciousInputs.length
+      : 0,
+    suspiciousInputs: Array.isArray(d.suspiciousInputs)
+      ? d.suspiciousInputs.slice(0, 10)
+      : [],
+  };
+};
+window.HardRoundAnalyzePrototypeStateMutation = function () {
+  const d = window.HardRoundPrototypeStateMutationData || null;
+  if (!d) {
+    return {
+      enabled: !!window.HardRoundDebugPrototypeStateMutation,
+      mutationCount: 0,
+      unexpectedStateJumpCount: 0,
+    };
+  }
+  return {
+    enabled: !!window.HardRoundDebugPrototypeStateMutation,
+    mutationCount: d.mutationCount || 0,
+    unexpectedStateJumpCount: d.unexpectedStateJumpCount || 0,
+    maximumStateJumpScreenPx: d.maximumStateJumpScreenPx || 0,
+    repeatedOrBackwardRepresentedSeqMutationCount:
+      d.repeatedOrBackwardRepresentedSeqMutationCount || 0,
+    resetDuringActiveStrokeCount: d.resetDuringActiveStrokeCount || 0,
+    mutationSources: Object.assign({}, d.mutationSources || {}),
+    suspiciousMutations: Array.isArray(d.suspiciousMutations)
+      ? d.suspiciousMutations.slice(0, 20)
+      : [],
+    latestMutation:
+      d.mutations && d.mutations.length
+        ? d.mutations[d.mutations.length - 1]
+        : null,
+  };
+};
+const _hrTemporalStrokeLimit = 8;
+function _hrTemporalActive() {
+  return (
+    typeof window !== "undefined" &&
+    !!window.HardRoundDebugTemporalStrokeTiming
+  );
+}
+function _hrTemporalData() {
+  if (!window.HardRoundTemporalStrokeTimingData) {
+    window.HardRoundTemporalStrokeTimingData = {
+      startedAt: performance.now(),
+      strokes: [],
+      current: null,
+    };
+  }
+  return window.HardRoundTemporalStrokeTimingData;
+}
+function _hrTemporalStartStroke(strokeId) {
+  if (!_hrTemporalActive()) return;
+  const d = _hrTemporalData();
+  const stroke = {
+    strokeId,
+    startedAt: performance.now(),
+    raw: [],
+    rawIntervals: [],
+    samplesPerPointerEvent: [],
+    emitted: [],
+    emittedIntervals: [],
+    flush: [],
+    flushIntervals: [],
+    previewStart: [],
+    previewCompletion: [],
+    acceptedPreview: [],
+    acceptedPreviewIntervals: [],
+    strokeCanvasUpdate: [],
+    strokeCanvasUpdateIntervals: [],
+    visibleRecompose: [],
+    visibleRecomposeIntervals: [],
+    visibleSamples: [],
+    emittedBySeq: Object.create(null),
+    rawBySeq: Object.create(null),
+    latestRaw: null,
+    latestEmitted: null,
+    latestAccepted: null,
+    latestDisplayed: null,
+  };
+  d.current = stroke;
+  d.strokes.push(stroke);
+  while (d.strokes.length > _hrTemporalStrokeLimit) d.strokes.shift();
+}
+function _hrTemporalStroke() {
+  const d = _hrTemporalData();
+  return d.current || null;
+}
+function _hrTemporalPush(list, value, limit = 1200) {
+  if (!list || !Number.isFinite(value)) return;
+  list.push(value);
+  while (list.length > limit) list.shift();
+}
+function _hrTemporalStats(values) {
+  const arr = (values || []).filter(Number.isFinite).sort((a, b) => a - b);
+  if (!arr.length)
+    return {
+      count: 0,
+      mean: null,
+      median: null,
+      p95: null,
+      max: null,
+      stdev: null,
+      above16_7: 0,
+      above25: 0,
+      above33_3: 0,
+    };
+  const pick = (p) => arr[Math.min(arr.length - 1, Math.floor((arr.length - 1) * p))];
+  const mean = arr.reduce((sum, v) => sum + v, 0) / arr.length;
+  const variance =
+    arr.reduce((sum, v) => sum + (v - mean) * (v - mean), 0) / arr.length;
+  return {
+    count: arr.length,
+    mean,
+    median: pick(0.5),
+    p95: pick(0.95),
+    max: arr[arr.length - 1],
+    stdev: Math.sqrt(variance),
+    above16_7: arr.filter((v) => v > 16.7).length,
+    above25: arr.filter((v) => v > 25).length,
+    above33_3: arr.filter((v) => v > 33.3).length,
+  };
+}
+function _hrTemporalPointFrom(endpoint) {
+  if (!endpoint || !Number.isFinite(endpoint.x) || !Number.isFinite(endpoint.y))
+    return null;
+  return {
+    seq: Number.isFinite(endpoint.seq) ? endpoint.seq : null,
+    x: endpoint.x,
+    y: endpoint.y,
+    time: Number.isFinite(endpoint.time) ? endpoint.time : null,
+    wallTime: Number.isFinite(endpoint.wallTime) ? endpoint.wallTime : performance.now(),
+    zoom: Number.isFinite(endpoint.zoom)
+      ? endpoint.zoom
+      : Number.isFinite(zoom)
+        ? zoom
+        : 1,
+    speedScreenPxPerSec: Number.isFinite(endpoint.speedScreenPxPerSec)
+      ? endpoint.speedScreenPxPerSec
+      : null,
+  };
+}
+function _hrTemporalInterval(list, point) {
+  const prev = list.length ? list[list.length - 1] : null;
+  if (prev && Number.isFinite(prev.wallTime) && Number.isFinite(point.wallTime))
+    return point.wallTime - prev.wallTime;
+  return null;
+}
+function _hrTemporalRecordPacket(type, count) {
+  if (!_hrTemporalActive()) return;
+  const stroke = _hrTemporalStroke();
+  if (!stroke) return;
+  if (type === "pointerrawupdate" || type === "pointermove")
+    _hrTemporalPush(stroke.samplesPerPointerEvent, count);
+}
+function _hrTemporalRecordRaw(raw) {
+  if (!_hrTemporalActive()) return;
+  const stroke = _hrTemporalStroke();
+  const point = _hrTemporalPointFrom(raw);
+  if (!stroke || !point || !Number.isFinite(point.seq)) return;
+  const interval = _hrTemporalInterval(stroke.raw, point);
+  _hrTemporalPush(stroke.rawIntervals, interval);
+  stroke.raw.push(point);
+  while (stroke.raw.length > 1200) stroke.raw.shift();
+  stroke.rawBySeq[point.seq] = point;
+  stroke.latestRaw = point;
+}
+function _hrTemporalRecordEmitted(endpoint) {
+  if (!_hrTemporalActive()) return;
+  const stroke = _hrTemporalStroke();
+  const point = _hrTemporalPointFrom(endpoint);
+  if (!stroke || !point || !Number.isFinite(point.seq)) return;
+  const interval = _hrTemporalInterval(stroke.emitted, point);
+  _hrTemporalPush(stroke.emittedIntervals, interval);
+  const prev = stroke.emitted.length
+    ? stroke.emitted[stroke.emitted.length - 1]
+    : null;
+  point.burst =
+    prev && Number.isFinite(prev.wallTime)
+      ? point.wallTime - prev.wallTime <= 0.25
+      : false;
+  stroke.emitted.push(point);
+  while (stroke.emitted.length > 1200) stroke.emitted.shift();
+  stroke.emittedBySeq[point.seq] = point;
+  stroke.latestEmitted = point;
+}
+function _hrTemporalRecordFlush(endpoint) {
+  if (!_hrTemporalActive()) return;
+  const stroke = _hrTemporalStroke();
+  const point = _hrTemporalPointFrom(endpoint);
+  if (!stroke || !point) return;
+  point.wallTime = performance.now();
+  const interval = _hrTemporalInterval(stroke.flush, point);
+  _hrTemporalPush(stroke.flushIntervals, interval);
+  stroke.flush.push(point);
+  while (stroke.flush.length > 600) stroke.flush.shift();
+}
+function _hrTemporalRecordPreviewStart() {
+  if (!_hrTemporalActive()) return;
+  const stroke = _hrTemporalStroke();
+  if (!stroke) return;
+  stroke.previewStart.push(performance.now());
+  while (stroke.previewStart.length > 600) stroke.previewStart.shift();
+}
+function _hrTemporalRecordPreviewCompletion() {
+  if (!_hrTemporalActive()) return;
+  const stroke = _hrTemporalStroke();
+  if (!stroke) return;
+  stroke.previewCompletion.push(performance.now());
+  while (stroke.previewCompletion.length > 600) stroke.previewCompletion.shift();
+}
+function _hrTemporalRecordAccepted(endpoint) {
+  if (!_hrTemporalActive()) return;
+  const stroke = _hrTemporalStroke();
+  const point = _hrTemporalPointFrom(endpoint);
+  if (!stroke || !point) return;
+  point.wallTime = performance.now();
+  const interval = _hrTemporalInterval(stroke.acceptedPreview, point);
+  _hrTemporalPush(stroke.acceptedPreviewIntervals, interval);
+  stroke.acceptedPreview.push(point);
+  while (stroke.acceptedPreview.length > 600) stroke.acceptedPreview.shift();
+  stroke.latestAccepted = point;
+}
+function _hrTemporalRecordStrokeCanvasUpdate(endpoint) {
+  if (!_hrTemporalActive()) return;
+  const stroke = _hrTemporalStroke();
+  const point = _hrTemporalPointFrom(endpoint);
+  if (!stroke || !point) return;
+  point.wallTime = performance.now();
+  const interval = _hrTemporalInterval(stroke.strokeCanvasUpdate, point);
+  _hrTemporalPush(stroke.strokeCanvasUpdateIntervals, interval);
+  stroke.strokeCanvasUpdate.push(point);
+  while (stroke.strokeCanvasUpdate.length > 600) stroke.strokeCanvasUpdate.shift();
+  stroke.latestDisplayed = point;
+}
+function _hrTemporalSpeedBucket(speedPxPerMs) {
+  if (!Number.isFinite(speedPxPerMs)) return "unknown";
+  if (speedPxPerMs <= 0.15) return "slow";
+  if (speedPxPerMs <= 0.45) return "medium";
+  if (speedPxPerMs <= 1.0) return "fast";
+  return "veryFast";
+}
+function _hrTemporalRecordVisible(endpoint) {
+  if (!_hrTemporalActive()) return;
+  const stroke = _hrTemporalStroke();
+  const represented = _hrTemporalPointFrom(endpoint);
+  if (!stroke || !represented) return;
+  const presentationWallTime = performance.now();
+  const representedInputWallTime = represented.wallTime;
+  represented.wallTime = presentationWallTime;
+  const interval = _hrTemporalInterval(stroke.visibleRecompose, represented);
+  _hrTemporalPush(stroke.visibleRecomposeIntervals, interval);
+  stroke.visibleRecompose.push(represented);
+  while (stroke.visibleRecompose.length > 600) stroke.visibleRecompose.shift();
+  const newestRaw = stroke.latestRaw;
+  const newestEmitted = stroke.latestEmitted;
+  const representedRaw =
+    Number.isFinite(represented.seq) && stroke.rawBySeq[represented.seq]
+      ? stroke.rawBySeq[represented.seq]
+      : null;
+  const representedEmitted =
+    Number.isFinite(represented.seq) && stroke.emittedBySeq[represented.seq]
+      ? stroke.emittedBySeq[represented.seq]
+      : represented;
+  const z = Math.max(0.0001, represented.zoom || (Number.isFinite(zoom) ? zoom : 1));
+  const rawAge =
+    newestRaw && representedRaw
+      ? Math.max(0, newestRaw.time - representedRaw.time)
+      : null;
+  const representedPresentationAge =
+    representedEmitted && Number.isFinite(representedEmitted.wallTime)
+      ? presentationWallTime - representedEmitted.wallTime
+      : Number.isFinite(representedInputWallTime)
+        ? presentationWallTime - representedInputWallTime
+        : null;
+  const newestRawPresentationAge =
+    newestRaw && Number.isFinite(newestRaw.wallTime)
+      ? presentationWallTime - newestRaw.wallTime
+      : null;
+  const rawDist =
+    newestRaw && representedEmitted
+      ? Math.hypot(newestRaw.x - representedEmitted.x, newestRaw.y - representedEmitted.y) * z
+      : null;
+  const speed =
+    newestRaw && representedRaw && rawAge > 0
+      ? rawDist / rawAge
+      : newestRaw && Number.isFinite(newestRaw.speedScreenPxPerSec)
+        ? newestRaw.speedScreenPxPerSec / 1000
+        : null;
+  stroke.visibleSamples.push({
+    time: performance.now(),
+    newestRawSeq: newestRaw ? newestRaw.seq : null,
+    newestEmittedSeq: newestEmitted ? newestEmitted.seq : null,
+    representedSeq: represented.seq,
+    rawToRepresentedAgeMs: rawAge,
+    representedPresentationAgeMs: representedPresentationAge,
+    newestRawToPresentationAgeMs: newestRawPresentationAge,
+    rawToRepresentedScreenPx: rawDist,
+    speedBucket: _hrTemporalSpeedBucket(speed),
+  });
+  while (stroke.visibleSamples.length > 600) stroke.visibleSamples.shift();
+}
+function _hrTemporalIntervalFromTimes(times) {
+  const out = [];
+  for (let i = 1; i < times.length; i++) out.push(times[i] - times[i - 1]);
+  return out;
+}
+function _hrTemporalBucketStats(stroke) {
+  const buckets = {
+    slow: { sampleAges: [], representedPresentationAges: [], newestRawPresentationAges: [], distances: [], count: 0 },
+    medium: { sampleAges: [], representedPresentationAges: [], newestRawPresentationAges: [], distances: [], count: 0 },
+    fast: { sampleAges: [], representedPresentationAges: [], newestRawPresentationAges: [], distances: [], count: 0 },
+    veryFast: { sampleAges: [], representedPresentationAges: [], newestRawPresentationAges: [], distances: [], count: 0 },
+  };
+  for (const sample of stroke.visibleSamples || []) {
+    const bucket = buckets[sample.speedBucket];
+    if (!bucket) continue;
+    bucket.count++;
+    _hrTemporalPush(bucket.sampleAges, sample.rawToRepresentedAgeMs, 10000);
+    _hrTemporalPush(
+      bucket.representedPresentationAges,
+      sample.representedPresentationAgeMs,
+      10000,
+    );
+    _hrTemporalPush(
+      bucket.newestRawPresentationAges,
+      sample.newestRawToPresentationAgeMs,
+      10000,
+    );
+    _hrTemporalPush(bucket.distances, sample.rawToRepresentedScreenPx, 10000);
+  }
+  const result = {};
+  for (const [name, bucket] of Object.entries(buckets)) {
+    result[name] = {
+      sampleCount: bucket.count,
+      sampleAgeLatencyMs: _hrTemporalStats(bucket.sampleAges),
+      representedPresentationAgeMs: _hrTemporalStats(
+        bucket.representedPresentationAges,
+      ),
+      newestRawToPresentationAgeMs: _hrTemporalStats(
+        bucket.newestRawPresentationAges,
+      ),
+      rawToRepresentedScreenPx: _hrTemporalStats(bucket.distances),
+    };
+  }
+  return result;
+}
+window.HardRoundAnalyzeTemporalStrokeTiming = function () {
+  const d = window.HardRoundTemporalStrokeTimingData || null;
+  const stroke = d && d.current ? d.current : d && d.strokes ? d.strokes[d.strokes.length - 1] : null;
+  if (!stroke)
+    return { enabled: !!window.HardRoundDebugTemporalStrokeTiming, stroke: null };
+  const bursts = (stroke.emitted || []).filter((p) => p.burst).length;
+  const visibleAges = (stroke.visibleSamples || []).map((s) => s.rawToRepresentedAgeMs);
+  const representedPresentationAges = (stroke.visibleSamples || []).map(
+    (s) => s.representedPresentationAgeMs,
+  );
+  const newestRawPresentationAges = (stroke.visibleSamples || []).map(
+    (s) => s.newestRawToPresentationAgeMs,
+  );
+  const visibleDistances = (stroke.visibleSamples || []).map(
+    (s) => s.rawToRepresentedScreenPx,
+  );
+  return {
+    enabled: !!window.HardRoundDebugTemporalStrokeTiming,
+    strokeId: stroke.strokeId,
+    raw: {
+      sampleCount: stroke.raw.length,
+      intervalMs: _hrTemporalStats(stroke.rawIntervals),
+      samplesPerPointerEvent: _hrTemporalStats(stroke.samplesPerPointerEvent),
+    },
+    emitted: {
+      sampleCount: stroke.emitted.length,
+      intervalMs: _hrTemporalStats(stroke.emittedIntervals),
+      burstCount: bursts,
+    },
+    rendererPreview: {
+      flushIntervalMs: _hrTemporalStats(stroke.flushIntervals),
+      previewStartIntervalMs: _hrTemporalStats(
+        _hrTemporalIntervalFromTimes(stroke.previewStart),
+      ),
+      previewCompletionIntervalMs: _hrTemporalStats(
+        _hrTemporalIntervalFromTimes(stroke.previewCompletion),
+      ),
+      acceptedPreviewIntervalMs: _hrTemporalStats(stroke.acceptedPreviewIntervals),
+      strokeCanvasUpdateIntervalMs: _hrTemporalStats(
+        stroke.strokeCanvasUpdateIntervals,
+      ),
+      visibleRecomposeIntervalMs: _hrTemporalStats(
+        stroke.visibleRecomposeIntervals,
+      ),
+      previewStartCount: stroke.previewStart.length,
+      previewCompletionCount: stroke.previewCompletion.length,
+      acceptedPreviewCount: stroke.acceptedPreview.length,
+      visibleRecomposeCount: stroke.visibleRecompose.length,
+    },
+    visibleRepresentation: {
+      rawToRepresentedAgeMs: _hrTemporalStats(visibleAges),
+      representedPresentationAgeMs: _hrTemporalStats(
+        representedPresentationAges,
+      ),
+      newestRawToPresentationAgeMs: _hrTemporalStats(
+        newestRawPresentationAges,
+      ),
+      rawToRepresentedScreenPx: _hrTemporalStats(visibleDistances),
+      latest: stroke.visibleSamples.length
+        ? stroke.visibleSamples[stroke.visibleSamples.length - 1]
+        : null,
+    },
+    speedBuckets: _hrTemporalBucketStats(stroke),
+    latest: {
+      raw: stroke.latestRaw,
+      emitted: stroke.latestEmitted,
+      accepted: stroke.latestAccepted,
+      displayed: stroke.latestDisplayed,
+    },
+  };
+};
+function _hrCblDocPoint(point) {
+  return _hrTlClonePoint(point);
+}
+function _hrCblPointToScreen(point, raw) {
+  if (
+    !point ||
+    !raw ||
+    !Number.isFinite(point.x) ||
+    !Number.isFinite(point.y) ||
+    !Number.isFinite(raw.x) ||
+    !Number.isFinite(raw.y) ||
+    !Number.isFinite(raw.clientX) ||
+    !Number.isFinite(raw.clientY)
+  )
+    return null;
+  const z = Math.max(0.0001, Number.isFinite(point.zoom) ? point.zoom : raw.zoom || zoom || 1);
+  return {
+    x: raw.clientX + (point.x - raw.x) * z,
+    y: raw.clientY + (point.y - raw.y) * z,
+    time: Number.isFinite(point.time) ? point.time : null,
+    wallTime: Number.isFinite(point.wallTime) ? point.wallTime : null,
+  };
+}
+function _hrCblDistance(a, b) {
+  if (!a || !b) return null;
+  if (
+    !Number.isFinite(a.x) ||
+    !Number.isFinite(a.y) ||
+    !Number.isFinite(b.x) ||
+    !Number.isFinite(b.y)
+  )
+    return null;
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+function _hrCblSignedOffset(inputPoint, outputPoint, raw) {
+  if (
+    !inputPoint ||
+    !outputPoint ||
+    !raw ||
+    !Number.isFinite(inputPoint.x) ||
+    !Number.isFinite(inputPoint.y) ||
+    !Number.isFinite(outputPoint.x) ||
+    !Number.isFinite(outputPoint.y) ||
+    !Number.isFinite(raw.motionUnitX) ||
+    !Number.isFinite(raw.motionUnitY)
+  )
+    return null;
+  const z = Math.max(0.0001, Number.isFinite(zoom) ? zoom : 1);
+  const dx = outputPoint.x - inputPoint.x;
+  const dy = outputPoint.y - inputPoint.y;
+  const along = (dx * raw.motionUnitX + dy * raw.motionUnitY) * z;
+  const cross = (dx * -raw.motionUnitY + dy * raw.motionUnitX) * z;
+  return { alongMotionOffsetPx: along, crossMotionOffsetPx: cross };
+}
+if (typeof window.HardRoundDebugTrajectoryWaviness === "undefined")
+  window.HardRoundDebugTrajectoryWaviness = false;
+if (typeof window.HardRoundDebugCurveContinuity === "undefined")
+  window.HardRoundDebugCurveContinuity = false;
+if (typeof window.HardRoundDebugRasterQuantization === "undefined")
+  window.HardRoundDebugRasterQuantization = false;
+const _hrTwLimit = 2400;
+function _hrTwActive() {
+  return (
+    typeof window !== "undefined" &&
+    (!!window.HardRoundDebugTrajectoryWaviness ||
+      !!window.HardRoundDebugCurveContinuity)
+  );
+}
+function _hrTwData() {
+  if (!window.HardRoundTrajectoryWavinessData) {
+    window.HardRoundTrajectoryWavinessData = {
+      startedAt: performance.now(),
+      order: [],
+      bySeq: Object.create(null),
+    };
+  }
+  return window.HardRoundTrajectoryWavinessData;
+}
+function _hrTwEnsure(seq) {
+  if (!_hrTwActive() || !Number.isFinite(seq)) return null;
+  const d = _hrTwData();
+  let entry = d.bySeq[seq];
+  if (!entry) {
+    entry = { seq, stages: Object.create(null) };
+    d.bySeq[seq] = entry;
+    d.order.push(seq);
+    while (d.order.length > _hrTwLimit) {
+      const old = d.order.shift();
+      delete d.bySeq[old];
+    }
+  }
+  return entry;
+}
+function _hrTwRecordRaw(raw) {
+  if (!_hrTwActive() || !raw || !Number.isFinite(raw.seq)) return;
+  const entry = _hrTwEnsure(raw.seq);
+  if (!entry) return;
+  entry.raw = _hrTlClonePoint(raw);
+  entry.raw.clientX = raw.clientX;
+  entry.raw.clientY = raw.clientY;
+  entry.raw.speedScreenPxPerSec = raw.speedScreenPxPerSec || 0;
+  entry.strokeId =
+    Number.isFinite(_activeStrokeSession) && _hardRoundStrokeActive
+      ? _activeStrokeSession
+      : null;
+  entry.stages.raw = {
+    x: raw.clientX,
+    y: raw.clientY,
+    wallTime: raw.wallTime,
+  };
+}
+function _hrTwRecordStage(name, point, seq) {
+  if (!_hrTwActive() || !point || !Number.isFinite(seq)) return;
+  const entry = _hrTwEnsure(seq);
+  if (!entry || !entry.raw) return;
+  const screen = _hrCblPointToScreen(point, entry.raw);
+  if (!screen) return;
+  entry.stages[name] = screen;
+  if (entry.strokeId == null && Number.isFinite(_activeStrokeSession))
+    entry.strokeId = _activeStrokeSession;
+}
+function _hrTwCrossToLine(point, a, b) {
+  if (!point || !a || !b) return null;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy);
+  if (len <= 1e-6) return null;
+  return Math.abs(((point.x - a.x) * dy - (point.y - a.y) * dx) / len);
+}
+function _hrTwDistanceToSegment(point, a, b) {
+  if (!point || !a || !b) return null;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq <= 1e-8) return Math.hypot(point.x - a.x, point.y - a.y);
+  const t = Math.max(
+    0,
+    Math.min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / lenSq),
+  );
+  const px = a.x + dx * t;
+  const py = a.y + dy * t;
+  return Math.hypot(point.x - px, point.y - py);
+}
+function _hrTwDistanceToLocalRawPath(point, rawPoints, index, radius = 8) {
+  if (!point || !rawPoints || rawPoints.length < 2) return null;
+  let best = Infinity;
+  const start = Math.max(0, index - radius);
+  const end = Math.min(rawPoints.length - 2, index + radius);
+  for (let i = start; i <= end; i++) {
+    const dist = _hrTwDistanceToSegment(point, rawPoints[i], rawPoints[i + 1]);
+    if (Number.isFinite(dist) && dist < best) best = dist;
+  }
+  return Number.isFinite(best) ? best : null;
+}
+function _hrTwStats(values) {
+  const arr = (values || []).filter(Number.isFinite).sort((a, b) => a - b);
+  if (!arr.length)
+    return { count: 0, mean: null, median: null, p95: null, max: null };
+  const pick = (p) => arr[Math.min(arr.length - 1, Math.floor((arr.length - 1) * p))];
+  return {
+    count: arr.length,
+    mean: arr.reduce((sum, v) => sum + v, 0) / arr.length,
+    median: pick(0.5),
+    p95: pick(0.95),
+    max: arr[arr.length - 1],
+  };
+}
+function _hrCcAngleStats(values) {
+  const arr = (values || []).filter(Number.isFinite).sort((a, b) => a - b);
+  if (!arr.length)
+    return {
+      sampleCount: 0,
+      meanTurnAngleDeg: null,
+      medianTurnAngleDeg: null,
+      p95TurnAngleDeg: null,
+      maxTurnAngleDeg: null,
+      countAbove2Deg: 0,
+      countAbove5Deg: 0,
+      countAbove10Deg: 0,
+    };
+  const pick = (p) => arr[Math.min(arr.length - 1, Math.floor((arr.length - 1) * p))];
+  return {
+    sampleCount: arr.length,
+    meanTurnAngleDeg: arr.reduce((sum, v) => sum + v, 0) / arr.length,
+    medianTurnAngleDeg: pick(0.5),
+    p95TurnAngleDeg: pick(0.95),
+    maxTurnAngleDeg: arr[arr.length - 1],
+    countAbove2Deg: arr.filter((v) => v > 2).length,
+    countAbove5Deg: arr.filter((v) => v > 5).length,
+    countAbove10Deg: arr.filter((v) => v > 10).length,
+  };
+}
+function _hrCcTurnAngleDeg(a, b, c, minStepPx) {
+  if (!a || !b || !c) return null;
+  const ax = b.x - a.x;
+  const ay = b.y - a.y;
+  const bx = c.x - b.x;
+  const by = c.y - b.y;
+  const alen = Math.hypot(ax, ay);
+  const blen = Math.hypot(bx, by);
+  if (alen < minStepPx || blen < minStepPx) return null;
+  const dot = Math.max(-1, Math.min(1, (ax * bx + ay * by) / (alen * blen)));
+  return Math.acos(dot) * (180 / Math.PI);
+}
+function _hrCcDirectionHoldStats(points, minStepPx, thresholdDeg) {
+  const holds = [];
+  let current = 0;
+  let longest = 0;
+  let meaningfulChanges = 0;
+  let prevVec = null;
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    if (!a || !b) continue;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    if (!Number.isFinite(len) || len < minStepPx) continue;
+    const vec = { x: dx / len, y: dy / len };
+    if (!prevVec) {
+      prevVec = vec;
+      current = len;
+      longest = Math.max(longest, current);
+      continue;
+    }
+    const dot = Math.max(-1, Math.min(1, prevVec.x * vec.x + prevVec.y * vec.y));
+    const delta = Math.acos(dot) * (180 / Math.PI);
+    if (delta > thresholdDeg) {
+      holds.push(current);
+      meaningfulChanges++;
+      current = len;
+      prevVec = vec;
+    } else {
+      current += len;
+    }
+    longest = Math.max(longest, current);
+  }
+  if (current > 0) holds.push(current);
+  const stats = _hrTwStats(holds);
+  return {
+    thresholdDeg,
+    meaningfulDirectionChangeCount: meaningfulChanges,
+    medianDirectionHoldScreenPx: stats.median,
+    p95DirectionHoldScreenPx: stats.p95,
+    longestDirectionHoldScreenPx: longest || null,
+  };
+}
+function _hrCcPathStats(points, minStepPx) {
+  const angles = [];
+  const lengths = [];
+  let ignoredShortSegments = 0;
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    if (!a || !b) continue;
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    if (Number.isFinite(len)) {
+      lengths.push(len);
+      if (len < minStepPx) ignoredShortSegments++;
+    }
+  }
+  for (let i = 1; i < points.length - 1; i++) {
+    const angle = _hrCcTurnAngleDeg(points[i - 1], points[i], points[i + 1], minStepPx);
+    if (Number.isFinite(angle)) angles.push(angle);
+  }
+  return Object.assign(_hrCcAngleStats(angles), {
+    pointCount: points.filter(Boolean).length,
+    segmentLengthScreenPx: _hrTwStats(lengths),
+    ignoredShortSegments,
+    minSegmentScreenPx: minStepPx,
+    directionHoldDistanceScreenPx: {
+      above1Deg: _hrCcDirectionHoldStats(points, minStepPx, 1),
+      above2Deg: _hrCcDirectionHoldStats(points, minStepPx, 2),
+      above5Deg: _hrCcDirectionHoldStats(points, minStepPx, 5),
+    },
+    effectiveVerticesPer100ScreenPx:
+      lengths.reduce((sum, v) => sum + (Number.isFinite(v) ? v : 0), 0) > 0
+        ? (angles.length /
+            lengths.reduce((sum, v) => sum + (Number.isFinite(v) ? v : 0), 0)) *
+          100
+        : null,
+  });
+}
+function _hrCcGroupedStageStats(groups, stage, minStepPx) {
+  const combined = {
+    sampleCount: 0,
+    pointCount: 0,
+    meanTurnAngleDeg: [],
+    rawAngles: [],
+    rawLengths: [],
+    ignoredShortSegments: 0,
+    directionHolds1: [],
+    directionHolds2: [],
+    directionHolds5: [],
+    totalDistance: 0,
+    angleCount: 0,
+  };
+  const groupSummaries = [];
+  for (const group of groups) {
+    const points = group
+      .map((entry) => entry && entry.stages && entry.stages[stage])
+      .filter((point) => point && Number.isFinite(point.x) && Number.isFinite(point.y));
+    if (points.length < 2) continue;
+    const stats = _hrCcPathStats(points, minStepPx);
+    groupSummaries.push({ strokeId: group.strokeId, pointCount: stats.pointCount });
+    combined.pointCount += stats.pointCount;
+    combined.ignoredShortSegments += stats.ignoredShortSegments;
+    for (let i = 1; i < points.length; i++) {
+      const len = Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+      if (Number.isFinite(len)) {
+        combined.rawLengths.push(len);
+        combined.totalDistance += len;
+      }
+    }
+    for (let i = 1; i < points.length - 1; i++) {
+      const angle = _hrCcTurnAngleDeg(points[i - 1], points[i], points[i + 1], minStepPx);
+      if (Number.isFinite(angle)) combined.rawAngles.push(angle);
+    }
+    const collectHolds = (threshold, target) => {
+      let current = 0;
+      let prevVec = null;
+      for (let i = 1; i < points.length; i++) {
+        const a = points[i - 1];
+        const b = points[i];
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const len = Math.hypot(dx, dy);
+        if (!Number.isFinite(len) || len < minStepPx) continue;
+        const vec = { x: dx / len, y: dy / len };
+        if (!prevVec) {
+          prevVec = vec;
+          current = len;
+          continue;
+        }
+        const dot = Math.max(-1, Math.min(1, prevVec.x * vec.x + prevVec.y * vec.y));
+        const delta = Math.acos(dot) * (180 / Math.PI);
+        if (delta > threshold) {
+          if (current > 0) target.push(current);
+          current = len;
+          prevVec = vec;
+        } else current += len;
+      }
+      if (current > 0) target.push(current);
+    };
+    collectHolds(1, combined.directionHolds1);
+    collectHolds(2, combined.directionHolds2);
+    collectHolds(5, combined.directionHolds5);
+  }
+  const angleStats = _hrCcAngleStats(combined.rawAngles);
+  const holdStats = (arr, thresholdDeg) => {
+    const s = _hrTwStats(arr);
+    return {
+      thresholdDeg,
+      meaningfulDirectionChangeCount: Math.max(0, arr.length - groupSummaries.length),
+      medianDirectionHoldScreenPx: s.median,
+      p95DirectionHoldScreenPx: s.p95,
+      longestDirectionHoldScreenPx: s.max,
+    };
+  };
+  return Object.assign(angleStats, {
+    pointCount: combined.pointCount,
+    segmentLengthScreenPx: _hrTwStats(combined.rawLengths),
+    ignoredShortSegments: combined.ignoredShortSegments,
+    minSegmentScreenPx: minStepPx,
+    directionHoldDistanceScreenPx: {
+      above1Deg: holdStats(combined.directionHolds1, 1),
+      above2Deg: holdStats(combined.directionHolds2, 2),
+      above5Deg: holdStats(combined.directionHolds5, 5),
+    },
+    effectiveVerticesPer100ScreenPx:
+      combined.totalDistance > 0
+        ? (combined.rawAngles.length / combined.totalDistance) * 100
+        : null,
+    strokeGroupCount: groupSummaries.length,
+  });
+}
+function _hrTwCurrentBucket() {
+  const z = Number.isFinite(zoom) ? zoom : 1;
+  if (z < 0.25) return "veryLowZoom";
+  if (z < 0.5) return "lowZoom";
+  if (z < 1.5) return "normalZoom";
+  return "highZoom";
+}
+function _hrTwTraceZoomStats(d) {
+  const values = [];
+  for (const seq of d.order || []) {
+    const entry = d.bySeq[seq];
+    if (entry && entry.raw && Number.isFinite(entry.raw.zoom))
+      values.push(entry.raw.zoom);
+  }
+  return _hrTwStats(values);
+}
+function _hrTwStrokeGroups(d) {
+  const groups = [];
+  let current = null;
+  for (const seq of d.order || []) {
+    const entry = d.bySeq[seq];
+    if (!entry) continue;
+    const strokeId = entry.strokeId == null ? "unknown" : String(entry.strokeId);
+    if (!current || current.strokeId !== strokeId) {
+      current = [];
+      current.strokeId = strokeId;
+      groups.push(current);
+    }
+    current.push(entry);
+  }
+  return groups;
+}
+window.HardRoundAnalyzeTrajectoryWaviness = function () {
+  const d = window.HardRoundTrajectoryWavinessData || _hrTwData();
+  const stageNames = [
+    "raw",
+    "stabilized",
+    "coreInput",
+    "internalRaw",
+    "emitted",
+    "flushed",
+    "accepted",
+    "displayed",
+  ];
+  const values = Object.create(null);
+  const chordValues = Object.create(null);
+  const correspondence = Object.create(null);
+  for (const name of stageNames) values[name] = [];
+  for (const name of stageNames) chordValues[name] = [];
+  const order = d.order || [];
+  const rawPoints = order.map((seq) => {
+    const entry = d.bySeq[seq];
+    return entry && entry.stages ? entry.stages.raw : null;
+  });
+  for (let i = 1; i < order.length - 1; i++) {
+    const prev = d.bySeq[order[i - 1]];
+    const current = d.bySeq[order[i]];
+    const next = d.bySeq[order[i + 1]];
+    if (!prev || !current || !next) continue;
+    const a = prev.stages && prev.stages.raw;
+    const b = next.stages && next.stages.raw;
+    if (!a || !b) continue;
+    for (const name of stageNames) {
+      const p = current.stages && current.stages[name];
+      if (p) correspondence[name] = (correspondence[name] || 0) + 1;
+      const chordCross = _hrTwCrossToLine(p, a, b);
+      if (Number.isFinite(chordCross)) chordValues[name].push(chordCross);
+      const cross =
+        name === "raw"
+          ? chordCross
+          : _hrTwDistanceToLocalRawPath(p, rawPoints, i);
+      if (Number.isFinite(cross)) values[name].push(cross);
+    }
+  }
+  const out = {
+    enabled: !!window.HardRoundDebugTrajectoryWaviness,
+    durationMs: performance.now() - d.startedAt,
+    zoom: Number.isFinite(zoom) ? zoom : null,
+    traceZoom: _hrTwTraceZoomStats(d),
+    bucket: _hrTwCurrentBucket(),
+    stabilization: _hrCblStabilizationState(),
+    sampleCount: order.length,
+    metric: {
+      raw: "perpendicular distance to neighboring raw chord",
+      stages:
+        "nearest distance to local raw path within +/-8 samples, to avoid counting along-path phase lag as cross-waviness",
+    },
+    correspondence,
+  };
+  for (const name of stageNames) {
+    out[name + "CrossMotion"] = _hrTwStats(values[name]);
+  }
+  out.chordReferenceCrossMotion = {};
+  for (const name of stageNames) {
+    out.chordReferenceCrossMotion[name] = _hrTwStats(chordValues[name]);
+  }
+  return out;
+};
+window.HardRoundAnalyzeCurveContinuity = function () {
+  const d = window.HardRoundTrajectoryWavinessData || _hrTwData();
+  const minStepPx = 0.1;
+  const stageMap = {
+    raw: "raw",
+    internalRaw: "internalRaw",
+    emitted: "emitted",
+  };
+  const out = {
+    enabled: !!window.HardRoundDebugCurveContinuity,
+    durationMs: performance.now() - d.startedAt,
+    zoom: Number.isFinite(zoom) ? zoom : null,
+    traceZoom: _hrTwTraceZoomStats(d),
+    bucket: _hrTwCurrentBucket(),
+    stabilization: _hrCblStabilizationState(),
+    minSegmentScreenPx: minStepPx,
+  };
+  const groups = _hrTwStrokeGroups(d);
+  for (const [label, stage] of Object.entries(stageMap)) {
+    out[label] = _hrCcGroupedStageStats(groups, stage, minStepPx);
+  }
+  out.correspondence = {
+    raw: out.raw.pointCount,
+    internalRaw: out.internalRaw.pointCount,
+    emitted: out.emitted.pointCount,
+  };
+  out.strokeGroupCount = groups.length;
+  out.strokeGroups = groups.map((group) => ({
+    strokeId: group.strokeId,
+    sampleCount: group.length,
+  }));
+  return out;
+};
+const _hrRqLimit = 2400;
+function _hrRqActive() {
+  return typeof window !== "undefined" && !!window.HardRoundDebugRasterQuantization;
+}
+function _hrRqData() {
+  if (!window.HardRoundRasterQuantizationData) {
+    window.HardRoundRasterQuantizationData = {
+      startedAt: performance.now(),
+      values: Object.create(null),
+      emittedSamples: 0,
+      stampSamples: 0,
+      latest: null,
+    };
+  }
+  return window.HardRoundRasterQuantizationData;
+}
+function _hrRqPush(name, value) {
+  if (!_hrRqActive() || !Number.isFinite(value)) return;
+  const d = _hrRqData();
+  const arr = d.values[name] || (d.values[name] = []);
+  arr.push(value);
+  if (arr.length > _hrRqLimit) arr.shift();
+}
+function _hrRqStats(values) {
+  const arr = (values || []).filter(Number.isFinite).sort((a, b) => a - b);
+  if (!arr.length)
+    return { count: 0, mean: null, median: null, p95: null, max: null };
+  const pick = (p) => arr[Math.min(arr.length - 1, Math.floor((arr.length - 1) * p))];
+  return {
+    count: arr.length,
+    mean: arr.reduce((sum, v) => sum + v, 0) / arr.length,
+    median: pick(0.5),
+    p95: pick(0.95),
+    max: arr[arr.length - 1],
+  };
+}
+function _hrRqPointToSegmentDistance(px, py, ax, ay, bx, by) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq <= 1e-8) return Math.hypot(px - ax, py - ay);
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
+  const x = ax + dx * t;
+  const y = ay + dy * t;
+  return Math.hypot(px - x, py - y);
+}
+function _hrRqRecordSegment(seg) {
+  if (!_hrRqActive() || !seg) return;
+  const x0 = Number(seg.x0);
+  const y0 = Number(seg.y0);
+  const x1 = Number(seg.x1);
+  const y1 = Number(seg.y1);
+  if (
+    !Number.isFinite(x0) ||
+    !Number.isFinite(y0) ||
+    !Number.isFinite(x1) ||
+    !Number.isFinite(y1)
+  )
+    return;
+  const z = Math.max(0.0001, Number.isFinite(zoom) ? zoom : 1);
+  const r0 = Math.max(0, Number(seg.r0) || 0);
+  const r1 = Math.max(0, Number(seg.r1) || 0);
+  const qx0 = Math.round(x0);
+  const qy0 = Math.round(y0);
+  const qx1 = Math.round(x1);
+  const qy1 = Math.round(y1);
+  const endpointQuant = Math.max(
+    Math.hypot(qx0 - x0, qy0 - y0),
+    Math.hypot(qx1 - x1, qy1 - y1),
+  );
+  const cross0 = _hrRqPointToSegmentDistance(qx0, qy0, x0, y0, x1, y1);
+  const cross1 = _hrRqPointToSegmentDistance(qx1, qy1, x0, y0, x1, y1);
+  const radiusQuant = Math.max(Math.abs(Math.round(r0) - r0), Math.abs(Math.round(r1) - r1));
+  const spacing = Math.hypot(x1 - x0, y1 - y0);
+  const d = _hrRqData();
+  d.emittedSamples++;
+  d.stampSamples++;
+  _hrRqPush("emittedToStampCenterCrossMotionScreenPx", Math.max(cross0, cross1) * z);
+  _hrRqPush("coordinateQuantizationScreenPx", endpointQuant * z);
+  _hrRqPush("radiusQuantizationScreenPx", radiusQuant * z);
+  _hrRqPush("spacingDocumentPx", spacing);
+  _hrRqPush("spacingScreenPx", spacing * z);
+  d.latest = {
+    zoom: z,
+    x0,
+    y0,
+    x1,
+    y1,
+    qx0,
+    qy0,
+    qx1,
+    qy1,
+    r0,
+    r1,
+    spacingDocumentPx: spacing,
+    spacingScreenPx: spacing * z,
+    coordinateQuantizationScreenPx: endpointQuant * z,
+    radiusQuantizationScreenPx: radiusQuant * z,
+  };
+}
+window.HardRoundAnalyzeRasterQuantization = function () {
+  const d = window.HardRoundRasterQuantizationData || _hrRqData();
+  const value = (name) => _hrRqStats(d.values[name]);
+  const z = Number.isFinite(zoom) ? zoom : null;
+  return {
+    enabled: !!window.HardRoundDebugRasterQuantization,
+    durationMs: performance.now() - d.startedAt,
+    zoom: z,
+    documentPixelToScreenPx: z,
+    emittedSamples: d.emittedSamples || 0,
+    stampSamples: d.stampSamples || 0,
+    emittedToStampCenterCrossMotionScreenPx: value(
+      "emittedToStampCenterCrossMotionScreenPx",
+    ),
+    stampCenterStepScreenPx: value("spacingScreenPx"),
+    coordinateQuantizationScreenPx: value("coordinateQuantizationScreenPx"),
+    radiusQuantizationScreenPx: value("radiusQuantizationScreenPx"),
+    spacingDocumentPx: value("spacingDocumentPx"),
+    spacingScreenPx: value("spacingScreenPx"),
+    latest: d.latest || null,
+    note:
+      "Migrated Hard Round uses continuous capsule segments, not legacy dab centers; stampSamples here are render segment endpoints and theoretical nearest-document-pixel quantization.",
+  };
+};
+function _hrCblPushSpeedMetric(d, metric, bucket, value) {
+  if (!Number.isFinite(value)) return;
+  if (!d.speedBins[metric]) {
+    d.speedBins[metric] = {
+      slow: _hrCblBucket(),
+      medium: _hrCblBucket(),
+      fast: _hrCblBucket(),
+    };
+  }
+  const b = d.speedBins[metric][bucket];
+  b.count++;
+  b.sum += value;
+  b.max = Math.max(b.max, value);
+}
+function _hrCblRecordRecomposite(durationMs) {
+  if (!_hrCblActive() || !_hardRoundStrokeActive || !_inStroke) return;
+  const raw = _hrCursorBrushLatestRaw;
+  if (!raw) return;
+  const cursor =
+    typeof window !== "undefined" && window.BrushCursorLatestPosition
+      ? {
+          x: window.BrushCursorLatestPosition.renderX,
+          y: window.BrushCursorLatestPosition.renderY,
+          time: window.BrushCursorLatestPosition.time || null,
+        }
+      : null;
+  const coreOutput =
+    window.HardRoundTipLagData &&
+    window.HardRoundTipLagData.latest &&
+    window.HardRoundTipLagData.latest.coreOutput
+      ? window.HardRoundTipLagData.latest.coreOutput
+      : _hrTipLagLastRenderedEndpoint;
+  const flushed = _hrTipLagLastFlushedEndpoint;
+  const accepted = _hrTipLagLastAcceptedPreviewEndpoint;
+  const displayed = _hrTipLagLastDisplayedBodyEndpoint;
+  const recomposited = displayed;
+  const rawScreen =
+    Number.isFinite(raw.clientX) && Number.isFinite(raw.clientY)
+      ? { x: raw.clientX, y: raw.clientY, time: raw.time, wallTime: raw.wallTime }
+      : null;
+  const stabilizedScreen = _hrCblPointToScreen(_hrCblLastStabilized, raw);
+  const coreInputScreen = _hrCblPointToScreen(_hrCblLastCoreInput, raw);
+  const internalRawScreen = _hrCblPointToScreen(_hrCblLastInternalRaw, raw);
+  const emittedScreen = _hrCblPointToScreen(_hrCblLastEmittedEndpoint, raw);
+  const coreScreen = _hrCblPointToScreen(coreOutput, raw);
+  const flushedScreen = _hrCblPointToScreen(flushed, raw);
+  const acceptedScreen = _hrCblPointToScreen(accepted, raw);
+  const displayedScreen = _hrCblPointToScreen(displayed, raw);
+  const recompositedScreen = _hrCblPointToScreen(recomposited, raw);
+  const pendingSegments = _hardRoundPendingRenderSegments.length;
+  const now = performance.now();
+  const oldestPending = _hardRoundPendingRenderSegmentTimes.length
+    ? _hardRoundPendingRenderSegmentTimes[0]
+    : null;
+  const oldestAgeMs = Number.isFinite(oldestPending) ? now - oldestPending : 0;
+  const cursorToBrush = _hrCblDistance(cursor, recompositedScreen);
+  const metrics = {
+    cursorToDisplayedBrushScreenPx: cursorToBrush,
+    rawToDisplayedBrushScreenPx: _hrCblDistance(rawScreen, recompositedScreen),
+    rawToCustomCursorScreenPx: _hrCblDistance(rawScreen, cursor),
+    rawToStabilizedScreenPx: _hrCblDistance(rawScreen, stabilizedScreen),
+    stabilizedToCoreInputScreenPx: _hrCblDistance(stabilizedScreen, coreInputScreen),
+    coreInputToInternalRawScreenPx: _hrCblDistance(coreInputScreen, internalRawScreen),
+    internalRawToEmittedEndpointScreenPx: _hrCblDistance(internalRawScreen, emittedScreen),
+    rawToEmittedEndpointScreenPx: _hrCblDistance(rawScreen, emittedScreen),
+    emittedEndpointToFlushedScreenPx: _hrCblDistance(emittedScreen, flushedScreen),
+    flushedToAcceptedPreviewScreenPx: _hrCblDistance(flushedScreen, acceptedScreen),
+    acceptedPreviewToDisplayedBrushScreenPx: _hrCblDistance(acceptedScreen, recompositedScreen),
+    emittedEndpointToDisplayedBrushScreenPx: _hrCblDistance(emittedScreen, recompositedScreen),
+    coreOutputToDisplayedBrushScreenPx: _hrCblDistance(coreScreen, recompositedScreen),
+    flushedToDisplayedBrushScreenPx: _hrCblDistance(flushedScreen, recompositedScreen),
+  };
+  Object.keys(metrics).forEach((name) => {
+    _hrCblPush("samples", name, metrics[name]);
+  });
+  const signed = {
+    coreInputToInternalRaw: _hrCblSignedOffset(
+      _hrCblLastCoreInput,
+      _hrCblLastInternalRaw,
+      raw,
+    ),
+    internalRawToEmittedEndpoint: _hrCblSignedOffset(
+      _hrCblLastInternalRaw,
+      _hrCblLastEmittedEndpoint,
+      raw,
+    ),
+    rawToEmittedEndpoint: _hrCblSignedOffset(
+      raw,
+      _hrCblLastEmittedEndpoint,
+      raw,
+    ),
+    emittedEndpointToDisplayedBrush: _hrCblSignedOffset(
+      _hrCblLastEmittedEndpoint,
+      recomposited,
+      raw,
+    ),
+    acceptedPreviewToDisplayedBrush: _hrCblSignedOffset(
+      accepted,
+      recomposited,
+      raw,
+    ),
+    rawToDisplayedBrush: _hrCblSignedOffset(raw, recomposited, raw),
+  };
+  Object.keys(signed).forEach((name) => {
+    const value = signed[name];
+    if (!value) return;
+    _hrCblPush("samples", name + "AlongMotionOffsetPx", value.alongMotionOffsetPx);
+    _hrCblPush("samples", name + "CrossMotionOffsetPx", value.crossMotionOffsetPx);
+  });
+  _hrCblPush("ages", "rawToDisplayedBrush", recomposited && Number.isFinite(recomposited.wallTime) ? now - raw.wallTime : null);
+  _hrCblPush("ages", "emittedEndpointToDisplay", _hrCblLastEmittedEndpoint && Number.isFinite(_hrCblLastEmittedEndpoint.wallTime) ? now - _hrCblLastEmittedEndpoint.wallTime : null);
+  _hrCblPush("ages", "flushedToDisplay", flushed && Number.isFinite(flushed.wallTime) ? now - flushed.wallTime : null);
+  _hrCblPush("ages", "acceptedPreviewToDisplay", accepted && Number.isFinite(accepted.wallTime) ? now - accepted.wallTime : null);
+  const d = _hrCblData();
+  _hrCblPushArray(d.pendingSegments, pendingSegments);
+  _hrCblPushArray(d.pendingOldestAgeMs, oldestAgeMs);
+  const speed = raw.speedScreenPxPerSec || 0;
+  const bucket = speed < 150 ? "slow" : speed < 700 ? "medium" : "fast";
+  Object.keys(metrics).forEach((name) =>
+    _hrCblPushSpeedMetric(d, name, bucket, metrics[name]),
+  );
+  Object.keys(signed).forEach((name) => {
+    const value = signed[name];
+    if (!value) return;
+    _hrCblPushSpeedMetric(
+      d,
+      name + "AlongMotionOffsetPx",
+      bucket,
+      value.alongMotionOffsetPx,
+    );
+    _hrCblPushSpeedMetric(
+      d,
+      name + "CrossMotionOffsetPx",
+      bucket,
+      value.crossMotionOffsetPx,
+    );
+  });
+  d.latest = {
+    raw,
+    customCursor: cursor,
+    stabilized: _hrCblDocPoint(_hrCblLastStabilized),
+    coreInput: _hrCblDocPoint(_hrCblLastCoreInput),
+    newestInternalRaw: _hrCblDocPoint(_hrCblLastInternalRaw),
+    emittedTrajectoryEndpoint: _hrCblDocPoint(_hrCblLastEmittedEndpoint),
+    coreOutput: _hrCblDocPoint(coreOutput),
+    flushedEndpoint: _hrCblDocPoint(flushed),
+    acceptedPreviewEndpoint: _hrCblDocPoint(accepted),
+    displayedStrokeCanvasEndpoint: _hrCblDocPoint(displayed),
+    recompositedEndpoint: _hrCblDocPoint(recomposited),
+    screen: {
+      raw: rawScreen,
+      customCursor: cursor,
+      stabilized: stabilizedScreen,
+      coreInput: coreInputScreen,
+      newestInternalRaw: internalRawScreen,
+      emittedTrajectoryEndpoint: emittedScreen,
+      coreOutput: coreScreen,
+      flushedEndpoint: flushedScreen,
+      acceptedPreviewEndpoint: acceptedScreen,
+      displayedStrokeCanvasEndpoint: displayedScreen,
+      recompositedEndpoint: recompositedScreen,
+    },
+    pendingSegmentCount: pendingSegments,
+    oldestPendingSegmentAgeMs: oldestAgeMs,
+    acceptedGenerationId: _hrAcceptedPreviewGenerationId,
+    displayedGenerationId: _hrDisplayedStrokeCanvasGenerationId,
+    recompositeTimestamp: now,
+    recompositeDurationMs: durationMs,
+    stabilization: _hrCblStabilizationState(),
+    sampleSeq: {
+      raw: raw.seq,
+      stabilized: _hrCblLastStabilized ? _hrCblLastStabilized.seq : null,
+      coreInput: _hrCblLastCoreInput ? _hrCblLastCoreInput.seq : null,
+      newestInternalRaw: _hrCblLastInternalRaw
+        ? _hrCblLastInternalRaw.seq
+        : null,
+      emittedTrajectoryEndpoint: _hrCblLastEmittedEndpoint
+        ? _hrCblLastEmittedEndpoint.seq
+        : null,
+    },
+    signedOffsets: signed,
+  };
+}
+window.HardRoundAnalyzeCursorToBrushLatency = function () {
+  const d = window.HardRoundCursorToBrushLatencyData || _hrCblData();
+  const sample = (name) => _hrCblStats(d.samples[name]);
+  const age = (name) => _hrCblStats(d.ages[name]);
+  const speedMetric = (metric) => {
+    const src = d.speedBins[metric] || {};
+    const one = (name) => {
+      const b = src[name] || _hrCblBucket();
+      return {
+        count: b.count,
+        mean: b.count ? b.sum / b.count : null,
+        max: b.count ? b.max : null,
+      };
+    };
+    return {
+      slow: one("slow"),
+      medium: one("medium"),
+      fast: one("fast"),
+    };
+  };
+  return {
+    enabled: !!window.HardRoundDebugCursorToBrushLatency,
+    durationMs: performance.now() - d.startedAt,
+    stabilization: _hrCblStabilizationState(),
+    cursorToDisplayedBrushScreenPx: sample("cursorToDisplayedBrushScreenPx"),
+    rawToDisplayedBrushScreenPx: sample("rawToDisplayedBrushScreenPx"),
+    rawToCustomCursorScreenPx: sample("rawToCustomCursorScreenPx"),
+    rawToStabilizedScreenPx: sample("rawToStabilizedScreenPx"),
+    stabilizedToCoreInputScreenPx: sample("stabilizedToCoreInputScreenPx"),
+    coreInputToInternalRawScreenPx: sample("coreInputToInternalRawScreenPx"),
+    internalRawToEmittedEndpointScreenPx: sample(
+      "internalRawToEmittedEndpointScreenPx",
+    ),
+    rawToEmittedTrajectoryEndpointScreenPx: sample(
+      "rawToEmittedEndpointScreenPx",
+    ),
+    emittedTrajectoryEndpointToFlushedScreenPx: sample(
+      "emittedEndpointToFlushedScreenPx",
+    ),
+    flushedToAcceptedPreviewScreenPx: sample(
+      "flushedToAcceptedPreviewScreenPx",
+    ),
+    acceptedPreviewToDisplayedBrushScreenPx: sample(
+      "acceptedPreviewToDisplayedBrushScreenPx",
+    ),
+    emittedTrajectoryEndpointToDisplayedBrushScreenPx: sample(
+      "emittedEndpointToDisplayedBrushScreenPx",
+    ),
+    signedOffsets: {
+      coreInputToInternalRaw: {
+        alongMotionOffsetPx: sample(
+          "coreInputToInternalRawAlongMotionOffsetPx",
+        ),
+        crossMotionOffsetPx: sample(
+          "coreInputToInternalRawCrossMotionOffsetPx",
+        ),
+      },
+      internalRawToEmittedEndpoint: {
+        alongMotionOffsetPx: sample(
+          "internalRawToEmittedEndpointAlongMotionOffsetPx",
+        ),
+        crossMotionOffsetPx: sample(
+          "internalRawToEmittedEndpointCrossMotionOffsetPx",
+        ),
+      },
+      rawToEmittedEndpoint: {
+        alongMotionOffsetPx: sample("rawToEmittedEndpointAlongMotionOffsetPx"),
+        crossMotionOffsetPx: sample("rawToEmittedEndpointCrossMotionOffsetPx"),
+      },
+      emittedEndpointToDisplayedBrush: {
+        alongMotionOffsetPx: sample(
+          "emittedEndpointToDisplayedBrushAlongMotionOffsetPx",
+        ),
+        crossMotionOffsetPx: sample(
+          "emittedEndpointToDisplayedBrushCrossMotionOffsetPx",
+        ),
+      },
+      acceptedPreviewToDisplayedBrush: {
+        alongMotionOffsetPx: sample(
+          "acceptedPreviewToDisplayedBrushAlongMotionOffsetPx",
+        ),
+        crossMotionOffsetPx: sample(
+          "acceptedPreviewToDisplayedBrushCrossMotionOffsetPx",
+        ),
+      },
+      rawToDisplayedBrush: {
+        alongMotionOffsetPx: sample("rawToDisplayedBrushAlongMotionOffsetPx"),
+        crossMotionOffsetPx: sample("rawToDisplayedBrushCrossMotionOffsetPx"),
+      },
+    },
+    coreOutputToDisplayedBrushScreenPx: sample("coreOutputToDisplayedBrushScreenPx"),
+    flushedToDisplayedBrushScreenPx: sample("flushedToDisplayedBrushScreenPx"),
+    agesMs: {
+      rawToDisplayedBrush: age("rawToDisplayedBrush"),
+      emittedEndpointToDisplay: age("emittedEndpointToDisplay"),
+      flushedToDisplay: age("flushedToDisplay"),
+      acceptedPreviewToDisplay: age("acceptedPreviewToDisplay"),
+    },
+    pending: {
+      segments: _hrCblStats(d.pendingSegments),
+      oldestAgeMs: _hrCblStats(d.pendingOldestAgeMs),
+    },
+    speedVsCursorToBrushLag: {
+      cursorToDisplayedBrushScreenPx: speedMetric(
+        "cursorToDisplayedBrushScreenPx",
+      ),
+      rawToStabilizedScreenPx: speedMetric("rawToStabilizedScreenPx"),
+      stabilizedToCoreInputScreenPx: speedMetric(
+        "stabilizedToCoreInputScreenPx",
+      ),
+      coreInputToInternalRawScreenPx: speedMetric(
+        "coreInputToInternalRawScreenPx",
+      ),
+      internalRawToEmittedEndpointScreenPx: speedMetric(
+        "internalRawToEmittedEndpointScreenPx",
+      ),
+      rawToEmittedEndpointScreenPx: speedMetric(
+        "rawToEmittedEndpointScreenPx",
+      ),
+      emittedEndpointToFlushedScreenPx: speedMetric(
+        "emittedEndpointToFlushedScreenPx",
+      ),
+      flushedToAcceptedPreviewScreenPx: speedMetric(
+        "flushedToAcceptedPreviewScreenPx",
+      ),
+      acceptedPreviewToDisplayedBrushScreenPx: speedMetric(
+        "acceptedPreviewToDisplayedBrushScreenPx",
+      ),
+      emittedEndpointToDisplayedBrushScreenPx: speedMetric(
+        "emittedEndpointToDisplayedBrushScreenPx",
+      ),
+      rawToDisplayedBrushScreenPx: speedMetric("rawToDisplayedBrushScreenPx"),
+      signed: {
+        coreInputToInternalRawAlongMotionOffsetPx: speedMetric(
+          "coreInputToInternalRawAlongMotionOffsetPx",
+        ),
+        coreInputToInternalRawCrossMotionOffsetPx: speedMetric(
+          "coreInputToInternalRawCrossMotionOffsetPx",
+        ),
+        internalRawToEmittedEndpointAlongMotionOffsetPx: speedMetric(
+          "internalRawToEmittedEndpointAlongMotionOffsetPx",
+        ),
+        internalRawToEmittedEndpointCrossMotionOffsetPx: speedMetric(
+          "internalRawToEmittedEndpointCrossMotionOffsetPx",
+        ),
+        rawToEmittedEndpointAlongMotionOffsetPx: speedMetric(
+          "rawToEmittedEndpointAlongMotionOffsetPx",
+        ),
+        emittedEndpointToDisplayedBrushAlongMotionOffsetPx: speedMetric(
+          "emittedEndpointToDisplayedBrushAlongMotionOffsetPx",
+        ),
+        acceptedPreviewToDisplayedBrushAlongMotionOffsetPx: speedMetric(
+          "acceptedPreviewToDisplayedBrushAlongMotionOffsetPx",
+        ),
+        rawToDisplayedBrushAlongMotionOffsetPx: speedMetric(
+          "rawToDisplayedBrushAlongMotionOffsetPx",
+        ),
+      },
+    },
+    latest: d.latest || null,
   };
 };
 
@@ -13470,9 +16620,13 @@ function _hrNewestSampleTipRect(from, to, radius) {
 }
 
 function _hrRestoreNewestSampleTipOverlayBase(sourceCanvas) {
+  const start = _hrLcActive() ? performance.now() : null;
   const r = _hrNewestSampleTipOverlayDirty;
   _hrNewestSampleTipOverlayDirty = null;
-  if (!r || !_strokeCtx || !sourceCanvas) return;
+  if (!r || !_strokeCtx || !sourceCanvas) {
+    if (start != null) _hrLcDuration("terminalRestoreMs", performance.now() - start);
+    return;
+  }
   _strokeCtx.clearRect(r.x, r.y, r.width, r.height);
   _strokeCtx.drawImage(
     sourceCanvas,
@@ -13485,46 +16639,213 @@ function _hrRestoreNewestSampleTipOverlayBase(sourceCanvas) {
     r.width,
     r.height,
   );
+  if (start != null) _hrLcDuration("terminalRestoreMs", performance.now() - start);
 }
 
 function _hrDrawNewestSampleTipOverlay(sourceCanvas) {
-  if (!window.HardRoundDebugNewestSampleTip || !_strokeCtx) return;
+  if (!window.HardRoundDebugLiveNewestSampleTail || !_strokeCtx) return;
+  const start = _hrLcActive() ? performance.now() : null;
+  _hrLiveNewestSampleTailStart = null;
+  _hrLiveNewestSampleTailEnd = null;
   const from = _hrTipLagLastRenderedEndpoint;
   const to = _hrNewestSampleTipTarget;
-  if (!from || !to) return;
+  if (!from || !to) {
+    if (start != null) _hrLcDuration("terminalDrawMs", performance.now() - start);
+    return;
+  }
   if (
     !Number.isFinite(from.x) ||
     !Number.isFinite(from.y) ||
     !Number.isFinite(to.x) ||
     !Number.isFinite(to.y)
   )
-    return;
+    {
+      if (start != null) _hrLcDuration("terminalDrawMs", performance.now() - start);
+      return;
+    }
   const z = Math.max(0.0001, Number.isFinite(zoom) ? zoom : 1);
   const dx = to.x - from.x;
   const dy = to.y - from.y;
-  if (Math.hypot(dx, dy) * z <= 0.25) return;
-  const radius = Math.max(0.5, getBrushSize() / 2);
+  if (Math.hypot(dx, dy) * z <= 0.25) {
+    if (start != null) _hrLcDuration("terminalDrawMs", performance.now() - start);
+    return;
+  }
+  _hrLiveNewestSampleTailStart = _hrTlClonePoint(from);
+  _hrLiveNewestSampleTailEnd = _hrTlClonePoint(to);
+  if (_hrTlActive()) {
+    const d = _hrTlData();
+    d.latest.liveTailStart = _hrTlClonePoint(_hrLiveNewestSampleTailStart);
+    d.latest.liveTailEnd = _hrTlClonePoint(_hrLiveNewestSampleTailEnd);
+    d.latest.latestCoreBodyEndpoint = _hrTlClonePoint(_hrTipLagLastRenderedEndpoint);
+    d.latest.latestFlushedBodyEndpoint = _hrTlClonePoint(_hrTipLagLastFlushedEndpoint);
+    d.latest.latestAcceptedPreviewEndpoint = _hrTlClonePoint(
+      _hrTipLagLastAcceptedPreviewEndpoint,
+    );
+    d.latest.latestDisplayedBodyEndpoint = _hrTlClonePoint(
+      _hrTipLagLastDisplayedBodyEndpoint,
+    );
+    d.latest.newestCoreInput = _hrTlClonePoint(_hrNewestSampleTipTarget);
+    _hrTlRecordPair(
+      "coreBodyToNewest",
+      _hrTipLagLastRenderedEndpoint,
+      _hrNewestSampleTipTarget,
+    );
+    _hrTlRecordPair(
+      "flushedBodyToNewest",
+      _hrTipLagLastFlushedEndpoint,
+      _hrNewestSampleTipTarget,
+    );
+    _hrTlRecordPair(
+      "acceptedBodyToNewest",
+      _hrTipLagLastAcceptedPreviewEndpoint,
+      _hrNewestSampleTipTarget,
+    );
+    _hrTlRecordPair(
+      "displayedBodyToNewest",
+      _hrTipLagLastDisplayedBodyEndpoint,
+      _hrNewestSampleTipTarget,
+    );
+    _hrTlRecordPair(
+      "liveTailLength",
+      _hrLiveNewestSampleTailStart,
+      _hrLiveNewestSampleTailEnd,
+    );
+    _hrTlRecordPair(
+      "displayedBodyToLiveTailStart",
+      _hrTipLagLastDisplayedBodyEndpoint,
+      _hrLiveNewestSampleTailStart,
+    );
+    _hrTlRecordPair(
+      "displayedBodyToLiveTailEnd",
+      _hrTipLagLastDisplayedBodyEndpoint,
+      _hrLiveNewestSampleTailEnd,
+    );
+  }
+  const seg = _hrLiveNewestSampleTailSegment || {};
+  const radius = Math.max(
+    0.5,
+    Number.isFinite(seg.r1)
+      ? seg.r1
+      : Number.isFinite(seg.r0)
+        ? seg.r0
+        : getBrushSize() / 2,
+  );
   const dirty = _hrNewestSampleTipRect(from, to, radius);
-  if (!dirty) return;
-  const rgb = tool === "eraser" ? [0, 0, 0] : _hexToRGB(color);
+  if (!dirty) {
+    if (start != null) _hrLcDuration("terminalDrawMs", performance.now() - start);
+    return;
+  }
+  const rgb = Array.isArray(seg.rgb)
+    ? seg.rgb
+    : tool === "eraser"
+      ? [0, 0, 0]
+      : _hexToRGB(color);
   _strokeCtx.save();
   _strokeCtx.globalCompositeOperation = "source-over";
-  const alpha = Number.isFinite(brushOpacity) ? brushOpacity : 1;
+  const alpha = Number.isFinite(seg.alpha1)
+    ? seg.alpha1
+    : Number.isFinite(brushOpacity)
+      ? brushOpacity
+      : 1;
   _strokeCtx.strokeStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${Math.max(0, Math.min(1, alpha))})`;
   _strokeCtx.lineWidth = radius * 2;
-  _strokeCtx.lineCap = "round";
+  _strokeCtx.lineCap = "butt";
   _strokeCtx.lineJoin = "round";
   _strokeCtx.beginPath();
   _strokeCtx.moveTo(from.x, from.y);
   _strokeCtx.lineTo(to.x, to.y);
   _strokeCtx.stroke();
+  _strokeCtx.beginPath();
+  _strokeCtx.arc(to.x, to.y, radius, 0, Math.PI * 2);
+  _strokeCtx.fillStyle = _strokeCtx.strokeStyle;
+  _strokeCtx.fill();
   _strokeCtx.restore();
   _hrNewestSampleTipOverlayDirty = dirty;
   _hrTipLagLastDisplayedEndpoint = {
     x: to.x,
     y: to.y,
     time: performance.now(),
+    wallTime: performance.now(),
+    zoom: Number.isFinite(zoom) ? zoom : 1,
   };
+  if (start != null) _hrLcDuration("terminalDrawMs", performance.now() - start);
+}
+
+function _hrBuildIntegratedNewestSampleTipSegments(previewGeneration) {
+  if (!window.HardRoundDebugIntegratedNewestSampleTip) return null;
+  if (!_hrTipLagLastFlushedEndpoint || !_hrNewestSampleTipTarget) return null;
+  if (_hardRoundPendingRenderSegments.length > 0) return null;
+  const from = _hrTipLagLastFlushedEndpoint;
+  const to = _hrNewestSampleTipTarget;
+  if (
+    !Number.isFinite(from.x) ||
+    !Number.isFinite(from.y) ||
+    !Number.isFinite(to.x) ||
+    !Number.isFinite(to.y)
+  )
+    return null;
+  const z = Math.max(0.0001, Number.isFinite(zoom) ? zoom : 1);
+  const lengthPx = Math.hypot(to.x - from.x, to.y - from.y) * z;
+  if (lengthPx <= 0.25) return null;
+  const seg = _hrLiveNewestSampleTailSegment || {};
+  const radius = Math.max(
+    0.5,
+    Number.isFinite(seg.r1)
+      ? seg.r1
+      : Number.isFinite(seg.r0)
+        ? seg.r0
+        : getBrushSize() / 2,
+  );
+  const rgb = Array.isArray(seg.rgb)
+    ? seg.rgb
+    : tool === "eraser"
+      ? [0, 0, 0]
+      : _hexToRGB(color);
+  const alpha = Number.isFinite(seg.alpha1)
+    ? seg.alpha1
+    : Number.isFinite(seg.alpha0)
+      ? seg.alpha0
+      : Number.isFinite(brushOpacity)
+        ? brushOpacity
+        : 1;
+  const terminal = {
+    x0: from.x,
+    y0: from.y,
+    x1: to.x,
+    y1: to.y,
+    r0: radius,
+    r1: radius,
+    rgb,
+    composite: seg.composite || (tool === "eraser" ? "erase" : "paint"),
+    alpha0: alpha,
+    alpha1: alpha,
+    isLivePreviewTerminal: true,
+  };
+  const generationId = ++_hrIntegratedTipGenerationId;
+  _hrIntegratedTipTopology = {
+    generationId,
+    previewGeneration,
+    generationBodyEndpoint: _hrTlClonePoint(from),
+    generationNewestIncludedInput: _hrTlClonePoint(to),
+    integratedTipStart: _hrTlClonePoint(from),
+    integratedTipEnd: _hrTlClonePoint(to),
+    latestAcceptedPreviewEndpoint: _hrTlClonePoint(
+      _hrTipLagLastAcceptedPreviewEndpoint,
+    ),
+    latestDisplayedBodyEndpoint: _hrTlClonePoint(
+      _hrTipLagLastDisplayedBodyEndpoint,
+    ),
+    submittedAt: performance.now(),
+  };
+  if (_hrTlActive()) {
+    const d = _hrTlData();
+    d.latest.integratedTip = Object.assign({}, _hrIntegratedTipTopology);
+    _hrTlRecordPair("integratedBodyToNewest", from, to);
+    _hrTlRecordPair("integratedTipLength", from, to);
+    _hrTlRecordPair("integratedBodyToTipStart", from, from);
+    _hrTlRecordPair("integratedTipEndToNewest", to, to);
+  }
+  return [terminal];
 }
 
 const _hardRoundInputLatencyRecords = [];
@@ -13663,6 +16984,11 @@ function _hardRoundPresentLivePreview(renderer) {
   // _hardRoundPreviewGeneration below for why this check exists in
   // addition to the session/_inStroke checks already here.
   const previewGeneration = _hardRoundPreviewGeneration;
+  const cadenceFlightId =
+    _hardRoundPreviewInFlightToken &&
+    Number.isFinite(_hardRoundPreviewInFlightToken.cadenceFlightId)
+      ? _hardRoundPreviewInFlightToken.cadenceFlightId
+      : ++_hrPresentationCadenceFlightSerial;
   // --- diagnostic (11A.31): request-time bookkeeping, opt-in, read-only ---
   const _dbgOrderOn =
     typeof window !== "undefined" && !!window.HardRoundDebugPreviewOrder;
@@ -13773,12 +17099,15 @@ function _hardRoundPresentLivePreview(renderer) {
       )
         return null;
       const peekStart = _hrLcActive() ? performance.now() : null;
+      const livePreviewTerminalSegments =
+        _hrBuildIntegratedNewestSampleTipSegments(previewGeneration);
       const peekResult = renderer.peekStroke({
         strokeId: session,
         previewGeneration,
         renderer,
         segmentCount: renderer._segmentCount,
         livePreviewId,
+        livePreviewTerminalSegments,
         presentationBarrierDependency: gpuLivePreview
           ? staleBaseRevision != null
             ? "gated-stale-base-webgpu"
@@ -13865,6 +17194,18 @@ function _hardRoundPresentLivePreview(renderer) {
       }
       // --- end 11B.10 resolve-time bookkeeping ---
       if (previewGeneration !== _hardRoundPreviewGeneration) {
+        _hrGaRecordFlight("previewDropped", {
+          strokeId: session,
+          generation: previewGeneration,
+          flightId: cadenceFlightId,
+          reason: "preview-generation-cancelled",
+        });
+        _hrPcRecord("previewDropped", {
+          strokeId: session,
+          generation: previewGeneration,
+          flightId: cadenceFlightId,
+          reason: "preview-generation-cancelled",
+        });
         _hrFirstPresentCount(
           session,
           "presentLivePreviewRejectedCount",
@@ -13882,6 +17223,24 @@ function _hardRoundPresentLivePreview(renderer) {
         !_strokeCtx ||
         !_strokeCanvas
       ) {
+        _hrGaRecordFlight("previewDropped", {
+          strokeId: session,
+          generation: previewGeneration,
+          flightId: cadenceFlightId,
+          reason:
+            session !== _activeStrokeSession
+              ? "wrong-stroke-id"
+              : "pending-preview-cancelled",
+        });
+        _hrPcRecord("previewDropped", {
+          strokeId: session,
+          generation: previewGeneration,
+          flightId: cadenceFlightId,
+          reason:
+            session !== _activeStrokeSession
+              ? "wrong-stroke-id"
+              : "pending-preview-cancelled",
+        });
         _hrFirstPresentCount(
           session,
           "presentLivePreviewRejectedCount",
@@ -13896,6 +17255,18 @@ function _hardRoundPresentLivePreview(renderer) {
         return;
       }
       if (!result || !result.canvas) {
+        _hrGaRecordFlight("previewDropped", {
+          strokeId: session,
+          generation: previewGeneration,
+          flightId: cadenceFlightId,
+          reason: "empty-geometry",
+        });
+        _hrPcRecord("previewDropped", {
+          strokeId: session,
+          generation: previewGeneration,
+          flightId: cadenceFlightId,
+          reason: "empty-geometry",
+        });
         _hrFirstPresentCount(
           session,
           "presentLivePreviewRejectedCount",
@@ -13913,6 +17284,22 @@ function _hardRoundPresentLivePreview(renderer) {
         !result.canvasLivePresentation &&
         (!result.presentation || result.presentation.presented !== true)
       ) {
+        _hrGaRecordFlight("previewDropped", {
+          strokeId: session,
+          generation: previewGeneration,
+          flightId: cadenceFlightId,
+          reason:
+            (result.presentation && result.presentation.reason) ||
+            "not-presented",
+        });
+        _hrPcRecord("previewDropped", {
+          strokeId: session,
+          generation: previewGeneration,
+          flightId: cadenceFlightId,
+          reason:
+            (result.presentation && result.presentation.reason) ||
+            "not-presented",
+        });
         _hr11b6Log("presentLivePreview-rejected", _lastPointerEvent, {
           reason:
             (result.presentation && result.presentation.reason) ||
@@ -13942,8 +17329,52 @@ function _hardRoundPresentLivePreview(renderer) {
           _hrTipLagLastFlushedEndpoint.y,
           performance.now(),
         );
+      if (
+        (_hrTlActive() ||
+          _hrCblActive() ||
+          _hrTwActive() ||
+          _hrGaActive() ||
+          _hrTemporalActive() ||
+          window.HardRoundDebugLiveNewestSampleTail ||
+          window.HardRoundDebugIntegratedNewestSampleTip) &&
+        _hrTipLagLastFlushedEndpoint
+      ) {
+        _hrTipLagLastAcceptedPreviewEndpoint = _hrTlClonePoint(
+          _hrTipLagLastFlushedEndpoint,
+        );
+        _hrAcceptedPreviewGenerationId = previewGeneration;
+        _hrTwRecordStage(
+          "accepted",
+          _hrTipLagLastAcceptedPreviewEndpoint,
+          _hrTipLagLastAcceptedPreviewEndpoint.seq,
+        );
+      }
+      if (_hrIntegratedTipTopology && _hrIntegratedTipTopology.previewGeneration === previewGeneration) {
+        _hrIntegratedTipTopology.acceptedGenerationId =
+          _hrIntegratedTipTopology.generationId;
+        _hrIntegratedTipTopology.latestAcceptedPreviewEndpoint = _hrTlClonePoint(
+          _hrTipLagLastAcceptedPreviewEndpoint,
+        );
+        if (_hrTlActive()) {
+          const d = _hrTlData();
+          d.latest.integratedTip = Object.assign({}, _hrIntegratedTipTopology);
+        }
+      }
       _hrLcInc("previewAccepted");
       _hrLcTime("previewAccepted");
+      _hrStartupMark(session, "firstPreviewAcceptedTime");
+      _hrPcRecord("acceptedPreview", {
+        strokeId: session,
+        generation: previewGeneration,
+        flightId: cadenceFlightId,
+      });
+      _hrGaRecordPresentation("acceptedPreview", {
+        strokeId: session,
+        generation: previewGeneration,
+        flightId: cadenceFlightId,
+        represented: _hrTipLagLastAcceptedPreviewEndpoint,
+      });
+      _hrTemporalRecordAccepted(_hrTipLagLastAcceptedPreviewEndpoint);
       const gpuPreviewAccepted = !!(
         renderer.isGpuActive && renderer.isGpuActive()
       );
@@ -13999,8 +17430,63 @@ function _hardRoundPresentLivePreview(renderer) {
               );
               _strokeCtx.drawImage(result.canvas, 0, 0);
             }
+            if (
+              (_hrTlActive() ||
+                _hrCblActive() ||
+                _hrTwActive() ||
+                _hrGaActive() ||
+                _hrTemporalActive() ||
+                window.HardRoundDebugLiveNewestSampleTail ||
+                window.HardRoundDebugIntegratedNewestSampleTip) &&
+              _hrTipLagLastAcceptedPreviewEndpoint
+            ) {
+              _hrTipLagLastDisplayedBodyEndpoint = _hrTlClonePoint(
+                _hrTipLagLastAcceptedPreviewEndpoint,
+              );
+              _hrDisplayedStrokeCanvasGenerationId = _hrAcceptedPreviewGenerationId;
+              _hrTwRecordStage(
+                "displayed",
+                _hrTipLagLastDisplayedBodyEndpoint,
+                _hrTipLagLastDisplayedBodyEndpoint.seq,
+              );
+              if (_hrTlActive()) {
+                const d = _hrTlData();
+                d.latest.displayedBody = _hrTlClonePoint(
+                  _hrTipLagLastDisplayedBodyEndpoint,
+                );
+              }
+            }
+            if (_hrIntegratedTipTopology && _hrIntegratedTipTopology.previewGeneration === previewGeneration) {
+              _hrIntegratedTipTopology.displayedGenerationId =
+                _hrIntegratedTipTopology.generationId;
+              _hrIntegratedTipTopology.latestDisplayedBodyEndpoint =
+                _hrTlClonePoint(_hrTipLagLastDisplayedBodyEndpoint);
+              if (_hrTlActive()) {
+                const d = _hrTlData();
+                d.latest.integratedTip = Object.assign(
+                  {},
+                  _hrIntegratedTipTopology,
+                );
+              }
+            }
             _hrRestoreNewestSampleTipOverlayBase(result.canvas);
             _hrDrawNewestSampleTipOverlay(result.canvas);
+            if (_hrLcActive()) _hrLcTime("strokeCanvasUpdate");
+            _hrStartupMark(session, "firstStrokeCanvasUpdateTime");
+            _hrPcRecord("strokeCanvasUpdate", {
+              strokeId: session,
+              generation: previewGeneration,
+              flightId: cadenceFlightId,
+            });
+            _hrGaRecordPresentation("strokeCanvasUpdate", {
+              strokeId: session,
+              generation: previewGeneration,
+              flightId: cadenceFlightId,
+              represented: _hrTipLagLastDisplayedBodyEndpoint,
+            });
+            _hrTemporalRecordStrokeCanvasUpdate(
+              _hrTipLagLastDisplayedBodyEndpoint,
+            );
             if (drawStart != null)
               _hrLcDuration("strokeCanvasDrawMs", performance.now() - drawStart);
           }
@@ -14199,7 +17685,33 @@ function _hardRoundPresentLivePreview(renderer) {
       const rect = dirty
         ? { x: dirty.x, y: dirty.y, w: dirty.width, h: dirty.height }
         : null;
+      _hrStartupMark(session, "firstStrokeCanvasUpdateTime");
+      _hrPcRecord("strokeCanvasUpdate", {
+        strokeId: session,
+        generation: previewGeneration,
+        flightId: cadenceFlightId,
+      });
+      _hrGaRecordPresentation("strokeCanvasUpdate", {
+        strokeId: session,
+        generation: previewGeneration,
+        flightId: cadenceFlightId,
+        represented: _hrTipLagLastAcceptedPreviewEndpoint,
+      });
+      _hrTemporalRecordStrokeCanvasUpdate(_hrTipLagLastAcceptedPreviewEndpoint);
       recomposite(curLayer, curFrame, rect);
+      _hrStartupMark(session, "firstRecompositeTime");
+      _hrPcRecord("visibleRecomposite", {
+        strokeId: session,
+        generation: previewGeneration,
+        flightId: cadenceFlightId,
+      });
+      _hrGaRecordPresentation("visibleRecomposite", {
+        strokeId: session,
+        generation: previewGeneration,
+        flightId: cadenceFlightId,
+        represented: _hrTipLagLastAcceptedPreviewEndpoint,
+      });
+      _hrTemporalRecordVisible(_hrTipLagLastAcceptedPreviewEndpoint);
     });
 }
 
@@ -14224,15 +17736,66 @@ let _hardRoundPreviewRequestedRenderer = null;
 function _hardRoundStartPreviewFlight(renderer, session) {
   if (session !== _activeStrokeSession || !_inStroke) return false;
   const flightStart = _hrLcActive() ? performance.now() : null;
+  const cadenceFlightId = ++_hrPresentationCadenceFlightSerial;
+  const cadenceGeneration = _hardRoundPreviewGeneration;
   _hrLcInc("previewFlightStarted");
   _hrLcTime("previewFlightStarted", flightStart || performance.now());
   _hardRoundFlushPending(renderer);
-  const flightToken = { sessionId: session, renderer };
+  _hrStartupMark(session, "firstPreviewStartTime");
+  _hrPcRecord("previewStart", {
+    strokeId: session,
+    generation: cadenceGeneration,
+    flightId: cadenceFlightId,
+  });
+  _hrTemporalRecordPreviewStart();
+  _hrGaRecordFlight("previewStart", {
+    strokeId: session,
+    generation: cadenceGeneration,
+    flightId: cadenceFlightId,
+    represented: _hrTipLagLastFlushedEndpoint,
+  });
+  const flightToken = { sessionId: session, renderer, cadenceFlightId };
   _hardRoundPreviewInFlight = true;
   _hardRoundPreviewInFlightToken = flightToken;
   _hardRoundPreviewNeedsFollowup = false;
   Promise.resolve(_hardRoundPresentLivePreview(renderer)).finally(() => {
-    if (_hardRoundPreviewInFlightToken !== flightToken) return;
+    if (_hardRoundPreviewInFlightToken !== flightToken) {
+      _hrPcRecord("previewComplete", {
+        strokeId: session,
+        generation: cadenceGeneration,
+        flightId: cadenceFlightId,
+      });
+      _hrPcRecord("previewDropped", {
+        strokeId: session,
+        generation: cadenceGeneration,
+        flightId: cadenceFlightId,
+        reason: "obsolete-flight-token",
+      });
+      _hrGaRecordFlight("previewComplete", {
+        strokeId: session,
+        generation: cadenceGeneration,
+        flightId: cadenceFlightId,
+      });
+      _hrGaRecordFlight("previewDropped", {
+        strokeId: session,
+        generation: cadenceGeneration,
+        flightId: cadenceFlightId,
+        reason: "obsolete-flight-token",
+      });
+      return;
+    }
+    _hrStartupMark(session, "firstPreviewCompletedTime");
+    _hrTemporalRecordPreviewCompletion();
+    _hrPcRecord("previewComplete", {
+      strokeId: session,
+      generation: cadenceGeneration,
+      flightId: cadenceFlightId,
+    });
+    _hrGaRecordFlight("previewComplete", {
+      strokeId: session,
+      generation: cadenceGeneration,
+      flightId: cadenceFlightId,
+    });
     if (flightStart != null) {
       _hrLcInc("previewFlightCompleted");
       _hrLcTime("previewFlightCompleted");
@@ -14252,9 +17815,21 @@ function _hardRoundStartPreviewFlight(renderer, session) {
       _inStroke
     ) {
       _hrLcInc("followupStarted");
-      if (window.HardRoundDebugImmediateLiveFollowup)
+      if (
+        window.HardRoundDebugImmediateLiveFollowup &&
+        !window.HardRoundDebugFrameBudgetedLivePreview
+      )
         _hardRoundStartPreviewFlight(requestedRenderer, _activeStrokeSession);
-      else _hardRoundRequestLivePreview(requestedRenderer);
+      else {
+        if (
+          window.HardRoundDebugImmediateLiveFollowup &&
+          window.HardRoundDebugFrameBudgetedLivePreview
+        )
+          _hrLcInc("skippedImmediateFollowup");
+        if (window.HardRoundDebugFrameBudgetedLivePreview)
+          _hrLcInc("frameBudgetedFollowup");
+        _hardRoundRequestLivePreview(requestedRenderer);
+      }
     }
   });
   return true;
@@ -15239,6 +18814,15 @@ function _brushPointerDown(e) {
     window._customTipGpuRenderer.beginStroke();
   }
   if (_hardRoundStrokeActive) _hrFirstPresentRecord(_activeStrokeSession);
+  if (_hardRoundStrokeActive)
+    _hrStartupBeginStroke(_activeStrokeSession, _hardRoundPointerDownAt);
+  if (_hardRoundStrokeActive) _hrTemporalStartStroke(_activeStrokeSession);
+  if (_hardRoundStrokeActive)
+    _hrPcRecord("strokeStart", {
+      strokeId: _activeStrokeSession,
+      time: _hardRoundPointerDownAt,
+      generation: _hardRoundPreviewGeneration,
+    });
   _brushDiagPerfBegin(_activeStrokeSession);
   if (_hardRoundStrokeActive) {
     _brushDiagPerfNote("hard-round-renderer", {
@@ -15533,6 +19117,7 @@ function _brushPointerDown(e) {
       });
       if (beginSeg) {
         _hrInputLatencyNote(_activeStrokeSession, "firstCoreGeometryTime");
+        _hrStartupMarkActive("firstEmittedTime");
         _hardRoundStampSegments([beginSeg], e);
       }
       const hardRoundRenderer = _hardRoundGetRenderer();
@@ -15796,9 +19381,27 @@ function _brushPointerDown(e) {
       _hardRoundPendingRenderSegmentTimes.length = 0;
       _hrTipLagLastRenderedEndpoint = null;
       _hrTipLagLastFlushedEndpoint = null;
+      _hrTipLagLastAcceptedPreviewEndpoint = null;
+      _hrTipLagLastDisplayedBodyEndpoint = null;
       _hrTipLagLastDisplayedEndpoint = null;
       _hrNewestSampleTipTarget = null;
       _hrNewestSampleTipOverlayDirty = null;
+      _hrLiveNewestSampleTailSegment = null;
+      _hrLiveNewestSampleTailStart = null;
+      _hrLiveNewestSampleTailEnd = null;
+      _hrIntegratedTipTopology = null;
+      _hrAcceptedPreviewGenerationId = null;
+      _hrDisplayedStrokeCanvasGenerationId = null;
+      _hrCursorBrushLatestRaw = null;
+      _hrCblLastStabilized = null;
+      _hrCblLastCoreInput = null;
+      _hrCblLastInternalRaw = null;
+      _hrCblLastEmittedEndpoint = null;
+      _hrCblInputSeq = 0;
+      _hrCblStabilizedSeq = 0;
+      _hrCblCoreInputSeq = 0;
+      _hrCblInternalRawSeq = 0;
+      _hrCblEmittedEndpointSeq = 0;
       _hardRoundNextStampIsFirst = true;
       _hardRoundStampSegments([beginSeg], e);
       // Preserve the original immediate first-dab behavior; only movement
@@ -16112,6 +19715,7 @@ function _handleMoveEvent(e) {
       _hrLcInc("coalescedSamples", events.length);
     }
   }
+  _hrTemporalRecordPacket(e.type || "pointermove", events.length);
   _brushDiagPerfNote("raw-samples", { count: events.length });
   if (_hrMtCoalesceStart != null)
     _hrMtRecord("getCoalescedEvents", _hrMtCoalesceStart, performance.now());
@@ -16171,7 +19775,20 @@ function _handleMoveEvent(e) {
         type: ev.type || e.type || "coalesced",
       });
     }
+    _hrStartupMarkActive("firstRawTime");
+    _hrPcRecord("rawInput");
+    _hrCblRecordRaw(raw.x, raw.y, evTime, e.type || "pointermove", ev);
     const p = _stabilizePoint(raw.x, raw.y, evTime);
+    if (_hrCblActive() || _hrTwActive())
+      _hrCblLastStabilized = {
+        seq: _hrCblInputSeq,
+        x: p.x,
+        y: p.y,
+        time: evTime,
+        wallTime: performance.now(),
+        zoom: Number.isFinite(zoom) ? zoom : 1,
+      };
+    _hrTwRecordStage("stabilized", _hrCblLastStabilized, _hrCblInputSeq);
     _hrTlRecordStage("stabilized", p.x, p.y, evTime);
     if (_hardRoundStrokeActive)
       _hrInputLatencyNote(_activeStrokeSession, "firstStabilizerOutputTime");
@@ -16269,6 +19886,10 @@ function _pointerEndStroke(e) {
     return;
   }
   const finalizingStrokeSession = _activeStrokeSession;
+  if (_hardRoundStrokeActive)
+    _hrStartupNoteStrokeEnd(finalizingStrokeSession);
+  if (_hardRoundStrokeActive)
+    _hrPcRecord("strokeEnd", { strokeId: finalizingStrokeSession });
   const smartPointerupTiming =
     drawing && _hardRoundStrokeActive && _hardRoundActiveContext
       ? _hrSmartPointerupBegin(

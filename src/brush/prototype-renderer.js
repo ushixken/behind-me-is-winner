@@ -2707,6 +2707,7 @@
       this._rgb = [0, 0, 0];
       this._segmentCount = 0;
       this.presentationOpacity = 1;
+      this._livePreviewTerminalDirty = null;
       // Phase 11B.3 TEMP DIAGNOSTIC: gated by window.HardRoundDebugSerializeGpuPreview
       // (default false, opt-in). Tracks whether a live GPU preview present()
       // is currently in flight for THIS stroke, and whether newer stroke
@@ -2751,6 +2752,7 @@
         this._outCanvas.height = height;
         this._outCtx = this._outCanvas.getContext("2d");
       }
+      this._livePreviewTerminalDirty = null;
     }
 
     destroy() {
@@ -2793,6 +2795,7 @@
       this._rgb = [0, 0, 0];
       this._livePresentInFlight = false;
       this._livePreviewDirty = false;
+      this._livePreviewTerminalDirty = null;
       // TEMP DIAGNOSTIC (Phase 11A.23): fresh, empty per-backend segment
       // log for this stroke. `_nextId` is NOT reset -- identity tags stay
       // unique across the whole session so a duplicate-submission check
@@ -2939,6 +2942,119 @@
         : this._outCanvas;
     }
 
+    _unionDirtyRegion(a, b) {
+      if (!a) return b || null;
+      if (!b) return a || null;
+      const x = Math.max(0, Math.floor(Math.min(a.x || 0, b.x || 0)));
+      const y = Math.max(0, Math.floor(Math.min(a.y || 0, b.y || 0)));
+      const ax2 = (a.x || 0) + (a.width || 0);
+      const ay2 = (a.y || 0) + (a.height || 0);
+      const bx2 = (b.x || 0) + (b.width || 0);
+      const by2 = (b.y || 0) + (b.height || 0);
+      const x2 = Math.min(this.width, Math.ceil(Math.max(ax2, bx2)));
+      const y2 = Math.min(this.height, Math.ceil(Math.max(ay2, by2)));
+      if (x2 <= x || y2 <= y) return null;
+      return { x, y, width: x2 - x, height: y2 - y };
+    }
+
+    _segmentDirtyRegion(seg) {
+      if (!seg) return null;
+      const x0 = Number(seg.x0);
+      const y0 = Number(seg.y0);
+      const x1 = Number(seg.x1);
+      const y1 = Number(seg.y1);
+      if (
+        !Number.isFinite(x0) ||
+        !Number.isFinite(y0) ||
+        !Number.isFinite(x1) ||
+        !Number.isFinite(y1)
+      )
+        return null;
+      const radius = Math.max(
+        0.5,
+        Number.isFinite(seg.r1)
+          ? seg.r1
+          : Number.isFinite(seg.r0)
+            ? seg.r0
+            : 1,
+      );
+      const pad = Math.ceil(radius + 3);
+      const x = Math.max(0, Math.floor(Math.min(x0, x1) - pad));
+      const y = Math.max(0, Math.floor(Math.min(y0, y1) - pad));
+      const x2 = Math.min(this.width, Math.ceil(Math.max(x0, x1) + pad));
+      const y2 = Math.min(this.height, Math.ceil(Math.max(y0, y1) + pad));
+      if (x2 <= x || y2 <= y) return null;
+      return { x, y, width: x2 - x, height: y2 - y };
+    }
+
+    _drawLivePreviewTerminalSegments(segments) {
+      const cadenceOn =
+        typeof window !== "undefined" &&
+        !!window.HardRoundDebugLiveCadence &&
+        typeof window.HardRoundLiveCadenceNote === "function";
+      const start = cadenceOn ? performance.now() : null;
+      if (!this._outCtx || !segments || !segments.length) return null;
+      let dirty = null;
+      for (const seg of segments) {
+        if (!seg) continue;
+        const x0 = Number(seg.x0);
+        const y0 = Number(seg.y0);
+        const x1 = Number(seg.x1);
+        const y1 = Number(seg.y1);
+        if (
+          !Number.isFinite(x0) ||
+          !Number.isFinite(y0) ||
+          !Number.isFinite(x1) ||
+          !Number.isFinite(y1)
+        )
+          continue;
+        const radius = Math.max(
+          0.5,
+          Number.isFinite(seg.r1)
+            ? seg.r1
+            : Number.isFinite(seg.r0)
+              ? seg.r0
+              : 1,
+        );
+        const rgb = Array.isArray(seg.rgb) ? seg.rgb : this._rgb;
+        const alpha = Math.max(
+          0,
+          Math.min(
+            1,
+            Number.isFinite(seg.alpha1)
+              ? seg.alpha1
+              : Number.isFinite(seg.alpha0)
+                ? seg.alpha0
+                : 1,
+          ),
+        );
+        this._outCtx.save();
+        this._outCtx.globalCompositeOperation = "source-over";
+        this._outCtx.strokeStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha})`;
+        this._outCtx.fillStyle = this._outCtx.strokeStyle;
+        this._outCtx.lineWidth = radius * 2;
+        this._outCtx.lineCap = "butt";
+        this._outCtx.lineJoin = "round";
+        this._outCtx.beginPath();
+        this._outCtx.moveTo(x0, y0);
+        this._outCtx.lineTo(x1, y1);
+        this._outCtx.stroke();
+        this._outCtx.beginPath();
+        this._outCtx.arc(x1, y1, radius, 0, Math.PI * 2);
+        this._outCtx.fill();
+        this._outCtx.restore();
+        dirty = this._unionDirtyRegion(dirty, this._segmentDirtyRegion(seg));
+      }
+      if (cadenceOn) {
+        window.HardRoundLiveCadenceNote("integrated-terminal", {
+          drawMs: performance.now() - start,
+          segmentCount: segments.length,
+          dirtyPixels: dirty ? dirty.width * dirty.height : 0,
+        });
+      }
+      return dirty;
+    }
+
     getStrokeDirtyRegion() {
       return this._usingGpu ? null : this.cpu.getStrokeDirtyRegion();
     }
@@ -3064,6 +3180,20 @@
             window.HardRoundDebugGpuDirtyLiveReadback
           ) {
             dirtyRegion = this.gpu.consumeLiveDirtyRegion();
+            if (this._livePreviewTerminalDirty) {
+              dirtyRegion = this._unionDirtyRegion(
+                dirtyRegion,
+                this._livePreviewTerminalDirty,
+              );
+              if (
+                typeof window !== "undefined" &&
+                !!window.HardRoundDebugLiveCadence &&
+                typeof window.HardRoundLiveCadenceNote === "function"
+              )
+                window.HardRoundLiveCadenceNote("integrated-terminal", {
+                  previousTerminalDirtyUnion: true,
+                });
+            }
             if (dirtyRegion)
               dirtyRegion = await this.gpu.resolveDirtyInto(
                 this._outCtx,
@@ -3073,6 +3203,15 @@
               );
           }
           if (!dirtyRegion) await this._resolveToOutput(true, _diagMeta);
+          const terminalSegments =
+            meta && Array.isArray(meta.livePreviewTerminalSegments)
+              ? meta.livePreviewTerminalSegments
+              : null;
+          const terminalDirty = this._drawLivePreviewTerminalSegments(
+            terminalSegments,
+          );
+          this._livePreviewTerminalDirty = terminalDirty || null;
+          dirtyRegion = this._unionDirtyRegion(dirtyRegion, terminalDirty);
           return {
             canvas: this._outCanvas,
             composite: this._composite,

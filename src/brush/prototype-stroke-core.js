@@ -190,6 +190,127 @@ function mix(a, b, t) {
   return a + (b - a) * t;
 }
 
+function debugRoot() {
+  return typeof globalThis !== "undefined" ? globalThis : null;
+}
+
+function oneEuroPrototypeStateActive() {
+  const g = debugRoot();
+  return !!(g && g.HardRoundDebugOneEuroPrototypeCoreState);
+}
+
+function prototypeSubdivisionActive() {
+  const g = debugRoot();
+  return !!(g && g.HardRoundDebugPrototypeSubdivision);
+}
+
+function prototypeSubdivisionData() {
+  const g = debugRoot();
+  if (!g) return null;
+  if (!g.HardRoundPrototypeSubdivisionData) {
+    g.HardRoundPrototypeSubdivisionData = {
+      startedAt: performance.now(),
+      inputs: [],
+      suspiciousInputs: [],
+      inputCount: 0,
+      subdividedInputCount: 0,
+      totalSubdivisionSteps: 0,
+      maxSubdivisionSteps: 0,
+      generatedSegmentCount: 0,
+      maxStepValues: [],
+      zoomValues: [],
+      documentStepValues: [],
+      screenStepValues: [],
+      subdivisionStepValues: [],
+      generatedSegmentsPerInput: [],
+    };
+  }
+  return g.HardRoundPrototypeSubdivisionData;
+}
+
+function prototypeStateMutationActive() {
+  const g = debugRoot();
+  return !!(g && g.HardRoundDebugPrototypeStateMutation);
+}
+
+function prototypeStateMutationData() {
+  const g = debugRoot();
+  if (!g) return null;
+  if (!g.HardRoundPrototypeStateMutationData) {
+    g.HardRoundPrototypeStateMutationData = {
+      startedAt: performance.now(),
+      mutations: [],
+      suspiciousMutations: [],
+      mutationCount: 0,
+      unexpectedStateJumpCount: 0,
+      maximumStateJumpScreenPx: 0,
+      repeatedOrBackwardRepresentedSeqMutationCount: 0,
+      resetDuringActiveStrokeCount: 0,
+      mutationSources: Object.create(null),
+      lastRepresentedSeq: null,
+      sequence: 0,
+    };
+  }
+  return g.HardRoundPrototypeStateMutationData;
+}
+
+function oneEuroPrototypeStateData() {
+  const g = debugRoot();
+  if (!g) return null;
+  if (!g.HardRoundOneEuroPrototypeCoreStateData) {
+    g.HardRoundOneEuroPrototypeCoreStateData = {
+      startedAt: performance.now(),
+      inputs: [],
+      suspiciousInputs: [],
+      filteredBySeq: Object.create(null),
+      prototypeInputCount: 0,
+      generatedSegmentCount: 0,
+      repeatedRepresentedSeqSegmentCount: 0,
+      uniqueSeq: Object.create(null),
+      suspiciousCounts: {
+        lastRawFarFromPreviousFiltered: 0,
+        lastMidFarFromPreviousFiltered: 0,
+        generatedSegmentFarFromIncoming: 0,
+        manySegmentsFromOneInput: 0,
+      },
+    };
+  }
+  return g.HardRoundOneEuroPrototypeCoreStateData;
+}
+
+function pushLimitedDebug(list, value, limit) {
+  if (!Array.isArray(list)) return;
+  list.push(value);
+  if (list.length > limit) list.splice(0, list.length - limit);
+}
+
+function clonePointDebug(p) {
+  return p && Number.isFinite(p.x) && Number.isFinite(p.y)
+    ? { x: p.x, y: p.y }
+    : null;
+}
+
+function distanceDebug(a, b, zoom = 1) {
+  if (!a || !b) return null;
+  if (
+    !Number.isFinite(a.x) ||
+    !Number.isFinite(a.y) ||
+    !Number.isFinite(b.x) ||
+    !Number.isFinite(b.y)
+  )
+    return null;
+  return Math.hypot(a.x - b.x, a.y - b.y) * Math.max(0.0001, zoom || 1);
+}
+
+function snapshotStateDebug(owner) {
+  return {
+    drawing: !!(owner && owner.drawing),
+    prevRaw: clonePointDebug(owner && owner.prevRaw),
+    lastRaw: clonePointDebug(owner && owner.lastRaw),
+    lastMid: clonePointDebug(owner && owner.lastMid),
+  };
+}
+
 // -----------------------------------------------------------------------
 // PrototypeStrokeCore
 //
@@ -240,6 +361,7 @@ class PrototypeStrokeCore {
   }
 
   _resetBuffers() {
+    const before = snapshotStateDebug(this);
     this.drawing = false;
     this.strokeMoved = false;
 
@@ -268,6 +390,249 @@ class PrototypeStrokeCore {
     this.releaseTailLastPressure = Infinity;
 
     this.lastMoveEventTime = 0;
+    this._recordPrototypeStateMutation({
+      source: "reset",
+      reason: "_resetBuffers",
+      before,
+      after: snapshotStateDebug(this),
+      incoming: null,
+      representedSeq: null,
+    });
+  }
+
+  _recordPrototypeStateMutation(detail) {
+    if (!prototypeStateMutationActive() || !detail) return;
+    const d = prototypeStateMutationData();
+    if (!d) return;
+    const zoom = Math.max(0.0001, Number(this.settings && this.settings.zoom) || 1);
+    const oldLastRaw = detail.before ? detail.before.lastRaw : null;
+    const newLastRaw = detail.after ? detail.after.lastRaw : null;
+    const oldLastMid = detail.before ? detail.before.lastMid : null;
+    const newLastMid = detail.after ? detail.after.lastMid : null;
+    const oldToNewLastRaw = distanceDebug(oldLastRaw, newLastRaw, zoom);
+    const incomingToNewLastRaw = distanceDebug(detail.incoming, newLastRaw, zoom);
+    const oldToNewLastMid = distanceDebug(oldLastMid, newLastMid, zoom);
+    const representedSeq = Number.isFinite(detail.representedSeq)
+      ? detail.representedSeq
+      : null;
+    const repeatedOrBackward =
+      Number.isFinite(representedSeq) &&
+      Number.isFinite(d.lastRepresentedSeq) &&
+      representedSeq <= d.lastRepresentedSeq;
+    if (Number.isFinite(representedSeq)) d.lastRepresentedSeq = representedSeq;
+    if (repeatedOrBackward)
+      d.repeatedOrBackwardRepresentedSeqMutationCount++;
+    const resetDuringActiveStroke =
+      detail.source === "reset" && !!(detail.before && detail.before.drawing);
+    if (resetDuringActiveStroke) d.resetDuringActiveStrokeCount++;
+    const stateJump = oldToNewLastRaw || 0;
+    if (stateJump > d.maximumStateJumpScreenPx)
+      d.maximumStateJumpScreenPx = stateJump;
+    const incomingExplainsNew =
+      incomingToNewLastRaw != null && incomingToNewLastRaw <= 0.5;
+    const unexpectedStateJump =
+      !!(detail.after && detail.after.drawing) &&
+      stateJump > 8 &&
+      !incomingExplainsNew;
+    if (unexpectedStateJump) d.unexpectedStateJumpCount++;
+    d.mutationCount++;
+    d.sequence++;
+    d.mutationSources[detail.source || "unknown"] =
+      (d.mutationSources[detail.source || "unknown"] || 0) + 1;
+    const entry = {
+      strokeId: this._debugStrokeId || null,
+      mutationSequence: d.sequence,
+      representedSeq,
+      source: detail.source || "unknown",
+      reason: detail.reason || null,
+      oldLastRaw,
+      newLastRaw,
+      oldLastMid,
+      newLastMid,
+      oldPrevRaw: detail.before ? detail.before.prevRaw : null,
+      newPrevRaw: detail.after ? detail.after.prevRaw : null,
+      incoming: clonePointDebug(detail.incoming),
+      distanceOldLastRawToNewLastRawScreenPx: oldToNewLastRaw,
+      distanceIncomingToNewLastRawScreenPx: incomingToNewLastRaw,
+      distanceOldLastMidToNewLastMidScreenPx: oldToNewLastMid,
+      activeBefore: !!(detail.before && detail.before.drawing),
+      activeAfter: !!(detail.after && detail.after.drawing),
+      resetDuringActiveStroke,
+      repeatedOrBackwardRepresentedSeq: repeatedOrBackward,
+      unexpectedStateJump,
+      callerTag: detail.callerTag || null,
+    };
+    pushLimitedDebug(d.mutations, entry, 2000);
+    if (unexpectedStateJump || resetDuringActiveStroke || repeatedOrBackward)
+      pushLimitedDebug(d.suspiciousMutations, entry, 20);
+  }
+
+  _feedPointDebug(out, raw, pressure, source, representedSeq, reason) {
+    this._debugFeedPointSource = source;
+    this._debugFeedPointRepresentedSeq = representedSeq;
+    this._debugFeedPointReason = reason;
+    try {
+      this._feedPoint(out, raw, pressure);
+    } finally {
+      this._debugFeedPointSource = null;
+      this._debugFeedPointRepresentedSeq = null;
+      this._debugFeedPointReason = null;
+    }
+  }
+
+  _recordOneEuroPrototypeCoreInput(detail) {
+    if (!oneEuroPrototypeStateActive() || !detail) return;
+    const d = oneEuroPrototypeStateData();
+    if (!d) return;
+    const zoom = Math.max(0.0001, Number(this.settings.zoom) || 1);
+    const seq = Number.isFinite(detail.representedSeq)
+      ? detail.representedSeq
+      : null;
+    d.prototypeInputCount++;
+    if (Number.isFinite(seq)) {
+      d.uniqueSeq[seq] = true;
+      if (detail.currentFiltered) d.filteredBySeq[seq] = detail.currentFiltered;
+    }
+    const generatedSegments = detail.generatedSegments || [];
+    d.generatedSegmentCount += generatedSegments.length;
+    if (generatedSegments.length > 1)
+      d.repeatedRepresentedSeqSegmentCount += generatedSegments.length - 1;
+    const firstSegment = generatedSegments[0] || null;
+    const lastSegment = generatedSegments[generatedSegments.length - 1] || null;
+    const lastRawToPreviousFiltered = distanceDebug(
+      detail.lastRawBefore,
+      detail.previousFiltered,
+      zoom,
+    );
+    const lastMidToPreviousFiltered = distanceDebug(
+      detail.lastMidBefore,
+      detail.previousFiltered,
+      zoom,
+    );
+    const incomingToLastRaw = distanceDebug(detail.incoming, detail.lastRawBefore, zoom);
+    const incomingToLastMid = distanceDebug(detail.incoming, detail.lastMidBefore, zoom);
+    const currentFilteredToLastRaw = distanceDebug(
+      detail.currentFiltered,
+      detail.lastRawBefore,
+      zoom,
+    );
+    const currentFilteredToLastMid = distanceDebug(
+      detail.currentFiltered,
+      detail.lastMidBefore,
+      zoom,
+    );
+    const farthestSegmentToIncoming = generatedSegments.reduce((max, seg) => {
+      const start = distanceDebug({ x: seg.x0, y: seg.y0 }, detail.incoming, zoom);
+      const end = distanceDebug({ x: seg.x1, y: seg.y1 }, detail.incoming, zoom);
+      return Math.max(max, start || 0, end || 0);
+    }, 0);
+    const suspicious =
+      (lastRawToPreviousFiltered != null && lastRawToPreviousFiltered > 8) ||
+      (lastMidToPreviousFiltered != null && lastMidToPreviousFiltered > 8) ||
+      farthestSegmentToIncoming > 16 ||
+      generatedSegments.length > 12;
+    if (lastRawToPreviousFiltered != null && lastRawToPreviousFiltered > 8)
+      d.suspiciousCounts.lastRawFarFromPreviousFiltered++;
+    if (lastMidToPreviousFiltered != null && lastMidToPreviousFiltered > 8)
+      d.suspiciousCounts.lastMidFarFromPreviousFiltered++;
+    if (farthestSegmentToIncoming > 16)
+      d.suspiciousCounts.generatedSegmentFarFromIncoming++;
+    if (generatedSegments.length > 12)
+      d.suspiciousCounts.manySegmentsFromOneInput++;
+    const entry = {
+      representedSeq: seq,
+      incoming: clonePointDebug(detail.incoming),
+      currentFiltered: clonePointDebug(detail.currentFiltered),
+      previousFiltered: clonePointDebug(detail.previousFiltered),
+      lastRawBefore: clonePointDebug(detail.lastRawBefore),
+      lastMidBefore: clonePointDebug(detail.lastMidBefore),
+      lastRawAfter: clonePointDebug(detail.lastRawAfter),
+      lastMidAfter: clonePointDebug(detail.lastMidAfter),
+      generatedSegmentCount: generatedSegments.length,
+      firstGeneratedSegment: firstSegment
+        ? { x0: firstSegment.x0, y0: firstSegment.y0, x1: firstSegment.x1, y1: firstSegment.y1 }
+        : null,
+      lastGeneratedSegment: lastSegment
+        ? { x0: lastSegment.x0, y0: lastSegment.y0, x1: lastSegment.x1, y1: lastSegment.y1 }
+        : null,
+      locality: {
+        incomingToLastRawScreenPx: incomingToLastRaw,
+        incomingToLastMidScreenPx: incomingToLastMid,
+        previousFilteredToLastRawScreenPx: lastRawToPreviousFiltered,
+        previousFilteredToLastMidScreenPx: lastMidToPreviousFiltered,
+        currentFilteredToLastRawScreenPx: currentFilteredToLastRaw,
+        currentFilteredToLastMidScreenPx: currentFilteredToLastMid,
+        farthestGeneratedSegmentToIncomingScreenPx: farthestSegmentToIncoming,
+      },
+      suspicious,
+    };
+    pushLimitedDebug(d.inputs, entry, 1000);
+    if (suspicious) pushLimitedDebug(d.suspiciousInputs, entry, 10);
+  }
+
+  _recordPrototypeSubdivision(detail) {
+    if (!prototypeSubdivisionActive() || !detail) return;
+    const d = prototypeSubdivisionData();
+    if (!d) return;
+    const zoom = Math.max(0.0001, Number(this.settings.zoom) || 1);
+    const documentStep = Number.isFinite(detail.jumpDist) ? detail.jumpDist : null;
+    const screenStep =
+      documentStep == null ? null : documentStep * zoom;
+    const subdivisionSteps = Number.isFinite(detail.subdivisionSteps)
+      ? detail.subdivisionSteps
+      : 0;
+    const generatedSegmentCount = Number.isFinite(detail.generatedSegmentCount)
+      ? detail.generatedSegmentCount
+      : 0;
+    d.inputCount++;
+    if (detail.subdivisionTriggered) d.subdividedInputCount++;
+    d.totalSubdivisionSteps += subdivisionSteps;
+    if (subdivisionSteps > d.maxSubdivisionSteps)
+      d.maxSubdivisionSteps = subdivisionSteps;
+    d.generatedSegmentCount += generatedSegmentCount;
+    pushLimitedDebug(d.maxStepValues, detail.maxStep, 2000);
+    pushLimitedDebug(d.zoomValues, zoom, 2000);
+    pushLimitedDebug(d.documentStepValues, documentStep, 2000);
+    pushLimitedDebug(d.screenStepValues, screenStep, 2000);
+    pushLimitedDebug(d.subdivisionStepValues, subdivisionSteps, 2000);
+    pushLimitedDebug(d.generatedSegmentsPerInput, generatedSegmentCount, 2000);
+    const suspicious =
+      (screenStep != null && screenStep <= 5 && subdivisionSteps > 2) ||
+      subdivisionSteps >= 10 ||
+      generatedSegmentCount >= 100 ||
+      (Number.isFinite(detail.maxStep) &&
+        Number.isFinite(zoom) &&
+        detail.maxStep * zoom < 0.5);
+    const entry = {
+      representedSeq: detail.representedSeq,
+      source: detail.source || "raw",
+      incoming: clonePointDebug(detail.incoming),
+      lastRawBefore: clonePointDebug(detail.lastRawBefore),
+      documentDistance: documentStep,
+      screenDistance: screenStep,
+      zoom,
+      maxStep: detail.maxStep,
+      maxStepScreenPx: Number.isFinite(detail.maxStep)
+        ? detail.maxStep * zoom
+        : null,
+      maxStepSource: "Math.max(settings.minStepPx, settings.brushSize * settings.subdivisionScale)",
+      maxStepCoordinateSpace: "caller/document coordinate space",
+      brushSize: this.settings.brushSize,
+      subdivisionScale: this.settings.subdivisionScale,
+      minStepPx: this.settings.minStepPx,
+      computedSubdivisionStepCount: subdivisionSteps,
+      feedPointCallCount: detail.feedPointCallCount,
+      generatedSegmentsPerFeedPoint:
+        detail.feedPointCallCount > 0
+          ? generatedSegmentCount / detail.feedPointCallCount
+          : null,
+      totalGeneratedSegmentCount: generatedSegmentCount,
+      subdivisionTriggered: !!detail.subdivisionTriggered,
+      clampApplied: false,
+      suspicious,
+    };
+    pushLimitedDebug(d.inputs, entry, 1000);
+    if (suspicious) pushLimitedDebug(d.suspiciousInputs, entry, 10);
   }
 
   // ---- internal: moving-average window sizing (ported) ------------------
@@ -385,6 +750,7 @@ class PrototypeStrokeCore {
   }
 
   _feedPoint(out, raw, pressure) {
+    const before = snapshotStateDebug(this);
     this.strokeMoved = true;
     const influence = pressureInfluence(pressure);
     const midStart = this.lastMid;
@@ -411,6 +777,15 @@ class PrototypeStrokeCore {
     this.lastPressure = pressure;
     this.prevRaw = this.lastRaw;
     this.lastRaw = raw;
+    this._recordPrototypeStateMutation({
+      source: this._debugFeedPointSource || "_feedPoint",
+      reason: this._debugFeedPointReason || "_feedPoint",
+      before,
+      after: snapshotStateDebug(this),
+      incoming: raw,
+      representedSeq: this._debugFeedPointRepresentedSeq,
+      callerTag: "_feedPoint",
+    });
   }
 
   // ---- public API ---------------------------------------------------
@@ -430,6 +805,7 @@ class PrototypeStrokeCore {
     if (this.trajectoryCore) this.trajectoryCore.beginStroke(sample, settings);
 
     const p = { x: sample.x, y: sample.y };
+    const before = snapshotStateDebug(this);
     this.drawing = true;
     this.prevRaw = p;
     this.lastRaw = p;
@@ -467,6 +843,21 @@ class PrototypeStrokeCore {
     const influence = pressureInfluence(startPressure);
     this.lastInfluence = influence;
     this.lastPressure = startPressure;
+    this._debugStrokeId =
+      Number.isFinite(sample && sample._debugStrokeId)
+        ? sample._debugStrokeId
+        : (this._debugStrokeId || 0) + 1;
+    this._recordPrototypeStateMutation({
+      source: "beginStroke",
+      reason: "initialize stroke state",
+      before,
+      after: snapshotStateDebug(this),
+      incoming: p,
+      representedSeq: Number.isFinite(sample && sample._debugSeq)
+        ? sample._debugSeq
+        : 0,
+      callerTag: "beginStroke",
+    });
 
     return {
       x0: p.x,
@@ -500,6 +891,106 @@ class PrototypeStrokeCore {
     const genericSamples = this.trajectoryCore
       ? this.trajectoryCore.pushSamples(samples)
       : null;
+
+    if (genericSamples && genericSamples.length !== samples.length) {
+      for (const gen of genericSamples) {
+        const raw = { x: gen.x, y: gen.y };
+        const lastRawBefore = clonePointDebug(this.lastRaw);
+        const lastMidBefore = clonePointDebug(this.lastMid);
+        const pressure = this._effectivePressure(gen.pressure);
+        this._trackVelocity(
+          raw,
+          Number.isFinite(gen.timeStamp)
+            ? gen.timeStamp
+            : this.lastVelTime + FINISH_TICK_DT_MS,
+        );
+        this.delayedPressure = pressure;
+        this.positionBufferAdvanceCount++;
+        this.pressureBufferAdvanceCount++;
+        const jumpDx = raw.x - this.lastRaw.x,
+          jumpDy = raw.y - this.lastRaw.y;
+        const jumpDist = Math.hypot(jumpDx, jumpDy);
+        const beforeCount = out.length;
+        let subdivisionSteps = 1;
+        if (jumpDist > maxStep) {
+          const origin = this.lastRaw;
+          const steps = Math.ceil(jumpDist / maxStep);
+          subdivisionSteps = steps;
+          for (let i = 1; i <= steps; i++) {
+            const t = i / steps;
+            this._feedPointDebug(
+              out,
+              {
+                x: origin.x + jumpDx * t,
+                y: origin.y + jumpDy * t,
+              },
+              this.delayedPressure,
+              "subdivision",
+              Number.isFinite(gen._debugSeq) ? gen._debugSeq : null,
+              "shared-core-variable-output subdivision",
+            );
+          }
+        } else {
+          this._feedPointDebug(
+            out,
+            raw,
+            this.delayedPressure,
+            "addPoint",
+            Number.isFinite(gen._debugSeq) ? gen._debugSeq : null,
+            "shared-core-variable-output direct",
+          );
+        }
+        this._recordPrototypeSubdivision({
+          representedSeq: Number.isFinite(gen._debugSeq) ? gen._debugSeq : null,
+          source: "shared-core-variable-output",
+          incoming: raw,
+          lastRawBefore,
+          jumpDist,
+          maxStep,
+          subdivisionSteps,
+          feedPointCallCount: subdivisionSteps,
+          generatedSegmentCount: out.length - beforeCount,
+          subdivisionTriggered: jumpDist > maxStep,
+        });
+        if (Number.isFinite(gen._debugSeq)) {
+          for (let i = beforeCount; i < out.length; i++) {
+            out[i]._debugSeq = gen._debugSeq;
+            out[i]._debugFilteredX = gen.x;
+            out[i]._debugFilteredY = gen.y;
+            out[i]._debugPreviousFilteredX = gen._debugPreviousFilteredX;
+            out[i]._debugPreviousFilteredY = gen._debugPreviousFilteredY;
+          }
+        }
+        if (Number.isFinite(gen._debugSeq)) {
+          this._recordOneEuroPrototypeCoreInput({
+            representedSeq: gen._debugSeq,
+            incoming: raw,
+            currentFiltered: { x: gen.x, y: gen.y },
+            previousFiltered:
+              Number.isFinite(gen._debugPreviousFilteredX) &&
+              Number.isFinite(gen._debugPreviousFilteredY)
+                ? {
+                    x: gen._debugPreviousFilteredX,
+                    y: gen._debugPreviousFilteredY,
+                  }
+                : null,
+            lastRawBefore,
+            lastMidBefore,
+            lastRawAfter: this.lastRaw,
+            lastMidAfter: this.lastMid,
+            generatedSegments: out.slice(beforeCount),
+          });
+        }
+      }
+      const lastInput = samples[samples.length - 1];
+      if (lastInput) {
+        this.lastInputRaw = { x: lastInput.x, y: lastInput.y };
+        this.lastInputPressure = this._effectivePressure(
+          normalizeRawPressure(lastInput.pointerType, lastInput.pressure),
+        );
+      }
+      return out;
+    }
 
     for (let idx = 0; idx < samples.length; idx++) {
       const ev = samples[idx];
@@ -554,25 +1045,81 @@ class PrototypeStrokeCore {
         : this._pushSmoothBuf(inputRaw);
       this.positionBufferAdvanceCount++;
 
+      const gen = genericSamples && genericSamples[idx];
+      const lastRawBefore = clonePointDebug(this.lastRaw);
+      const lastMidBefore = clonePointDebug(this.lastMid);
       const jumpDx = raw.x - this.lastRaw.x,
         jumpDy = raw.y - this.lastRaw.y;
       const jumpDist = Math.hypot(jumpDx, jumpDy);
+      const beforeCount = out.length;
+      let subdivisionSteps = 1;
       if (jumpDist > maxStep) {
         const origin = this.lastRaw;
         const steps = Math.ceil(jumpDist / maxStep);
+        subdivisionSteps = steps;
         for (let i = 1; i <= steps; i++) {
           const t = i / steps;
-          this._feedPoint(
+          this._feedPointDebug(
             out,
             {
               x: origin.x + jumpDx * t,
               y: origin.y + jumpDy * t,
             },
             this.delayedPressure,
+            "subdivision",
+            gen && Number.isFinite(gen._debugSeq) ? gen._debugSeq : null,
+            gen ? "shared-core-equal-output subdivision" : "prototype-internal subdivision",
           );
         }
       } else {
-        this._feedPoint(out, raw, this.delayedPressure);
+        this._feedPointDebug(
+          out,
+          raw,
+          this.delayedPressure,
+          "addPoint",
+          gen && Number.isFinite(gen._debugSeq) ? gen._debugSeq : null,
+          gen ? "shared-core-equal-output direct" : "prototype-internal direct",
+        );
+      }
+      this._recordPrototypeSubdivision({
+        representedSeq:
+          gen && Number.isFinite(gen._debugSeq) ? gen._debugSeq : null,
+        source: gen ? "shared-core-equal-output" : "prototype-internal",
+        incoming: raw,
+        lastRawBefore,
+        jumpDist,
+        maxStep,
+        subdivisionSteps,
+        feedPointCallCount: subdivisionSteps,
+        generatedSegmentCount: out.length - beforeCount,
+        subdivisionTriggered: jumpDist > maxStep,
+      });
+      if (gen && Number.isFinite(gen._debugSeq)) {
+        for (let i = beforeCount; i < out.length; i++) {
+          out[i]._debugSeq = gen._debugSeq;
+          out[i]._debugFilteredX = gen.x;
+          out[i]._debugFilteredY = gen.y;
+          out[i]._debugPreviousFilteredX = gen._debugPreviousFilteredX;
+          out[i]._debugPreviousFilteredY = gen._debugPreviousFilteredY;
+        }
+        this._recordOneEuroPrototypeCoreInput({
+          representedSeq: gen._debugSeq,
+          incoming: raw,
+          currentFiltered: { x: gen.x, y: gen.y },
+          previousFiltered:
+            Number.isFinite(gen._debugPreviousFilteredX) &&
+            Number.isFinite(gen._debugPreviousFilteredY)
+              ? {
+                  x: gen._debugPreviousFilteredX,
+                  y: gen._debugPreviousFilteredY,
+                }
+              : null,
+          lastRawBefore,
+          lastMidBefore,
+          lastRawAfter: this.lastRaw,
+          lastMidAfter: this.lastMid,
+          generatedSegments: out.slice(beforeCount),
+        });
       }
     }
     return out;
@@ -609,7 +1156,14 @@ class PrototypeStrokeCore {
         this.pressureBufferAdvanceCount++;
         this.delayedPressure = genSample.pressure;
         const raw = { x: genSample.x, y: genSample.y };
-        this._feedPoint(out, raw, this.delayedPressure);
+        this._feedPointDebug(
+          out,
+          raw,
+          this.delayedPressure,
+          "tickHold",
+          Number.isFinite(genSample._debugSeq) ? genSample._debugSeq : null,
+          "shared-core tickHold",
+        );
       }
     } else if (!this.trajectoryCore) {
       for (let i = 0; i < ticks; i++) {
@@ -620,7 +1174,14 @@ class PrototypeStrokeCore {
         const dx = raw.x - this.lastRaw.x,
           dy = raw.y - this.lastRaw.y;
         if (Math.hypot(dx, dy) <= 1e-4) break;
-        this._feedPoint(out, raw, this.delayedPressure);
+        this._feedPointDebug(
+          out,
+          raw,
+          this.delayedPressure,
+          "tickHold",
+          null,
+          "prototype-internal tickHold",
+        );
       }
     }
     return out;
@@ -702,7 +1263,14 @@ class PrototypeStrokeCore {
       const finishSamples = this.trajectoryCore.finishStroke();
       if (finishSamples && finishSamples.length) {
         for (const sample of finishSamples) {
-          this._feedPoint(segments, sample, sample.pressure);
+          this._feedPointDebug(
+            segments,
+            sample,
+            sample.pressure,
+            "finishStroke",
+            Number.isFinite(sample._debugSeq) ? sample._debugSeq : null,
+            "shared-core finishStroke",
+          );
         }
       }
       this._resetBuffers();
@@ -714,7 +1282,15 @@ class PrototypeStrokeCore {
     }
 
     if (!endpoint || startDist < 0.15) {
-      if (endpoint) this._feedPoint(segments, endpoint, nextFinishPressure());
+      if (endpoint)
+        this._feedPointDebug(
+          segments,
+          endpoint,
+          nextFinishPressure(),
+          "finishStroke",
+          null,
+          "short-distance endpoint",
+        );
       this._resetBuffers();
       return {
         segments,
@@ -750,7 +1326,14 @@ class PrototypeStrokeCore {
       );
       if (remaining <= 0.15 || this.smoothBuf.length === 0) {
         const finalPressure = nextFinishPressure();
-        this._feedPoint(segments, endpoint, finalPressure);
+        this._feedPointDebug(
+          segments,
+          endpoint,
+          finalPressure,
+          "finishStroke",
+          null,
+          "final endpoint",
+        );
         ticksEmitted++;
         break;
       }
@@ -781,7 +1364,14 @@ class PrototypeStrokeCore {
         );
         if (stepDist <= 1e-4) break;
         const emittedPressure = nextFinishPressure();
-        this._feedPoint(segments, caught, emittedPressure);
+        this._feedPointDebug(
+          segments,
+          caught,
+          emittedPressure,
+          "finishStroke",
+          null,
+          "finish catchup",
+        );
         ticksEmitted++;
         producedThisFrame = true;
       }
@@ -790,7 +1380,14 @@ class PrototypeStrokeCore {
         // exact-endpoint sample and stop, mirroring the prototype's
         // `remaining <= 0.15` exit on the next tick.
         const finalPressure = nextFinishPressure();
-        this._feedPoint(segments, endpoint, finalPressure);
+        this._feedPointDebug(
+          segments,
+          endpoint,
+          finalPressure,
+          "finishStroke",
+          null,
+          "fallback final endpoint",
+        );
         ticksEmitted++;
         break;
       }

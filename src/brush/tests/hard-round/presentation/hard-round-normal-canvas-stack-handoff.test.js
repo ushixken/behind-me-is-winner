@@ -129,3 +129,25 @@ test("finally cleanup prevents held live state from remaining stuck", () => {
   assert.match(finallyCleanup, /_inStroke = false;/);
   assert.match(finallyCleanup, /_strokeCtx\.clearRect/);
 });
+
+test("temporal stroke timing diagnostic is wired to authoritative presentation stages", () => {
+  assert.match(engine, /function _hrTemporalActive\(\)/);
+  const acceptedSetup = engine.slice(
+    engine.indexOf('_hr11b6Log("presentLivePreview-accepted"'),
+    engine.indexOf("_hrLcInc(\"previewAccepted\")"),
+  );
+  assert.match(
+    acceptedSetup,
+    /_hrTemporalActive\(\)/,
+    "temporal diagnostic should create the accepted represented endpoint without older diagnostics",
+  );
+  assert.match(engine, /_hrTemporalRecordAccepted\(_hrTipLagLastAcceptedPreviewEndpoint\)/);
+  assert.match(
+    engine,
+    /_hrTemporalRecordStrokeCanvasUpdate\(\s*_hrTipLagLastDisplayedBodyEndpoint,\s*\)/,
+  );
+  assert.match(
+    engine,
+    /_hrTemporalRecordVisible\(_hrTipLagLastDisplayedBodyEndpoint\)/,
+  );
+});
